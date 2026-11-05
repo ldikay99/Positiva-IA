@@ -1,122 +1,150 @@
 import { useMemo, useState } from "react";
 import { usar } from "../estado.ts";
+import { Icono } from "../iconos.tsx";
 import { NOMBRES_DESENLACE, TONO_DESENLACE } from "../progreso.ts";
 import type { Corrida } from "../tipos.ts";
 
 function fecha(iso: string): string {
   if (!iso) return "";
-  const d = new Date(iso);
-  return d.toLocaleString("es-CO", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  return new Date(iso).toLocaleString("es-CO", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
 }
 
-function ultimaCorrida(corridas: Record<string, Corrida>, orden: string[], caso: string): Corrida | undefined {
-  for (const id of orden) if (corridas[id]?.caso === caso) return corridas[id];
-  return undefined;
+function ultimas(corridas: Record<string, Corrida>, orden: string[]): Record<string, Corrida> {
+  const r: Record<string, Corrida> = {};
+  for (const id of [...orden].reverse()) {
+    const c = corridas[id];
+    if (c) r[c.caso] = c;
+  }
+  return r;
 }
+
+type Filtro = "todos" | "sin_procesar" | "radicado" | "manual" | string;
 
 export function Bandeja() {
   const bandeja = usar((s) => s.bandeja);
   const corridas = usar((s) => s.corridas);
   const orden = usar((s) => s.orden);
+  const seleccion = usar((s) => s.seleccion);
+  const alternar = usar((s) => s.alternarSeleccion);
+  const fijar = usar((s) => s.fijarSeleccion);
   const procesar = usar((s) => s.procesar);
-  const seleccionar = usar((s) => s.seleccionar);
-  const seleccionada = usar((s) => s.seleccionada);
+  const enfocar = usar((s) => s.enfocar);
+  const foco = usar((s) => s.foco);
+  const verCorrida = usar((s) => s.verCorrida);
   const avisar = usar((s) => s.avisar);
-  const [filtro, setFiltro] = useState("");
-  const [grupo, setGrupo] = useState("");
-  const [marcados, setMarcados] = useState<Set<string>>(new Set());
-  const [cuantos, setCuantos] = useState(5);
+  const motor = usar((s) => s.motor);
+  const cancelarCola = usar((s) => s.cancelarCola);
+  const [busqueda, setBusqueda] = useState("");
+  const [filtro, setFiltro] = useState<Filtro>("todos");
+  const [enviando, setEnviando] = useState(false);
 
-  const visibles = useMemo(() => {
-    const f = filtro.trim().toLowerCase();
-    return bandeja.filter(
-      (c) =>
-        (!grupo || c.desenlaceProduccion === grupo || c.motivoProduccion === grupo) &&
-        (!f || `${c.caso} ${c.asunto} ${c.remitente} ${c.remitenteCorreo} ${c.vistaPrevia}`.toLowerCase().includes(f)),
-    );
-  }, [bandeja, filtro, grupo]);
-
+  const porCaso = useMemo(() => ultimas(corridas, orden), [corridas, orden]);
   const motivos = useMemo(() => [...new Set(bandeja.map((c) => c.motivoProduccion).filter(Boolean))].sort(), [bandeja]);
 
-  const lanzar = async (casos: string[]) => {
-    if (!casos.length) return;
+  const visibles = useMemo(() => {
+    const q = busqueda.trim().toLowerCase();
+    return bandeja.filter((c) => {
+      if (filtro === "sin_procesar" && porCaso[c.caso]) return false;
+      if ((filtro === "radicado" || filtro === "manual") && c.desenlaceProduccion !== filtro) return false;
+      if (!["todos", "sin_procesar", "radicado", "manual"].includes(filtro) && c.motivoProduccion !== filtro) return false;
+      return !q || `${c.caso} ${c.asunto} ${c.remitente} ${c.remitenteCorreo} ${c.vistaPrevia}`.toLowerCase().includes(q);
+    });
+  }, [bandeja, busqueda, filtro, porCaso]);
+
+  const todosMarcados = visibles.length > 0 && visibles.every((c) => seleccion.includes(c.caso));
+  const enCola = motor?.enCola.length ?? 0;
+
+  const lanzar = async () => {
+    if (!seleccion.length) return;
+    setEnviando(true);
     try {
-      await procesar(casos);
-      setMarcados(new Set());
-      avisar(`${casos.length} correo${casos.length > 1 ? "s" : ""} en proceso`);
+      const n = seleccion.length;
+      await procesar(seleccion);
+      avisar(`${n} correo${n > 1 ? "s" : ""} en cola de proceso`);
     } catch (e) {
-      avisar((e as Error).message);
+      avisar((e as Error).message, "error");
+    } finally {
+      setEnviando(false);
     }
   };
 
-  const alternar = (caso: string) =>
-    setMarcados((m) => {
-      const n = new Set(m);
-      if (n.has(caso)) n.delete(caso);
-      else n.add(caso);
-      return n;
-    });
-
   return (
-    <aside className="columna izq">
-      <div className="cabeza">
-        <div className="cabeza-fila">
-          <h2>Bandeja</h2>
-          <span className="pastilla">{visibles.length} de {bandeja.length}</span>
+    <section className="bandeja">
+      <header className="bandeja-cabeza">
+        <div className="fila">
+          <h2 className="crece">Bandeja</h2>
+          <span className="pastilla">{visibles.length} / {bandeja.length}</span>
         </div>
-        <input className="campo" placeholder="Buscar por asunto, remitente o texto" value={filtro} onChange={(e) => setFiltro(e.target.value)} />
-        <select className="campo" value={grupo} onChange={(e) => setGrupo(e.target.value)}>
-          <option value="">Todos los correos</option>
+        <div className="campo-icono"><Icono n="buscar" tam={14} /><input className="campo" placeholder="Buscar asunto, remitente o texto" value={busqueda} onChange={(e) => setBusqueda(e.target.value)} /></div>
+        <select className="campo" value={filtro} onChange={(e) => setFiltro(e.target.value)}>
+          <option value="todos">Todos los correos</option>
+          <option value="sin_procesar">Sin procesar aquí</option>
           <option value="radicado">Producción los radicó</option>
           <option value="manual">Producción los mandó a manual</option>
-          {motivos.map((m) => (
-            <option key={m} value={m}>Manual por {m}</option>
-          ))}
+          <optgroup label="Manual en producción por">
+            {motivos.map((m) => <option key={m} value={m}>{m}</option>)}
+          </optgroup>
         </select>
-        <div className="fila-botones">
-          <button className="boton primario" disabled={!marcados.size} onClick={() => lanzar([...marcados])}>
-            Procesar {marcados.size || ""} marcado{marcados.size === 1 ? "" : "s"}
-          </button>
-          <input className="campo" style={{ width: 64 }} type="number" min={1} max={200} value={cuantos} onChange={(e) => setCuantos(Math.max(1, Number(e.target.value)))} />
-          <button className="boton" onClick={() => lanzar(visibles.slice(0, cuantos).map((c) => c.caso))}>
-            Procesar los primeros
-          </button>
+        <div className="fila">
+          <label className="fila chico texto-2 crece">
+            <input type="checkbox" className="check" checked={todosMarcados} onChange={() => fijar(todosMarcados ? seleccion.filter((c) => !visibles.some((v) => v.caso === c)) : [...new Set([...seleccion, ...visibles.map((v) => v.caso)])])} />
+            Seleccionar los {visibles.length} visibles
+          </label>
+          {seleccion.length > 0 && <button className="boton chico" onClick={() => fijar([])}>Limpiar</button>}
         </div>
-      </div>
-      <div className="desplaza lista-correo">
+      </header>
+
+      <div className="bandeja-lista">
         {visibles.map((c) => {
-          const u = ultimaCorrida(corridas, orden, c.caso);
-          const accion = u?.resultado ? String(u.resultado.accion) : u ? "en curso" : "";
+          const u = porCaso[c.caso];
+          const accion = u?.resultado ? String(u.resultado.accion) : u ? (u.estado === "en_cola" ? "en_cola" : "procesando") : "";
+          const marcado = seleccion.includes(c.caso);
+          const abierto = foco?.tipo === "correo" && foco.caso === c.caso;
           return (
-            <div key={c.caso} className={`correo ${u && u.id === seleccionada ? "activo" : ""}`} onClick={() => (u ? seleccionar(u.id) : lanzar([c.caso]))} title={u ? "Ver la última corrida" : "Procesar este correo"}>
-              <input type="checkbox" className="check" checked={marcados.has(c.caso)} onClick={(e) => e.stopPropagation()} onChange={() => alternar(c.caso)} />
-              <div style={{ minWidth: 0 }}>
-                <div className="cabeza-fila" style={{ gap: 6 }}>
-                  <span className="de" style={{ flex: 1 }}>{c.remitente || c.remitenteCorreo}</span>
-                  <span className="fecha">{fecha(c.recibido)}</span>
+            <div key={c.caso} className={`correo ${marcado ? "marcado" : ""} ${abierto ? "abierto" : ""}`} onClick={() => enfocar({ tipo: "correo", caso: c.caso })}>
+              <input type="checkbox" className="check" checked={marcado} onClick={(e) => e.stopPropagation()} onChange={() => alternar(c.caso)} aria-label={`Seleccionar ${c.caso}`} />
+              <div className="correo-cuerpo-lista">
+                <div className="fila">
+                  <span className="correo-de crece">{c.remitente || c.remitenteCorreo}</span>
+                  <span className="texto-3 diminuto">{fecha(c.recibido)}</span>
                 </div>
-                <div className="asunto">{c.asunto || "(sin asunto)"}</div>
-                <div className="previa">{c.vistaPrevia}</div>
-                <div className="meta">
-                  <span className="pastilla">{c.caso}</span>
-                  {c.adjuntos.filter((a) => !a.enLinea).length > 0 && <span className="pastilla">{c.adjuntos.filter((a) => !a.enLinea).length} adjuntos</span>}
-                  {c.desenlaceProduccion && (
-                    <span className="pastilla" title={c.motivoProduccion}>
-                      Prod: {c.desenlaceProduccion}
-                    </span>
-                  )}
+                <div className="correo-asunto">{c.asunto || "(sin asunto)"}</div>
+                <div className="correo-previa">{c.vistaPrevia}</div>
+                <div className="fila envuelve">
+                  <span className="ficha">{c.caso}</span>
+                  {c.adjuntos.some((a) => !a.enLinea) && <span className="ficha"><Icono n="adjunto" tam={11} />{c.adjuntos.filter((a) => !a.enLinea).length}</span>}
+                  {c.desenlaceProduccion && <span className={`ficha tono-${TONO_DESENLACE[c.desenlaceProduccion] ?? ""}`} title={c.motivoProduccion}>Prod: {c.desenlaceProduccion}</span>}
                   {accion && (
-                    <span className={`pastilla ${TONO_DESENLACE[accion] ?? "azul"}`}>
-                      Aquí: {NOMBRES_DESENLACE[accion] ?? accion}
-                    </span>
+                    <button
+                      className={`ficha boton-ficha tono-${TONO_DESENLACE[accion] ?? "azul"}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (u) {
+                          void verCorrida(u.id);
+                          enfocar({ tipo: "corrida", id: u.id });
+                        }
+                      }}
+                      title="Ver esta corrida"
+                    >
+                      {accion === "procesando" ? <span className="girando" /> : null}
+                      Aquí: {NOMBRES_DESENLACE[accion] ?? (accion === "en_cola" ? "en cola" : "procesando")}
+                    </button>
                   )}
                 </div>
               </div>
             </div>
           );
         })}
-        {!visibles.length && <div className="vacio">No hay correos en la bandeja.</div>}
+        {!visibles.length && <div className="vacio">No hay correos con ese filtro.</div>}
       </div>
-    </aside>
+
+      <footer className={`bandeja-pie ${seleccion.length ? "visible" : ""}`}>
+        <span className="crece"><b>{seleccion.length}</b> seleccionado{seleccion.length === 1 ? "" : "s"}</span>
+        {enCola > 0 && <button className="boton chico peligro" onClick={() => void cancelarCola()}>Cancelar {enCola} en cola</button>}
+        <button className="boton primario" disabled={!seleccion.length || enviando} onClick={() => void lanzar()}>
+          <Icono n="play" tam={14} />Procesar {seleccion.length || ""}
+        </button>
+      </footer>
+    </section>
   );
 }

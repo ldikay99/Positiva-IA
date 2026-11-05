@@ -10,6 +10,7 @@ export interface Parametro {
   nota_sobrescritura?: string;
   ajuste: "modulo" | "entorno" | null;
   motivo_fijo?: string;
+  es_regex?: boolean;
 }
 
 export interface Nodo {
@@ -80,7 +81,7 @@ export interface Correo {
 export interface Configuracion {
   parametros: Record<string, unknown>;
   entorno: Record<string, string>;
-  ia: { modelo: string; ubicacion: string };
+  ia: { modelo: string; ubicacion: string; temperatura: number | null };
   concurrencia: number;
   topeSegundos: number;
 }
