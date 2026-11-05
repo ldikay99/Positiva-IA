@@ -3,9 +3,10 @@ import { usar } from "../estado.ts";
 import { Icono } from "../iconos.tsx";
 import { conValor, resumen } from "../parametros.ts";
 import { NOMBRES_DESENLACE, TONO_DESENLACE } from "../progreso.ts";
-import type { Configuracion, Evento, Parametro } from "../tipos.ts";
+import type { Configuracion, Evento, Parametro, Regla } from "../tipos.ts";
 import { LineaDeTiempo } from "./Dock.tsx";
 import { Deslizador, Interruptor } from "./Editores.tsx";
+import { fraseDeRegla } from "../flujo.ts";
 
 function Cabecera({ titulo, sub, children }: { titulo: string; sub: string; children?: React.ReactNode }) {
   return (
@@ -282,6 +283,8 @@ export function VistaConfiguracion() {
   const avisar = usar((s) => s.avisar);
   const enfocar = usar((s) => s.enfocar);
   const irA = usar((s) => s.irA);
+  const crearRegla = usar((s) => s.crearRegla);
+  const centrar = usar((s) => s.centrar);
   const [b, setB] = useState<Configuracion | null>(configuracion);
   const [nombre, setNombre] = useState("");
   const [descripcion, setDescripcion] = useState("");
@@ -362,6 +365,23 @@ export function VistaConfiguracion() {
         <div className="pila">
           <article className="tarjeta plana">
             <div className="fila">
+              <h3 className="crece">Reglas personalizadas <span className="pastilla rosa">{configuracion.reglas.length}</span></h3>
+              <button className="boton chico" onClick={() => crearRegla("entrada")}><Icono n="mas" tam={13} />Nueva regla</button>
+            </div>
+            {!configuracion.reglas.length && <p className="texto-3 chico">Ninguna todavía. Clic derecho en el lienzo del flujo para crear una: corre dentro del motor desde el próximo correo, sin tocar el código.</p>}
+            {configuracion.reglas.map((r) => (
+              <div key={r.id} className="cambio">
+                <span className="mini-icono t-rosa"><Icono n="regla" tam={12} /></span>
+                <div className="crece">
+                  <button className="enlace" onClick={() => { irA("flujo"); centrar(r.id); }}>{r.nombre}</button>
+                  <div className="texto-3 diminuto mono">{fraseDeRegla(r)}</div>
+                </div>
+                <Interruptor valor={r.activa} alCambiar={(v) => void intentar({ ...configuracion, reglas: configuracion.reglas.map((x) => (x.id === r.id ? { ...x, activa: v } : x)) }, `regla «${r.nombre}» ${v ? "activada" : "desactivada"}`)} />
+              </div>
+            ))}
+          </article>
+          <article className="tarjeta plana">
+            <div className="fila">
               <h3 className="crece">Cambios activos <span className="pastilla ambar">{activos.length}</span></h3>
               {activos.length > 0 && <button className="boton chico peligro" onClick={() => void intentar({ ...configuracion, parametros: {}, entorno: {} }, "volver a producción")}>Volver todo a producción</button>}
             </div>
@@ -386,8 +406,17 @@ export function VistaConfiguracion() {
               {historial.slice(0, 60).map((h, i) => (
                 <div key={i} className="hito">
                   <span className="texto-3 diminuto">{new Date(h.t).toLocaleString("es-CO")}</span>
-                  <span className="chico"><code>{h.clave.split(".").pop()}</code>{h.nota ? <span className="texto-3"> · {h.nota}</span> : null}</span>
-                  <div className="diff"><span className="antes mono">{resumen(h.antes, 60)}</span><span className="despues mono">{resumen(h.despues, 60)}</span></div>
+                  {h.clave.startsWith("regla.") ? (
+                    <>
+                      <span className="chico"><span className="ficha tono-rosa">regla</span> {h.nota ?? h.clave}</span>
+                      {(h.despues ?? h.antes) && <span className="texto-3 diminuto mono">{fraseDeRegla((h.despues ?? h.antes) as Regla)}</span>}
+                    </>
+                  ) : (
+                    <>
+                      <span className="chico"><code>{h.clave.split(".").pop()}</code>{h.nota ? <span className="texto-3"> · {h.nota}</span> : null}</span>
+                      <div className="diff"><span className="antes mono">{resumen(h.antes, 60)}</span><span className="despues mono">{resumen(h.despues, 60)}</span></div>
+                    </>
+                  )}
                 </div>
               ))}
               {!historial.length && <p className="texto-3 chico">Sin cambios todavía.</p>}

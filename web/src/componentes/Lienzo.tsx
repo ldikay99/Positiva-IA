@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   BaseEdge,
-  Controls,
   EdgeLabelRenderer,
   Handle,
   MarkerType,
@@ -12,6 +11,7 @@ import {
   applyNodeChanges,
   getSmoothStepPath,
   useReactFlow,
+  useStore,
   type Edge,
   type EdgeProps,
   type Node,
@@ -19,32 +19,61 @@ import {
   type NodeProps,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { usar } from "../estado.ts";
+import { AnimatePresence, motion } from "motion/react";
+import { CLAVE_POSICIONES, guardarLocal, leerLocal, usar } from "../estado.ts";
+import { ACCIONES, ANCLA_DEL_PUNTO, CATEGORIAS, FASES, FASE_DEL_FINAL, PUNTOS, categoria, fraseDeRegla, type Categoria } from "../flujo.ts";
 import { Icono } from "../iconos.tsx";
-import { ajustado } from "../parametros.ts";
-import { progreso, segundos, type Progreso } from "../progreso.ts";
-import type { Catalogo, EstadoNodo, Nodo as NodoCatalogo } from "../tipos.ts";
+import { ajustado, conValor } from "../parametros.ts";
+import { NOMBRES_DESENLACE, TONO_DESENLACE, progreso, segundos, type Progreso } from "../progreso.ts";
+import type { Catalogo, Corrida, EstadoNodo, Nodo as NodoCatalogo, Regla } from "../tipos.ts";
+import { MenuContextual, type Opcion } from "./MenuContextual.tsx";
 
-const CLAVE_POSICIONES = "positiva-ia:posiciones:v4";
-const ANCHO = 228;
-const ALTO = 104;
-const ANCHO_FIN = 176;
-const COLUMNAS = 6;
-const PASO_X = 300;
-const PASO_Y = 300;
+const ANCHO = 248;
+const ANCHO_FIN = 204;
+const COLUMNA = 330;
+const FILA = 150;
+const CABEZA_FASE = 58;
 
-interface DatosNodo extends Record<string, unknown> {
+type Posicion = { x: number; y: number };
+
+interface DatosEtapa extends Record<string, unknown> {
   nodo: NodoCatalogo;
+  cat: Categoria;
   estado: EstadoNodo;
   ms: number;
   veces: number;
   extra: string[];
   ajustes: number;
+  modelo: string;
 }
-
+interface DatosRegla extends Record<string, unknown> {
+  regla: Regla;
+  borrador: boolean;
+  resultado: "" | "cumple" | "no";
+}
+interface DatosFase extends Record<string, unknown> {
+  nombre: string;
+  numero: string;
+  ancho: number;
+  alto: number;
+  pista?: string;
+}
+interface DatosExtremo extends Record<string, unknown> {
+  tipo: "inicio" | "fin";
+  corrida?: Corrida;
+  asunto?: string;
+}
+interface DatosNota extends Record<string, unknown> {
+  id: string;
+  texto: string;
+}
 interface DatosCable extends Record<string, unknown> {
   estado: "inactivo" | "recorrido" | "activo";
+  clase: "principal" | "desvio" | "regla";
   etiqueta?: string;
+  resaltado: boolean;
+  /** Altura del pasillo por donde va un desvío; sin ella el cable es escalonado normal. */
+  carril?: number;
 }
 
 // ------------------------------------------------------------------- nodos
@@ -65,68 +94,199 @@ function Asas() {
   );
 }
 
-const TEXTO_ESTADO: Record<EstadoNodo, string> = { inactivo: "", activo: "En curso", hecho: "Recorrida", fallo: "Falló", desenlace: "" };
+function Insignia({ estado }: { estado: EstadoNodo }) {
+  if (estado === "activo") return <span className="insignia activo" title="En curso"><span className="girando" /></span>;
+  if (estado === "hecho") return <span className="insignia hecho" title="Recorrida"><Icono n="ok" tam={11} strokeWidth={2.6} /></span>;
+  if (estado === "fallo") return <span className="insignia fallo" title="Falló"><Icono n="cerrar" tam={11} strokeWidth={2.6} /></span>;
+  return null;
+}
 
-function NodoEtapa({ data, selected }: NodeProps<Node<DatosNodo>>) {
+const NodoEtapa = memo(function NodoEtapa({ data, selected }: NodeProps<Node<DatosEtapa>>) {
   const n = data.nodo;
+  const c = CATEGORIAS[data.cat];
   return (
-    <div className={`nodo ${n.usa_ia ? "ia" : ""} ${data.estado} ${selected ? "sel" : ""}`}>
+    <div className={`nodo t-${c.tono} ${data.estado} ${selected ? "sel" : ""}`}>
       <Asas />
       <div className="nodo-cabeza">
-        <span className="nodo-icono"><Icono n={n.usa_ia ? "chispa" : n.id.includes("dedup") ? "capas" : n.id.includes("radic") ? "rayo" : "regla"} tam={14} /></span>
-        <span className="nodo-titulo">{n.nombre}</span>
-        {data.estado !== "inactivo" && <span className={`punto-estado ${data.estado}`} title={TEXTO_ESTADO[data.estado]} />}
+        <span className="nodo-icono"><Icono n={c.icono} tam={15} /></span>
+        <span className="nodo-cat">{c.nombre}</span>
+        <Insignia estado={data.estado} />
       </div>
+      <div className="nodo-titulo">{n.nombre}</div>
       <div className="nodo-desc">{n.descripcion}</div>
       <div className="nodo-pie">
-        {data.ms > 0 && <span className="dato">{segundos(data.ms)}</span>}
+        {data.cat === "ia" && data.modelo && <span className="dato ia"><Icono n="chispa" tam={10} />{data.modelo}</span>}
+        {data.ms > 0 && <span className="dato"><Icono n="reloj" tam={10} />{segundos(data.ms)}</span>}
         {data.veces > 1 && <span className="dato">×{data.veces}</span>}
         {data.extra.map((x) => <span key={x} className="dato">{x}</span>)}
-        {data.ajustes > 0 && <span className="dato ajustado">{data.ajustes} ajustado{data.ajustes > 1 ? "s" : ""}</span>}
-        {data.ms === 0 && data.extra.length === 0 && n.parametros.length > 0 && <span className="dato tenue">{n.parametros.filter((p) => p.ajuste !== null).length} editables</span>}
+        {data.ajustes > 0 && <span className="dato ajustado">{data.ajustes} ajuste{data.ajustes > 1 ? "s" : ""}</span>}
+        {data.ms === 0 && data.extra.length === 0 && data.ajustes === 0 && (n.reglas?.length ?? 0) > 0 && <span className="dato tenue">{n.reglas!.length} reglas · {n.parametros.filter((p) => p.ajuste !== null).length} parámetros</span>}
       </div>
     </div>
   );
-}
+});
 
-function NodoFinal({ data, selected }: NodeProps<Node<DatosNodo>>) {
-  const accion = data.nodo.desenlaces?.[0]?.accion ?? data.nodo.id;
+const NodoFinal = memo(function NodoFinal({ data, selected }: NodeProps<Node<DatosEtapa>>) {
+  const alcanzado = data.estado !== "inactivo";
   return (
-    <div className={`nodo final ${accion} ${data.estado !== "inactivo" ? "alcanzado" : ""} ${selected ? "sel" : ""}`}>
+    <div className={`nodo-final ${alcanzado ? "alcanzado" : ""} ${selected ? "sel" : ""}`}>
       <Asas />
-      <span className="nodo-titulo">{data.nodo.nombre}</span>
+      <Icono n="bandera" tam={14} />
+      <span className="crece">{data.nodo.nombre}</span>
     </div>
   );
-}
+});
+
+const NodoExtremo = memo(function NodoExtremo({ data, selected }: NodeProps<Node<DatosExtremo>>) {
+  const c = data.corrida;
+  if (data.tipo === "inicio") {
+    return (
+      <div className={`nodo-extremo inicio ${c ? "con-correo" : ""} ${selected ? "sel" : ""}`}>
+        <Asas />
+        <span className="extremo-icono"><Icono n="correo" tam={16} /></span>
+        <div className="crece">
+          <span className="nodo-cat">Correo entrante</span>
+          <div className="extremo-titulo">{c ? c.caso : "Ningún correo en proceso"}</div>
+          <div className="nodo-desc">{c ? data.asunto || "(sin asunto)" : "Elige correos en la bandeja y pulsa Procesar"}</div>
+        </div>
+      </div>
+    );
+  }
+  const r = c?.resultado;
+  const accion = r ? String(r.accion) : "";
+  const tono = r ? (TONO_DESENLACE[accion] ?? "gris") : c ? "azul" : "gris";
+  return (
+    <div className={`nodo-extremo fin tono-${tono} ${selected ? "sel" : ""}`}>
+      <Asas />
+      <span className="extremo-icono">{c && !r ? <span className="girando" /> : <Icono n={accion === "radicado" ? "ok" : r ? "bandera" : "bandera"} tam={16} />}</span>
+      <div className="crece">
+        <span className="nodo-cat">Fin del correo · desenlace</span>
+        <div className="extremo-titulo">{r ? (NOMBRES_DESENLACE[accion] ?? accion) : c ? "Procesando…" : "Esperando una corrida"}</div>
+        <div className="nodo-desc">
+          {r ? (accion === "radicado" ? `Radicado ${String(r.radicado ?? "")} · ${String(r.segundos ?? "")} s` : String(r.motivo || r.razon_del_reenvio || r.razon_del_duplicado || "")) : "Aquí termina cada correo: radicado, a revisión manual, duplicado o reenviado"}
+        </div>
+      </div>
+    </div>
+  );
+});
+
+const NodoRegla = memo(function NodoRegla({ data, selected }: NodeProps<Node<DatosRegla>>) {
+  const r = data.regla;
+  return (
+    <div className={`nodo t-rosa regla ${!r.activa ? "inactiva" : ""} ${data.resultado === "cumple" ? "cumplida" : ""} ${selected ? "sel" : ""}`}>
+      <Asas />
+      <div className="nodo-cabeza">
+        <span className="nodo-icono"><Icono n="regla" tam={15} /></span>
+        <span className="nodo-cat">Regla · {PUNTOS[r.punto].nombre.toLowerCase()}</span>
+        {data.borrador ? <span className="dato ajustado">borrador</span> : !r.activa ? <span className="dato tenue">inactiva</span> : null}
+      </div>
+      <div className="nodo-titulo">{r.nombre}</div>
+      <div className="nodo-desc mono">{fraseDeRegla(r)}</div>
+      <div className="nodo-pie">
+        <span className={`dato ${r.accion === "manual" ? "rojo" : ""}`}>{ACCIONES[r.accion]}</span>
+        {data.resultado === "cumple" && <span className="dato cumple"><Icono n="rayo" tam={10} />se cumplió</span>}
+        {data.resultado === "no" && <span className="dato tenue">no aplicó</span>}
+      </div>
+    </div>
+  );
+});
+
+const NodoFase = memo(function NodoFase({ data }: NodeProps<Node<DatosFase>>) {
+  return (
+    <div className="fase" style={{ width: data.ancho, height: data.alto }}>
+      <div className="fase-cabeza">
+        {data.numero && <span className="fase-numero">{data.numero}</span>}
+        <span>{data.nombre}</span>
+        {data.pista && <span className="fase-pista">{data.pista}</span>}
+      </div>
+    </div>
+  );
+});
+
+const NodoNota = memo(function NodoNota({ data, selected }: NodeProps<Node<DatosNota>>) {
+  const cambiar = usar((s) => s.cambiarNota);
+  const borrar = usar((s) => s.borrarNota);
+  return (
+    <div className={`nota ${selected ? "sel" : ""}`}>
+      <div className="nota-cabeza">
+        <Icono n="nota" tam={13} />
+        <span className="crece">Nota</span>
+        <button className="nodrag" aria-label="Borrar nota" onClick={() => borrar(data.id)}><Icono n="cerrar" tam={12} /></button>
+      </div>
+      <textarea className="nodrag nowheel" value={data.texto} placeholder="Escribe una nota…" onChange={(e) => cambiar(data.id, e.target.value)} />
+    </div>
+  );
+});
 
 // ------------------------------------------------------------------- cables
 
+/** Polilínea ortogonal con esquinas redondeadas. */
+function redondeada(puntos: [number, number][], radio = 12): string {
+  const pts = puntos.filter((p, i) => i === 0 || p[0] !== puntos[i - 1]![0] || p[1] !== puntos[i - 1]![1]);
+  let d = `M ${pts[0]![0]} ${pts[0]![1]}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const [x0, y0] = pts[i - 1]!;
+    const [x1, y1] = pts[i]!;
+    const [x2, y2] = pts[i + 1]!;
+    const d1 = Math.hypot(x1 - x0, y1 - y0);
+    const d2 = Math.hypot(x2 - x1, y2 - y1);
+    const r = Math.min(radio, d1 / 2, d2 / 2);
+    if (r < 0.5) {
+      d += ` L ${x1} ${y1}`;
+      continue;
+    }
+    d += ` L ${x1 - ((x1 - x0) / d1) * r} ${y1 - ((y1 - y0) / d1) * r} Q ${x1} ${y1} ${x1 + ((x2 - x1) / d2) * r} ${y1 + ((y2 - y1) / d2) * r}`;
+  }
+  const ultimo = pts[pts.length - 1]!;
+  return `${d} L ${ultimo[0]} ${ultimo[1]}`;
+}
+
+/** Recorrido por los pasillos: sale al hueco entre fases, baja o sube al carril y entra al destino. */
+function porPasillo(sx: number, sy: number, sp: Position, tx: number, ty: number, tp: Position, carril: number): [string, number, number] {
+  const pts: [number, number][] = [[sx, sy]];
+  if (sp === Position.Right) pts.push([sx + 40, sy], [sx + 40, carril]);
+  else pts.push([sx, carril]);
+  const desde = pts[pts.length - 1]![0];
+  if (tp === Position.Left) pts.push([tx - 40, carril], [tx - 40, ty]);
+  else pts.push([tx, carril]);
+  pts.push([tx, ty]);
+  const hasta = tp === Position.Left ? tx - 40 : tx;
+  return [redondeada(pts, 14), (desde + hasta) / 2, carril];
+}
+
+const COLOR_FLECHA = { inactivo: "#c2c8d2", recorrido: "#2f9e6e", activo: "#2f6fd6", resaltado: "#7ea3e0", regla: "#d27aa6" };
+
 /** Cable con flecha; mientras la corriente pasa, unas chispas recorren el trazo. */
-function Cable({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, markerEnd }: EdgeProps<Edge<DatosCable>>) {
-  const [ruta, lx, ly] = getSmoothStepPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, borderRadius: 14, offset: 22 });
+const Cable = memo(function Cable({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, markerEnd }: EdgeProps<Edge<DatosCable>>) {
+  const [ruta, lx, ly] =
+    data?.carril !== undefined
+      ? porPasillo(sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, data.carril)
+      : getSmoothStepPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, borderRadius: 16, offset: 24 });
   const estado = data?.estado ?? "inactivo";
+  const clase = data?.clase ?? "principal";
+  const mostrarEtiqueta = data?.etiqueta && (data.resaltado || (estado !== "inactivo" && clase !== "principal"));
   return (
     <>
-      <BaseEdge id={id} path={ruta} markerEnd={markerEnd} className={`cable ${estado}`} />
+      <BaseEdge id={id} path={ruta} markerEnd={markerEnd} className={`cable ${clase} ${estado} ${data?.resaltado ? "resaltado" : ""}`} interactionWidth={14} />
       {estado !== "inactivo" && <path d={ruta} className={`cable-corriente ${estado}`} fill="none" />}
       {estado === "activo" &&
-        [0, 0.33, 0.66].map((d) => (
-          <circle key={d} r={3.6} className="chispa">
-            <animateMotion dur="1.1s" begin={`${d}s`} repeatCount="indefinite" path={ruta} />
+        [0, 0.4, 0.8].map((d) => (
+          <circle key={d} r={3.4} className="chispa">
+            <animateMotion dur="1.2s" begin={`${d}s`} repeatCount="indefinite" path={ruta} />
           </circle>
         ))}
-      {data?.etiqueta && (
+      {mostrarEtiqueta && (
         <EdgeLabelRenderer>
           <div className={`cable-etiqueta ${estado}`} style={{ transform: `translate(-50%, -50%) translate(${lx}px, ${ly}px)` }}>
-            {data.etiqueta}
+            {data!.etiqueta}
           </div>
         </EdgeLabelRenderer>
       )}
     </>
   );
-}
+});
 
-const tiposNodo = { etapa: NodoEtapa, final: NodoFinal };
+const tiposNodo = { etapa: NodoEtapa, final: NodoFinal, extremo: NodoExtremo, regla: NodoRegla, fase: NodoFase, nota: NodoNota };
 const tiposCable = { cable: Cable };
 
 // -------------------------------------------------------------- disposición
@@ -158,56 +318,69 @@ function caminoPrincipal(catalogo: Catalogo): string[] {
   return camino;
 }
 
-/** Serpentina: el camino principal en filas que van y vuelven; los desvíos, bajo la etapa de donde salen. */
-function disponer(catalogo: Catalogo): Record<string, { x: number; y: number }> {
-  const camino = caminoPrincipal(catalogo);
-  const pos: Record<string, { x: number; y: number }> = {};
-  camino.forEach((id, i) => {
-    const fila = Math.floor(i / COLUMNAS);
-    const col = fila % 2 === 0 ? i % COLUMNAS : COLUMNAS - 1 - (i % COLUMNAS);
-    pos[id] = { x: col * PASO_X, y: fila * PASO_Y };
-  });
-  const filas = Math.ceil(camino.length / COLUMNAS);
-  const entradas: Record<string, number> = {};
-  for (const a of catalogo.aristas) entradas[a.hacia] = (entradas[a.hacia] ?? 0) + 1;
-  const ocupados: Record<string, number> = {};
-  let lateral = 0;
-  for (const n of catalogo.nodos.filter((x) => !pos[x.id])) {
-    if ((entradas[n.id] ?? 0) >= 3) {
-      pos[n.id] = { x: ((COLUMNAS - 1) * PASO_X) / 2 + lateral * PASO_X, y: (filas - 1) * PASO_Y + ALTO + 160 };
-      lateral += 1;
-      continue;
-    }
-    const origen = catalogo.aristas.find((a) => a.hacia === n.id && pos[a.desde])?.desde ?? catalogo.aristas.find((a) => a.desde === n.id && pos[a.hacia])?.hacia;
-    const base = origen ? pos[origen]! : { x: 0, y: filas * PASO_Y };
-    const k = (ocupados[origen ?? ""] = (ocupados[origen ?? ""] ?? -1) + 1);
-    const ancho = n.terminal ? ANCHO_FIN : ANCHO;
-    pos[n.id] = { x: base.x + (ANCHO - ancho) / 2 + k * (ancho + 18), y: base.y + ALTO + 62 };
-  }
-  return pos;
+interface Disposicion {
+  posiciones: Record<string, Posicion>;
+  fases: Node<DatosFase>[];
+  /** Donde empieza la banda de salidas y donde termina la de reglas: por ahí van los pasillos. */
+  ySalidas: number;
+  yBajoReglas: number;
+  salidas: Set<string>;
 }
 
-function lados(o: { x: number; y: number }, d: { x: number; y: number }): [string, string] {
+/** Columnas por fase, de izquierda a derecha; abajo, los desvíos y salidas; arriba, las reglas propias. */
+function disponer(catalogo: Catalogo, reglas: Regla[]): Disposicion {
+  const posiciones: Record<string, Posicion> = {};
+  const fases: Node<DatosFase>[] = [];
+  const existe = new Set(["__inicio", "__fin", ...catalogo.nodos.map((n) => n.id)]);
+  const ubicadas = new Set<string>();
+  const columnas = FASES.map((f) => f.nodos.filter((id) => existe.has(id)));
+  // Lo que el catálogo traiga y no tenga fase va al final de la fase más cercana.
+  for (const n of catalogo.nodos) {
+    if (n.terminal || FASE_DEL_FINAL[n.id] || columnas.some((c) => c.includes(n.id))) continue;
+    columnas[columnas.length - 1]!.push(n.id);
+  }
+  const filas = Math.max(...columnas.map((c) => c.length));
+  const altoFase = CABEZA_FASE + filas * FILA;
+  columnas.forEach((ids, i) => {
+    ids.forEach((id, j) => {
+      posiciones[id] = { x: i * COLUMNA, y: CABEZA_FASE + j * FILA };
+      ubicadas.add(id);
+    });
+    fases.push({ id: `__fase-${FASES[i]!.id}`, type: "fase", position: { x: i * COLUMNA - 18, y: 0 }, data: { nombre: FASES[i]!.nombre, numero: String(i + 1), ancho: ANCHO + 36, alto: altoFase }, draggable: false, selectable: false, focusable: false, zIndex: -1 });
+  });
+
+  const anchoTotal = (FASES.length - 1) * COLUMNA + ANCHO + 36;
+  const y0 = altoFase + 72;
+  const porFase: Record<string, number> = {};
+  for (const n of catalogo.nodos) {
+    if (ubicadas.has(n.id)) continue;
+    const fase = FASE_DEL_FINAL[n.id] ?? FASES[FASES.length - 1]!.id;
+    const i = Math.max(0, FASES.findIndex((f) => f.id === fase));
+    const k = (porFase[fase] = (porFase[fase] ?? -1) + 1);
+    const ancho = n.terminal ? ANCHO_FIN : ANCHO;
+    posiciones[n.id] = { x: i * COLUMNA + (ANCHO - ancho) / 2, y: y0 + CABEZA_FASE + k * 66 };
+  }
+  const altoSalidas = CABEZA_FASE + Math.max(2, ...Object.values(porFase).map((k) => k + 1)) * 66 + 70;
+  fases.push({ id: "__fase-salidas", type: "fase", position: { x: -18, y: y0 }, data: { nombre: "Desvíos y salidas", numero: "", ancho: anchoTotal, alto: altoSalidas, pista: "donde termina un correo que no se radica" }, draggable: false, selectable: false, focusable: false, zIndex: -1 });
+
+  const yReglas = -280;
+  fases.push({ id: "__fase-reglas", type: "fase", position: { x: -18, y: yReglas }, data: { nombre: "Reglas personalizadas", numero: "", ancho: anchoTotal, alto: 214, pista: "clic derecho en el lienzo para agregar una" }, draggable: false, selectable: false, focusable: false, zIndex: -1 });
+  const porAncla: Record<string, number> = {};
+  for (const r of reglas) {
+    const ancla = ANCLA_DEL_PUNTO[r.punto];
+    const base = posiciones[ancla] ?? { x: 0, y: 0 };
+    const k = (porAncla[ancla] = (porAncla[ancla] ?? -1) + 1);
+    posiciones[r.id] = { x: base.x + k * (ANCHO + 16), y: yReglas + CABEZA_FASE };
+  }
+  const salidas = new Set(catalogo.nodos.filter((n) => !ubicadas.has(n.id)).map((n) => n.id));
+  return { posiciones, fases, ySalidas: y0, yBajoReglas: yReglas + 214, salidas };
+}
+
+function lados(o: Posicion, d: Posicion): [string, string] {
   const dx = d.x - o.x;
   const dy = d.y - o.y;
-  if (Math.abs(dy) > ALTO * 0.8 && Math.abs(dy) > Math.abs(dx) * 0.55) return dy > 0 ? ["s-b", "e-t"] : ["s-t", "e-b"];
+  if (Math.abs(dy) > 90 && Math.abs(dy) > Math.abs(dx) * 0.55) return dy > 0 ? ["s-b", "e-t"] : ["s-t", "e-b"];
   return dx >= 0 ? ["s-r", "e-l"] : ["s-l", "e-r"];
-}
-
-function leerPosiciones(): Record<string, { x: number; y: number }> {
-  try {
-    return JSON.parse(localStorage.getItem(CLAVE_POSICIONES) ?? "{}") as Record<string, { x: number; y: number }>;
-  } catch {
-    return {};
-  }
-}
-
-function guardarPosiciones(p: Record<string, { x: number; y: number }>): void {
-  try {
-    localStorage.setItem(CLAVE_POSICIONES, JSON.stringify(p));
-  } catch {
-    /* sin almacenamiento: las posiciones viven solo en esta pestaña */
-  }
 }
 
 function extras(n: NodoCatalogo, p: Progreso): string[] {
@@ -218,7 +391,151 @@ function extras(n: NodoCatalogo, p: Progreso): string[] {
   return [];
 }
 
+function igual(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+  for (const k of Object.keys(b)) {
+    const x = a[k];
+    const y = b[k];
+    if (x === y) continue;
+    if (Array.isArray(x) && Array.isArray(y) && x.length === y.length && x.every((v, i) => v === y[i])) continue;
+    return false;
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------- buscador
+
+function Buscador({ catalogo, reglas, ir }: { catalogo: Catalogo; reglas: Regla[]; ir: (id: string) => void }) {
+  const [q, setQ] = useState("");
+  const [abierto, setAbierto] = useState(false);
+  const [activo, setActivo] = useState(0);
+  const entrada = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const atajo = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        entrada.current?.focus();
+        setAbierto(true);
+      }
+    };
+    window.addEventListener("keydown", atajo);
+    return () => window.removeEventListener("keydown", atajo);
+  }, []);
+  const resultados = useMemo(() => {
+    const t = q.trim().toLowerCase();
+    const todos = [
+      ...catalogo.nodos.map((n) => ({ id: n.id, nombre: n.nombre, cat: categoria(n) })),
+      ...reglas.map((r) => ({ id: r.id, nombre: r.nombre, cat: "regla" as Categoria })),
+    ];
+    return todos.filter((x) => !t || `${x.nombre} ${CATEGORIAS[x.cat].nombre} ${x.id}`.toLowerCase().includes(t)).slice(0, 9);
+  }, [q, catalogo, reglas]);
+  const elegir = (id: string) => {
+    ir(id);
+    setQ("");
+    setAbierto(false);
+    entrada.current?.blur();
+  };
+  return (
+    <div className="buscador">
+      <div className="campo-icono">
+        <Icono n="buscar" tam={14} />
+        <input
+          ref={entrada}
+          className="campo"
+          placeholder="Buscar un nodo…"
+          value={q}
+          onFocus={() => setAbierto(true)}
+          onBlur={() => setTimeout(() => setAbierto(false), 120)}
+          onChange={(e) => {
+            setQ(e.target.value);
+            setActivo(0);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown") setActivo((a) => Math.min(a + 1, resultados.length - 1));
+            else if (e.key === "ArrowUp") setActivo((a) => Math.max(a - 1, 0));
+            else if (e.key === "Enter" && resultados[activo]) elegir(resultados[activo]!.id);
+            else if (e.key === "Escape") entrada.current?.blur();
+          }}
+        />
+        <kbd className="atajo">Ctrl K</kbd>
+      </div>
+      <AnimatePresence>
+        {abierto && resultados.length > 0 && (
+          <motion.div className="buscador-lista" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.12 }}>
+            {resultados.map((r, i) => {
+              const c = CATEGORIAS[r.cat];
+              return (
+                <button key={r.id} className={`buscador-opcion ${i === activo ? "activa" : ""}`} onMouseEnter={() => setActivo(i)} onMouseDown={(e) => e.preventDefault()} onClick={() => elegir(r.id)}>
+                  <span className={`mini-icono t-${c.tono}`}><Icono n={c.icono} tam={13} /></span>
+                  <span className="crece">{r.nombre}</span>
+                  <span className="texto-3 diminuto">{c.nombre}</span>
+                </button>
+              );
+            })}
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function Leyenda() {
+  const [abierta, setAbierta] = useState(false);
+  const usadas: Categoria[] = ["entrada", "filtro", "ruta", "documentos", "ocr", "busqueda", "ia", "datos", "validacion", "integracion", "salida", "regla"];
+  return (
+    <div className="leyenda">
+      <button className={`boton flotante chico ${abierta ? "activo" : ""}`} onClick={() => setAbierta(!abierta)}><Icono n="info" tam={14} />Leyenda</button>
+      <AnimatePresence>
+        {abierta && (
+          <motion.div className="leyenda-caja" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.14 }}>
+            <div className="leyenda-grupo">
+              {usadas.map((c) => (
+                <span key={c} className="leyenda-item"><span className={`mini-icono t-${CATEGORIAS[c].tono}`}><Icono n={CATEGORIAS[c].icono} tam={12} /></span>{CATEGORIAS[c].nombre}</span>
+              ))}
+            </div>
+            <div className="leyenda-grupo">
+              <span className="leyenda-item"><span className="muestra-cable principal" />Camino principal</span>
+              <span className="leyenda-item"><span className="muestra-cable desvio" />Desvío posible</span>
+              <span className="leyenda-item"><span className="muestra-cable recorrido" />Recorrido por el correo</span>
+              <span className="leyenda-item"><span className="muestra-cable activo" />Corriente en este momento</span>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function Banda({ corrida, p, catalogo }: { corrida: Corrida | undefined; p: Progreso; catalogo: Catalogo }) {
+  const enfocar = usar((s) => s.enfocar);
+  const [ahora, setAhora] = useState(() => Date.now());
+  const enCurso = corrida && !corrida.resultado;
+  useEffect(() => {
+    if (!enCurso) return;
+    const t = setInterval(() => setAhora(Date.now()), 250);
+    return () => clearInterval(t);
+  }, [enCurso]);
+  if (!corrida) return null;
+  const r = corrida.resultado;
+  const activo = Object.entries(p.nodos).find(([, e]) => e.estado === "activo")?.[0];
+  const etapa = activo ? catalogo.nodos.find((n) => n.id === activo)?.nombre : undefined;
+  const t0 = corrida.eventos.find((e) => e.tipo === "inicio")?.t;
+  const accion = r ? String(r.accion) : "";
+  const hechas = Object.values(p.nodos).filter((x) => x.estado === "hecho").length;
+  const total = catalogo.nodos.filter((n) => !n.terminal).length;
+  return (
+    <motion.button layout className={`banda tono-${r ? (TONO_DESENLACE[accion] ?? "gris") : "azul"}`} onClick={() => enfocar({ tipo: "corrida", id: corrida.id })} initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
+      {r ? <Icono n={accion === "radicado" ? "ok" : "bandera"} tam={14} /> : <span className="girando" />}
+      <b>{corrida.caso}</b>
+      <span className="banda-texto">{r ? `${NOMBRES_DESENLACE[accion] ?? accion}${r.motivo ? ` · ${String(r.motivo)}` : ""}` : corrida.estado === "en_cola" ? "En cola" : etapa ? etapa : "Arrancando…"}</span>
+      <span className="banda-t mono">{r ? `${String(r.segundos ?? "")} s` : t0 ? `${((ahora / 1000 - t0) | 0)} s` : ""}</span>
+      {!r && <span className="banda-progreso"><i style={{ width: `${Math.min(100, (hechas / total) * 100)}%` }} /></span>}
+    </motion.button>
+  );
+}
+
 // ------------------------------------------------------------------- lienzo
+
+type Menu = { x: number; y: number; opciones: Opcion[] } | null;
 
 export function Lienzo() {
   const catalogo = usar((s) => s.catalogo);
@@ -226,52 +543,115 @@ export function Lienzo() {
   const foco = usar((s) => s.foco);
   const enfocar = usar((s) => s.enfocar);
   const configuracion = usar((s) => s.configuracion);
+  const guardarConfiguracion = usar((s) => s.guardarConfiguracion);
   const seguir = usar((s) => s.seguirEnVivo);
   const setSeguir = usar((s) => s.setSeguirEnVivo);
-  const { fitView } = useReactFlow();
-  const [nodos, setNodos] = useState<Node<DatosNodo>[]>([]);
+  const borradores = usar((s) => s.borradores);
+  const notas = usar((s) => s.notas);
+  const objetivo = usar((s) => s.objetivo);
+  const crearRegla = usar((s) => s.crearRegla);
+  const crearNota = usar((s) => s.crearNota);
+  const borrarRegla = usar((s) => s.borrarRegla);
+  const borrarNota = usar((s) => s.borrarNota);
+  const duplicarRegla = usar((s) => s.duplicarRegla);
+  const guardarRegla = usar((s) => s.guardarRegla);
+  const avisar = usar((s) => s.avisar);
+  const bandeja = usar((s) => s.bandeja);
+  const flujo = useReactFlow();
+  const [nodos, setNodos] = useState<Node[]>([]);
+  const [menu, setMenu] = useState<Menu>(null);
+  const [encima, setEncima] = useState<string | null>(null);
+  const [bloqueado, setBloqueado] = useState(false);
+  const [minimapa, setMinimapa] = useState(true);
   const encuadrado = useRef(false);
+  // Zoom semántico: de lejos cada nodo muestra solo su categoría y su nombre, en grande.
+  const lejos = useStore((s) => s.transform[2] < 0.62);
+
+  const reglas = useMemo(() => {
+    const guardadas = configuracion?.reglas ?? [];
+    return [...guardadas.filter((r) => !borradores.some((b) => b.id === r.id)), ...borradores];
+  }, [configuracion, borradores]);
+  const idsBorrador = useMemo(() => new Set(borradores.filter((b) => !(configuracion?.reglas ?? []).some((r) => r.id === b.id)).map((b) => b.id)), [borradores, configuracion]);
 
   const p = useMemo(() => progreso(catalogo, corrida), [catalogo, corrida]);
+  const disposicion = useMemo(() => (catalogo ? disponer(catalogo, reglas) : null), [catalogo, reglas]);
+  const asunto = useMemo(() => (corrida ? (bandeja.find((c) => c.caso === corrida.caso)?.asunto ?? String(corrida.eventos.find((e) => e.tipo === "inicio")?.asunto ?? "")) : ""), [corrida, bandeja]);
+  const evaluadas = useMemo(() => {
+    const m: Record<string, "cumple" | "no"> = {};
+    for (const e of corrida?.eventos ?? []) if (e.tipo === "regla") m[String(e.id)] = e.cumple ? "cumple" : "no";
+    return m;
+  }, [corrida]);
 
-  // Los nodos se crean una vez por catálogo; después solo cambian sus datos,
+  // Los nodos del catálogo se crean una vez; después solo cambian sus datos,
   // así arrastrar uno no reacomoda los demás ni mueve la cámara.
   useEffect(() => {
-    if (!catalogo) return;
-    const guardadas = leerPosiciones();
-    const auto = disponer(catalogo);
-    setNodos(
-      catalogo.nodos.map((n) => ({
-        id: n.id,
-        type: n.terminal ? "final" : "etapa",
-        position: guardadas[n.id] ?? auto[n.id] ?? { x: 0, y: 0 },
-        data: { nodo: n, estado: "inactivo", ms: 0, veces: 0, extra: [], ajustes: 0 },
-      })),
-    );
+    if (!catalogo || !disposicion) return;
+    const guardadas = leerLocal<Record<string, Posicion>>(CLAVE_POSICIONES, {});
+    const pos = (id: string) => guardadas[id] ?? disposicion.posiciones[id] ?? { x: 0, y: 0 };
+    setNodos([
+      ...disposicion.fases,
+      { id: "__inicio", type: "extremo", position: pos("__inicio"), data: { tipo: "inicio" } },
+      ...catalogo.nodos.map((n) => ({ id: n.id, type: n.terminal ? "final" : "etapa", position: pos(n.id), data: { nodo: n, cat: categoria(n), estado: "inactivo", ms: 0, veces: 0, extra: [], ajustes: 0, modelo: "" } })),
+      { id: "__fin", type: "extremo", position: pos("__fin"), data: { tipo: "fin" } },
+    ]);
     encuadrado.current = false;
+    // Solo al cambiar de catálogo: las reglas y notas se sincronizan aparte.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [catalogo]);
 
+  // Reglas y notas entran y salen sin tocar la posición de lo demás.
+  useEffect(() => {
+    if (!disposicion) return;
+    setNodos((ns) => {
+      if (!ns.length) return ns;
+      const guardadas = leerLocal<Record<string, Posicion>>(CLAVE_POSICIONES, {});
+      const quedan = ns.filter((x) => (x.type !== "regla" || reglas.some((r) => r.id === x.id)) && (x.type !== "nota" || notas.some((n) => n.id === x.id)));
+      const ids = new Set(quedan.map((x) => x.id));
+      const nuevas: Node[] = [
+        ...reglas.filter((r) => !ids.has(r.id)).map((r) => ({ id: r.id, type: "regla", position: guardadas[r.id] ?? disposicion.posiciones[r.id] ?? { x: 0, y: -200 }, data: { regla: r, borrador: false, resultado: "" } })),
+        ...notas.filter((n) => !ids.has(n.id)).map((n) => ({ id: n.id, type: "nota", position: guardadas[n.id] ?? { x: 0, y: -400 }, data: { id: n.id, texto: n.texto }, style: { width: 220 } })),
+      ];
+      return nuevas.length || quedan.length !== ns.length ? [...quedan, ...nuevas] : ns;
+    });
+  }, [reglas, notas, disposicion]);
+
+  // Datos vivos de cada nodo: se reemplazan solo los que cambiaron.
   useEffect(() => {
     setNodos((ns) =>
       ns.map((x) => {
-        const n = x.data.nodo;
-        const est = p.nodos[n.id];
-        const datos: DatosNodo = {
-          nodo: n,
-          estado: est?.estado ?? "inactivo",
-          ms: est?.ms ?? 0,
-          veces: est?.veces ?? 0,
-          extra: extras(n, p),
-          ajustes: n.parametros.filter((q) => ajustado(q, configuracion)).length,
-        };
-        return { ...x, data: datos, selected: foco?.tipo === "nodo" && foco.id === n.id };
+        const sel = (foco?.tipo === "nodo" || foco?.tipo === "regla") && foco.id === x.id;
+        let datos: Record<string, unknown> | null = null;
+        if (x.type === "etapa" || x.type === "final") {
+          const n = (x.data as DatosEtapa).nodo;
+          const est = p.nodos[n.id];
+          datos = { nodo: n, cat: categoria(n), estado: est?.estado ?? "inactivo", ms: est?.ms ?? 0, veces: est?.veces ?? 0, extra: extras(n, p), ajustes: n.parametros.filter((q) => ajustado(q, configuracion)).length, modelo: configuracion?.ia.modelo ?? "" };
+        } else if (x.type === "extremo") {
+          datos = { tipo: (x.data as DatosExtremo).tipo, corrida, asunto };
+        } else if (x.type === "regla") {
+          const r = reglas.find((y) => y.id === x.id);
+          if (r) datos = { regla: r, borrador: idsBorrador.has(r.id), resultado: evaluadas[r.id] ?? "" };
+        } else if (x.type === "nota") {
+          const n = notas.find((y) => y.id === x.id);
+          if (n) datos = { id: n.id, texto: n.texto };
+        }
+        const mismoDato = !datos || igual(x.data, datos);
+        if (mismoDato && Boolean(x.selected) === sel) return x;
+        return { ...x, data: mismoDato ? x.data : datos!, selected: sel };
       }),
     );
-  }, [p, configuracion, foco]);
+  }, [p, configuracion, foco, corrida, asunto, reglas, idsBorrador, evaluadas, notas]);
+
+  const principal = useMemo(() => {
+    if (!catalogo) return new Set<string>();
+    const c = caminoPrincipal(catalogo);
+    const s = new Set<string>();
+    for (let i = 0; i < c.length - 1; i++) s.add(`${c[i]}->${c[i + 1]}`);
+    return s;
+  }, [catalogo]);
 
   const cables: Edge<DatosCable>[] = useMemo(() => {
     if (!catalogo) return [];
-    const donde: Record<string, { x: number; y: number }> = {};
+    const donde: Record<string, Posicion> = {};
     for (const n of nodos) donde[n.id] = n.position;
     // A un nodo con varias entradas se llega por una sola: la de la última etapa recorrida antes de él.
     const tomada: Record<string, string> = {};
@@ -281,81 +661,338 @@ export function Lienzo() {
       if (!o || !d || d.orden <= o.orden) continue;
       if (!tomada[a.hacia] || (p.nodos[tomada[a.hacia]!]?.orden ?? 0) < o.orden) tomada[a.hacia] = a.desde;
     }
-    return catalogo.aristas.map((a, i) => {
-      const recorrido = tomada[a.hacia] === a.desde;
-      const activo = recorrido && p.nodos[a.hacia]?.estado === "activo";
-      const [sh, th] = donde[a.desde] && donde[a.hacia] ? lados(donde[a.desde]!, donde[a.hacia]!) : ["s-r", "e-l"];
-      const estado: DatosCable["estado"] = activo ? "activo" : recorrido ? "recorrido" : "inactivo";
-      return {
-        id: `${a.desde}->${a.hacia}-${i}`,
-        source: a.desde,
-        target: a.hacia,
-        sourceHandle: sh,
-        targetHandle: th,
-        type: "cable",
-        data: { estado, etiqueta: a.etiqueta },
-        zIndex: estado === "inactivo" ? 0 : 3,
-        markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: estado === "activo" ? "#2f6fd6" : estado === "recorrido" ? "#2f9e6e" : "#b4bcc8" },
-      };
-    });
-  }, [catalogo, nodos, p]);
+    const enCurso = Boolean(corrida && !corrida.resultado);
+    const foco_ = foco && (foco.tipo === "nodo" || foco.tipo === "regla") ? foco.id : null;
+    const lista: { desde: string; hacia: string; etiqueta?: string; clase: DatosCable["clase"]; estado: DatosCable["estado"] }[] = [
+      { desde: "__inicio", hacia: catalogo.nodos[0]?.id ?? "lote", clase: "principal", estado: corrida ? (Object.keys(p.nodos).length ? "recorrido" : "activo") : "inactivo" },
+      ...catalogo.aristas.map((a) => {
+        const recorrido = tomada[a.hacia] === a.desde;
+        const activo = recorrido && p.nodos[a.hacia]?.estado === "activo";
+        return { desde: a.desde, hacia: a.hacia, etiqueta: a.etiqueta, clase: (principal.has(`${a.desde}->${a.hacia}`) ? "principal" : "desvio") as DatosCable["clase"], estado: (activo ? "activo" : recorrido ? "recorrido" : "inactivo") as DatosCable["estado"] };
+      }),
+      { desde: "aviso_y_cierre", hacia: "__fin", clase: "principal", estado: corrida?.resultado ? "recorrido" : "inactivo" },
+      ...reglas.flatMap((r) => {
+        const ancla = ANCLA_DEL_PUNTO[r.punto];
+        const ev = evaluadas[r.id];
+        const salen = [{ desde: ancla, hacia: r.id, etiqueta: "evalúa", clase: "regla" as const, estado: (ev ? "recorrido" : "inactivo") as DatosCable["estado"] }];
+        if (r.accion === "manual") salen.push({ desde: r.id, hacia: "revision_manual", etiqueta: r.motivo || "REGLA_PERSONALIZADA", clase: "regla", estado: ev === "cumple" ? "recorrido" : "inactivo" });
+        return salen;
+      }),
+    ];
+    const salidas = disposicion?.salidas ?? new Set<string>();
+    const esRegla = new Set(reglas.map((r) => r.id));
+    return lista
+      .filter((a) => donde[a.desde] && donde[a.hacia])
+      .map((a, i) => {
+        let [sh, th] = lados(donde[a.desde]!, donde[a.hacia]!);
+        let carril: number | undefined;
+        if (disposicion && salidas.has(a.hacia) && !salidas.has(a.desde)) {
+          // Hacia la banda de salidas: por el pasillo justo encima de ella.
+          [sh, th, carril] = ["s-r", "e-t", disposicion.ySalidas - 36];
+        } else if (disposicion && salidas.has(a.desde) && !salidas.has(a.hacia)) {
+          // De la banda de salidas al cierre: por el borde superior de la banda.
+          [sh, th, carril] = ["s-t", "e-l", disposicion.ySalidas - 14];
+        } else if (disposicion && esRegla.has(a.hacia)) {
+          [sh, th, carril] = ["s-r", "e-b", disposicion.yBajoReglas + 26];
+        }
+        const resaltado = a.desde === encima || a.hacia === encima || a.desde === foco_ || a.hacia === foco_;
+        const estado = a.estado === "activo" && !enCurso ? "recorrido" : a.estado;
+        const color = estado !== "inactivo" ? COLOR_FLECHA[estado] : resaltado ? COLOR_FLECHA.resaltado : a.clase === "regla" ? COLOR_FLECHA.regla : COLOR_FLECHA.inactivo;
+        return {
+          id: `${a.desde}->${a.hacia}-${i}`,
+          source: a.desde,
+          target: a.hacia,
+          sourceHandle: sh,
+          targetHandle: th,
+          type: "cable",
+          data: { estado, clase: a.clase, etiqueta: a.etiqueta, resaltado, carril },
+          zIndex: 0,
+          markerEnd: { type: MarkerType.ArrowClosed, width: 13, height: 13, color },
+        };
+      })
+      // Lo recorrido y lo resaltado se dibuja encima de los demás cables, pero debajo de los nodos.
+      .sort((x, y) => Number(x.data.estado !== "inactivo" || x.data.resaltado) - Number(y.data.estado !== "inactivo" || y.data.resaltado));
+  }, [catalogo, nodos, p, corrida, reglas, evaluadas, principal, encima, foco, disposicion]);
 
-  const alCambiar = useCallback((cambios: NodeChange<Node<DatosNodo>>[]) => setNodos((ns) => applyNodeChanges(cambios, ns)), []);
+  const alCambiar = useCallback((cambios: NodeChange[]) => setNodos((ns) => applyNodeChanges(cambios, ns)), []);
 
-  const encuadrar = useCallback(() => void fitView({ padding: 0.08, duration: 300 }), [fitView]);
+  const encuadrar = useCallback(() => {
+    const sinReglas = !reglas.length && !notas.length;
+    void flujo.fitView({ padding: { top: "64px", left: "60px", right: "24px", bottom: "20px" }, duration: 450, nodes: sinReglas ? flujo.getNodes().filter((n) => n.id !== "__fase-reglas") : undefined });
+  }, [flujo, reglas.length, notas.length]);
+
+  /** Lo que tapa la hoja del inspector por la derecha, en píxeles de pantalla. */
+  const anchoHoja = useCallback(() => {
+    const lienzo = document.querySelector(".lienzo") as HTMLElement | null;
+    const centro = document.querySelector(".centro") as HTMLElement | null;
+    const w = lienzo?.clientWidth ?? 1200;
+    if (w < 760) return 0;
+    const v = centro ? parseFloat(getComputedStyle(centro).getPropertyValue("--inspector")) : 470;
+    return Math.min(v || 470, w - 20) + 10;
+  }, []);
+
+  const centrarEn = useCallback(
+    (id: string, zoom?: number, conHoja = true) => {
+      const n = flujo.getNode(id);
+      if (!n) return;
+      const w = n.measured?.width ?? ANCHO;
+      const h = n.measured?.height ?? 110;
+      const z = zoom ?? Math.max(flujo.getZoom(), 0.95);
+      const corrimiento = conHoja ? anchoHoja() / 2 / z : 0;
+      void flujo.setCenter(n.position.x + w / 2 + corrimiento, n.position.y + h / 2, { zoom: z, duration: 550 });
+    },
+    [flujo, anchoHoja],
+  );
+
+  /** Si el nodo elegido queda debajo de la hoja, el lienzo se corre lo justo. */
+  const asegurarVisible = useCallback(
+    (id: string) => {
+      const n = flujo.getNode(id);
+      const lienzo = document.querySelector(".lienzo") as HTMLElement | null;
+      if (!n || !lienzo) return;
+      const { x, y, zoom } = flujo.getViewport();
+      const derecha = (n.position.x + (n.measured?.width ?? ANCHO)) * zoom + x;
+      const limite = lienzo.clientWidth - anchoHoja() - 24;
+      if (derecha > limite) void flujo.setViewport({ x: x - (derecha - limite), y, zoom }, { duration: 400 });
+    },
+    [flujo, anchoHoja],
+  );
+
+  const enfocarNodo = useCallback(
+    (id: string) => {
+      if (id.startsWith("__")) return;
+      const esRegla = reglas.some((r) => r.id === id);
+      if (esRegla) enfocar({ tipo: "regla", id });
+      else if (catalogo?.nodos.some((n) => n.id === id)) enfocar({ tipo: "nodo", id });
+    },
+    [reglas, catalogo, enfocar],
+  );
+
+  // Pedidos de otros paneles: «mostrar este nodo».
+  useEffect(() => {
+    if (!objetivo) return;
+    const t = setTimeout(() => {
+      centrarEn(objetivo.id);
+      enfocarNodo(objetivo.id);
+    }, 60);
+    return () => clearTimeout(t);
+  }, [objetivo, centrarEn, enfocarNodo]);
+
+  // En vivo: la cámara acompaña a la etapa en curso.
+  const activo = useMemo(() => Object.entries(p.nodos).find(([, e]) => e.estado === "activo")?.[0], [p]);
+  useEffect(() => {
+    if (seguir && activo && corrida && !corrida.resultado) centrarEn(activo, Math.max(flujo.getZoom(), 0.75), Boolean(document.querySelector(".hoja")));
+  }, [activo, seguir, corrida, centrarEn, flujo]);
 
   const reordenar = () => {
-    if (!catalogo) return;
-    guardarPosiciones({});
-    const auto = disponer(catalogo);
-    setNodos((ns) => ns.map((n) => ({ ...n, position: auto[n.id] ?? n.position })));
-    setTimeout(encuadrar, 30);
+    if (!catalogo || !disposicion) return;
+    const g = leerLocal<Record<string, Posicion>>(CLAVE_POSICIONES, {});
+    const notasPos: Record<string, Posicion> = {};
+    for (const n of notas) if (g[n.id]) notasPos[n.id] = g[n.id]!;
+    guardarLocal(CLAVE_POSICIONES, notasPos);
+    setNodos((ns) => ns.map((n) => ({ ...n, position: disposicion.posiciones[n.id] ?? notasPos[n.id] ?? n.position })));
+    setTimeout(encuadrar, 40);
+  };
+
+  const enfocado = foco && (foco.tipo === "nodo" || foco.tipo === "regla") ? foco.id : null;
+
+  // Teclado: F enfoca, Supr borra lo propio, Esc suelta la selección.
+  useEffect(() => {
+    const tecla = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement;
+      if (t.closest("input, textarea, select, [contenteditable], .cm-editor")) return;
+      if (e.key === "Escape" && enfocado) enfocar(null);
+      if (e.key.toLowerCase() === "f" && !e.ctrlKey && !e.metaKey) {
+        if (enfocado) centrarEn(enfocado, 1.05);
+        else encuadrar();
+      }
+      if ((e.key === "Delete" || e.key === "Backspace") && enfocado && reglas.some((r) => r.id === enfocado)) void borrarRegla(enfocado);
+    };
+    window.addEventListener("keydown", tecla);
+    return () => window.removeEventListener("keydown", tecla);
+  }, [enfocado, enfocar, centrarEn, encuadrar, reglas, borrarRegla]);
+
+  const menuDeNodo = (e: React.MouseEvent, n: Node) => {
+    e.preventDefault();
+    const donde = flujo.screenToFlowPosition({ x: e.clientX, y: e.clientY });
+    let opciones: Opcion[] = [];
+    if (n.type === "regla") {
+      const r = reglas.find((x) => x.id === n.id)!;
+      const guardada = (configuracion?.reglas ?? []).some((x) => x.id === r.id);
+      opciones = [
+        { titulo: r.nombre },
+        { etiqueta: "Editar regla", icono: "editar", atajo: "Clic", alHacer: () => enfocar({ tipo: "regla", id: r.id }) },
+        { etiqueta: "Enfocar", icono: "mira", atajo: "F", alHacer: () => centrarEn(r.id, 1.05) },
+        { separador: true },
+        { etiqueta: r.activa ? "Desactivar" : "Activar", icono: r.activa ? "pausa" : "play", deshabilitado: !guardada, pista: guardada ? undefined : "Guárdala primero", alHacer: () => void guardarRegla({ ...r, activa: !r.activa }).then(() => avisar(r.activa ? "Regla desactivada" : "Regla activada")).catch((x: Error) => avisar(x.message, "error")) },
+        { etiqueta: "Duplicar", icono: "copiar", alHacer: () => duplicarRegla(r.id) },
+        { separador: true },
+        { etiqueta: "Eliminar regla", icono: "papelera", atajo: "Supr", peligro: true, alHacer: () => void borrarRegla(r.id).then(() => avisar("Regla eliminada")) },
+      ];
+    } else if (n.type === "nota") {
+      opciones = [{ etiqueta: "Eliminar nota", icono: "papelera", peligro: true, alHacer: () => borrarNota(n.id) }];
+    } else if (n.type === "etapa" || n.type === "final") {
+      const nodo = (n.data as DatosEtapa).nodo;
+      const ajustes = nodo.parametros.filter((q) => ajustado(q, configuracion));
+      opciones = [
+        { titulo: nodo.nombre },
+        { etiqueta: "Abrir y configurar", icono: "ajustes", atajo: "Clic", alHacer: () => enfocar({ tipo: "nodo", id: nodo.id }) },
+        { etiqueta: "Enfocar", icono: "mira", atajo: "F", alHacer: () => centrarEn(nodo.id, 1.05) },
+        { separador: true },
+        { etiqueta: "Agregar regla de entrada aquí", icono: "regla", alHacer: () => crearRegla("entrada", { x: donde.x + 30, y: donde.y + 150 }) },
+        { etiqueta: "Agregar regla de validación aquí", icono: "escudo", alHacer: () => crearRegla("validacion", { x: donde.x + 30, y: donde.y + 150 }) },
+        { etiqueta: "Agregar nota", icono: "nota", alHacer: () => crearNota({ x: donde.x + 30, y: donde.y + 150 }) },
+        { separador: true },
+        {
+          etiqueta: `Restablecer ${ajustes.length} ajuste${ajustes.length === 1 ? "" : "s"} de este nodo`,
+          icono: "deshacer",
+          deshabilitado: !ajustes.length,
+          alHacer: () => {
+            if (!configuracion) return;
+            let c = configuracion;
+            for (const q of ajustes) c = conValor(c, q, undefined);
+            void guardarConfiguracion(c, `${nodo.nombre}: valores del código`).then(() => avisar("Volvió a los valores del código"));
+          },
+        },
+        { etiqueta: "Copiar nombre técnico", icono: "copiar", alHacer: () => void navigator.clipboard?.writeText(nodo.modulo ? `${nodo.modulo} · ${nodo.id}` : nodo.id).then(() => avisar("Copiado")) },
+        { etiqueta: "Eliminar", icono: "papelera", deshabilitado: true, pista: "Es una etapa del motor de producción: se configura, no se elimina. Para cambiar su efecto agrega una regla.", alHacer: () => undefined },
+      ];
+    } else return;
+    setMenu({ x: e.clientX, y: e.clientY, opciones });
+  };
+
+  const menuDelLienzo = (e: React.MouseEvent | MouseEvent) => {
+    e.preventDefault();
+    const donde = flujo.screenToFlowPosition({ x: e.clientX, y: e.clientY });
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      opciones: [
+        { titulo: "Agregar al flujo" },
+        { etiqueta: "Regla de entrada", icono: "regla", pista: PUNTOS.entrada.descripcion, alHacer: () => crearRegla("entrada", donde) },
+        { etiqueta: "Regla de validación", icono: "escudo", pista: PUNTOS.validacion.descripcion, alHacer: () => crearRegla("validacion", donde) },
+        { etiqueta: "Nota", icono: "nota", alHacer: () => crearNota(donde) },
+        { separador: true },
+        { etiqueta: "Encuadrar todo", icono: "encuadrar", atajo: "F", alHacer: encuadrar },
+        { etiqueta: "Reordenar el diagrama", icono: "reordenar", alHacer: reordenar },
+        { etiqueta: "Seguir la corrida en vivo", marcado: seguir, alHacer: () => setSeguir(!seguir) },
+        { etiqueta: "Mostrar minimapa", marcado: minimapa, alHacer: () => setMinimapa(!minimapa) },
+      ],
+    });
   };
 
   if (!catalogo) return <div className="vacio">Cargando el mapa del pipeline…</div>;
 
   return (
-    <ReactFlow
-      nodes={nodos}
-      edges={cables}
-      nodeTypes={tiposNodo}
-      edgeTypes={tiposCable}
-      onNodesChange={alCambiar}
-      onNodeDragStop={(_, __, movidos) => {
-        const g = leerPosiciones();
-        for (const n of nodos) g[n.id] = n.position;
-        for (const m of movidos) g[m.id] = m.position;
-        guardarPosiciones(g);
-      }}
-      onNodeClick={(_, n) => enfocar({ tipo: "nodo", id: n.id })}
-      onPaneClick={() => foco?.tipo === "nodo" && enfocar(null)}
-      onInit={() => {
-        if (!encuadrado.current) {
-          encuadrado.current = true;
-          setTimeout(encuadrar, 50);
-        }
-      }}
-      minZoom={0.12}
-      maxZoom={1.8}
-      nodesConnectable={false}
-      elementsSelectable
-      proOptions={{ hideAttribution: true }}
-    >
-      <Panel position="top-left" className="lienzo-leyenda">
-        <span className="pastilla"><span className="punto-estado activo" />En curso</span>
-        <span className="pastilla"><span className="punto-estado hecho" />Recorrida</span>
-        <span className="pastilla"><span className="punto-estado fallo" />Falló</span>
-        <span className="pastilla"><Icono n="chispa" tam={12} />Usa IA</span>
-      </Panel>
-      <Panel position="top-right" className="lienzo-barra">
-        <button className={`boton chico ${seguir ? "activo" : ""}`} onClick={() => setSeguir(!seguir)} title="Mostrar en el lienzo cada corrida en cuanto empieza">
-          <Icono n="ojo" tam={14} />Seguir en vivo
-        </button>
-        <button className="boton chico" onClick={encuadrar}><Icono n="encuadrar" tam={14} />Encuadrar</button>
-        <button className="boton chico" onClick={reordenar}><Icono n="reordenar" tam={14} />Reordenar</button>
-      </Panel>
-      <Controls position="bottom-left" showInteractive={false} />
-      <MiniMap pannable zoomable position="bottom-right" style={{ width: 150, height: 96 }} nodeColor={(n) => ({ activo: "#9cc0f5", hecho: "#a6dcc2", fallo: "#f2b8b3" })[(n.data as DatosNodo).estado as string] ?? "#dde1e7"} maskColor="rgba(244,245,247,0.7)" />
-    </ReactFlow>
+    <>
+      <ReactFlow
+        nodes={nodos}
+        edges={cables}
+        nodeTypes={tiposNodo}
+        edgeTypes={tiposCable}
+        onNodesChange={alCambiar}
+        onNodeDragStop={(_, __, movidos) => {
+          const g = leerLocal<Record<string, Posicion>>(CLAVE_POSICIONES, {});
+          for (const m of movidos) g[m.id] = m.position;
+          guardarLocal(CLAVE_POSICIONES, g);
+        }}
+        onNodeClick={(_, n) => {
+          setMenu(null);
+          if (n.id === "__fin" && corrida) enfocar({ tipo: "corrida", id: corrida.id });
+          else if (n.id === "__inicio" && corrida) enfocar({ tipo: "correo", caso: corrida.caso });
+          else enfocarNodo(n.id);
+          if (n.type !== "fase") setTimeout(() => asegurarVisible(n.id), 30);
+        }}
+        onEdgeClick={() => {
+          setMenu(null);
+          if (foco) enfocar(null);
+        }}
+        onNodeDoubleClick={(_, n) => centrarEn(n.id, 1.1)}
+        onNodeMouseEnter={(_, n) => n.type !== "fase" && setEncima(n.id)}
+        onNodeMouseLeave={() => setEncima(null)}
+        onNodeContextMenu={menuDeNodo}
+        onPaneContextMenu={menuDelLienzo}
+        onPaneClick={() => {
+          setMenu(null);
+          if (foco) enfocar(null);
+        }}
+        onInit={() => {
+          if (!encuadrado.current) {
+            encuadrado.current = true;
+            setTimeout(encuadrar, 60);
+          }
+        }}
+        nodesDraggable={!bloqueado}
+        minZoom={0.1}
+        maxZoom={2}
+        nodesConnectable={false}
+        deleteKeyCode={null}
+        selectionKeyCode={null}
+        multiSelectionKeyCode={null}
+        elementsSelectable
+        onlyRenderVisibleElements={false}
+        proOptions={{ hideAttribution: true }}
+        className={`${encima ? "con-encima" : ""} ${lejos ? "lejos" : ""}`}
+      >
+        <Panel position="top-left" className="lienzo-arriba-izq">
+          <Buscador catalogo={catalogo} reglas={reglas} ir={(id) => { centrarEn(id, 1.05); enfocarNodo(id); }} />
+          <Leyenda />
+        </Panel>
+        <Panel position="top-center" className="lienzo-centro">
+          <AnimatePresence>{corrida && <Banda key={corrida.id} corrida={corrida} p={p} catalogo={catalogo} />}</AnimatePresence>
+        </Panel>
+        <Panel position="top-right" className="lienzo-barra">
+          <button className={`boton flotante chico ${seguir ? "activo" : ""}`} onClick={() => setSeguir(!seguir)} title="La cámara acompaña la etapa en curso y el lienzo muestra cada corrida que empieza">
+            <span className={`punto ${seguir ? "latiendo" : ""}`} />En vivo
+          </button>
+          <button
+            className="boton flotante chico"
+            onClick={(e) => {
+              const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+              setMenu({
+                x: r.left,
+                y: r.bottom + 6,
+                opciones: [
+                  { titulo: "Nueva regla" },
+                  { etiqueta: "Regla de entrada", icono: "regla", pista: PUNTOS.entrada.descripcion, alHacer: () => crearRegla("entrada") },
+                  { etiqueta: "Regla de validación", icono: "escudo", pista: PUNTOS.validacion.descripcion, alHacer: () => crearRegla("validacion") },
+                  { separador: true },
+                  { etiqueta: "Nota en el centro", icono: "nota", alHacer: () => { const b = document.querySelector(".react-flow")!.getBoundingClientRect(); crearNota(flujo.screenToFlowPosition({ x: b.left + b.width / 2, y: b.top + b.height / 2 })); } },
+                ],
+              });
+            }}
+          >
+            <Icono n="mas" tam={14} />Agregar
+          </button>
+        </Panel>
+        <Panel position="bottom-left" className="controles">
+          <button onClick={() => void flujo.zoomIn({ duration: 200 })} title="Acercar" aria-label="Acercar"><Icono n="mas" tam={15} /></button>
+          <button onClick={() => void flujo.zoomOut({ duration: 200 })} title="Alejar" aria-label="Alejar"><Icono n="menos" tam={15} /></button>
+          <i />
+          <button onClick={encuadrar} title="Encuadrar todo (F)" aria-label="Encuadrar todo"><Icono n="encuadrar" tam={15} /></button>
+          <button onClick={() => enfocado && centrarEn(enfocado, 1.05)} disabled={!enfocado} title={enfocado ? "Enfocar el nodo seleccionado (F)" : "Selecciona un nodo para enfocarlo"} aria-label="Enfocar selección"><Icono n="mira" tam={15} /></button>
+          <i />
+          <button className={bloqueado ? "activo" : ""} onClick={() => setBloqueado(!bloqueado)} title={bloqueado ? "Desbloquear posiciones" : "Bloquear posiciones"} aria-label="Bloquear"><Icono n={bloqueado ? "candado" : "abierto"} tam={15} /></button>
+          <button className={minimapa ? "activo" : ""} onClick={() => setMinimapa(!minimapa)} title="Minimapa" aria-label="Minimapa"><Icono n="mapa" tam={15} /></button>
+        </Panel>
+        {minimapa && (
+          <MiniMap
+            pannable
+            zoomable
+            position="bottom-right"
+            style={{ width: 168, height: 104 }}
+            nodeBorderRadius={6}
+            nodeColor={(n) => {
+              if (n.type === "fase") return "rgba(0,0,0,0)";
+              const e = (n.data as DatosEtapa).estado;
+              return ({ activo: "#8fb5f0", hecho: "#9fd8bd", fallo: "#f0b2ac" } as Record<string, string>)[e as string] ?? (n.type === "regla" ? "#efc3d8" : "#d9dde4");
+            }}
+            maskColor="rgba(243,244,246,0.72)"
+          />
+        )}
+      </ReactFlow>
+      {menu && <MenuContextual x={menu.x} y={menu.y} opciones={menu.opciones} cerrar={() => setMenu(null)} />}
+    </>
   );
 }
+

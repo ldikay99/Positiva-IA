@@ -1,5 +1,36 @@
 import { create } from "zustand";
-import type { Catalogo, Configuracion, Corrida, Correo, EstadoMotor, Evento } from "./tipos.ts";
+import { reglaNueva } from "./flujo.ts";
+import type { Catalogo, Configuracion, Corrida, Correo, EstadoMotor, Evento, Regla } from "./tipos.ts";
+
+export interface Nota {
+  id: string;
+  texto: string;
+}
+
+const CLAVE_NOTAS = "positiva-ia:notas:v1";
+export const CLAVE_POSICIONES = "positiva-ia:posiciones:v5";
+
+export function leerLocal<T>(clave: string, defecto: T): T {
+  try {
+    const v = localStorage.getItem(clave);
+    return v ? (JSON.parse(v) as T) : defecto;
+  } catch {
+    return defecto;
+  }
+}
+
+export function guardarLocal(clave: string, v: unknown): void {
+  try {
+    localStorage.setItem(clave, JSON.stringify(v));
+  } catch {
+    /* sin almacenamiento: vive solo en esta pestaña */
+  }
+}
+
+/** Fija dónde aparece un nodo nuevo antes de que el lienzo lo dibuje. */
+export function ubicar(id: string, p: { x: number; y: number }): void {
+  guardarLocal(CLAVE_POSICIONES, { ...leerLocal<Record<string, { x: number; y: number }>>(CLAVE_POSICIONES, {}), [id]: p });
+}
 
 export async function pedir<T>(ruta: string, init?: RequestInit): Promise<T> {
   const r = await fetch(ruta, { ...init, headers: { "Content-Type": "application/json", ...init?.headers } });
@@ -9,7 +40,7 @@ export async function pedir<T>(ruta: string, init?: RequestInit): Promise<T> {
 }
 
 export type Vista = "flujo" | "corridas" | "logs" | "herramientas" | "proveedores" | "configuracion";
-export type Foco = { tipo: "nodo"; id: string } | { tipo: "correo"; caso: string } | { tipo: "corrida"; id: string } | null;
+export type Foco = { tipo: "nodo"; id: string } | { tipo: "regla"; id: string } | { tipo: "correo"; caso: string } | { tipo: "corrida"; id: string } | null;
 
 export interface Aviso {
   id: number;
@@ -51,6 +82,13 @@ interface Estado {
   avisos: Aviso[];
   perfiles: Perfil[];
   historial: Cambio[];
+  /** Reglas creadas en el lienzo que todavía no se guardan. */
+  borradores: Regla[];
+  notas: Nota[];
+  /** Pide al lienzo centrar un nodo; `n` cambia en cada pedido. */
+  objetivo: { id: string; n: number } | null;
+  /** Parámetro que el inspector debe abrir y mostrar. */
+  parametroAbierto: string | null;
   cargar: () => Promise<void>;
   conectar: () => void;
   irA: (v: Vista) => void;
@@ -69,6 +107,16 @@ interface Estado {
   cargarHistorial: () => Promise<void>;
   avisar: (texto: string, tono?: Aviso["tono"]) => void;
   cerrarAviso: (id: number) => void;
+  crearRegla: (punto: Regla["punto"], donde?: { x: number; y: number }) => void;
+  cambiarBorrador: (r: Regla) => void;
+  guardarRegla: (r: Regla) => Promise<void>;
+  borrarRegla: (id: string) => Promise<void>;
+  duplicarRegla: (id: string) => void;
+  crearNota: (donde: { x: number; y: number }) => void;
+  cambiarNota: (id: string, texto: string) => void;
+  borrarNota: (id: string) => void;
+  centrar: (id: string) => void;
+  abrirParametro: (nodo: string, clave: string) => void;
 }
 
 let siguienteAviso = 1;
@@ -91,6 +139,10 @@ export const usar = create<Estado>((set, get) => ({
   avisos: [],
   perfiles: [],
   historial: [],
+  borradores: [],
+  notas: leerLocal<Nota[]>(CLAVE_NOTAS, []),
+  objetivo: null,
+  parametroAbierto: null,
 
   cargar: async () => {
     const [catalogo, bandeja, conf, lista, recientes] = await Promise.all([
@@ -178,6 +230,61 @@ export const usar = create<Estado>((set, get) => ({
     setTimeout(() => get().cerrarAviso(id), tono === "error" ? 8000 : 4000);
   },
   cerrarAviso: (id) => set((s) => ({ avisos: s.avisos.filter((a) => a.id !== id) })),
+
+  crearRegla: (punto, donde) => {
+    const r = reglaNueva(punto);
+    if (donde) ubicar(r.id, donde);
+    set((s) => ({ borradores: [...s.borradores, r], foco: { tipo: "regla", id: r.id }, vista: "flujo" }));
+  },
+  cambiarBorrador: (r) => set((s) => ({ borradores: s.borradores.some((b) => b.id === r.id) ? s.borradores.map((b) => (b.id === r.id ? r : b)) : [...s.borradores, r] })),
+  guardarRegla: async (r) => {
+    const c = get().configuracion;
+    if (!c) return;
+    const existe = c.reglas.some((x) => x.id === r.id);
+    const sig: Configuracion = { ...c, reglas: existe ? c.reglas.map((x) => (x.id === r.id ? r : x)) : [...c.reglas, r] };
+    await get().guardarConfiguracion(sig, `regla «${r.nombre}» ${existe ? "editada" : "creada"}`);
+    set((s) => ({ borradores: s.borradores.filter((b) => b.id !== r.id) }));
+  },
+  borrarRegla: async (id) => {
+    const c = get().configuracion;
+    set((s) => ({ borradores: s.borradores.filter((b) => b.id !== id), foco: s.foco?.tipo === "regla" && s.foco.id === id ? null : s.foco }));
+    if (c?.reglas.some((x) => x.id === id)) {
+      const r = c.reglas.find((x) => x.id === id)!;
+      await get().guardarConfiguracion({ ...c, reglas: c.reglas.filter((x) => x.id !== id) }, `regla «${r.nombre}» eliminada`);
+    }
+  },
+  duplicarRegla: (id) => {
+    const s = get();
+    const r = [...(s.configuracion?.reglas ?? []), ...s.borradores].find((x) => x.id === id);
+    if (!r) return;
+    const copia: Regla = { ...r, id: `r-${Math.random().toString(36).slice(2, 8)}`, nombre: `${r.nombre} (copia)` };
+    const pos = leerLocal<Record<string, { x: number; y: number }>>(CLAVE_POSICIONES, {})[id];
+    if (pos) ubicar(copia.id, { x: pos.x + 40, y: pos.y + 40 });
+    set((x) => ({ borradores: [...x.borradores, copia], foco: { tipo: "regla", id: copia.id } }));
+  },
+  crearNota: (donde) => {
+    const n: Nota = { id: `nota-${Math.random().toString(36).slice(2, 8)}`, texto: "" };
+    ubicar(n.id, donde);
+    set((s) => {
+      const notas = [...s.notas, n];
+      guardarLocal(CLAVE_NOTAS, notas);
+      return { notas };
+    });
+  },
+  cambiarNota: (id, texto) =>
+    set((s) => {
+      const notas = s.notas.map((n) => (n.id === id ? { ...n, texto } : n));
+      guardarLocal(CLAVE_NOTAS, notas);
+      return { notas };
+    }),
+  borrarNota: (id) =>
+    set((s) => {
+      const notas = s.notas.filter((n) => n.id !== id);
+      guardarLocal(CLAVE_NOTAS, notas);
+      return { notas };
+    }),
+  centrar: (id) => set((s) => ({ objetivo: { id, n: (s.objetivo?.n ?? 0) + 1 }, vista: "flujo" })),
+  abrirParametro: (nodo, clave) => set({ foco: { tipo: "nodo", id: nodo }, parametroAbierto: clave, vista: "flujo" }),
 }));
 
 function recibir(e: Evento): void {

@@ -24,8 +24,33 @@ export interface Nodo {
   usa_ia?: boolean;
   siguientes?: string[];
   desenlaces?: { accion: string; cuando: string }[];
-  reglas?: { id: string; descripcion: string; modulo?: string; funcion?: string }[];
+  reglas?: { id: string; descripcion: string; modulo?: string; funcion?: string; usa?: string[] }[];
+  busquedas?: Busqueda[];
   parametros: Parametro[];
+}
+
+export interface Busqueda {
+  funcion: string;
+  campos: string[];
+  nombre: string;
+  descripcion: string;
+  usa: string[];
+}
+
+/** Regla creada desde la web que el motor evalúa en la entrada o antes de la compuerta. */
+export interface Regla {
+  id: string;
+  nombre: string;
+  descripcion: string;
+  activa: boolean;
+  punto: "entrada" | "validacion";
+  campo: string;
+  operador: "coincide" | "no_coincide" | "falta" | "existe";
+  patron: string;
+  ignorarMayusculas: boolean;
+  accion: "manual" | "aviso" | "fijar";
+  motivo: string;
+  valor: string;
 }
 
 export interface Proveedor {
@@ -79,6 +104,7 @@ export interface Correo {
 }
 
 export interface Configuracion {
+  reglas: Regla[];
   parametros: Record<string, unknown>;
   entorno: Record<string, string>;
   ia: { modelo: string; ubicacion: string; temperatura: number | null };
