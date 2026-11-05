@@ -1,0 +1,54 @@
+trigger:
+  - dev
+  - uat
+  - prod
+
+pool:
+  vmImage: ubuntu-latest
+
+resources:
+  repositories:
+    - repository: templates
+      type: git
+      name: Infraestructura-DevOps/devops_util_pipeline
+
+parameters:
+  - name: Environments
+    type: object
+    default:
+      DEFAULT: VALUE
+
+variables:
+  - ${{ if eq(variables['Build.SourceBranchName'], 'dev') }}:
+    - group: vg-radicacion-ia-pqrd-dev
+  - ${{ if eq(variables['Build.SourceBranchName'], 'uat') }}:
+    - group: vg-radicacion-ia-pqrd-uat
+  - ${{ if eq(variables['Build.SourceBranchName'], 'prod') }}:
+    - group: vg-radicacion-ia-pqrd-prod
+
+stages:
+  - stage: Build_Docker
+    jobs:
+      - job: Build_Docker
+        steps:
+          - template: steps-docker-gcp.yml@templates
+            parameters:
+              REPOSITORY_NAME_GCP: $(DOCKER_REPOSITORY_NAME_GCP)
+              REPOSITORY_NAME: $(DOCKER_REPOSITORY_NAME_GCP)
+              DOCKER_CONTAINER_REGISTRY: $(DOCKER_REGISTRY)
+
+  - stage: Deploy_CloudRun
+    jobs:
+      - job: Deploy
+        steps:
+          - template: steps-deploy-cloudjob-gcp.yml@templates
+            parameters:
+              CLOUD_RUN_JOB: $(CLOUD_RUN_JOB)
+              GCP_PROJECT_ID: $(GCP_PROJECT_ID)
+              DOCKER_REGISTRY: $(DOCKER_REGISTRY)
+              GCP_REGION: $(GCP_REGION)
+              IMAGE_NAME: $(IMAGE_NAME)
+              IMAGE_URI_PATH: $(IMAGE_URI_PATH)
+              SECURE_FILE_NAME: $(SECURE_FILE_NAME)
+              Environments: ${{ parameters.Environments }}
+              JOB_MEMORY: "8Gi" 

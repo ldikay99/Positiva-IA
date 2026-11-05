@@ -1,0 +1,54 @@
+steps:
+  # Build the container image
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'us-east1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/ms-radicacion-ia-pqrd:$COMMIT_SHA'
+      - '-t'
+      - 'us-east1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/ms-radicacion-ia-pqrd:latest'
+      - '.'
+
+  # Push the container image to Artifact Registry
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - '--all-tags'
+      - 'us-east1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/ms-radicacion-ia-pqrd'
+
+  # Deploy to Cloud Run Job (no Service)
+  # Secretos gestionados en Secret Manager (nombres: GOOGLE_API_KEY,
+  # MICROSOFT_CLIENT_SECRET, OUTLOOK_REFRESH_TOKEN, REDIS_PASSWORD,
+  # SUPABASE_SERVICE_ROLE_KEY, SGDEA_CLIENT_SECRET, SGDEA_PASSWORD).
+  # El service account que ejecuta el job requiere rol
+  # roles/secretmanager.secretAccessor sobre cada secreto.
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
+    entrypoint: gcloud
+    args:
+      - 'run'
+      - 'jobs'
+      - 'deploy'
+      - 'ms-radicacion-ia-pqrd'
+      - '--image'
+      - 'us-east1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/ms-radicacion-ia-pqrd:$COMMIT_SHA'
+      - '--region'
+      - 'us-east1'
+      - '--memory'
+      - '2Gi'
+      - '--cpu'
+      - '2'
+      - '--task-timeout'
+      - '540s'
+      - '--max-retries'
+      - '2'
+      - '--set-secrets'
+      - 'MICROSOFT_CLIENT_SECRET=MICROSOFT_CLIENT_SECRET:latest,OUTLOOK_REFRESH_TOKEN=OUTLOOK_REFRESH_TOKEN:latest,REDIS_PASSWORD=REDIS_PASSWORD:latest,SUPABASE_SERVICE_ROLE_KEY=SUPABASE_SERVICE_ROLE_KEY:latest,SGDEA_CLIENT_SECRET=SGDEA_CLIENT_SECRET:latest,SGDEA_PASSWORD=SGDEA_PASSWORD:latest'
+
+images:
+  - 'us-east1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/ms-radicacion-ia-pqrd:$COMMIT_SHA'
+  - 'us-east1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/ms-radicacion-ia-pqrd:latest'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: '1200s'

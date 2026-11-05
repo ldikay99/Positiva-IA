@@ -1,0 +1,18 @@
+{
+  "casos": 102,
+  "total": 58,
+  "por_campo": {
+    "nombre_afectado": 78,
+    "numero_documento_afectado": 79,
+    "tipo_documento_afectado": 76,
+    "nombre_remitente": 97,
+    "sexo_afectado": 46,
+    "tipo_pqrd": 90,
+    "telefono_afectado": 57,
+    "numero_documento_remitente": 45,
+    "tipo_documento_remitente": 42,
+    "tipo_remitente": 38,
+    "tipo_solicitud": 45,
+    "direccion_afectado": 9
+  }
+}

@@ -1,0 +1,5673 @@
+{
+ "1": [
+  {
+   "divipola": "91001",
+   "id": 1089,
+   "nombre": "LETICIA"
+  },
+  {
+   "divipola": "91263",
+   "id": 1090,
+   "nombre": "EL ENCANTO"
+  },
+  {
+   "divipola": "91405",
+   "id": 1091,
+   "nombre": "LA CHORRERA"
+  },
+  {
+   "divipola": "91407",
+   "id": 1092,
+   "nombre": "LA PEDRERA"
+  },
+  {
+   "divipola": "91430",
+   "id": 1093,
+   "nombre": "LA VICTORIA"
+  },
+  {
+   "divipola": "91460",
+   "id": 1094,
+   "nombre": "MIRITÍ - PARANÁ"
+  },
+  {
+   "divipola": "91530",
+   "id": 1095,
+   "nombre": "PUERTO ALEGRÍA"
+  },
+  {
+   "divipola": "91536",
+   "id": 1096,
+   "nombre": "PUERTO ARICA"
+  },
+  {
+   "divipola": "91540",
+   "id": 1097,
+   "nombre": "PUERTO NARIÑO"
+  },
+  {
+   "divipola": "91669",
+   "id": 1098,
+   "nombre": "PUERTO SANTANDER"
+  },
+  {
+   "divipola": "91798",
+   "id": 1099,
+   "nombre": "TARAPACÁ"
+  }
+ ],
+ "10": [
+  {
+   "divipola": "18001",
+   "id": 347,
+   "nombre": "FLORENCIA"
+  },
+  {
+   "divipola": "18029",
+   "id": 348,
+   "nombre": "ALBANIA"
+  },
+  {
+   "divipola": "18094",
+   "id": 349,
+   "nombre": "BELÉN DE LOS ANDAQUÍES"
+  },
+  {
+   "divipola": "18150",
+   "id": 350,
+   "nombre": "CARTAGENA DEL CHAIRÁ"
+  },
+  {
+   "divipola": "18205",
+   "id": 351,
+   "nombre": "CURILLO"
+  },
+  {
+   "divipola": "18247",
+   "id": 352,
+   "nombre": "EL DONCELLO"
+  },
+  {
+   "divipola": "18256",
+   "id": 353,
+   "nombre": "EL PAUJÍL"
+  },
+  {
+   "divipola": "18410",
+   "id": 354,
+   "nombre": "LA MONTAÑITA"
+  },
+  {
+   "divipola": "18460",
+   "id": 355,
+   "nombre": "MILÁN"
+  },
+  {
+   "divipola": "18479",
+   "id": 356,
+   "nombre": "MORELIA"
+  },
+  {
+   "divipola": "18592",
+   "id": 357,
+   "nombre": "PUERTO RICO"
+  },
+  {
+   "divipola": "18610",
+   "id": 358,
+   "nombre": "SAN JOSÉ DEL FRAGUA"
+  },
+  {
+   "divipola": "18753",
+   "id": 359,
+   "nombre": "SAN VICENTE DEL CAGUÁN"
+  },
+  {
+   "divipola": "18756",
+   "id": 360,
+   "nombre": "SOLANO"
+  },
+  {
+   "divipola": "18785",
+   "id": 361,
+   "nombre": "SOLITA"
+  },
+  {
+   "divipola": "18860",
+   "id": 362,
+   "nombre": "VALPARAÍSO"
+  }
+ ],
+ "11": [
+  {
+   "divipola": "85001",
+   "id": 1055,
+   "nombre": "YOPAL"
+  },
+  {
+   "divipola": "85010",
+   "id": 1056,
+   "nombre": "AGUAZUL"
+  },
+  {
+   "divipola": "85015",
+   "id": 1057,
+   "nombre": "CHÁMEZA"
+  },
+  {
+   "divipola": "85125",
+   "id": 1058,
+   "nombre": "HATO COROZAL"
+  },
+  {
+   "divipola": "85136",
+   "id": 1059,
+   "nombre": "LA SALINA"
+  },
+  {
+   "divipola": "85139",
+   "id": 1060,
+   "nombre": "MANÍ"
+  },
+  {
+   "divipola": "85162",
+   "id": 1061,
+   "nombre": "MONTERREY"
+  },
+  {
+   "divipola": "85225",
+   "id": 1062,
+   "nombre": "NUNCHÍA"
+  },
+  {
+   "divipola": "85230",
+   "id": 1063,
+   "nombre": "OROCUÉ"
+  },
+  {
+   "divipola": "85250",
+   "id": 1064,
+   "nombre": "PAZ DE ARIPORO"
+  },
+  {
+   "divipola": "85263",
+   "id": 1065,
+   "nombre": "PORE"
+  },
+  {
+   "divipola": "85279",
+   "id": 1066,
+   "nombre": "RECETOR"
+  },
+  {
+   "divipola": "85300",
+   "id": 1067,
+   "nombre": "SABANALARGA"
+  },
+  {
+   "divipola": "85315",
+   "id": 1068,
+   "nombre": "SÁCAMA"
+  },
+  {
+   "divipola": "85325",
+   "id": 1069,
+   "nombre": "SAN LUIS DE PALENQUE"
+  },
+  {
+   "divipola": "85400",
+   "id": 1070,
+   "nombre": "TÁMARA"
+  },
+  {
+   "divipola": "85410",
+   "id": 1071,
+   "nombre": "TAURAMENA"
+  },
+  {
+   "divipola": "85430",
+   "id": 1072,
+   "nombre": "TRINIDAD"
+  },
+  {
+   "divipola": "85440",
+   "id": 1073,
+   "nombre": "VILLANUEVA"
+  }
+ ],
+ "12": [
+  {
+   "divipola": "19318",
+   "id": 223,
+   "nombre": "GUAPI"
+  },
+  {
+   "divipola": "19001",
+   "id": 363,
+   "nombre": "POPAYÁN"
+  },
+  {
+   "divipola": "19022",
+   "id": 364,
+   "nombre": "ALMAGUER"
+  },
+  {
+   "divipola": "19050",
+   "id": 365,
+   "nombre": "ARGELIA"
+  },
+  {
+   "divipola": "19075",
+   "id": 366,
+   "nombre": "BALBOA"
+  },
+  {
+   "divipola": "19100",
+   "id": 367,
+   "nombre": "BOLÍVAR"
+  },
+  {
+   "divipola": "19110",
+   "id": 368,
+   "nombre": "BUENOS AIRES"
+  },
+  {
+   "divipola": "19130",
+   "id": 369,
+   "nombre": "CAJIBÍO"
+  },
+  {
+   "divipola": "19137",
+   "id": 370,
+   "nombre": "CALDONO"
+  },
+  {
+   "divipola": "19142",
+   "id": 371,
+   "nombre": "CALOTO"
+  },
+  {
+   "divipola": "19212",
+   "id": 372,
+   "nombre": "CORINTO"
+  },
+  {
+   "divipola": "19256",
+   "id": 373,
+   "nombre": "EL TAMBO"
+  },
+  {
+   "divipola": "19290",
+   "id": 374,
+   "nombre": "FLORENCIA"
+  },
+  {
+   "divipola": "19300",
+   "id": 375,
+   "nombre": "GUACHENÉ"
+  },
+  {
+   "divipola": "19355",
+   "id": 376,
+   "nombre": "INZÁ"
+  },
+  {
+   "divipola": "19364",
+   "id": 377,
+   "nombre": "JAMBALÓ"
+  },
+  {
+   "divipola": "19392",
+   "id": 378,
+   "nombre": "LA SIERRA"
+  },
+  {
+   "divipola": "19397",
+   "id": 379,
+   "nombre": "LA VEGA"
+  },
+  {
+   "divipola": "19418",
+   "id": 380,
+   "nombre": "LÓPEZ DE MICAY"
+  },
+  {
+   "divipola": "19450",
+   "id": 381,
+   "nombre": "MERCADERES"
+  },
+  {
+   "divipola": "19455",
+   "id": 382,
+   "nombre": "MIRANDA"
+  },
+  {
+   "divipola": "19473",
+   "id": 383,
+   "nombre": "MORALES"
+  },
+  {
+   "divipola": "19513",
+   "id": 384,
+   "nombre": "PADILLA"
+  },
+  {
+   "divipola": "19517",
+   "id": 385,
+   "nombre": "PÁEZ"
+  },
+  {
+   "divipola": "19532",
+   "id": 386,
+   "nombre": "PATÍA"
+  },
+  {
+   "divipola": "19533",
+   "id": 387,
+   "nombre": "PIAMONTE"
+  },
+  {
+   "divipola": "19548",
+   "id": 388,
+   "nombre": "PIENDAMÓ - TUNÍA"
+  },
+  {
+   "divipola": "19573",
+   "id": 389,
+   "nombre": "PUERTO TEJADA"
+  },
+  {
+   "divipola": "19585",
+   "id": 390,
+   "nombre": "PURACÉ"
+  },
+  {
+   "divipola": "19622",
+   "id": 391,
+   "nombre": "ROSAS"
+  },
+  {
+   "divipola": "19693",
+   "id": 392,
+   "nombre": "SAN SEBASTIÁN"
+  },
+  {
+   "divipola": "19698",
+   "id": 393,
+   "nombre": "SANTANDER DE QUILICHAO"
+  },
+  {
+   "divipola": "19701",
+   "id": 394,
+   "nombre": "SANTA ROSA"
+  },
+  {
+   "divipola": "19743",
+   "id": 395,
+   "nombre": "SILVIA"
+  },
+  {
+   "divipola": "19760",
+   "id": 396,
+   "nombre": "SOTARÁ PAISPAMBA"
+  },
+  {
+   "divipola": "19780",
+   "id": 397,
+   "nombre": "SUÁREZ"
+  },
+  {
+   "divipola": "19785",
+   "id": 398,
+   "nombre": "SUCRE"
+  },
+  {
+   "divipola": "19807",
+   "id": 399,
+   "nombre": "TIMBÍO"
+  },
+  {
+   "divipola": "19809",
+   "id": 400,
+   "nombre": "TIMBIQUÍ"
+  },
+  {
+   "divipola": "19821",
+   "id": 401,
+   "nombre": "TORIBÍO"
+  },
+  {
+   "divipola": "19824",
+   "id": 402,
+   "nombre": "TOTORÓ"
+  },
+  {
+   "divipola": "19845",
+   "id": 403,
+   "nombre": "VILLA RICA"
+  }
+ ],
+ "13": [
+  {
+   "divipola": "20001",
+   "id": 404,
+   "nombre": "VALLEDUPAR"
+  },
+  {
+   "divipola": "20011",
+   "id": 405,
+   "nombre": "AGUACHICA"
+  },
+  {
+   "divipola": "20013",
+   "id": 406,
+   "nombre": "AGUSTÍN CODAZZI"
+  },
+  {
+   "divipola": "20032",
+   "id": 407,
+   "nombre": "ASTREA"
+  },
+  {
+   "divipola": "20045",
+   "id": 408,
+   "nombre": "BECERRIL"
+  },
+  {
+   "divipola": "20060",
+   "id": 409,
+   "nombre": "BOSCONIA"
+  },
+  {
+   "divipola": "20175",
+   "id": 410,
+   "nombre": "CHIMICHAGUA"
+  },
+  {
+   "divipola": "20178",
+   "id": 411,
+   "nombre": "CHIRIGUANÁ"
+  },
+  {
+   "divipola": "20228",
+   "id": 412,
+   "nombre": "CURUMANÍ"
+  },
+  {
+   "divipola": "20238",
+   "id": 413,
+   "nombre": "EL COPEY"
+  },
+  {
+   "divipola": "20250",
+   "id": 414,
+   "nombre": "EL PASO"
+  },
+  {
+   "divipola": "20295",
+   "id": 415,
+   "nombre": "GAMARRA"
+  },
+  {
+   "divipola": "20310",
+   "id": 416,
+   "nombre": "GONZÁLEZ"
+  },
+  {
+   "divipola": "20383",
+   "id": 417,
+   "nombre": "LA GLORIA"
+  },
+  {
+   "divipola": "20400",
+   "id": 418,
+   "nombre": "LA JAGUA DE IBIRICO"
+  },
+  {
+   "divipola": "20443",
+   "id": 419,
+   "nombre": "MANAURE BALCÓN DEL CESAR"
+  },
+  {
+   "divipola": "20517",
+   "id": 420,
+   "nombre": "PAILITAS"
+  },
+  {
+   "divipola": "20550",
+   "id": 421,
+   "nombre": "PELAYA"
+  },
+  {
+   "divipola": "20570",
+   "id": 422,
+   "nombre": "PUEBLO BELLO"
+  },
+  {
+   "divipola": "20614",
+   "id": 423,
+   "nombre": "RÍO DE ORO"
+  },
+  {
+   "divipola": "20621",
+   "id": 424,
+   "nombre": "LA PAZ"
+  },
+  {
+   "divipola": "20710",
+   "id": 425,
+   "nombre": "SAN ALBERTO"
+  },
+  {
+   "divipola": "20750",
+   "id": 426,
+   "nombre": "SAN DIEGO"
+  },
+  {
+   "divipola": "20770",
+   "id": 427,
+   "nombre": "SAN MARTÍN"
+  },
+  {
+   "divipola": "20787",
+   "id": 428,
+   "nombre": "TAMALAMEQUE"
+  }
+ ],
+ "14": [
+  {
+   "divipola": "27001",
+   "id": 575,
+   "nombre": "QUIBDÓ"
+  },
+  {
+   "divipola": "27006",
+   "id": 576,
+   "nombre": "ACANDÍ"
+  },
+  {
+   "divipola": "27025",
+   "id": 577,
+   "nombre": "ALTO BAUDÓ"
+  },
+  {
+   "divipola": "27050",
+   "id": 578,
+   "nombre": "ATRATO"
+  },
+  {
+   "divipola": "27073",
+   "id": 579,
+   "nombre": "BAGADÓ"
+  },
+  {
+   "divipola": "27075",
+   "id": 580,
+   "nombre": "BAHÍA SOLANO"
+  },
+  {
+   "divipola": "27077",
+   "id": 581,
+   "nombre": "BAJO BAUDÓ"
+  },
+  {
+   "divipola": "27099",
+   "id": 582,
+   "nombre": "BOJAYÁ"
+  },
+  {
+   "divipola": "27135",
+   "id": 583,
+   "nombre": "EL CANTÓN DEL SAN PABLO"
+  },
+  {
+   "divipola": "27150",
+   "id": 584,
+   "nombre": "CARMEN DEL DARIÉN"
+  },
+  {
+   "divipola": "27160",
+   "id": 585,
+   "nombre": "CÉRTEGUI"
+  },
+  {
+   "divipola": "27205",
+   "id": 586,
+   "nombre": "CONDOTO"
+  },
+  {
+   "divipola": "27245",
+   "id": 587,
+   "nombre": "EL CARMEN DE ATRATO"
+  },
+  {
+   "divipola": "27250",
+   "id": 588,
+   "nombre": "EL LITORAL DEL SAN JUAN"
+  },
+  {
+   "divipola": "27361",
+   "id": 589,
+   "nombre": "ISTMINA"
+  },
+  {
+   "divipola": "27372",
+   "id": 590,
+   "nombre": "JURADÓ"
+  },
+  {
+   "divipola": "27413",
+   "id": 591,
+   "nombre": "LLORÓ"
+  },
+  {
+   "divipola": "27425",
+   "id": 592,
+   "nombre": "MEDIO ATRATO"
+  },
+  {
+   "divipola": "27430",
+   "id": 593,
+   "nombre": "MEDIO BAUDÓ"
+  },
+  {
+   "divipola": "27450",
+   "id": 594,
+   "nombre": "MEDIO SAN JUAN"
+  },
+  {
+   "divipola": "27491",
+   "id": 595,
+   "nombre": "NÓVITA"
+  },
+  {
+   "divipola": "27495",
+   "id": 596,
+   "nombre": "NUQUÍ"
+  },
+  {
+   "divipola": "27580",
+   "id": 597,
+   "nombre": "RÍO IRÓ"
+  },
+  {
+   "divipola": "27600",
+   "id": 598,
+   "nombre": "RÍO QUITO"
+  },
+  {
+   "divipola": "27615",
+   "id": 599,
+   "nombre": "RIOSUCIO"
+  },
+  {
+   "divipola": "27660",
+   "id": 600,
+   "nombre": "SAN JOSÉ DEL PALMAR"
+  },
+  {
+   "divipola": "27745",
+   "id": 601,
+   "nombre": "SIPÍ"
+  },
+  {
+   "divipola": "27787",
+   "id": 602,
+   "nombre": "TADÓ"
+  },
+  {
+   "divipola": "27800",
+   "id": 603,
+   "nombre": "UNGUÍA"
+  },
+  {
+   "divipola": "27810",
+   "id": 604,
+   "nombre": "UNIÓN PANAMERICANA"
+  }
+ ],
+ "15": [
+  {
+   "divipola": "23001",
+   "id": 429,
+   "nombre": "MONTERÍA"
+  },
+  {
+   "divipola": "23068",
+   "id": 430,
+   "nombre": "AYAPEL"
+  },
+  {
+   "divipola": "23079",
+   "id": 431,
+   "nombre": "BUENAVISTA"
+  },
+  {
+   "divipola": "23090",
+   "id": 432,
+   "nombre": "CANALETE"
+  },
+  {
+   "divipola": "23162",
+   "id": 433,
+   "nombre": "CERETÉ"
+  },
+  {
+   "divipola": "23168",
+   "id": 434,
+   "nombre": "CHIMÁ"
+  },
+  {
+   "divipola": "23182",
+   "id": 435,
+   "nombre": "CHINÚ"
+  },
+  {
+   "divipola": "23189",
+   "id": 436,
+   "nombre": "CIÉNAGA DE ORO"
+  },
+  {
+   "divipola": "23300",
+   "id": 437,
+   "nombre": "COTORRA"
+  },
+  {
+   "divipola": "23350",
+   "id": 438,
+   "nombre": "LA APARTADA"
+  },
+  {
+   "divipola": "23417",
+   "id": 439,
+   "nombre": "LORICA"
+  },
+  {
+   "divipola": "23419",
+   "id": 440,
+   "nombre": "LOS CÓRDOBAS"
+  },
+  {
+   "divipola": "23464",
+   "id": 441,
+   "nombre": "MOMIL"
+  },
+  {
+   "divipola": "23466",
+   "id": 442,
+   "nombre": "MONTELÍBANO"
+  },
+  {
+   "divipola": "23500",
+   "id": 443,
+   "nombre": "MOÑITOS"
+  },
+  {
+   "divipola": "23555",
+   "id": 444,
+   "nombre": "PLANETA RICA"
+  },
+  {
+   "divipola": "23570",
+   "id": 445,
+   "nombre": "PUEBLO NUEVO"
+  },
+  {
+   "divipola": "23574",
+   "id": 446,
+   "nombre": "PUERTO ESCONDIDO"
+  },
+  {
+   "divipola": "23580",
+   "id": 447,
+   "nombre": "PUERTO LIBERTADOR"
+  },
+  {
+   "divipola": "23586",
+   "id": 448,
+   "nombre": "PURÍSIMA DE LA CONCEPCIÓN"
+  },
+  {
+   "divipola": "23660",
+   "id": 449,
+   "nombre": "SAHAGÚN"
+  },
+  {
+   "divipola": "23670",
+   "id": 450,
+   "nombre": "SAN ANDRÉS DE SOTAVENTO"
+  },
+  {
+   "divipola": "23672",
+   "id": 451,
+   "nombre": "SAN ANTERO"
+  },
+  {
+   "divipola": "23675",
+   "id": 452,
+   "nombre": "SAN BERNARDO DEL VIENTO"
+  },
+  {
+   "divipola": "23678",
+   "id": 453,
+   "nombre": "SAN CARLOS"
+  },
+  {
+   "divipola": "23682",
+   "id": 454,
+   "nombre": "SAN JOSÉ DE URÉ"
+  },
+  {
+   "divipola": "23686",
+   "id": 455,
+   "nombre": "SAN PELAYO"
+  },
+  {
+   "divipola": "23807",
+   "id": 456,
+   "nombre": "TIERRALTA"
+  },
+  {
+   "divipola": "23815",
+   "id": 457,
+   "nombre": "TUCHÍN"
+  },
+  {
+   "divipola": "23855",
+   "id": 458,
+   "nombre": "VALENCIA"
+  }
+ ],
+ "16": [
+  {
+   "divipola": "25001",
+   "id": 459,
+   "nombre": "AGUA DE DIOS"
+  },
+  {
+   "divipola": "25019",
+   "id": 460,
+   "nombre": "ALBÁN"
+  },
+  {
+   "divipola": "25035",
+   "id": 461,
+   "nombre": "ANAPOIMA"
+  },
+  {
+   "divipola": "25040",
+   "id": 462,
+   "nombre": "ANOLAIMA"
+  },
+  {
+   "divipola": "25053",
+   "id": 463,
+   "nombre": "ARBELÁEZ"
+  },
+  {
+   "divipola": "25086",
+   "id": 464,
+   "nombre": "BELTRÁN"
+  },
+  {
+   "divipola": "25095",
+   "id": 465,
+   "nombre": "BITUIMA"
+  },
+  {
+   "divipola": "25099",
+   "id": 466,
+   "nombre": "BOJACÁ"
+  },
+  {
+   "divipola": "25120",
+   "id": 467,
+   "nombre": "CABRERA"
+  },
+  {
+   "divipola": "25123",
+   "id": 468,
+   "nombre": "CACHIPAY"
+  },
+  {
+   "divipola": "25126",
+   "id": 469,
+   "nombre": "CAJICÁ"
+  },
+  {
+   "divipola": "25148",
+   "id": 470,
+   "nombre": "CAPARRAPÍ"
+  },
+  {
+   "divipola": "25151",
+   "id": 471,
+   "nombre": "CÁQUEZA"
+  },
+  {
+   "divipola": "25154",
+   "id": 472,
+   "nombre": "CARMEN DE CARUPA"
+  },
+  {
+   "divipola": "25168",
+   "id": 473,
+   "nombre": "CHAGUANÍ"
+  },
+  {
+   "divipola": "25175",
+   "id": 474,
+   "nombre": "CHÍA"
+  },
+  {
+   "divipola": "25178",
+   "id": 475,
+   "nombre": "CHIPAQUE"
+  },
+  {
+   "divipola": "25181",
+   "id": 476,
+   "nombre": "CHOACHÍ"
+  },
+  {
+   "divipola": "25183",
+   "id": 477,
+   "nombre": "CHOCONTÁ"
+  },
+  {
+   "divipola": "25200",
+   "id": 478,
+   "nombre": "COGUA"
+  },
+  {
+   "divipola": "25214",
+   "id": 479,
+   "nombre": "COTA"
+  },
+  {
+   "divipola": "25224",
+   "id": 480,
+   "nombre": "CUCUNUBÁ"
+  },
+  {
+   "divipola": "25245",
+   "id": 481,
+   "nombre": "EL COLEGIO"
+  },
+  {
+   "divipola": "25258",
+   "id": 482,
+   "nombre": "EL PEÑÓN"
+  },
+  {
+   "divipola": "25260",
+   "id": 483,
+   "nombre": "EL ROSAL"
+  },
+  {
+   "divipola": "25269",
+   "id": 484,
+   "nombre": "FACATATIVÁ"
+  },
+  {
+   "divipola": "25279",
+   "id": 485,
+   "nombre": "FÓMEQUE"
+  },
+  {
+   "divipola": "25281",
+   "id": 486,
+   "nombre": "FOSCA"
+  },
+  {
+   "divipola": "25286",
+   "id": 487,
+   "nombre": "FUNZA"
+  },
+  {
+   "divipola": "25288",
+   "id": 488,
+   "nombre": "FÚQUENE"
+  },
+  {
+   "divipola": "25290",
+   "id": 489,
+   "nombre": "FUSAGASUGÁ"
+  },
+  {
+   "divipola": "25293",
+   "id": 490,
+   "nombre": "GACHALÁ"
+  },
+  {
+   "divipola": "25295",
+   "id": 491,
+   "nombre": "GACHANCIPÁ"
+  },
+  {
+   "divipola": "25297",
+   "id": 492,
+   "nombre": "GACHETÁ"
+  },
+  {
+   "divipola": "25299",
+   "id": 493,
+   "nombre": "GAMA"
+  },
+  {
+   "divipola": "25307",
+   "id": 494,
+   "nombre": "GIRARDOT"
+  },
+  {
+   "divipola": "25312",
+   "id": 495,
+   "nombre": "GRANADA"
+  },
+  {
+   "divipola": "25317",
+   "id": 496,
+   "nombre": "GUACHETÁ"
+  },
+  {
+   "divipola": "25320",
+   "id": 497,
+   "nombre": "GUADUAS"
+  },
+  {
+   "divipola": "25322",
+   "id": 498,
+   "nombre": "GUASCA"
+  },
+  {
+   "divipola": "25324",
+   "id": 499,
+   "nombre": "GUATAQUÍ"
+  },
+  {
+   "divipola": "25326",
+   "id": 500,
+   "nombre": "GUATAVITA"
+  },
+  {
+   "divipola": "25328",
+   "id": 501,
+   "nombre": "GUAYABAL DE SÍQUIMA"
+  },
+  {
+   "divipola": "25335",
+   "id": 502,
+   "nombre": "GUAYABETAL"
+  },
+  {
+   "divipola": "25339",
+   "id": 503,
+   "nombre": "GUTIÉRREZ"
+  },
+  {
+   "divipola": "25368",
+   "id": 504,
+   "nombre": "JERUSALÉN"
+  },
+  {
+   "divipola": "25372",
+   "id": 505,
+   "nombre": "JUNÍN"
+  },
+  {
+   "divipola": "25377",
+   "id": 506,
+   "nombre": "LA CALERA"
+  },
+  {
+   "divipola": "25386",
+   "id": 507,
+   "nombre": "LA MESA"
+  },
+  {
+   "divipola": "25394",
+   "id": 508,
+   "nombre": "LA PALMA"
+  },
+  {
+   "divipola": "25398",
+   "id": 509,
+   "nombre": "LA PEÑA"
+  },
+  {
+   "divipola": "25402",
+   "id": 510,
+   "nombre": "LA VEGA"
+  },
+  {
+   "divipola": "25407",
+   "id": 511,
+   "nombre": "LENGUAZAQUE"
+  },
+  {
+   "divipola": "25426",
+   "id": 512,
+   "nombre": "MACHETÁ"
+  },
+  {
+   "divipola": "25430",
+   "id": 513,
+   "nombre": "MADRID"
+  },
+  {
+   "divipola": "25436",
+   "id": 514,
+   "nombre": "MANTA"
+  },
+  {
+   "divipola": "25438",
+   "id": 515,
+   "nombre": "MEDINA"
+  },
+  {
+   "divipola": "25473",
+   "id": 516,
+   "nombre": "MOSQUERA"
+  },
+  {
+   "divipola": "25483",
+   "id": 517,
+   "nombre": "NARIÑO"
+  },
+  {
+   "divipola": "25486",
+   "id": 518,
+   "nombre": "NEMOCÓN"
+  },
+  {
+   "divipola": "25488",
+   "id": 519,
+   "nombre": "NILO"
+  },
+  {
+   "divipola": "25489",
+   "id": 520,
+   "nombre": "NIMAIMA"
+  },
+  {
+   "divipola": "25491",
+   "id": 521,
+   "nombre": "NOCAIMA"
+  },
+  {
+   "divipola": "25506",
+   "id": 522,
+   "nombre": "VENECIA"
+  },
+  {
+   "divipola": "25513",
+   "id": 523,
+   "nombre": "PACHO"
+  },
+  {
+   "divipola": "25518",
+   "id": 524,
+   "nombre": "PAIME"
+  },
+  {
+   "divipola": "25524",
+   "id": 525,
+   "nombre": "PANDI"
+  },
+  {
+   "divipola": "25530",
+   "id": 526,
+   "nombre": "PARATEBUENO"
+  },
+  {
+   "divipola": "25535",
+   "id": 527,
+   "nombre": "PASCA"
+  },
+  {
+   "divipola": "25572",
+   "id": 528,
+   "nombre": "PUERTO SALGAR"
+  },
+  {
+   "divipola": "25580",
+   "id": 529,
+   "nombre": "PULÍ"
+  },
+  {
+   "divipola": "25592",
+   "id": 530,
+   "nombre": "QUEBRADANEGRA"
+  },
+  {
+   "divipola": "25594",
+   "id": 531,
+   "nombre": "QUETAME"
+  },
+  {
+   "divipola": "25596",
+   "id": 532,
+   "nombre": "QUIPILE"
+  },
+  {
+   "divipola": "25599",
+   "id": 533,
+   "nombre": "APULO"
+  },
+  {
+   "divipola": "25612",
+   "id": 534,
+   "nombre": "RICAURTE"
+  },
+  {
+   "divipola": "25645",
+   "id": 535,
+   "nombre": "SAN ANTONIO DEL TEQUENDAMA"
+  },
+  {
+   "divipola": "25649",
+   "id": 536,
+   "nombre": "SAN BERNARDO"
+  },
+  {
+   "divipola": "25653",
+   "id": 537,
+   "nombre": "SAN CAYETANO"
+  },
+  {
+   "divipola": "25658",
+   "id": 538,
+   "nombre": "SAN FRANCISCO"
+  },
+  {
+   "divipola": "25662",
+   "id": 539,
+   "nombre": "SAN JUAN DE RIOSECO"
+  },
+  {
+   "divipola": "25718",
+   "id": 540,
+   "nombre": "SASAIMA"
+  },
+  {
+   "divipola": "25736",
+   "id": 541,
+   "nombre": "SESQUILÉ"
+  },
+  {
+   "divipola": "25740",
+   "id": 542,
+   "nombre": "SIBATÉ"
+  },
+  {
+   "divipola": "25743",
+   "id": 543,
+   "nombre": "SILVANIA"
+  },
+  {
+   "divipola": "25745",
+   "id": 544,
+   "nombre": "SIMIJACA"
+  },
+  {
+   "divipola": "25754",
+   "id": 545,
+   "nombre": "SOACHA"
+  },
+  {
+   "divipola": "25758",
+   "id": 546,
+   "nombre": "SOPÓ"
+  },
+  {
+   "divipola": "25769",
+   "id": 547,
+   "nombre": "SUBACHOQUE"
+  },
+  {
+   "divipola": "25772",
+   "id": 548,
+   "nombre": "SUESCA"
+  },
+  {
+   "divipola": "25777",
+   "id": 549,
+   "nombre": "SUPATÁ"
+  },
+  {
+   "divipola": "25779",
+   "id": 550,
+   "nombre": "SUSA"
+  },
+  {
+   "divipola": "25781",
+   "id": 551,
+   "nombre": "SUTATAUSA"
+  },
+  {
+   "divipola": "25785",
+   "id": 552,
+   "nombre": "TABIO"
+  },
+  {
+   "divipola": "25793",
+   "id": 553,
+   "nombre": "TAUSA"
+  },
+  {
+   "divipola": "25797",
+   "id": 554,
+   "nombre": "TENA"
+  },
+  {
+   "divipola": "25799",
+   "id": 555,
+   "nombre": "TENJO"
+  },
+  {
+   "divipola": "25805",
+   "id": 556,
+   "nombre": "TIBACUY"
+  },
+  {
+   "divipola": "25807",
+   "id": 557,
+   "nombre": "TIBIRITA"
+  },
+  {
+   "divipola": "25815",
+   "id": 558,
+   "nombre": "TOCAIMA"
+  },
+  {
+   "divipola": "25817",
+   "id": 559,
+   "nombre": "TOCANCIPÁ"
+  },
+  {
+   "divipola": "25823",
+   "id": 560,
+   "nombre": "TOPAIPÍ"
+  },
+  {
+   "divipola": "25839",
+   "id": 561,
+   "nombre": "UBALÁ"
+  },
+  {
+   "divipola": "25841",
+   "id": 562,
+   "nombre": "UBAQUE"
+  },
+  {
+   "divipola": "25843",
+   "id": 563,
+   "nombre": "VILLA DE SAN DIEGO DE UBATÉ"
+  },
+  {
+   "divipola": "25845",
+   "id": 564,
+   "nombre": "UNE"
+  },
+  {
+   "divipola": "25851",
+   "id": 565,
+   "nombre": "ÚTICA"
+  },
+  {
+   "divipola": "25862",
+   "id": 566,
+   "nombre": "VERGARA"
+  },
+  {
+   "divipola": "25867",
+   "id": 567,
+   "nombre": "VIANÍ"
+  },
+  {
+   "divipola": "25871",
+   "id": 568,
+   "nombre": "VILLAGÓMEZ"
+  },
+  {
+   "divipola": "25873",
+   "id": 569,
+   "nombre": "VILLAPINZÓN"
+  },
+  {
+   "divipola": "25875",
+   "id": 570,
+   "nombre": "VILLETA"
+  },
+  {
+   "divipola": "25878",
+   "id": 571,
+   "nombre": "VIOTÁ"
+  },
+  {
+   "divipola": "25885",
+   "id": 572,
+   "nombre": "YACOPÍ"
+  },
+  {
+   "divipola": "25898",
+   "id": 573,
+   "nombre": "ZIPACÓN"
+  },
+  {
+   "divipola": "25899",
+   "id": 574,
+   "nombre": "ZIPAQUIRÁ"
+  }
+ ],
+ "17": [
+  {
+   "divipola": "94001",
+   "id": 1100,
+   "nombre": "INÍRIDA"
+  },
+  {
+   "divipola": "94343",
+   "id": 1101,
+   "nombre": "BARRANCOMINAS"
+  },
+  {
+   "divipola": "94883",
+   "id": 1102,
+   "nombre": "SAN FELIPE"
+  },
+  {
+   "divipola": "94884",
+   "id": 1103,
+   "nombre": "PUERTO COLOMBIA"
+  },
+  {
+   "divipola": "94885",
+   "id": 1104,
+   "nombre": "LA GUADALUPE"
+  },
+  {
+   "divipola": "94886",
+   "id": 1105,
+   "nombre": "CACAHUAL"
+  },
+  {
+   "divipola": "94887",
+   "id": 1106,
+   "nombre": "PANA PANA"
+  },
+  {
+   "divipola": "94888",
+   "id": 1107,
+   "nombre": "MORICHAL"
+  }
+ ],
+ "18": [
+  {
+   "divipola": "95001",
+   "id": 1108,
+   "nombre": "SAN JOSÉ DEL GUAVIARE"
+  },
+  {
+   "divipola": "95015",
+   "id": 1109,
+   "nombre": "CALAMAR"
+  },
+  {
+   "divipola": "95025",
+   "id": 1110,
+   "nombre": "EL RETORNO"
+  },
+  {
+   "divipola": "95200",
+   "id": 1111,
+   "nombre": "MIRAFLORES"
+  }
+ ],
+ "19": [
+  {
+   "divipola": "41001",
+   "id": 605,
+   "nombre": "NEIVA"
+  },
+  {
+   "divipola": "41006",
+   "id": 606,
+   "nombre": "ACEVEDO"
+  },
+  {
+   "divipola": "41013",
+   "id": 607,
+   "nombre": "AGRADO"
+  },
+  {
+   "divipola": "41016",
+   "id": 608,
+   "nombre": "AIPE"
+  },
+  {
+   "divipola": "41020",
+   "id": 609,
+   "nombre": "ALGECIRAS"
+  },
+  {
+   "divipola": "41026",
+   "id": 610,
+   "nombre": "ALTAMIRA"
+  },
+  {
+   "divipola": "41078",
+   "id": 611,
+   "nombre": "BARAYA"
+  },
+  {
+   "divipola": "41132",
+   "id": 612,
+   "nombre": "CAMPOALEGRE"
+  },
+  {
+   "divipola": "41206",
+   "id": 613,
+   "nombre": "COLOMBIA"
+  },
+  {
+   "divipola": "41244",
+   "id": 614,
+   "nombre": "ELÍAS"
+  },
+  {
+   "divipola": "41298",
+   "id": 615,
+   "nombre": "GARZÓN"
+  },
+  {
+   "divipola": "41306",
+   "id": 616,
+   "nombre": "GIGANTE"
+  },
+  {
+   "divipola": "41319",
+   "id": 617,
+   "nombre": "GUADALUPE"
+  },
+  {
+   "divipola": "41349",
+   "id": 618,
+   "nombre": "HOBO"
+  },
+  {
+   "divipola": "41357",
+   "id": 619,
+   "nombre": "ÍQUIRA"
+  },
+  {
+   "divipola": "41359",
+   "id": 620,
+   "nombre": "ISNOS"
+  },
+  {
+   "divipola": "41378",
+   "id": 621,
+   "nombre": "LA ARGENTINA"
+  },
+  {
+   "divipola": "41396",
+   "id": 622,
+   "nombre": "LA PLATA"
+  },
+  {
+   "divipola": "41483",
+   "id": 623,
+   "nombre": "NÁTAGA"
+  },
+  {
+   "divipola": "41503",
+   "id": 624,
+   "nombre": "OPORAPA"
+  },
+  {
+   "divipola": "41518",
+   "id": 625,
+   "nombre": "PAICOL"
+  },
+  {
+   "divipola": "41524",
+   "id": 626,
+   "nombre": "PALERMO"
+  },
+  {
+   "divipola": "41530",
+   "id": 627,
+   "nombre": "PALESTINA"
+  },
+  {
+   "divipola": "41548",
+   "id": 628,
+   "nombre": "PITAL"
+  },
+  {
+   "divipola": "41551",
+   "id": 629,
+   "nombre": "PITALITO"
+  },
+  {
+   "divipola": "41615",
+   "id": 630,
+   "nombre": "RIVERA"
+  },
+  {
+   "divipola": "41660",
+   "id": 631,
+   "nombre": "SALADOBLANCO"
+  },
+  {
+   "divipola": "41668",
+   "id": 632,
+   "nombre": "SAN AGUSTÍN"
+  },
+  {
+   "divipola": "41676",
+   "id": 633,
+   "nombre": "SANTA MARÍA"
+  },
+  {
+   "divipola": "41770",
+   "id": 634,
+   "nombre": "SUAZA"
+  },
+  {
+   "divipola": "41791",
+   "id": 635,
+   "nombre": "TARQUI"
+  },
+  {
+   "divipola": "41797",
+   "id": 636,
+   "nombre": "TESALIA"
+  },
+  {
+   "divipola": "41799",
+   "id": 637,
+   "nombre": "TELLO"
+  },
+  {
+   "divipola": "41801",
+   "id": 638,
+   "nombre": "TERUEL"
+  },
+  {
+   "divipola": "41807",
+   "id": 639,
+   "nombre": "TIMANÁ"
+  },
+  {
+   "divipola": "41872",
+   "id": 640,
+   "nombre": "VILLAVIEJA"
+  },
+  {
+   "divipola": "41885",
+   "id": 641,
+   "nombre": "YAGUARÁ"
+  }
+ ],
+ "2": [
+  {
+   "divipola": "05001",
+   "id": 1,
+   "nombre": "MEDELLÍN"
+  },
+  {
+   "divipola": "05002",
+   "id": 2,
+   "nombre": "ABEJORRAL"
+  },
+  {
+   "divipola": "05004",
+   "id": 3,
+   "nombre": "ABRIAQUÍ"
+  },
+  {
+   "divipola": "05021",
+   "id": 4,
+   "nombre": "ALEJANDRÍA"
+  },
+  {
+   "divipola": "05030",
+   "id": 5,
+   "nombre": "AMAGÁ"
+  },
+  {
+   "divipola": "05031",
+   "id": 6,
+   "nombre": "AMALFI"
+  },
+  {
+   "divipola": "05034",
+   "id": 7,
+   "nombre": "ANDES"
+  },
+  {
+   "divipola": "05036",
+   "id": 8,
+   "nombre": "ANGELÓPOLIS"
+  },
+  {
+   "divipola": "05038",
+   "id": 9,
+   "nombre": "ANGOSTURA"
+  },
+  {
+   "divipola": "05040",
+   "id": 10,
+   "nombre": "ANORÍ"
+  },
+  {
+   "divipola": "05042",
+   "id": 11,
+   "nombre": "SANTA FÉ DE ANTIOQUIA"
+  },
+  {
+   "divipola": "05044",
+   "id": 12,
+   "nombre": "ANZÁ"
+  },
+  {
+   "divipola": "05045",
+   "id": 13,
+   "nombre": "APARTADÓ"
+  },
+  {
+   "divipola": "05051",
+   "id": 14,
+   "nombre": "ARBOLETES"
+  },
+  {
+   "divipola": "05055",
+   "id": 15,
+   "nombre": "ARGELIA"
+  },
+  {
+   "divipola": "05059",
+   "id": 16,
+   "nombre": "ARMENIA"
+  },
+  {
+   "divipola": "05079",
+   "id": 17,
+   "nombre": "BARBOSA"
+  },
+  {
+   "divipola": "05086",
+   "id": 18,
+   "nombre": "BELMIRA"
+  },
+  {
+   "divipola": "05088",
+   "id": 19,
+   "nombre": "BELLO"
+  },
+  {
+   "divipola": "05091",
+   "id": 20,
+   "nombre": "BETANIA"
+  },
+  {
+   "divipola": "05093",
+   "id": 21,
+   "nombre": "BETULIA"
+  },
+  {
+   "divipola": "05101",
+   "id": 22,
+   "nombre": "CIUDAD BOLÍVAR"
+  },
+  {
+   "divipola": "05107",
+   "id": 23,
+   "nombre": "BRICEÑO"
+  },
+  {
+   "divipola": "05113",
+   "id": 24,
+   "nombre": "BURITICÁ"
+  },
+  {
+   "divipola": "05120",
+   "id": 25,
+   "nombre": "CÁCERES"
+  },
+  {
+   "divipola": "05125",
+   "id": 26,
+   "nombre": "CAICEDO"
+  },
+  {
+   "divipola": "05129",
+   "id": 27,
+   "nombre": "CALDAS"
+  },
+  {
+   "divipola": "05134",
+   "id": 28,
+   "nombre": "CAMPAMENTO"
+  },
+  {
+   "divipola": "05138",
+   "id": 29,
+   "nombre": "CAÑASGORDAS"
+  },
+  {
+   "divipola": "05142",
+   "id": 30,
+   "nombre": "CARACOLÍ"
+  },
+  {
+   "divipola": "05145",
+   "id": 31,
+   "nombre": "CARAMANTA"
+  },
+  {
+   "divipola": "05147",
+   "id": 32,
+   "nombre": "CAREPA"
+  },
+  {
+   "divipola": "05148",
+   "id": 33,
+   "nombre": "EL CARMEN DE VIBORAL"
+  },
+  {
+   "divipola": "05150",
+   "id": 34,
+   "nombre": "CAROLINA"
+  },
+  {
+   "divipola": "05154",
+   "id": 35,
+   "nombre": "CAUCASIA"
+  },
+  {
+   "divipola": "05172",
+   "id": 36,
+   "nombre": "CHIGORODÓ"
+  },
+  {
+   "divipola": "05190",
+   "id": 37,
+   "nombre": "CISNEROS"
+  },
+  {
+   "divipola": "05197",
+   "id": 38,
+   "nombre": "COCORNÁ"
+  },
+  {
+   "divipola": "05206",
+   "id": 39,
+   "nombre": "CONCEPCIÓN"
+  },
+  {
+   "divipola": "05209",
+   "id": 40,
+   "nombre": "CONCORDIA"
+  },
+  {
+   "divipola": "05212",
+   "id": 41,
+   "nombre": "COPACABANA"
+  },
+  {
+   "divipola": "05234",
+   "id": 42,
+   "nombre": "DABEIBA"
+  },
+  {
+   "divipola": "05237",
+   "id": 43,
+   "nombre": "DONMATÍAS"
+  },
+  {
+   "divipola": "05240",
+   "id": 44,
+   "nombre": "EBÉJICO"
+  },
+  {
+   "divipola": "05250",
+   "id": 45,
+   "nombre": "EL BAGRE"
+  },
+  {
+   "divipola": "05264",
+   "id": 46,
+   "nombre": "ENTRERRÍOS"
+  },
+  {
+   "divipola": "05266",
+   "id": 47,
+   "nombre": "ENVIGADO"
+  },
+  {
+   "divipola": "05282",
+   "id": 48,
+   "nombre": "FREDONIA"
+  },
+  {
+   "divipola": "05284",
+   "id": 49,
+   "nombre": "FRONTINO"
+  },
+  {
+   "divipola": "05306",
+   "id": 50,
+   "nombre": "GIRALDO"
+  },
+  {
+   "divipola": "05308",
+   "id": 51,
+   "nombre": "GIRARDOTA"
+  },
+  {
+   "divipola": "05310",
+   "id": 52,
+   "nombre": "GÓMEZ PLATA"
+  },
+  {
+   "divipola": "05313",
+   "id": 53,
+   "nombre": "GRANADA"
+  },
+  {
+   "divipola": "05315",
+   "id": 54,
+   "nombre": "GUADALUPE"
+  },
+  {
+   "divipola": "05318",
+   "id": 55,
+   "nombre": "GUARNE"
+  },
+  {
+   "divipola": "05321",
+   "id": 56,
+   "nombre": "GUATAPÉ"
+  },
+  {
+   "divipola": "05347",
+   "id": 57,
+   "nombre": "HELICONIA"
+  },
+  {
+   "divipola": "05353",
+   "id": 58,
+   "nombre": "HISPANIA"
+  },
+  {
+   "divipola": "05360",
+   "id": 59,
+   "nombre": "ITAGÜÍ"
+  },
+  {
+   "divipola": "05361",
+   "id": 60,
+   "nombre": "ITUANGO"
+  },
+  {
+   "divipola": "05364",
+   "id": 61,
+   "nombre": "JARDÍN"
+  },
+  {
+   "divipola": "05368",
+   "id": 62,
+   "nombre": "JERICÓ"
+  },
+  {
+   "divipola": "05376",
+   "id": 63,
+   "nombre": "LA CEJA"
+  },
+  {
+   "divipola": "05380",
+   "id": 64,
+   "nombre": "LA ESTRELLA"
+  },
+  {
+   "divipola": "05390",
+   "id": 65,
+   "nombre": "LA PINTADA"
+  },
+  {
+   "divipola": "05400",
+   "id": 66,
+   "nombre": "LA UNIÓN"
+  },
+  {
+   "divipola": "05411",
+   "id": 67,
+   "nombre": "LIBORINA"
+  },
+  {
+   "divipola": "05425",
+   "id": 68,
+   "nombre": "MACEO"
+  },
+  {
+   "divipola": "05440",
+   "id": 69,
+   "nombre": "MARINILLA"
+  },
+  {
+   "divipola": "05467",
+   "id": 70,
+   "nombre": "MONTEBELLO"
+  },
+  {
+   "divipola": "05475",
+   "id": 71,
+   "nombre": "MURINDÓ"
+  },
+  {
+   "divipola": "05480",
+   "id": 72,
+   "nombre": "MUTATÁ"
+  },
+  {
+   "divipola": "05483",
+   "id": 73,
+   "nombre": "NARIÑO"
+  },
+  {
+   "divipola": "05490",
+   "id": 74,
+   "nombre": "NECOCLÍ"
+  },
+  {
+   "divipola": "05495",
+   "id": 75,
+   "nombre": "NECHÍ"
+  },
+  {
+   "divipola": "05501",
+   "id": 76,
+   "nombre": "OLAYA"
+  },
+  {
+   "divipola": "05541",
+   "id": 77,
+   "nombre": "PEÑOL"
+  },
+  {
+   "divipola": "05543",
+   "id": 78,
+   "nombre": "PEQUE"
+  },
+  {
+   "divipola": "05576",
+   "id": 79,
+   "nombre": "PUEBLORRICO"
+  },
+  {
+   "divipola": "05579",
+   "id": 80,
+   "nombre": "PUERTO BERRÍO"
+  },
+  {
+   "divipola": "05585",
+   "id": 81,
+   "nombre": "PUERTO NARE"
+  },
+  {
+   "divipola": "05591",
+   "id": 82,
+   "nombre": "PUERTO TRIUNFO"
+  },
+  {
+   "divipola": "05604",
+   "id": 83,
+   "nombre": "REMEDIOS"
+  },
+  {
+   "divipola": "05607",
+   "id": 84,
+   "nombre": "RETIRO"
+  },
+  {
+   "divipola": "05615",
+   "id": 85,
+   "nombre": "RIONEGRO"
+  },
+  {
+   "divipola": "05628",
+   "id": 86,
+   "nombre": "SABANALARGA"
+  },
+  {
+   "divipola": "05631",
+   "id": 87,
+   "nombre": "SABANETA"
+  },
+  {
+   "divipola": "05642",
+   "id": 88,
+   "nombre": "SALGAR"
+  },
+  {
+   "divipola": "05647",
+   "id": 89,
+   "nombre": "SAN ANDRÉS DE CUERQUÍA"
+  },
+  {
+   "divipola": "05649",
+   "id": 90,
+   "nombre": "SAN CARLOS"
+  },
+  {
+   "divipola": "05652",
+   "id": 91,
+   "nombre": "SAN FRANCISCO"
+  },
+  {
+   "divipola": "05656",
+   "id": 92,
+   "nombre": "SAN JERÓNIMO"
+  },
+  {
+   "divipola": "05658",
+   "id": 93,
+   "nombre": "SAN JOSÉ DE LA MONTAÑA"
+  },
+  {
+   "divipola": "05659",
+   "id": 94,
+   "nombre": "SAN JUAN DE URABÁ"
+  },
+  {
+   "divipola": "05660",
+   "id": 95,
+   "nombre": "SAN LUIS"
+  },
+  {
+   "divipola": "05664",
+   "id": 96,
+   "nombre": "SAN PEDRO DE LOS MILAGROS"
+  },
+  {
+   "divipola": "05665",
+   "id": 97,
+   "nombre": "SAN PEDRO DE URABÁ"
+  },
+  {
+   "divipola": "05667",
+   "id": 98,
+   "nombre": "SAN RAFAEL"
+  },
+  {
+   "divipola": "05670",
+   "id": 99,
+   "nombre": "SAN ROQUE"
+  },
+  {
+   "divipola": "05674",
+   "id": 100,
+   "nombre": "SAN VICENTE FERRER"
+  },
+  {
+   "divipola": "05679",
+   "id": 101,
+   "nombre": "SANTA BÁRBARA"
+  },
+  {
+   "divipola": "05686",
+   "id": 102,
+   "nombre": "SANTA ROSA DE OSOS"
+  },
+  {
+   "divipola": "05690",
+   "id": 103,
+   "nombre": "SANTO DOMINGO"
+  },
+  {
+   "divipola": "05697",
+   "id": 104,
+   "nombre": "EL SANTUARIO"
+  },
+  {
+   "divipola": "05736",
+   "id": 105,
+   "nombre": "SEGOVIA"
+  },
+  {
+   "divipola": "05756",
+   "id": 106,
+   "nombre": "SONSÓN"
+  },
+  {
+   "divipola": "05761",
+   "id": 107,
+   "nombre": "SOPETRÁN"
+  },
+  {
+   "divipola": "05789",
+   "id": 108,
+   "nombre": "TÁMESIS"
+  },
+  {
+   "divipola": "05790",
+   "id": 109,
+   "nombre": "TARAZÁ"
+  },
+  {
+   "divipola": "05792",
+   "id": 110,
+   "nombre": "TARSO"
+  },
+  {
+   "divipola": "05809",
+   "id": 111,
+   "nombre": "TITIRIBÍ"
+  },
+  {
+   "divipola": "05819",
+   "id": 112,
+   "nombre": "TOLEDO"
+  },
+  {
+   "divipola": "05837",
+   "id": 113,
+   "nombre": "TURBO"
+  },
+  {
+   "divipola": "05842",
+   "id": 114,
+   "nombre": "URAMITA"
+  },
+  {
+   "divipola": "05847",
+   "id": 115,
+   "nombre": "URRAO"
+  },
+  {
+   "divipola": "05854",
+   "id": 116,
+   "nombre": "VALDIVIA"
+  },
+  {
+   "divipola": "05856",
+   "id": 117,
+   "nombre": "VALPARAÍSO"
+  },
+  {
+   "divipola": "05858",
+   "id": 118,
+   "nombre": "VEGACHÍ"
+  },
+  {
+   "divipola": "05861",
+   "id": 119,
+   "nombre": "VENECIA"
+  },
+  {
+   "divipola": "05873",
+   "id": 120,
+   "nombre": "VIGÍA DEL FUERTE"
+  },
+  {
+   "divipola": "05885",
+   "id": 121,
+   "nombre": "YALÍ"
+  },
+  {
+   "divipola": "05887",
+   "id": 122,
+   "nombre": "YARUMAL"
+  },
+  {
+   "divipola": "05890",
+   "id": 123,
+   "nombre": "YOLOMBÓ"
+  },
+  {
+   "divipola": "05893",
+   "id": 124,
+   "nombre": "YONDÓ"
+  },
+  {
+   "divipola": "05895",
+   "id": 125,
+   "nombre": "ZARAGOZA"
+  }
+ ],
+ "20": [
+  {
+   "divipola": "44001",
+   "id": 642,
+   "nombre": "RIOHACHA"
+  },
+  {
+   "divipola": "44035",
+   "id": 643,
+   "nombre": "ALBANIA"
+  },
+  {
+   "divipola": "44078",
+   "id": 644,
+   "nombre": "BARRANCAS"
+  },
+  {
+   "divipola": "44090",
+   "id": 645,
+   "nombre": "DIBULLA"
+  },
+  {
+   "divipola": "44098",
+   "id": 646,
+   "nombre": "DISTRACCIÓN"
+  },
+  {
+   "divipola": "44110",
+   "id": 647,
+   "nombre": "EL MOLINO"
+  },
+  {
+   "divipola": "44279",
+   "id": 648,
+   "nombre": "FONSECA"
+  },
+  {
+   "divipola": "44378",
+   "id": 649,
+   "nombre": "HATONUEVO"
+  },
+  {
+   "divipola": "44420",
+   "id": 650,
+   "nombre": "LA JAGUA DEL PILAR"
+  },
+  {
+   "divipola": "44430",
+   "id": 651,
+   "nombre": "MAICAO"
+  },
+  {
+   "divipola": "44560",
+   "id": 652,
+   "nombre": "MANAURE"
+  },
+  {
+   "divipola": "44650",
+   "id": 653,
+   "nombre": "SAN JUAN DEL CESAR"
+  },
+  {
+   "divipola": "44847",
+   "id": 654,
+   "nombre": "URIBIA"
+  },
+  {
+   "divipola": "44855",
+   "id": 655,
+   "nombre": "URUMITA"
+  },
+  {
+   "divipola": "44874",
+   "id": 656,
+   "nombre": "VILLANUEVA"
+  }
+ ],
+ "21": [
+  {
+   "divipola": "47001",
+   "id": 657,
+   "nombre": "SANTA MARTA"
+  },
+  {
+   "divipola": "47030",
+   "id": 658,
+   "nombre": "ALGARROBO"
+  },
+  {
+   "divipola": "47053",
+   "id": 659,
+   "nombre": "ARACATACA"
+  },
+  {
+   "divipola": "47058",
+   "id": 660,
+   "nombre": "ARIGUANÍ"
+  },
+  {
+   "divipola": "47161",
+   "id": 661,
+   "nombre": "CERRO DE SAN ANTONIO"
+  },
+  {
+   "divipola": "47170",
+   "id": 662,
+   "nombre": "CHIVOLO"
+  },
+  {
+   "divipola": "47189",
+   "id": 663,
+   "nombre": "CIÉNAGA"
+  },
+  {
+   "divipola": "47205",
+   "id": 664,
+   "nombre": "CONCORDIA"
+  },
+  {
+   "divipola": "47245",
+   "id": 665,
+   "nombre": "EL BANCO"
+  },
+  {
+   "divipola": "47258",
+   "id": 666,
+   "nombre": "EL PIÑÓN"
+  },
+  {
+   "divipola": "47268",
+   "id": 667,
+   "nombre": "EL RETÉN"
+  },
+  {
+   "divipola": "47288",
+   "id": 668,
+   "nombre": "FUNDACIÓN"
+  },
+  {
+   "divipola": "47318",
+   "id": 669,
+   "nombre": "GUAMAL"
+  },
+  {
+   "divipola": "47460",
+   "id": 670,
+   "nombre": "NUEVA GRANADA"
+  },
+  {
+   "divipola": "47541",
+   "id": 671,
+   "nombre": "PEDRAZA"
+  },
+  {
+   "divipola": "47545",
+   "id": 672,
+   "nombre": "PIJIÑO DEL CARMEN"
+  },
+  {
+   "divipola": "47551",
+   "id": 673,
+   "nombre": "PIVIJAY"
+  },
+  {
+   "divipola": "47555",
+   "id": 674,
+   "nombre": "PLATO"
+  },
+  {
+   "divipola": "47570",
+   "id": 675,
+   "nombre": "PUEBLOVIEJO"
+  },
+  {
+   "divipola": "47605",
+   "id": 676,
+   "nombre": "REMOLINO"
+  },
+  {
+   "divipola": "47660",
+   "id": 677,
+   "nombre": "SABANAS DE SAN ÁNGEL"
+  },
+  {
+   "divipola": "47675",
+   "id": 678,
+   "nombre": "SALAMINA"
+  },
+  {
+   "divipola": "47692",
+   "id": 679,
+   "nombre": "SAN SEBASTIÁN DE BUENAVISTA"
+  },
+  {
+   "divipola": "47703",
+   "id": 680,
+   "nombre": "SAN ZENÓN"
+  },
+  {
+   "divipola": "47707",
+   "id": 681,
+   "nombre": "SANTA ANA"
+  },
+  {
+   "divipola": "47720",
+   "id": 682,
+   "nombre": "SANTA BÁRBARA DE PINTO"
+  },
+  {
+   "divipola": "47745",
+   "id": 683,
+   "nombre": "SITIONUEVO"
+  },
+  {
+   "divipola": "47798",
+   "id": 684,
+   "nombre": "TENERIFE"
+  },
+  {
+   "divipola": "47960",
+   "id": 685,
+   "nombre": "ZAPAYÁN"
+  },
+  {
+   "divipola": "47980",
+   "id": 686,
+   "nombre": "ZONA BANANERA"
+  }
+ ],
+ "22": [
+  {
+   "divipola": "50001",
+   "id": 687,
+   "nombre": "VILLAVICENCIO"
+  },
+  {
+   "divipola": "50006",
+   "id": 688,
+   "nombre": "ACACÍAS"
+  },
+  {
+   "divipola": "50110",
+   "id": 689,
+   "nombre": "BARRANCA DE UPÍA"
+  },
+  {
+   "divipola": "50124",
+   "id": 690,
+   "nombre": "CABUYARO"
+  },
+  {
+   "divipola": "50150",
+   "id": 691,
+   "nombre": "CASTILLA LA NUEVA"
+  },
+  {
+   "divipola": "50223",
+   "id": 692,
+   "nombre": "CUBARRAL"
+  },
+  {
+   "divipola": "50226",
+   "id": 693,
+   "nombre": "CUMARAL"
+  },
+  {
+   "divipola": "50245",
+   "id": 694,
+   "nombre": "EL CALVARIO"
+  },
+  {
+   "divipola": "50251",
+   "id": 695,
+   "nombre": "EL CASTILLO"
+  },
+  {
+   "divipola": "50270",
+   "id": 696,
+   "nombre": "EL DORADO"
+  },
+  {
+   "divipola": "50287",
+   "id": 697,
+   "nombre": "FUENTE DE ORO"
+  },
+  {
+   "divipola": "50313",
+   "id": 698,
+   "nombre": "GRANADA"
+  },
+  {
+   "divipola": "50318",
+   "id": 699,
+   "nombre": "GUAMAL"
+  },
+  {
+   "divipola": "50325",
+   "id": 700,
+   "nombre": "MAPIRIPÁN"
+  },
+  {
+   "divipola": "50330",
+   "id": 701,
+   "nombre": "MESETAS"
+  },
+  {
+   "divipola": "50350",
+   "id": 702,
+   "nombre": "LA MACARENA"
+  },
+  {
+   "divipola": "50370",
+   "id": 703,
+   "nombre": "URIBE"
+  },
+  {
+   "divipola": "50400",
+   "id": 704,
+   "nombre": "LEJANÍAS"
+  },
+  {
+   "divipola": "50450",
+   "id": 705,
+   "nombre": "PUERTO CONCORDIA"
+  },
+  {
+   "divipola": "50568",
+   "id": 706,
+   "nombre": "PUERTO GAITÁN"
+  },
+  {
+   "divipola": "50573",
+   "id": 707,
+   "nombre": "PUERTO LÓPEZ"
+  },
+  {
+   "divipola": "50577",
+   "id": 708,
+   "nombre": "PUERTO LLERAS"
+  },
+  {
+   "divipola": "50590",
+   "id": 709,
+   "nombre": "PUERTO RICO"
+  },
+  {
+   "divipola": "50606",
+   "id": 710,
+   "nombre": "RESTREPO"
+  },
+  {
+   "divipola": "50680",
+   "id": 711,
+   "nombre": "SAN CARLOS DE GUAROA"
+  },
+  {
+   "divipola": "50683",
+   "id": 712,
+   "nombre": "SAN JUAN DE ARAMA"
+  },
+  {
+   "divipola": "50686",
+   "id": 713,
+   "nombre": "SAN JUANITO"
+  },
+  {
+   "divipola": "50689",
+   "id": 714,
+   "nombre": "SAN MARTÍN"
+  },
+  {
+   "divipola": "50711",
+   "id": 715,
+   "nombre": "VISTAHERMOSA"
+  }
+ ],
+ "23": [
+  {
+   "divipola": "52001",
+   "id": 716,
+   "nombre": "PASTO"
+  },
+  {
+   "divipola": "52019",
+   "id": 717,
+   "nombre": "ALBÁN"
+  },
+  {
+   "divipola": "52022",
+   "id": 718,
+   "nombre": "ALDANA"
+  },
+  {
+   "divipola": "52036",
+   "id": 719,
+   "nombre": "ANCUYA"
+  },
+  {
+   "divipola": "52051",
+   "id": 720,
+   "nombre": "ARBOLEDA"
+  },
+  {
+   "divipola": "52079",
+   "id": 721,
+   "nombre": "BARBACOAS"
+  },
+  {
+   "divipola": "52083",
+   "id": 722,
+   "nombre": "BELÉN"
+  },
+  {
+   "divipola": "52110",
+   "id": 723,
+   "nombre": "BUESACO"
+  },
+  {
+   "divipola": "52203",
+   "id": 724,
+   "nombre": "COLÓN"
+  },
+  {
+   "divipola": "52207",
+   "id": 725,
+   "nombre": "CONSACÁ"
+  },
+  {
+   "divipola": "52210",
+   "id": 726,
+   "nombre": "CONTADERO"
+  },
+  {
+   "divipola": "52215",
+   "id": 727,
+   "nombre": "CÓRDOBA"
+  },
+  {
+   "divipola": "52224",
+   "id": 728,
+   "nombre": "CUASPUD CARLOSAMA"
+  },
+  {
+   "divipola": "52227",
+   "id": 729,
+   "nombre": "CUMBAL"
+  },
+  {
+   "divipola": "52233",
+   "id": 730,
+   "nombre": "CUMBITARA"
+  },
+  {
+   "divipola": "52240",
+   "id": 731,
+   "nombre": "CHACHAGÜÍ"
+  },
+  {
+   "divipola": "52250",
+   "id": 732,
+   "nombre": "EL CHARCO"
+  },
+  {
+   "divipola": "52254",
+   "id": 733,
+   "nombre": "EL PEÑOL"
+  },
+  {
+   "divipola": "52256",
+   "id": 734,
+   "nombre": "EL ROSARIO"
+  },
+  {
+   "divipola": "52258",
+   "id": 735,
+   "nombre": "EL TABLÓN DE GÓMEZ"
+  },
+  {
+   "divipola": "52260",
+   "id": 736,
+   "nombre": "EL TAMBO"
+  },
+  {
+   "divipola": "52287",
+   "id": 737,
+   "nombre": "FUNES"
+  },
+  {
+   "divipola": "52317",
+   "id": 738,
+   "nombre": "GUACHUCAL"
+  },
+  {
+   "divipola": "52320",
+   "id": 739,
+   "nombre": "GUAITARILLA"
+  },
+  {
+   "divipola": "52323",
+   "id": 740,
+   "nombre": "GUALMATÁN"
+  },
+  {
+   "divipola": "52352",
+   "id": 741,
+   "nombre": "ILES"
+  },
+  {
+   "divipola": "52354",
+   "id": 742,
+   "nombre": "IMUÉS"
+  },
+  {
+   "divipola": "52356",
+   "id": 743,
+   "nombre": "IPIALES"
+  },
+  {
+   "divipola": "52378",
+   "id": 744,
+   "nombre": "LA CRUZ"
+  },
+  {
+   "divipola": "52381",
+   "id": 745,
+   "nombre": "LA FLORIDA"
+  },
+  {
+   "divipola": "52385",
+   "id": 746,
+   "nombre": "LA LLANADA"
+  },
+  {
+   "divipola": "52390",
+   "id": 747,
+   "nombre": "LA TOLA"
+  },
+  {
+   "divipola": "52399",
+   "id": 748,
+   "nombre": "LA UNIÓN"
+  },
+  {
+   "divipola": "52405",
+   "id": 749,
+   "nombre": "LEIVA"
+  },
+  {
+   "divipola": "52411",
+   "id": 750,
+   "nombre": "LINARES"
+  },
+  {
+   "divipola": "52418",
+   "id": 751,
+   "nombre": "LOS ANDES"
+  },
+  {
+   "divipola": "52427",
+   "id": 752,
+   "nombre": "MAGÜÍ"
+  },
+  {
+   "divipola": "52435",
+   "id": 753,
+   "nombre": "MALLAMA"
+  },
+  {
+   "divipola": "52473",
+   "id": 754,
+   "nombre": "MOSQUERA"
+  },
+  {
+   "divipola": "52480",
+   "id": 755,
+   "nombre": "NARIÑO"
+  },
+  {
+   "divipola": "52490",
+   "id": 756,
+   "nombre": "OLAYA HERRERA"
+  },
+  {
+   "divipola": "52506",
+   "id": 757,
+   "nombre": "OSPINA"
+  },
+  {
+   "divipola": "52520",
+   "id": 758,
+   "nombre": "FRANCISCO PIZARRO"
+  },
+  {
+   "divipola": "52540",
+   "id": 759,
+   "nombre": "POLICARPA"
+  },
+  {
+   "divipola": "52560",
+   "id": 760,
+   "nombre": "POTOSÍ"
+  },
+  {
+   "divipola": "52565",
+   "id": 761,
+   "nombre": "PROVIDENCIA"
+  },
+  {
+   "divipola": "52573",
+   "id": 762,
+   "nombre": "PUERRES"
+  },
+  {
+   "divipola": "52585",
+   "id": 763,
+   "nombre": "PUPIALES"
+  },
+  {
+   "divipola": "52612",
+   "id": 764,
+   "nombre": "RICAURTE"
+  },
+  {
+   "divipola": "52621",
+   "id": 765,
+   "nombre": "ROBERTO PAYÁN"
+  },
+  {
+   "divipola": "52678",
+   "id": 766,
+   "nombre": "SAMANIEGO"
+  },
+  {
+   "divipola": "52683",
+   "id": 767,
+   "nombre": "SANDONÁ"
+  },
+  {
+   "divipola": "52685",
+   "id": 768,
+   "nombre": "SAN BERNARDO"
+  },
+  {
+   "divipola": "52687",
+   "id": 769,
+   "nombre": "SAN LORENZO"
+  },
+  {
+   "divipola": "52693",
+   "id": 770,
+   "nombre": "SAN PABLO"
+  },
+  {
+   "divipola": "52694",
+   "id": 771,
+   "nombre": "SAN PEDRO DE CARTAGO"
+  },
+  {
+   "divipola": "52696",
+   "id": 772,
+   "nombre": "SANTA BÁRBARA"
+  },
+  {
+   "divipola": "52699",
+   "id": 773,
+   "nombre": "SANTACRUZ"
+  },
+  {
+   "divipola": "52720",
+   "id": 774,
+   "nombre": "SAPUYES"
+  },
+  {
+   "divipola": "52786",
+   "id": 775,
+   "nombre": "TAMINANGO"
+  },
+  {
+   "divipola": "52788",
+   "id": 776,
+   "nombre": "TANGUA"
+  },
+  {
+   "divipola": "52835",
+   "id": 777,
+   "nombre": "SAN ANDRÉS DE TUMACO"
+  },
+  {
+   "divipola": "52838",
+   "id": 778,
+   "nombre": "TÚQUERRES"
+  },
+  {
+   "divipola": "52885",
+   "id": 779,
+   "nombre": "YACUANQUER"
+  }
+ ],
+ "24": [
+  {
+   "divipola": "54001",
+   "id": 780,
+   "nombre": "SAN JOSÉ DE CÚCUTA"
+  },
+  {
+   "divipola": "54003",
+   "id": 781,
+   "nombre": "ÁBREGO"
+  },
+  {
+   "divipola": "54051",
+   "id": 782,
+   "nombre": "ARBOLEDAS"
+  },
+  {
+   "divipola": "54099",
+   "id": 783,
+   "nombre": "BOCHALEMA"
+  },
+  {
+   "divipola": "54109",
+   "id": 784,
+   "nombre": "BUCARASICA"
+  },
+  {
+   "divipola": "54125",
+   "id": 785,
+   "nombre": "CÁCOTA"
+  },
+  {
+   "divipola": "54128",
+   "id": 786,
+   "nombre": "CÁCHIRA"
+  },
+  {
+   "divipola": "54172",
+   "id": 787,
+   "nombre": "CHINÁCOTA"
+  },
+  {
+   "divipola": "54174",
+   "id": 788,
+   "nombre": "CHITAGÁ"
+  },
+  {
+   "divipola": "54206",
+   "id": 789,
+   "nombre": "CONVENCIÓN"
+  },
+  {
+   "divipola": "54223",
+   "id": 790,
+   "nombre": "CUCUTILLA"
+  },
+  {
+   "divipola": "54239",
+   "id": 791,
+   "nombre": "DURANIA"
+  },
+  {
+   "divipola": "54245",
+   "id": 792,
+   "nombre": "EL CARMEN"
+  },
+  {
+   "divipola": "54250",
+   "id": 793,
+   "nombre": "EL TARRA"
+  },
+  {
+   "divipola": "54261",
+   "id": 794,
+   "nombre": "EL ZULIA"
+  },
+  {
+   "divipola": "54313",
+   "id": 795,
+   "nombre": "GRAMALOTE"
+  },
+  {
+   "divipola": "54344",
+   "id": 796,
+   "nombre": "HACARÍ"
+  },
+  {
+   "divipola": "54347",
+   "id": 797,
+   "nombre": "HERRÁN"
+  },
+  {
+   "divipola": "54377",
+   "id": 798,
+   "nombre": "LABATECA"
+  },
+  {
+   "divipola": "54385",
+   "id": 799,
+   "nombre": "LA ESPERANZA"
+  },
+  {
+   "divipola": "54398",
+   "id": 800,
+   "nombre": "LA PLAYA"
+  },
+  {
+   "divipola": "54405",
+   "id": 801,
+   "nombre": "LOS PATIOS"
+  },
+  {
+   "divipola": "54418",
+   "id": 802,
+   "nombre": "LOURDES"
+  },
+  {
+   "divipola": "54480",
+   "id": 803,
+   "nombre": "MUTISCUA"
+  },
+  {
+   "divipola": "54498",
+   "id": 804,
+   "nombre": "OCAÑA"
+  },
+  {
+   "divipola": "54518",
+   "id": 805,
+   "nombre": "PAMPLONA"
+  },
+  {
+   "divipola": "54520",
+   "id": 806,
+   "nombre": "PAMPLONITA"
+  },
+  {
+   "divipola": "54553",
+   "id": 807,
+   "nombre": "PUERTO SANTANDER"
+  },
+  {
+   "divipola": "54599",
+   "id": 808,
+   "nombre": "RAGONVALIA"
+  },
+  {
+   "divipola": "54660",
+   "id": 809,
+   "nombre": "SALAZAR"
+  },
+  {
+   "divipola": "54670",
+   "id": 810,
+   "nombre": "SAN CALIXTO"
+  },
+  {
+   "divipola": "54673",
+   "id": 811,
+   "nombre": "SAN CAYETANO"
+  },
+  {
+   "divipola": "54680",
+   "id": 812,
+   "nombre": "SANTIAGO"
+  },
+  {
+   "divipola": "54720",
+   "id": 813,
+   "nombre": "SARDINATA"
+  },
+  {
+   "divipola": "54743",
+   "id": 814,
+   "nombre": "SILOS"
+  },
+  {
+   "divipola": "54800",
+   "id": 815,
+   "nombre": "TEORAMA"
+  },
+  {
+   "divipola": "54810",
+   "id": 816,
+   "nombre": "TIBÚ"
+  },
+  {
+   "divipola": "54820",
+   "id": 817,
+   "nombre": "TOLEDO"
+  },
+  {
+   "divipola": "54871",
+   "id": 818,
+   "nombre": "VILLA CARO"
+  },
+  {
+   "divipola": "54874",
+   "id": 819,
+   "nombre": "VILLA DEL ROSARIO"
+  }
+ ],
+ "25": [
+  {
+   "divipola": "86001",
+   "id": 1074,
+   "nombre": "MOCOA"
+  },
+  {
+   "divipola": "86219",
+   "id": 1075,
+   "nombre": "COLÓN"
+  },
+  {
+   "divipola": "86320",
+   "id": 1076,
+   "nombre": "ORITO"
+  },
+  {
+   "divipola": "86568",
+   "id": 1077,
+   "nombre": "PUERTO ASÍS"
+  },
+  {
+   "divipola": "86569",
+   "id": 1078,
+   "nombre": "PUERTO CAICEDO"
+  },
+  {
+   "divipola": "86571",
+   "id": 1079,
+   "nombre": "PUERTO GUZMÁN"
+  },
+  {
+   "divipola": "86573",
+   "id": 1080,
+   "nombre": "PUERTO LEGUÍZAMO"
+  },
+  {
+   "divipola": "86749",
+   "id": 1081,
+   "nombre": "SIBUNDOY"
+  },
+  {
+   "divipola": "86755",
+   "id": 1082,
+   "nombre": "SAN FRANCISCO"
+  },
+  {
+   "divipola": "86757",
+   "id": 1083,
+   "nombre": "SAN MIGUEL"
+  },
+  {
+   "divipola": "86760",
+   "id": 1084,
+   "nombre": "SANTIAGO"
+  },
+  {
+   "divipola": "86865",
+   "id": 1085,
+   "nombre": "VALLE DEL GUAMUEZ"
+  },
+  {
+   "divipola": "86885",
+   "id": 1086,
+   "nombre": "VILLAGARZÓN"
+  }
+ ],
+ "26": [
+  {
+   "divipola": "63001",
+   "id": 820,
+   "nombre": "ARMENIA"
+  },
+  {
+   "divipola": "63111",
+   "id": 821,
+   "nombre": "BUENAVISTA"
+  },
+  {
+   "divipola": "63130",
+   "id": 822,
+   "nombre": "CALARCÁ"
+  },
+  {
+   "divipola": "63190",
+   "id": 823,
+   "nombre": "CIRCASIA"
+  },
+  {
+   "divipola": "63212",
+   "id": 824,
+   "nombre": "CÓRDOBA"
+  },
+  {
+   "divipola": "63272",
+   "id": 825,
+   "nombre": "FILANDIA"
+  },
+  {
+   "divipola": "63302",
+   "id": 826,
+   "nombre": "GÉNOVA"
+  },
+  {
+   "divipola": "63401",
+   "id": 827,
+   "nombre": "LA TEBAIDA"
+  },
+  {
+   "divipola": "63470",
+   "id": 828,
+   "nombre": "MONTENEGRO"
+  },
+  {
+   "divipola": "63548",
+   "id": 829,
+   "nombre": "PIJAO"
+  },
+  {
+   "divipola": "63594",
+   "id": 830,
+   "nombre": "QUIMBAYA"
+  },
+  {
+   "divipola": "63690",
+   "id": 831,
+   "nombre": "SALENTO"
+  }
+ ],
+ "27": [
+  {
+   "divipola": "66001",
+   "id": 832,
+   "nombre": "PEREIRA"
+  },
+  {
+   "divipola": "66045",
+   "id": 833,
+   "nombre": "APÍA"
+  },
+  {
+   "divipola": "66075",
+   "id": 834,
+   "nombre": "BALBOA"
+  },
+  {
+   "divipola": "66088",
+   "id": 835,
+   "nombre": "BELÉN DE UMBRÍA"
+  },
+  {
+   "divipola": "66170",
+   "id": 836,
+   "nombre": "DOSQUEBRADAS"
+  },
+  {
+   "divipola": "66318",
+   "id": 837,
+   "nombre": "GUÁTICA"
+  },
+  {
+   "divipola": "66383",
+   "id": 838,
+   "nombre": "LA CELIA"
+  },
+  {
+   "divipola": "66400",
+   "id": 839,
+   "nombre": "LA VIRGINIA"
+  },
+  {
+   "divipola": "66440",
+   "id": 840,
+   "nombre": "MARSELLA"
+  },
+  {
+   "divipola": "66456",
+   "id": 841,
+   "nombre": "MISTRATÓ"
+  },
+  {
+   "divipola": "66572",
+   "id": 842,
+   "nombre": "PUEBLO RICO"
+  },
+  {
+   "divipola": "66594",
+   "id": 843,
+   "nombre": "QUINCHÍA"
+  },
+  {
+   "divipola": "66682",
+   "id": 844,
+   "nombre": "SANTA ROSA DE CABAL"
+  },
+  {
+   "divipola": "66687",
+   "id": 845,
+   "nombre": "SANTUARIO"
+  }
+ ],
+ "28": [
+  {
+   "divipola": "68001",
+   "id": 846,
+   "nombre": "BUCARAMANGA"
+  },
+  {
+   "divipola": "68013",
+   "id": 847,
+   "nombre": "AGUADA"
+  },
+  {
+   "divipola": "68020",
+   "id": 848,
+   "nombre": "ALBANIA"
+  },
+  {
+   "divipola": "68051",
+   "id": 849,
+   "nombre": "ARATOCA"
+  },
+  {
+   "divipola": "68077",
+   "id": 850,
+   "nombre": "BARBOSA"
+  },
+  {
+   "divipola": "68079",
+   "id": 851,
+   "nombre": "BARICHARA"
+  },
+  {
+   "divipola": "68081",
+   "id": 852,
+   "nombre": "BARRANCABERMEJA"
+  },
+  {
+   "divipola": "68092",
+   "id": 853,
+   "nombre": "BETULIA"
+  },
+  {
+   "divipola": "68101",
+   "id": 854,
+   "nombre": "BOLÍVAR"
+  },
+  {
+   "divipola": "68121",
+   "id": 855,
+   "nombre": "CABRERA"
+  },
+  {
+   "divipola": "68132",
+   "id": 856,
+   "nombre": "CALIFORNIA"
+  },
+  {
+   "divipola": "68147",
+   "id": 857,
+   "nombre": "CAPITANEJO"
+  },
+  {
+   "divipola": "68152",
+   "id": 858,
+   "nombre": "CARCASÍ"
+  },
+  {
+   "divipola": "68160",
+   "id": 859,
+   "nombre": "CEPITÁ"
+  },
+  {
+   "divipola": "68162",
+   "id": 860,
+   "nombre": "CERRITO"
+  },
+  {
+   "divipola": "68167",
+   "id": 861,
+   "nombre": "CHARALÁ"
+  },
+  {
+   "divipola": "68169",
+   "id": 862,
+   "nombre": "CHARTA"
+  },
+  {
+   "divipola": "68176",
+   "id": 863,
+   "nombre": "CHIMA"
+  },
+  {
+   "divipola": "68179",
+   "id": 864,
+   "nombre": "CHIPATÁ"
+  },
+  {
+   "divipola": "68190",
+   "id": 865,
+   "nombre": "CIMITARRA"
+  },
+  {
+   "divipola": "68207",
+   "id": 866,
+   "nombre": "CONCEPCIÓN"
+  },
+  {
+   "divipola": "68209",
+   "id": 867,
+   "nombre": "CONFINES"
+  },
+  {
+   "divipola": "68211",
+   "id": 868,
+   "nombre": "CONTRATACIÓN"
+  },
+  {
+   "divipola": "68217",
+   "id": 869,
+   "nombre": "COROMORO"
+  },
+  {
+   "divipola": "68229",
+   "id": 870,
+   "nombre": "CURITÍ"
+  },
+  {
+   "divipola": "68235",
+   "id": 871,
+   "nombre": "EL CARMEN DE CHUCURI"
+  },
+  {
+   "divipola": "68245",
+   "id": 872,
+   "nombre": "EL GUACAMAYO"
+  },
+  {
+   "divipola": "68250",
+   "id": 873,
+   "nombre": "EL PEÑÓN"
+  },
+  {
+   "divipola": "68255",
+   "id": 874,
+   "nombre": "EL PLAYÓN"
+  },
+  {
+   "divipola": "68264",
+   "id": 875,
+   "nombre": "ENCINO"
+  },
+  {
+   "divipola": "68266",
+   "id": 876,
+   "nombre": "ENCISO"
+  },
+  {
+   "divipola": "68271",
+   "id": 877,
+   "nombre": "FLORIÁN"
+  },
+  {
+   "divipola": "68276",
+   "id": 878,
+   "nombre": "FLORIDABLANCA"
+  },
+  {
+   "divipola": "68296",
+   "id": 879,
+   "nombre": "GALÁN"
+  },
+  {
+   "divipola": "68298",
+   "id": 880,
+   "nombre": "GÁMBITA"
+  },
+  {
+   "divipola": "68307",
+   "id": 881,
+   "nombre": "GIRÓN"
+  },
+  {
+   "divipola": "68318",
+   "id": 882,
+   "nombre": "GUACA"
+  },
+  {
+   "divipola": "68320",
+   "id": 883,
+   "nombre": "GUADALUPE"
+  },
+  {
+   "divipola": "68322",
+   "id": 884,
+   "nombre": "GUAPOTÁ"
+  },
+  {
+   "divipola": "68324",
+   "id": 885,
+   "nombre": "GUAVATÁ"
+  },
+  {
+   "divipola": "68327",
+   "id": 886,
+   "nombre": "GÜEPSA"
+  },
+  {
+   "divipola": "68344",
+   "id": 887,
+   "nombre": "HATO"
+  },
+  {
+   "divipola": "68368",
+   "id": 888,
+   "nombre": "JESÚS MARÍA"
+  },
+  {
+   "divipola": "68370",
+   "id": 889,
+   "nombre": "JORDÁN"
+  },
+  {
+   "divipola": "68377",
+   "id": 890,
+   "nombre": "LA BELLEZA"
+  },
+  {
+   "divipola": "68385",
+   "id": 891,
+   "nombre": "LANDÁZURI"
+  },
+  {
+   "divipola": "68397",
+   "id": 892,
+   "nombre": "LA PAZ"
+  },
+  {
+   "divipola": "68406",
+   "id": 893,
+   "nombre": "LEBRIJA"
+  },
+  {
+   "divipola": "68418",
+   "id": 894,
+   "nombre": "LOS SANTOS"
+  },
+  {
+   "divipola": "68425",
+   "id": 895,
+   "nombre": "MACARAVITA"
+  },
+  {
+   "divipola": "68432",
+   "id": 896,
+   "nombre": "MÁLAGA"
+  },
+  {
+   "divipola": "68444",
+   "id": 897,
+   "nombre": "MATANZA"
+  },
+  {
+   "divipola": "68464",
+   "id": 898,
+   "nombre": "MOGOTES"
+  },
+  {
+   "divipola": "68468",
+   "id": 899,
+   "nombre": "MOLAGAVITA"
+  },
+  {
+   "divipola": "68498",
+   "id": 900,
+   "nombre": "OCAMONTE"
+  },
+  {
+   "divipola": "68500",
+   "id": 901,
+   "nombre": "OIBA"
+  },
+  {
+   "divipola": "68502",
+   "id": 902,
+   "nombre": "ONZAGA"
+  },
+  {
+   "divipola": "68522",
+   "id": 903,
+   "nombre": "PALMAR"
+  },
+  {
+   "divipola": "68524",
+   "id": 904,
+   "nombre": "PALMAS DEL SOCORRO"
+  },
+  {
+   "divipola": "68533",
+   "id": 905,
+   "nombre": "PÁRAMO"
+  },
+  {
+   "divipola": "68547",
+   "id": 906,
+   "nombre": "PIEDECUESTA"
+  },
+  {
+   "divipola": "68549",
+   "id": 907,
+   "nombre": "PINCHOTE"
+  },
+  {
+   "divipola": "68572",
+   "id": 908,
+   "nombre": "PUENTE NACIONAL"
+  },
+  {
+   "divipola": "68573",
+   "id": 909,
+   "nombre": "PUERTO PARRA"
+  },
+  {
+   "divipola": "68575",
+   "id": 910,
+   "nombre": "PUERTO WILCHES"
+  },
+  {
+   "divipola": "68615",
+   "id": 911,
+   "nombre": "RIONEGRO"
+  },
+  {
+   "divipola": "68655",
+   "id": 912,
+   "nombre": "SABANA DE TORRES"
+  },
+  {
+   "divipola": "68669",
+   "id": 913,
+   "nombre": "SAN ANDRÉS"
+  },
+  {
+   "divipola": "68673",
+   "id": 914,
+   "nombre": "SAN BENITO"
+  },
+  {
+   "divipola": "68679",
+   "id": 915,
+   "nombre": "SAN GIL"
+  },
+  {
+   "divipola": "68682",
+   "id": 916,
+   "nombre": "SAN JOAQUÍN"
+  },
+  {
+   "divipola": "68684",
+   "id": 917,
+   "nombre": "SAN JOSÉ DE MIRANDA"
+  },
+  {
+   "divipola": "68686",
+   "id": 918,
+   "nombre": "SAN MIGUEL"
+  },
+  {
+   "divipola": "68689",
+   "id": 919,
+   "nombre": "SAN VICENTE DE CHUCURÍ"
+  },
+  {
+   "divipola": "68705",
+   "id": 920,
+   "nombre": "SANTA BÁRBARA"
+  },
+  {
+   "divipola": "68720",
+   "id": 921,
+   "nombre": "SANTA HELENA DEL OPÓN"
+  },
+  {
+   "divipola": "68745",
+   "id": 922,
+   "nombre": "SIMACOTA"
+  },
+  {
+   "divipola": "68755",
+   "id": 923,
+   "nombre": "SOCORRO"
+  },
+  {
+   "divipola": "68770",
+   "id": 924,
+   "nombre": "SUAITA"
+  },
+  {
+   "divipola": "68773",
+   "id": 925,
+   "nombre": "SUCRE"
+  },
+  {
+   "divipola": "68780",
+   "id": 926,
+   "nombre": "SURATÁ"
+  },
+  {
+   "divipola": "68820",
+   "id": 927,
+   "nombre": "TONA"
+  },
+  {
+   "divipola": "68855",
+   "id": 928,
+   "nombre": "VALLE DE SAN JOSÉ"
+  },
+  {
+   "divipola": "68861",
+   "id": 929,
+   "nombre": "VÉLEZ"
+  },
+  {
+   "divipola": "68867",
+   "id": 930,
+   "nombre": "VETAS"
+  },
+  {
+   "divipola": "68872",
+   "id": 931,
+   "nombre": "VILLANUEVA"
+  },
+  {
+   "divipola": "68895",
+   "id": 932,
+   "nombre": "ZAPATOCA"
+  }
+ ],
+ "29": [
+  {
+   "divipola": "70001",
+   "id": 933,
+   "nombre": "SINCELEJO"
+  },
+  {
+   "divipola": "70110",
+   "id": 934,
+   "nombre": "BUENAVISTA"
+  },
+  {
+   "divipola": "70124",
+   "id": 935,
+   "nombre": "CAIMITO"
+  },
+  {
+   "divipola": "70204",
+   "id": 936,
+   "nombre": "COLOSÓ"
+  },
+  {
+   "divipola": "70215",
+   "id": 937,
+   "nombre": "COROZAL"
+  },
+  {
+   "divipola": "70221",
+   "id": 938,
+   "nombre": "COVEÑAS"
+  },
+  {
+   "divipola": "70230",
+   "id": 939,
+   "nombre": "CHALÁN"
+  },
+  {
+   "divipola": "70233",
+   "id": 940,
+   "nombre": "EL ROBLE"
+  },
+  {
+   "divipola": "70235",
+   "id": 941,
+   "nombre": "GALERAS"
+  },
+  {
+   "divipola": "70265",
+   "id": 942,
+   "nombre": "GUARANDA"
+  },
+  {
+   "divipola": "70400",
+   "id": 943,
+   "nombre": "LA UNIÓN"
+  },
+  {
+   "divipola": "70418",
+   "id": 944,
+   "nombre": "LOS PALMITOS"
+  },
+  {
+   "divipola": "70429",
+   "id": 945,
+   "nombre": "MAJAGUAL"
+  },
+  {
+   "divipola": "70473",
+   "id": 946,
+   "nombre": "MORROA"
+  },
+  {
+   "divipola": "70508",
+   "id": 947,
+   "nombre": "OVEJAS"
+  },
+  {
+   "divipola": "70523",
+   "id": 948,
+   "nombre": "PALMITO"
+  },
+  {
+   "divipola": "70670",
+   "id": 949,
+   "nombre": "SAMPUÉS"
+  },
+  {
+   "divipola": "70678",
+   "id": 950,
+   "nombre": "SAN BENITO ABAD"
+  },
+  {
+   "divipola": "70702",
+   "id": 951,
+   "nombre": "SAN JUAN DE BETULIA"
+  },
+  {
+   "divipola": "70708",
+   "id": 952,
+   "nombre": "SAN MARCOS"
+  },
+  {
+   "divipola": "70713",
+   "id": 953,
+   "nombre": "SAN ONOFRE"
+  },
+  {
+   "divipola": "70717",
+   "id": 954,
+   "nombre": "SAN PEDRO"
+  },
+  {
+   "divipola": "70742",
+   "id": 955,
+   "nombre": "SAN LUIS DE SINCÉ"
+  },
+  {
+   "divipola": "70771",
+   "id": 956,
+   "nombre": "SUCRE"
+  },
+  {
+   "divipola": "70820",
+   "id": 957,
+   "nombre": "SANTIAGO DE TOLÚ"
+  },
+  {
+   "divipola": "70823",
+   "id": 958,
+   "nombre": "SAN JOSÉ DE TOLUVIEJO"
+  }
+ ],
+ "3": [
+  {
+   "divipola": "81001",
+   "id": 1048,
+   "nombre": "ARAUCA"
+  },
+  {
+   "divipola": "81065",
+   "id": 1049,
+   "nombre": "ARAUQUITA"
+  },
+  {
+   "divipola": "81220",
+   "id": 1050,
+   "nombre": "CRAVO NORTE"
+  },
+  {
+   "divipola": "81300",
+   "id": 1051,
+   "nombre": "FORTUL"
+  },
+  {
+   "divipola": "81591",
+   "id": 1052,
+   "nombre": "PUERTO RONDÓN"
+  },
+  {
+   "divipola": "81736",
+   "id": 1053,
+   "nombre": "SARAVENA"
+  },
+  {
+   "divipola": "81794",
+   "id": 1054,
+   "nombre": "TAME"
+  }
+ ],
+ "30": [
+  {
+   "divipola": "73001",
+   "id": 959,
+   "nombre": "IBAGUÉ"
+  },
+  {
+   "divipola": "73024",
+   "id": 960,
+   "nombre": "ALPUJARRA"
+  },
+  {
+   "divipola": "73026",
+   "id": 961,
+   "nombre": "ALVARADO"
+  },
+  {
+   "divipola": "73030",
+   "id": 962,
+   "nombre": "AMBALEMA"
+  },
+  {
+   "divipola": "73043",
+   "id": 963,
+   "nombre": "ANZOÁTEGUI"
+  },
+  {
+   "divipola": "73055",
+   "id": 964,
+   "nombre": "ARMERO"
+  },
+  {
+   "divipola": "73067",
+   "id": 965,
+   "nombre": "ATACO"
+  },
+  {
+   "divipola": "73124",
+   "id": 966,
+   "nombre": "CAJAMARCA"
+  },
+  {
+   "divipola": "73148",
+   "id": 967,
+   "nombre": "CARMEN DE APICALÁ"
+  },
+  {
+   "divipola": "73152",
+   "id": 968,
+   "nombre": "CASABIANCA"
+  },
+  {
+   "divipola": "73168",
+   "id": 969,
+   "nombre": "CHAPARRAL"
+  },
+  {
+   "divipola": "73200",
+   "id": 970,
+   "nombre": "COELLO"
+  },
+  {
+   "divipola": "73217",
+   "id": 971,
+   "nombre": "COYAIMA"
+  },
+  {
+   "divipola": "73226",
+   "id": 972,
+   "nombre": "CUNDAY"
+  },
+  {
+   "divipola": "73236",
+   "id": 973,
+   "nombre": "DOLORES"
+  },
+  {
+   "divipola": "73268",
+   "id": 974,
+   "nombre": "ESPINAL"
+  },
+  {
+   "divipola": "73270",
+   "id": 975,
+   "nombre": "FALAN"
+  },
+  {
+   "divipola": "73275",
+   "id": 976,
+   "nombre": "FLANDES"
+  },
+  {
+   "divipola": "73283",
+   "id": 977,
+   "nombre": "FRESNO"
+  },
+  {
+   "divipola": "73319",
+   "id": 978,
+   "nombre": "GUAMO"
+  },
+  {
+   "divipola": "73347",
+   "id": 979,
+   "nombre": "HERVEO"
+  },
+  {
+   "divipola": "73349",
+   "id": 980,
+   "nombre": "HONDA"
+  },
+  {
+   "divipola": "73352",
+   "id": 981,
+   "nombre": "ICONONZO"
+  },
+  {
+   "divipola": "73408",
+   "id": 982,
+   "nombre": "LÉRIDA"
+  },
+  {
+   "divipola": "73411",
+   "id": 983,
+   "nombre": "LÍBANO"
+  },
+  {
+   "divipola": "73443",
+   "id": 984,
+   "nombre": "SAN SEBASTIÁN DE MARIQUITA"
+  },
+  {
+   "divipola": "73449",
+   "id": 985,
+   "nombre": "MELGAR"
+  },
+  {
+   "divipola": "73461",
+   "id": 986,
+   "nombre": "MURILLO"
+  },
+  {
+   "divipola": "73483",
+   "id": 987,
+   "nombre": "NATAGAIMA"
+  },
+  {
+   "divipola": "73504",
+   "id": 988,
+   "nombre": "ORTEGA"
+  },
+  {
+   "divipola": "73520",
+   "id": 989,
+   "nombre": "PALOCABILDO"
+  },
+  {
+   "divipola": "73547",
+   "id": 990,
+   "nombre": "PIEDRAS"
+  },
+  {
+   "divipola": "73555",
+   "id": 991,
+   "nombre": "PLANADAS"
+  },
+  {
+   "divipola": "73563",
+   "id": 992,
+   "nombre": "PRADO"
+  },
+  {
+   "divipola": "73585",
+   "id": 993,
+   "nombre": "PURIFICACIÓN"
+  },
+  {
+   "divipola": "73616",
+   "id": 994,
+   "nombre": "RIOBLANCO"
+  },
+  {
+   "divipola": "73622",
+   "id": 995,
+   "nombre": "RONCESVALLES"
+  },
+  {
+   "divipola": "73624",
+   "id": 996,
+   "nombre": "ROVIRA"
+  },
+  {
+   "divipola": "73671",
+   "id": 997,
+   "nombre": "SALDAÑA"
+  },
+  {
+   "divipola": "73675",
+   "id": 998,
+   "nombre": "SAN ANTONIO"
+  },
+  {
+   "divipola": "73678",
+   "id": 999,
+   "nombre": "SAN LUIS"
+  },
+  {
+   "divipola": "73686",
+   "id": 1000,
+   "nombre": "SANTA ISABEL"
+  },
+  {
+   "divipola": "73770",
+   "id": 1001,
+   "nombre": "SUÁREZ"
+  },
+  {
+   "divipola": "73854",
+   "id": 1002,
+   "nombre": "VALLE DE SAN JUAN"
+  },
+  {
+   "divipola": "73861",
+   "id": 1003,
+   "nombre": "VENADILLO"
+  },
+  {
+   "divipola": "73870",
+   "id": 1004,
+   "nombre": "VILLAHERMOSA"
+  },
+  {
+   "divipola": "73873",
+   "id": 1005,
+   "nombre": "VILLARRICA"
+  }
+ ],
+ "31": [
+  {
+   "divipola": "76001",
+   "id": 1006,
+   "nombre": "CALI"
+  },
+  {
+   "divipola": "76020",
+   "id": 1007,
+   "nombre": "ALCALÁ"
+  },
+  {
+   "divipola": "76036",
+   "id": 1008,
+   "nombre": "ANDALUCÍA"
+  },
+  {
+   "divipola": "76041",
+   "id": 1009,
+   "nombre": "ANSERMANUEVO"
+  },
+  {
+   "divipola": "76054",
+   "id": 1010,
+   "nombre": "ARGELIA"
+  },
+  {
+   "divipola": "76100",
+   "id": 1011,
+   "nombre": "BOLÍVAR"
+  },
+  {
+   "divipola": "76109",
+   "id": 1012,
+   "nombre": "BUENAVENTURA"
+  },
+  {
+   "divipola": "76111",
+   "id": 1013,
+   "nombre": "GUADALAJARA DE BUGA"
+  },
+  {
+   "divipola": "76113",
+   "id": 1014,
+   "nombre": "BUGALAGRANDE"
+  },
+  {
+   "divipola": "76122",
+   "id": 1015,
+   "nombre": "CAICEDONIA"
+  },
+  {
+   "divipola": "76126",
+   "id": 1016,
+   "nombre": "CALIMA"
+  },
+  {
+   "divipola": "76130",
+   "id": 1017,
+   "nombre": "CANDELARIA"
+  },
+  {
+   "divipola": "76147",
+   "id": 1018,
+   "nombre": "CARTAGO"
+  },
+  {
+   "divipola": "76233",
+   "id": 1019,
+   "nombre": "DAGUA"
+  },
+  {
+   "divipola": "76243",
+   "id": 1020,
+   "nombre": "EL ÁGUILA"
+  },
+  {
+   "divipola": "76246",
+   "id": 1021,
+   "nombre": "EL CAIRO"
+  },
+  {
+   "divipola": "76248",
+   "id": 1022,
+   "nombre": "EL CERRITO"
+  },
+  {
+   "divipola": "76250",
+   "id": 1023,
+   "nombre": "EL DOVIO"
+  },
+  {
+   "divipola": "76275",
+   "id": 1024,
+   "nombre": "FLORIDA"
+  },
+  {
+   "divipola": "76306",
+   "id": 1025,
+   "nombre": "GINEBRA"
+  },
+  {
+   "divipola": "76318",
+   "id": 1026,
+   "nombre": "GUACARÍ"
+  },
+  {
+   "divipola": "76364",
+   "id": 1027,
+   "nombre": "JAMUNDÍ"
+  },
+  {
+   "divipola": "76377",
+   "id": 1028,
+   "nombre": "LA CUMBRE"
+  },
+  {
+   "divipola": "76400",
+   "id": 1029,
+   "nombre": "LA UNIÓN"
+  },
+  {
+   "divipola": "76403",
+   "id": 1030,
+   "nombre": "LA VICTORIA"
+  },
+  {
+   "divipola": "76497",
+   "id": 1031,
+   "nombre": "OBANDO"
+  },
+  {
+   "divipola": "76520",
+   "id": 1032,
+   "nombre": "PALMIRA"
+  },
+  {
+   "divipola": "76563",
+   "id": 1033,
+   "nombre": "PRADERA"
+  },
+  {
+   "divipola": "76606",
+   "id": 1034,
+   "nombre": "RESTREPO"
+  },
+  {
+   "divipola": "76616",
+   "id": 1035,
+   "nombre": "RIOFRÍO"
+  },
+  {
+   "divipola": "76622",
+   "id": 1036,
+   "nombre": "ROLDANILLO"
+  },
+  {
+   "divipola": "76670",
+   "id": 1037,
+   "nombre": "SAN PEDRO"
+  },
+  {
+   "divipola": "76736",
+   "id": 1038,
+   "nombre": "SEVILLA"
+  },
+  {
+   "divipola": "76823",
+   "id": 1039,
+   "nombre": "TORO"
+  },
+  {
+   "divipola": "76828",
+   "id": 1040,
+   "nombre": "TRUJILLO"
+  },
+  {
+   "divipola": "76834",
+   "id": 1041,
+   "nombre": "TULUÁ"
+  },
+  {
+   "divipola": "76845",
+   "id": 1042,
+   "nombre": "ULLOA"
+  },
+  {
+   "divipola": "76863",
+   "id": 1043,
+   "nombre": "VERSALLES"
+  },
+  {
+   "divipola": "76869",
+   "id": 1044,
+   "nombre": "VIJES"
+  },
+  {
+   "divipola": "76890",
+   "id": 1045,
+   "nombre": "YOTOCO"
+  },
+  {
+   "divipola": "76892",
+   "id": 1046,
+   "nombre": "YUMBO"
+  },
+  {
+   "divipola": "76895",
+   "id": 1047,
+   "nombre": "ZARZAL"
+  }
+ ],
+ "32": [
+  {
+   "divipola": "97001",
+   "id": 1112,
+   "nombre": "MITÚ"
+  },
+  {
+   "divipola": "97161",
+   "id": 1113,
+   "nombre": "CARURÚ"
+  },
+  {
+   "divipola": "97511",
+   "id": 1114,
+   "nombre": "PACOA"
+  },
+  {
+   "divipola": "97666",
+   "id": 1115,
+   "nombre": "TARAIRA"
+  },
+  {
+   "divipola": "97777",
+   "id": 1116,
+   "nombre": "PAPUNAHUA"
+  },
+  {
+   "divipola": "97889",
+   "id": 1117,
+   "nombre": "YAVARATÉ"
+  }
+ ],
+ "33": [
+  {
+   "divipola": "99001",
+   "id": 1118,
+   "nombre": "PUERTO CARREÑO"
+  },
+  {
+   "divipola": "99524",
+   "id": 1119,
+   "nombre": "LA PRIMAVERA"
+  },
+  {
+   "divipola": "99624",
+   "id": 1120,
+   "nombre": "SANTA ROSALÍA"
+  },
+  {
+   "divipola": "99773",
+   "id": 1121,
+   "nombre": "CUMARIBO"
+  }
+ ],
+ "4": [
+  {
+   "divipola": "88001",
+   "id": 1087,
+   "nombre": "SAN ANDRÉS"
+  },
+  {
+   "divipola": "88564",
+   "id": 1122,
+   "nombre": "PROVIDENCIA"
+  }
+ ],
+ "5": [
+  {
+   "divipola": "08001",
+   "id": 126,
+   "nombre": "BARRANQUILLA"
+  },
+  {
+   "divipola": "08078",
+   "id": 127,
+   "nombre": "BARANOA"
+  },
+  {
+   "divipola": "08137",
+   "id": 128,
+   "nombre": "CAMPO DE LA CRUZ"
+  },
+  {
+   "divipola": "08141",
+   "id": 129,
+   "nombre": "CANDELARIA"
+  },
+  {
+   "divipola": "08296",
+   "id": 130,
+   "nombre": "GALAPA"
+  },
+  {
+   "divipola": "08372",
+   "id": 131,
+   "nombre": "JUAN DE ACOSTA"
+  },
+  {
+   "divipola": "08421",
+   "id": 132,
+   "nombre": "LURUACO"
+  },
+  {
+   "divipola": "08433",
+   "id": 133,
+   "nombre": "MALAMBO"
+  },
+  {
+   "divipola": "08436",
+   "id": 134,
+   "nombre": "MANATÍ"
+  },
+  {
+   "divipola": "08520",
+   "id": 135,
+   "nombre": "PALMAR DE VARELA"
+  },
+  {
+   "divipola": "08549",
+   "id": 136,
+   "nombre": "PIOJÓ"
+  },
+  {
+   "divipola": "08558",
+   "id": 137,
+   "nombre": "POLONUEVO"
+  },
+  {
+   "divipola": "08560",
+   "id": 138,
+   "nombre": "PONEDERA"
+  },
+  {
+   "divipola": "08573",
+   "id": 139,
+   "nombre": "PUERTO COLOMBIA"
+  },
+  {
+   "divipola": "08606",
+   "id": 140,
+   "nombre": "REPELÓN"
+  },
+  {
+   "divipola": "08634",
+   "id": 141,
+   "nombre": "SABANAGRANDE"
+  },
+  {
+   "divipola": "08638",
+   "id": 142,
+   "nombre": "SABANALARGA"
+  },
+  {
+   "divipola": "08675",
+   "id": 143,
+   "nombre": "SANTA LUCÍA"
+  },
+  {
+   "divipola": "08685",
+   "id": 144,
+   "nombre": "SANTO TOMÁS"
+  },
+  {
+   "divipola": "08758",
+   "id": 145,
+   "nombre": "SOLEDAD"
+  },
+  {
+   "divipola": "08770",
+   "id": 146,
+   "nombre": "SUAN"
+  },
+  {
+   "divipola": "08832",
+   "id": 147,
+   "nombre": "TUBARÁ"
+  },
+  {
+   "divipola": "08849",
+   "id": 148,
+   "nombre": "USIACURÍ"
+  }
+ ],
+ "6": [
+  {
+   "divipola": "11001",
+   "id": 149,
+   "nombre": "BOGOTÁ D.C."
+  }
+ ],
+ "7": [
+  {
+   "divipola": "13001",
+   "id": 150,
+   "nombre": "CARTAGENA DE INDIAS"
+  },
+  {
+   "divipola": "13006",
+   "id": 151,
+   "nombre": "ACHÍ"
+  },
+  {
+   "divipola": "13030",
+   "id": 152,
+   "nombre": "ALTOS DEL ROSARIO"
+  },
+  {
+   "divipola": "13042",
+   "id": 153,
+   "nombre": "ARENAL"
+  },
+  {
+   "divipola": "13052",
+   "id": 154,
+   "nombre": "ARJONA"
+  },
+  {
+   "divipola": "13062",
+   "id": 155,
+   "nombre": "ARROYOHONDO"
+  },
+  {
+   "divipola": "13074",
+   "id": 156,
+   "nombre": "BARRANCO DE LOBA"
+  },
+  {
+   "divipola": "13140",
+   "id": 157,
+   "nombre": "CALAMAR"
+  },
+  {
+   "divipola": "13160",
+   "id": 158,
+   "nombre": "CANTAGALLO"
+  },
+  {
+   "divipola": "13188",
+   "id": 159,
+   "nombre": "CICUCO"
+  },
+  {
+   "divipola": "13212",
+   "id": 160,
+   "nombre": "CÓRDOBA"
+  },
+  {
+   "divipola": "13222",
+   "id": 161,
+   "nombre": "CLEMENCIA"
+  },
+  {
+   "divipola": "13244",
+   "id": 162,
+   "nombre": "EL CARMEN DE BOLÍVAR"
+  },
+  {
+   "divipola": "13248",
+   "id": 163,
+   "nombre": "EL GUAMO"
+  },
+  {
+   "divipola": "13268",
+   "id": 164,
+   "nombre": "EL PEÑÓN"
+  },
+  {
+   "divipola": "13300",
+   "id": 165,
+   "nombre": "HATILLO DE LOBA"
+  },
+  {
+   "divipola": "13430",
+   "id": 166,
+   "nombre": "MAGANGUÉ"
+  },
+  {
+   "divipola": "13433",
+   "id": 167,
+   "nombre": "MAHATES"
+  },
+  {
+   "divipola": "13440",
+   "id": 168,
+   "nombre": "MARGARITA"
+  },
+  {
+   "divipola": "13442",
+   "id": 169,
+   "nombre": "MARÍA LA BAJA"
+  },
+  {
+   "divipola": "13458",
+   "id": 170,
+   "nombre": "MONTECRISTO"
+  },
+  {
+   "divipola": "13468",
+   "id": 171,
+   "nombre": "SANTA CRUZ DE MOMPOX"
+  },
+  {
+   "divipola": "13473",
+   "id": 172,
+   "nombre": "MORALES"
+  },
+  {
+   "divipola": "13490",
+   "id": 173,
+   "nombre": "NOROSÍ"
+  },
+  {
+   "divipola": "13549",
+   "id": 174,
+   "nombre": "PINILLOS"
+  },
+  {
+   "divipola": "13580",
+   "id": 175,
+   "nombre": "REGIDOR"
+  },
+  {
+   "divipola": "13600",
+   "id": 176,
+   "nombre": "RÍO VIEJO"
+  },
+  {
+   "divipola": "13620",
+   "id": 177,
+   "nombre": "SAN CRISTÓBAL"
+  },
+  {
+   "divipola": "13647",
+   "id": 178,
+   "nombre": "SAN ESTANISLAO"
+  },
+  {
+   "divipola": "13650",
+   "id": 179,
+   "nombre": "SAN FERNANDO"
+  },
+  {
+   "divipola": "13654",
+   "id": 180,
+   "nombre": "SAN JACINTO"
+  },
+  {
+   "divipola": "13655",
+   "id": 181,
+   "nombre": "SAN JACINTO DEL CAUCA"
+  },
+  {
+   "divipola": "13657",
+   "id": 182,
+   "nombre": "SAN JUAN NEPOMUCENO"
+  },
+  {
+   "divipola": "13667",
+   "id": 183,
+   "nombre": "SAN MARTÍN DE LOBA"
+  },
+  {
+   "divipola": "13670",
+   "id": 184,
+   "nombre": "SAN PABLO"
+  },
+  {
+   "divipola": "13673",
+   "id": 185,
+   "nombre": "SANTA CATALINA"
+  },
+  {
+   "divipola": "13683",
+   "id": 186,
+   "nombre": "SANTA ROSA"
+  },
+  {
+   "divipola": "13688",
+   "id": 187,
+   "nombre": "SANTA ROSA DEL SUR"
+  },
+  {
+   "divipola": "13744",
+   "id": 188,
+   "nombre": "SIMITÍ"
+  },
+  {
+   "divipola": "13760",
+   "id": 189,
+   "nombre": "SOPLAVIENTO"
+  },
+  {
+   "divipola": "13780",
+   "id": 190,
+   "nombre": "TALAIGUA NUEVO"
+  },
+  {
+   "divipola": "13810",
+   "id": 191,
+   "nombre": "TIQUISIO"
+  },
+  {
+   "divipola": "13836",
+   "id": 192,
+   "nombre": "TURBACO"
+  },
+  {
+   "divipola": "13838",
+   "id": 193,
+   "nombre": "TURBANÁ"
+  },
+  {
+   "divipola": "13873",
+   "id": 194,
+   "nombre": "VILLANUEVA"
+  },
+  {
+   "divipola": "13894",
+   "id": 195,
+   "nombre": "ZAMBRANO"
+  }
+ ],
+ "8": [
+  {
+   "divipola": "15001",
+   "id": 196,
+   "nombre": "TUNJA"
+  },
+  {
+   "divipola": "15022",
+   "id": 197,
+   "nombre": "ALMEIDA"
+  },
+  {
+   "divipola": "15047",
+   "id": 198,
+   "nombre": "AQUITANIA"
+  },
+  {
+   "divipola": "15051",
+   "id": 199,
+   "nombre": "ARCABUCO"
+  },
+  {
+   "divipola": "15087",
+   "id": 200,
+   "nombre": "BELÉN"
+  },
+  {
+   "divipola": "15090",
+   "id": 201,
+   "nombre": "BERBEO"
+  },
+  {
+   "divipola": "15092",
+   "id": 202,
+   "nombre": "BETÉITIVA"
+  },
+  {
+   "divipola": "15097",
+   "id": 203,
+   "nombre": "BOAVITA"
+  },
+  {
+   "divipola": "15104",
+   "id": 204,
+   "nombre": "BOYACÁ"
+  },
+  {
+   "divipola": "15106",
+   "id": 205,
+   "nombre": "BRICEÑO"
+  },
+  {
+   "divipola": "15109",
+   "id": 206,
+   "nombre": "BUENAVISTA"
+  },
+  {
+   "divipola": "15114",
+   "id": 207,
+   "nombre": "BUSBANZÁ"
+  },
+  {
+   "divipola": "15131",
+   "id": 208,
+   "nombre": "CALDAS"
+  },
+  {
+   "divipola": "15135",
+   "id": 209,
+   "nombre": "CAMPOHERMOSO"
+  },
+  {
+   "divipola": "15162",
+   "id": 210,
+   "nombre": "CERINZA"
+  },
+  {
+   "divipola": "15172",
+   "id": 211,
+   "nombre": "CHINAVITA"
+  },
+  {
+   "divipola": "15176",
+   "id": 212,
+   "nombre": "CHIQUINQUIRÁ"
+  },
+  {
+   "divipola": "15180",
+   "id": 213,
+   "nombre": "CHISCAS"
+  },
+  {
+   "divipola": "15183",
+   "id": 214,
+   "nombre": "CHITA"
+  },
+  {
+   "divipola": "15185",
+   "id": 215,
+   "nombre": "CHITARAQUE"
+  },
+  {
+   "divipola": "15187",
+   "id": 216,
+   "nombre": "CHIVATÁ"
+  },
+  {
+   "divipola": "15189",
+   "id": 217,
+   "nombre": "CIÉNEGA"
+  },
+  {
+   "divipola": "15204",
+   "id": 218,
+   "nombre": "CÓMBITA"
+  },
+  {
+   "divipola": "15212",
+   "id": 219,
+   "nombre": "COPER"
+  },
+  {
+   "divipola": "15215",
+   "id": 220,
+   "nombre": "CORRALES"
+  },
+  {
+   "divipola": "15218",
+   "id": 221,
+   "nombre": "COVARACHÍA"
+  },
+  {
+   "divipola": "15223",
+   "id": 222,
+   "nombre": "CUBARÁ"
+  },
+  {
+   "divipola": "15224",
+   "id": 224,
+   "nombre": "CUCAITA"
+  },
+  {
+   "divipola": "15226",
+   "id": 225,
+   "nombre": "CUÍTIVA"
+  },
+  {
+   "divipola": "15232",
+   "id": 226,
+   "nombre": "CHÍQUIZA"
+  },
+  {
+   "divipola": "15236",
+   "id": 227,
+   "nombre": "CHIVOR"
+  },
+  {
+   "divipola": "15238",
+   "id": 228,
+   "nombre": "DUITAMA"
+  },
+  {
+   "divipola": "15244",
+   "id": 229,
+   "nombre": "EL COCUY"
+  },
+  {
+   "divipola": "15248",
+   "id": 230,
+   "nombre": "EL ESPINO"
+  },
+  {
+   "divipola": "15272",
+   "id": 231,
+   "nombre": "FIRAVITOBA"
+  },
+  {
+   "divipola": "15276",
+   "id": 232,
+   "nombre": "FLORESTA"
+  },
+  {
+   "divipola": "15293",
+   "id": 233,
+   "nombre": "GACHANTIVÁ"
+  },
+  {
+   "divipola": "15296",
+   "id": 234,
+   "nombre": "GÁMEZA"
+  },
+  {
+   "divipola": "15299",
+   "id": 235,
+   "nombre": "GARAGOA"
+  },
+  {
+   "divipola": "15317",
+   "id": 236,
+   "nombre": "GUACAMAYAS"
+  },
+  {
+   "divipola": "15322",
+   "id": 237,
+   "nombre": "GUATEQUE"
+  },
+  {
+   "divipola": "15325",
+   "id": 238,
+   "nombre": "GUAYATÁ"
+  },
+  {
+   "divipola": "15332",
+   "id": 239,
+   "nombre": "GÜICÁN DE LA SIERRA"
+  },
+  {
+   "divipola": "15362",
+   "id": 240,
+   "nombre": "IZA"
+  },
+  {
+   "divipola": "15367",
+   "id": 241,
+   "nombre": "JENESANO"
+  },
+  {
+   "divipola": "15368",
+   "id": 242,
+   "nombre": "JERICÓ"
+  },
+  {
+   "divipola": "15377",
+   "id": 243,
+   "nombre": "LABRANZAGRANDE"
+  },
+  {
+   "divipola": "15380",
+   "id": 244,
+   "nombre": "LA CAPILLA"
+  },
+  {
+   "divipola": "15401",
+   "id": 245,
+   "nombre": "LA VICTORIA"
+  },
+  {
+   "divipola": "15403",
+   "id": 246,
+   "nombre": "LA UVITA"
+  },
+  {
+   "divipola": "15407",
+   "id": 247,
+   "nombre": "VILLA DE LEYVA"
+  },
+  {
+   "divipola": "15425",
+   "id": 248,
+   "nombre": "MACANAL"
+  },
+  {
+   "divipola": "15442",
+   "id": 249,
+   "nombre": "MARIPÍ"
+  },
+  {
+   "divipola": "15455",
+   "id": 250,
+   "nombre": "MIRAFLORES"
+  },
+  {
+   "divipola": "15464",
+   "id": 251,
+   "nombre": "MONGUA"
+  },
+  {
+   "divipola": "15466",
+   "id": 252,
+   "nombre": "MONGUÍ"
+  },
+  {
+   "divipola": "15469",
+   "id": 253,
+   "nombre": "MONIQUIRÁ"
+  },
+  {
+   "divipola": "15476",
+   "id": 254,
+   "nombre": "MOTAVITA"
+  },
+  {
+   "divipola": "15480",
+   "id": 255,
+   "nombre": "MUZO"
+  },
+  {
+   "divipola": "15491",
+   "id": 256,
+   "nombre": "NOBSA"
+  },
+  {
+   "divipola": "15494",
+   "id": 257,
+   "nombre": "NUEVO COLÓN"
+  },
+  {
+   "divipola": "15500",
+   "id": 258,
+   "nombre": "OICATÁ"
+  },
+  {
+   "divipola": "15507",
+   "id": 259,
+   "nombre": "OTANCHE"
+  },
+  {
+   "divipola": "15511",
+   "id": 260,
+   "nombre": "PACHAVITA"
+  },
+  {
+   "divipola": "15514",
+   "id": 261,
+   "nombre": "PÁEZ"
+  },
+  {
+   "divipola": "15516",
+   "id": 262,
+   "nombre": "PAIPA"
+  },
+  {
+   "divipola": "15518",
+   "id": 263,
+   "nombre": "PAJARITO"
+  },
+  {
+   "divipola": "15522",
+   "id": 264,
+   "nombre": "PANQUEBA"
+  },
+  {
+   "divipola": "15531",
+   "id": 265,
+   "nombre": "PAUNA"
+  },
+  {
+   "divipola": "15533",
+   "id": 266,
+   "nombre": "PAYA"
+  },
+  {
+   "divipola": "15537",
+   "id": 267,
+   "nombre": "PAZ DE RÍO"
+  },
+  {
+   "divipola": "15542",
+   "id": 268,
+   "nombre": "PESCA"
+  },
+  {
+   "divipola": "15550",
+   "id": 269,
+   "nombre": "PISBA"
+  },
+  {
+   "divipola": "15572",
+   "id": 270,
+   "nombre": "PUERTO BOYACÁ"
+  },
+  {
+   "divipola": "15580",
+   "id": 271,
+   "nombre": "QUÍPAMA"
+  },
+  {
+   "divipola": "15599",
+   "id": 272,
+   "nombre": "RAMIRIQUÍ"
+  },
+  {
+   "divipola": "15600",
+   "id": 273,
+   "nombre": "RÁQUIRA"
+  },
+  {
+   "divipola": "15621",
+   "id": 274,
+   "nombre": "RONDÓN"
+  },
+  {
+   "divipola": "15632",
+   "id": 275,
+   "nombre": "SABOYÁ"
+  },
+  {
+   "divipola": "15638",
+   "id": 276,
+   "nombre": "SÁCHICA"
+  },
+  {
+   "divipola": "15646",
+   "id": 277,
+   "nombre": "SAMACÁ"
+  },
+  {
+   "divipola": "15660",
+   "id": 278,
+   "nombre": "SAN EDUARDO"
+  },
+  {
+   "divipola": "15664",
+   "id": 279,
+   "nombre": "SAN JOSÉ DE PARE"
+  },
+  {
+   "divipola": "15667",
+   "id": 280,
+   "nombre": "SAN LUIS DE GACENO"
+  },
+  {
+   "divipola": "15673",
+   "id": 281,
+   "nombre": "SAN MATEO"
+  },
+  {
+   "divipola": "15676",
+   "id": 282,
+   "nombre": "SAN MIGUEL DE SEMA"
+  },
+  {
+   "divipola": "15681",
+   "id": 283,
+   "nombre": "SAN PABLO DE BORBUR"
+  },
+  {
+   "divipola": "15686",
+   "id": 284,
+   "nombre": "SANTANA"
+  },
+  {
+   "divipola": "15690",
+   "id": 285,
+   "nombre": "SANTA MARÍA"
+  },
+  {
+   "divipola": "15693",
+   "id": 286,
+   "nombre": "SANTA ROSA DE VITERBO"
+  },
+  {
+   "divipola": "15696",
+   "id": 287,
+   "nombre": "SANTA SOFÍA"
+  },
+  {
+   "divipola": "15720",
+   "id": 288,
+   "nombre": "SATIVANORTE"
+  },
+  {
+   "divipola": "15723",
+   "id": 289,
+   "nombre": "SATIVASUR"
+  },
+  {
+   "divipola": "15740",
+   "id": 290,
+   "nombre": "SIACHOQUE"
+  },
+  {
+   "divipola": "15753",
+   "id": 291,
+   "nombre": "SOATÁ"
+  },
+  {
+   "divipola": "15755",
+   "id": 292,
+   "nombre": "SOCOTÁ"
+  },
+  {
+   "divipola": "15757",
+   "id": 293,
+   "nombre": "SOCHA"
+  },
+  {
+   "divipola": "15759",
+   "id": 294,
+   "nombre": "SOGAMOSO"
+  },
+  {
+   "divipola": "15761",
+   "id": 295,
+   "nombre": "SOMONDOCO"
+  },
+  {
+   "divipola": "15762",
+   "id": 296,
+   "nombre": "SORA"
+  },
+  {
+   "divipola": "15763",
+   "id": 297,
+   "nombre": "SOTAQUIRÁ"
+  },
+  {
+   "divipola": "15764",
+   "id": 298,
+   "nombre": "SORACÁ"
+  },
+  {
+   "divipola": "15774",
+   "id": 299,
+   "nombre": "SUSACÓN"
+  },
+  {
+   "divipola": "15776",
+   "id": 300,
+   "nombre": "SUTAMARCHÁN"
+  },
+  {
+   "divipola": "15778",
+   "id": 301,
+   "nombre": "SUTATENZA"
+  },
+  {
+   "divipola": "15790",
+   "id": 302,
+   "nombre": "TASCO"
+  },
+  {
+   "divipola": "15798",
+   "id": 303,
+   "nombre": "TENZA"
+  },
+  {
+   "divipola": "15804",
+   "id": 304,
+   "nombre": "TIBANÁ"
+  },
+  {
+   "divipola": "15806",
+   "id": 305,
+   "nombre": "TIBASOSA"
+  },
+  {
+   "divipola": "15808",
+   "id": 306,
+   "nombre": "TINJACÁ"
+  },
+  {
+   "divipola": "15810",
+   "id": 307,
+   "nombre": "TIPACOQUE"
+  },
+  {
+   "divipola": "15814",
+   "id": 308,
+   "nombre": "TOCA"
+  },
+  {
+   "divipola": "15816",
+   "id": 309,
+   "nombre": "TOGÜÍ"
+  },
+  {
+   "divipola": "15820",
+   "id": 310,
+   "nombre": "TÓPAGA"
+  },
+  {
+   "divipola": "15822",
+   "id": 311,
+   "nombre": "TOTA"
+  },
+  {
+   "divipola": "15832",
+   "id": 312,
+   "nombre": "TUNUNGUÁ"
+  },
+  {
+   "divipola": "15835",
+   "id": 313,
+   "nombre": "TURMEQUÉ"
+  },
+  {
+   "divipola": "15837",
+   "id": 314,
+   "nombre": "TUTA"
+  },
+  {
+   "divipola": "15839",
+   "id": 315,
+   "nombre": "TUTAZÁ"
+  },
+  {
+   "divipola": "15842",
+   "id": 316,
+   "nombre": "ÚMBITA"
+  },
+  {
+   "divipola": "15861",
+   "id": 317,
+   "nombre": "VENTAQUEMADA"
+  },
+  {
+   "divipola": "15879",
+   "id": 318,
+   "nombre": "VIRACACHÁ"
+  },
+  {
+   "divipola": "15897",
+   "id": 319,
+   "nombre": "ZETAQUIRA"
+  }
+ ],
+ "9": [
+  {
+   "divipola": "17001",
+   "id": 320,
+   "nombre": "MANIZALES"
+  },
+  {
+   "divipola": "17013",
+   "id": 321,
+   "nombre": "AGUADAS"
+  },
+  {
+   "divipola": "17042",
+   "id": 322,
+   "nombre": "ANSERMA"
+  },
+  {
+   "divipola": "17050",
+   "id": 323,
+   "nombre": "ARANZAZU"
+  },
+  {
+   "divipola": "17088",
+   "id": 324,
+   "nombre": "BELALCÁZAR"
+  },
+  {
+   "divipola": "17174",
+   "id": 325,
+   "nombre": "CHINCHINÁ"
+  },
+  {
+   "divipola": "17272",
+   "id": 326,
+   "nombre": "FILADELFIA"
+  },
+  {
+   "divipola": "17380",
+   "id": 327,
+   "nombre": "LA DORADA"
+  },
+  {
+   "divipola": "17388",
+   "id": 328,
+   "nombre": "LA MERCED"
+  },
+  {
+   "divipola": "17433",
+   "id": 329,
+   "nombre": "MANZANARES"
+  },
+  {
+   "divipola": "17442",
+   "id": 330,
+   "nombre": "MARMATO"
+  },
+  {
+   "divipola": "17444",
+   "id": 331,
+   "nombre": "MARQUETALIA"
+  },
+  {
+   "divipola": "17446",
+   "id": 332,
+   "nombre": "MARULANDA"
+  },
+  {
+   "divipola": "17486",
+   "id": 333,
+   "nombre": "NEIRA"
+  },
+  {
+   "divipola": "17495",
+   "id": 334,
+   "nombre": "NORCASIA"
+  },
+  {
+   "divipola": "17513",
+   "id": 335,
+   "nombre": "PÁCORA"
+  },
+  {
+   "divipola": "17524",
+   "id": 336,
+   "nombre": "PALESTINA"
+  },
+  {
+   "divipola": "17541",
+   "id": 337,
+   "nombre": "PENSILVANIA"
+  },
+  {
+   "divipola": "17614",
+   "id": 338,
+   "nombre": "RIOSUCIO"
+  },
+  {
+   "divipola": "17616",
+   "id": 339,
+   "nombre": "RISARALDA"
+  },
+  {
+   "divipola": "17653",
+   "id": 340,
+   "nombre": "SALAMINA"
+  },
+  {
+   "divipola": "17662",
+   "id": 341,
+   "nombre": "SAMANÁ"
+  },
+  {
+   "divipola": "17665",
+   "id": 342,
+   "nombre": "SAN JOSÉ"
+  },
+  {
+   "divipola": "17777",
+   "id": 343,
+   "nombre": "SUPÍA"
+  },
+  {
+   "divipola": "17867",
+   "id": 344,
+   "nombre": "VICTORIA"
+  },
+  {
+   "divipola": "17873",
+   "id": 345,
+   "nombre": "VILLAMARÍA"
+  },
+  {
+   "divipola": "17877",
+   "id": 346,
+   "nombre": "VITERBO"
+  }
+ ]
+}

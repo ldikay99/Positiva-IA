@@ -1,0 +1,8 @@
+# Con `core.autocrlf=true` Git normaliza los saltos de linea de todo lo que cree
+# texto. Un PDF que pase por esa conversion llega corrupto al que clone el
+# repositorio, y el dano no se ve hasta que alguien intenta abrirlo.
+*.pdf binary
+*.png binary
+*.jpg binary
+*.ico binary
+*.traineddata binary

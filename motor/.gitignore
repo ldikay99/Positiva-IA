@@ -1,0 +1,121 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+.venv/
+ENV/
+env/
+.env/
+
+# Environment variables
+# Se ignora cualquier variante y se rescata la plantilla, en vez de listar los
+# sufijos conocidos: un `.env.respaldo` o un `.env.viejo` no aparecen en una
+# lista escrita a mano y son un archivo de secretos a un `git add .` de
+# distancia.
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*.sublime-project
+*.sublime-workspace
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Test coverage
+coverage/
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+.nox/
+
+# Credentials (NEVER commit these)
+credentials*.json
+*-credentials.json
+*.pem
+*.key
+BACKUP_CREDS.json
+credenciales-desencriptadas.txt
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Salidas del MODO_TEST (contienen PII real: cedulas, nombres, correos) -> NUNCA subir
+salidas_prueba/
+*.csv
+
+# Node.js (legacy)
+node_modules/
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Jupyter
+.ipynb_checkpoints/
+
+
+.DS_Store
+# Configuracion local de herramientas de desarrollo
+CLAUDE.md
+.claude/
+.agents/
+.claude-flow/
+
+prs.txt
+
+# Informes y analisis locales -> NUNCA subir al repo.
+# La excepcion es docs/: ahi vive la documentacion del proyecto, que si se
+# versiona. Se rescata despues de la regla general porque un patron negado no
+# tiene efecto si el directorio que lo contiene ya esta ignorado.
+*.pdf
+Informe-*.pdf
+Informe-Hallazgos-Despliegue-PQRD.pdf
+!docs/*.pdf
+
+# ── Rama mcp: artefactos locales que NUNCA se versionan ──
+# El corpus sale de correos reales: aunque este anonimizado, no se sube.
+corpus/casos/
+# Espacio de trabajo efimero por correo (OCR, markdown intermedio)
+workspace/
+# Logs de ejecucion y consolidados diarios: contienen datos de casos reales
+logs/
+# Informes de linea base y evaluacion
+harness/informes/
+
+# Datos de idioma de Tesseract (binarios, ~50 MB)
+.tessdata/
