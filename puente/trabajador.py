@@ -287,6 +287,44 @@ def _cambiar_por_defecto(modulo: str, funcion: str, parametro: str, valor: Any) 
     f.__defaults__ = tuple(nuevos)
 
 
+# Lo que el modelo ve de cada herramienta. El orquestador guardó la misma lista
+# al importarse, así que se cambia en su sitio y solo las descripciones: los
+# nombres los usa el código para despachar.
+_ESQUEMAS = "pipeline.agente.ESQUEMAS_HERRAMIENTAS"
+_esquemas_previos: list = []
+
+
+def _cambiar_esquemas(nuevos: Any) -> None:
+    from pipeline import agente
+
+    lista = agente.ESQUEMAS_HERRAMIENTAS
+    por_nombre = {e.get("name"): e for e in nuevos if isinstance(e, dict)}
+    if not _esquemas_previos:
+        _esquemas_previos.extend(copy.deepcopy(lista))
+    for esquema in lista:
+        nuevo = por_nombre.get(esquema["name"])
+        if not nuevo:
+            continue
+        if isinstance(nuevo.get("description"), str):
+            esquema["description"] = nuevo["description"]
+        props_nuevas = ((nuevo.get("parameters") or {}).get("properties") or {})
+        for nombre, prop in ((esquema.get("parameters") or {}).get("properties") or {}).items():
+            descripcion = (props_nuevas.get(nombre) or {}).get("description")
+            if isinstance(descripcion, str):
+                prop["description"] = descripcion
+
+
+def _restaurar_esquemas() -> None:
+    from pipeline import agente
+
+    if not _esquemas_previos:
+        return
+    for esquema, previo in zip(agente.ESQUEMAS_HERRAMIENTAS, _esquemas_previos):
+        esquema.clear()
+        esquema.update(copy.deepcopy(previo))
+    _esquemas_previos.clear()
+
+
 def _coaccionar(original: Any, valor: Any) -> Any:
     """Devuelve el valor con la forma de Python que tenía el original (JSON no la conserva)."""
     if isinstance(original, re.Pattern):
@@ -313,6 +351,12 @@ def aplicar_configuracion(parametros: Dict[str, Any], entorno: Dict[str, str]) -
         modulo, _, nombre = clave.rpartition(".")
         if clave.startswith(_PROHIBIDOS) or "MODO_TEST" in clave or "DEDUP_EN_PRUEBAS" in clave:
             fallidas.append({"clave": clave, "error": "no se ajusta desde el visor"})
+            continue
+        if clave == _ESQUEMAS:
+            try:
+                _cambiar_esquemas(valor)
+            except Exception as e:
+                fallidas.append({"clave": clave, "error": f"{type(e).__name__}: {e}"[:200]})
             continue
         try:
             mod = importlib.import_module(modulo)
@@ -343,6 +387,7 @@ def aplicar_configuracion(parametros: Dict[str, Any], entorno: Dict[str, str]) -
 
 
 def restaurar_configuracion() -> None:
+    _restaurar_esquemas()
     for f, tipo, previos in reversed(_defaults_previos):
         if tipo == "kw":
             f.__kwdefaults__ = previos
@@ -364,6 +409,7 @@ def restaurar_configuracion() -> None:
 
 _modelos: Dict[str, Any] = {}
 _registro: Any = None
+_ia: Dict[str, Any] = {"temperatura": None}
 
 
 def modelo_vertex(nombre: str, ubicacion: str):
@@ -374,9 +420,22 @@ def modelo_vertex(nombre: str, ubicacion: str):
         from pipeline.modelo import ModeloVertex
 
         cred, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-        _modelos[clave] = ModeloVertex(proyecto=os.environ.get("GCP_PROJECT", settings.GCP_PROJECT),
-                                       ubicacion=ubicacion, nombre=nombre, credenciales=cred,
-                                       endpoint_global=True)
+        m = ModeloVertex(proyecto=os.environ.get("GCP_PROJECT", settings.GCP_PROJECT),
+                         ubicacion=ubicacion, nombre=nombre, credenciales=cred,
+                         endpoint_global=True)
+        # La temperatura está escrita dentro de `generar`: se ajusta en la
+        # configuración que llega al cliente, justo antes de cada llamada.
+        modelos_api = m._obtener_cliente().models
+        generar_original = modelos_api.generate_content
+
+        def _generar(*a, **k):
+            config = k.get("config")
+            if _ia["temperatura"] is not None and config is not None:
+                config.temperature = _ia["temperatura"]
+            return generar_original(*a, **k)
+
+        modelos_api.generate_content = _generar
+        _modelos[clave] = m
     return _modelos[clave]
 
 
@@ -398,7 +457,8 @@ async def procesar(orden: Dict[str, Any]) -> None:
     email = EmailMessage.from_graph_api(limpio)
 
     ia = orden.get("ia") or {}
-    modelo = ModeloObservado(modelo_vertex(ia.get("modelo", "gemini-2.5-flash"),
+    _ia["temperatura"] = ia.get("temperatura")
+    modelo =ModeloObservado(modelo_vertex(ia.get("modelo", "gemini-2.5-flash"),
                                            ia.get("ubicacion", "global")))
     if _registro is None:
         _registro = ConsultaDePersonas(url_base=settings.MS_SGDEA_BETA_URL)
