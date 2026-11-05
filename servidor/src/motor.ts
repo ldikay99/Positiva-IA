@@ -185,7 +185,7 @@ export class Motor extends EventEmitter {
       corrida.inicio = Date.now();
       const c = corrida.configuracion;
       t.proceso.stdin.write(
-        JSON.stringify({ cmd: "procesar", corrida: corrida.id, caso: corrida.caso, parametros: c.parametros, entorno: c.entorno, ia: c.ia, tope_s: c.topeSegundos }) + "\n",
+        JSON.stringify({ cmd: "procesar", corrida: corrida.id, caso: corrida.caso, parametros: c.parametros, entorno: c.entorno, ia: c.ia, tope_s: c.topeSegundos, reglas: c.reglas.filter((r) => r.activa) }) + "\n",
       );
       this.publicar({ tipo: "asignada", corrida: corrida.id, t: Date.now() / 1000, caso: corrida.caso, trabajador: t.id });
       this.publicarEstado();

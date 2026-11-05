@@ -6,7 +6,26 @@ import { ajustables } from "./catalogo.ts";
 
 export const MODELOS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5-pro", "gemini-3.1-flash-lite"] as const;
 
+/** Regla creada desde la web que el motor evalúa en la entrada o antes de la compuerta. */
+const regla = z.object({
+  id: z.string().regex(/^[a-z0-9-]{3,48}$/),
+  nombre: z.string().trim().min(1).max(80),
+  descripcion: z.string().max(400).default(""),
+  activa: z.boolean().default(true),
+  punto: z.enum(["entrada", "validacion"]),
+  campo: z.string().regex(/^[a-z_]{2,48}$/),
+  operador: z.enum(["coincide", "no_coincide", "falta", "existe"]),
+  patron: z.string().max(2000).default(""),
+  ignorarMayusculas: z.boolean().default(true),
+  accion: z.enum(["manual", "aviso", "fijar"]),
+  motivo: z.string().regex(/^[A-Z0-9_]{0,48}$/).default("REGLA_PERSONALIZADA"),
+  valor: z.string().max(300).default(""),
+});
+
+export type Regla = z.infer<typeof regla>;
+
 const esquema = z.object({
+  reglas: z.array(regla).max(60).default([]),
   parametros: z.record(z.string(), z.unknown()).default({}),
   entorno: z.record(z.string(), z.string()).default({}),
   ia: z
@@ -57,6 +76,10 @@ export function validar(entrada: unknown): { ok: true; valor: Configuracion } | 
   if (ajenos.length) return { ok: false, error: `parámetros no ajustables: ${ajenos.join(", ")}` };
   const otras = Object.keys(r.data.entorno).filter((k) => !permitidos.entorno.has(k));
   if (otras.length) return { ok: false, error: `variables no permitidas: ${otras.join(", ")}` };
+  const ids = r.data.reglas.map((x) => x.id);
+  if (new Set(ids).size !== ids.length) return { ok: false, error: "hay dos reglas con el mismo id" };
+  const malas = r.data.reglas.filter((x) => (x.accion === "fijar" && x.punto !== "validacion") || ((x.operador === "coincide" || x.operador === "no_coincide") && !x.patron));
+  if (malas.length) return { ok: false, error: `reglas incompletas: ${malas.map((x) => x.nombre).join(", ")}` };
   return { ok: true, valor: r.data };
 }
 
@@ -67,6 +90,7 @@ function plano(c: Configuracion): Record<string, unknown> {
   p["ia.modelo"] = c.ia.modelo;
   p["ia.ubicacion"] = c.ia.ubicacion;
   p["ia.temperatura"] = c.ia.temperatura;
+  for (const x of c.reglas) p[`regla.${x.id}`] = x;
   p.concurrencia = c.concurrencia;
   p.topeSegundos = c.topeSegundos;
   return p;
@@ -107,7 +131,7 @@ export async function perfiles(): Promise<{ nombre: string; t: number; cambios: 
   const lista = await Promise.all(
     nombres.map(async (n) => {
       const p = JSON.parse(await readFile(join(carpetaPerfiles(), n), "utf8")) as { nombre: string; t: number; descripcion: string; configuracion: Configuracion };
-      return { nombre: p.nombre, t: p.t, descripcion: p.descripcion, cambios: Object.keys(p.configuracion.parametros).length + Object.keys(p.configuracion.entorno).length };
+      return { nombre: p.nombre, t: p.t, descripcion: p.descripcion, cambios: Object.keys(p.configuracion.parametros).length + Object.keys(p.configuracion.entorno).length + (p.configuracion.reglas?.length ?? 0) };
     }),
   );
   return lista.sort((a, b) => b.t - a.t);
