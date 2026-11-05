@@ -11,21 +11,29 @@ es exactamente lo que hace el servicio real.
 
 ## Qué se puede hacer
 
-- **Bandeja:** buscar y filtrar los correos descargados, ver cómo terminaron en producción y
-  procesar uno, varios o los primeros N.
-- **Flujo:** el pipeline como diagrama manipulable (los nodos se arrastran y la posición se
-  recuerda). Durante una corrida la etapa en curso se ilumina, las conexiones recorridas se marcan
-  y cada nodo muestra su tiempo. Al terminar, el desenlace (radicado, manual, duplicado,
-  reenviado, aplazado) queda resaltado.
-- **Nodo:** descripción, reglas, desenlaces posibles y parámetros. Los que el motor lee en tiempo
-  de ejecución se ajustan desde la web y aplican a las corridas siguientes; los que están fijos en
-  el código se muestran con la razón.
-- **Corrida:** la línea de tiempo en vivo (etapas, pedidos al modelo con sus tokens, herramientas
-  con argumentos y respuesta, consultas al registro de personas, logs), los datos encontrados con
-  su origen y confianza, y el payload que se radicaría en SGDEA.
-- **Corridas, Proveedores y APIs, Herramientas del agente, Ajustes:** el resumen de lo procesado
-  frente a producción, cada sistema externo con sus operaciones, las herramientas del agente, el
-  modelo de Vertex y la concurrencia.
+- **Flujo:** el pipeline como diagrama de nodos conectados por cables con flecha. Mientras un
+  correo se procesa, la corriente recorre los cables, la etapa en curso late y cada nodo muestra
+  su tiempo, las vueltas del modelo y los tokens. Los nodos se arrastran sin mover la cámara y la
+  posición se recuerda; hay minimapa, encuadre y modo «seguir en vivo».
+- **Inspector de nodo:** al hacer clic en un nodo se editan sus parámetros con el editor que le
+  corresponde: prompts del agente y del revisor (con resaltado), descripciones de las
+  herramientas que lee el modelo, umbrales de confianza con deslizador, reglas de búsqueda
+  (expresiones regulares) con probador en vivo contra el correo abierto, listas, tablas e
+  interruptores. Se editan varios y se aplican juntos: rigen desde el próximo correo, sin
+  reconstruir ni desplegar. También muestra las reglas de la etapa y lo que hizo en la corrida.
+- **Bandeja:** buscar y filtrar los correos, seleccionarlos con su casilla y procesarlos con un
+  botón explícito. Un clic en la fila abre el correo y sus adjuntos en el inspector.
+- **Panel inferior:** la corrida en vivo (etapas, pedidos y respuestas del modelo, herramientas,
+  consultas, escrituras simuladas), los logs del servicio y la consola. Se redimensiona y se
+  pliega, igual que la bandeja y el inspector.
+- **Corridas:** resultados frente a producción con los mismos correos (cuántos que allá fueron a
+  manual aquí se radican y al revés), distribución de desenlaces, tokens y tiempos.
+- **Logs:** todos los eventos de todas las corridas en vivo, con filtros y pausa.
+- **Herramientas y Proveedores:** cada herramienta del agente y cada sistema externo con su uso
+  real en la sesión (llamadas, tiempo promedio, fallos) y sus operaciones.
+- **Configuración:** modelo de Vertex, temperatura, capacidad, cambios activos frente al código
+  con su diferencia y su botón para volver, perfiles con nombre, historial de cambios y
+  exportación.
 
 ## Seguridad
 
