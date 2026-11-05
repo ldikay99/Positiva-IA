@@ -1,0 +1,18 @@
+services:
+  positiva-ia:
+    build: .
+    image: positiva-ia:local
+    ports:
+      - "${PUERTO:-8080}:8080"
+    environment:
+      GCP_PROJECT: ${GCP_PROJECT:-positiva-sgda-prd-416417}
+      TRABAJADORES_MAX: ${TRABAJADORES_MAX:-8}
+    volumes:
+      # Credenciales de Vertex (ADC de gcloud o llave de cuenta de servicio), solo lectura.
+      - ${RUTA_CREDENCIALES:?define RUTA_CREDENCIALES en .env}:/secretos/adc.json:ro
+      # Bandeja de correos descargados, solo lectura.
+      - ${RUTA_BANDEJA:?define RUTA_BANDEJA en .env}:/datos/bandeja:ro
+      # Ajustes y corridas guardadas.
+      - positiva-ia-datos:/datos/estado
+volumes:
+  positiva-ia-datos:
