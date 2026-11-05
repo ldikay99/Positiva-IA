@@ -70,55 +70,139 @@
      "id": "lote_exige_vertex",
      "descripcion": "Sin la bandera --vertex la corrida termina sin procesar nada (return 1): Vertex es el unico backend que resuelve campos y se factura.",
      "modulo": "correr.py",
-     "funcion": "main"
+     "funcion": "main",
+     "usa": [
+      "correr.CONCURRENCIA",
+      "correr.CORREOS_POR_CORRIDA",
+      "correr.LARGO_DEL_FALLO",
+      "correr.LOGS",
+      "correr.TIMEOUT_SGDEA_S",
+      "correr.TOPE_POR_CORREO_S",
+      "correr.UMBRAL_ETAPA_LENTA_MS",
+      "correr.UMBRAL_POR_ETAPA_MS",
+      "correr.WORKSPACES"
+     ]
     },
     {
      "id": "lote_seco_exige_modo_test",
      "descripcion": "--seco exige MODO_TEST=true; con --seco el Orquestador recibe outlook=None y radicador=None (no marca, no mueve, no reenvia; radicar devuelve 'DRY-RUN'). La bandeja se lee igual con get_emails.",
      "modulo": "correr.py",
-     "funcion": "main"
+     "funcion": "main",
+     "usa": [
+      "correr.CONCURRENCIA",
+      "correr.CORREOS_POR_CORRIDA",
+      "correr.LARGO_DEL_FALLO",
+      "correr.LOGS",
+      "correr.TIMEOUT_SGDEA_S",
+      "correr.TOPE_POR_CORREO_S",
+      "correr.UMBRAL_ETAPA_LENTA_MS",
+      "correr.UMBRAL_POR_ETAPA_MS",
+      "correr.WORKSPACES"
+     ]
     },
     {
      "id": "lote_carpeta",
      "descripcion": "--carpeta inbox lee settings.OUTLOOK_FOLDER_ID; --carpeta exitosa lee settings.OUTLOOK_FOLDER_RADICACION_EXITOSA.",
      "modulo": "correr.py",
-     "funcion": "main"
+     "funcion": "main",
+     "usa": [
+      "correr.CONCURRENCIA",
+      "correr.CORREOS_POR_CORRIDA",
+      "correr.LARGO_DEL_FALLO",
+      "correr.LOGS",
+      "correr.TIMEOUT_SGDEA_S",
+      "correr.TOPE_POR_CORREO_S",
+      "correr.UMBRAL_ETAPA_LENTA_MS",
+      "correr.UMBRAL_POR_ETAPA_MS",
+      "correr.WORKSPACES"
+     ]
     },
     {
      "id": "lote_tamano",
      "descripcion": "Se piden get_emails(carpeta, limit=--n) (Graph pide $top=limit*3) y se recorta a --n (por defecto CORREOS_POR_CORRIDA).",
      "modulo": "correr.py",
-     "funcion": "main"
+     "funcion": "main",
+     "usa": [
+      "correr.CONCURRENCIA",
+      "correr.CORREOS_POR_CORRIDA",
+      "correr.LARGO_DEL_FALLO",
+      "correr.LOGS",
+      "correr.TIMEOUT_SGDEA_S",
+      "correr.TOPE_POR_CORREO_S",
+      "correr.UMBRAL_ETAPA_LENTA_MS",
+      "correr.UMBRAL_POR_ETAPA_MS",
+      "correr.WORKSPACES"
+     ]
     },
     {
      "id": "lote_concurrencia",
      "descripcion": "asyncio.Semaphore(max(1, CONCURRENCIA)): correos procesados en paralelo dentro de la misma instancia de Orquestador.",
      "modulo": "correr.py",
-     "funcion": "main.atender"
+     "funcion": "main.atender",
+     "usa": [
+      "correr.CONCURRENCIA",
+      "correr.CORREOS_POR_CORRIDA",
+      "correr.LARGO_DEL_FALLO",
+      "correr.LOGS",
+      "correr.TIMEOUT_SGDEA_S",
+      "correr.TOPE_POR_CORREO_S",
+      "correr.UMBRAL_ETAPA_LENTA_MS",
+      "correr.UMBRAL_POR_ETAPA_MS",
+      "correr.WORKSPACES"
+     ]
     },
     {
      "id": "lote_presupuesto",
      "descripcion": "Presupuesto total = PRESUPUESTO_S (entorno) o CADENCIA_S*FRACCION_DE_LA_VENTANA (1188 s). agotado() = queda() < MINIMO_POR_CORREO_S, con queda() = total - RESERVA_S - transcurrido.",
      "modulo": "pipeline/presupuesto.py",
-     "funcion": "Presupuesto.agotado"
+     "funcion": "Presupuesto.agotado",
+     "usa": [
+      "pipeline.presupuesto.CADENCIA_S",
+      "pipeline.presupuesto.FRACCION_DE_LA_VENTANA",
+      "pipeline.presupuesto.MINIMO_POR_CORREO_S",
+      "pipeline.presupuesto.RESERVA_S"
+     ]
     },
     {
      "id": "lote_tope_por_correo",
      "descripcion": "Cada correo corre bajo asyncio.wait_for(orq.procesar(email), TOPE_POR_CORREO_S); al vencer se emite un ERROR y el correo queda 'colgado' (no aparece en el informe).",
      "modulo": "correr.py",
-     "funcion": "main.atender"
+     "funcion": "main.atender",
+     "usa": [
+      "correr.CONCURRENCIA",
+      "correr.CORREOS_POR_CORRIDA",
+      "correr.LARGO_DEL_FALLO",
+      "correr.LOGS",
+      "correr.TIMEOUT_SGDEA_S",
+      "correr.TOPE_POR_CORREO_S",
+      "correr.UMBRAL_ETAPA_LENTA_MS",
+      "correr.UMBRAL_POR_ETAPA_MS",
+      "correr.WORKSPACES"
+     ]
     },
     {
      "id": "lote_credenciales_vertex",
      "descripcion": "Credenciales: primero ADC (google.auth.default, scope cloud-platform); si falla, `gcloud auth print-access-token`.",
      "modulo": "correr.py",
-     "funcion": "_credenciales_de_vertex"
+     "funcion": "_credenciales_de_vertex",
+     "usa": []
     },
     {
      "id": "lote_servicios",
      "descripcion": "Se construyen: ModeloVertex(proyecto=GCP_PROJECT, ubicacion='global', endpoint_global=True), OutlookService(), RadicacionService(timeout=TIMEOUT_SGDEA_S), SupabaseService() (auditoria; None si falla), ConsultaDePersonas(url_base=MS_SGDEA_BETA_URL). NO se pasa cache= (la capa Redis queda apagada).",
      "modulo": "correr.py",
-     "funcion": "main"
+     "funcion": "main",
+     "usa": [
+      "correr.CONCURRENCIA",
+      "correr.CORREOS_POR_CORRIDA",
+      "correr.LARGO_DEL_FALLO",
+      "correr.LOGS",
+      "correr.TIMEOUT_SGDEA_S",
+      "correr.TOPE_POR_CORREO_S",
+      "correr.UMBRAL_ETAPA_LENTA_MS",
+      "correr.UMBRAL_POR_ETAPA_MS",
+      "correr.WORKSPACES"
+     ]
     }
    ],
    "parametros": [
@@ -349,31 +433,44 @@
      "id": "dedup_etiqueta_propia",
      "descripcion": "Capa 1: si alguna categoria del correo tiene forma de radicado (PATRON_RADICADO ^ENT[\\s-]?\\d o prefijo 'RADICADO:'), es duplicado; radicado = esa etiqueta.",
      "modulo": "utils/radicado.py",
-     "funcion": "etiqueta_de_radicado"
+     "funcion": "etiqueta_de_radicado",
+     "usa": [
+      "utils.radicado.PATRON_RADICADO",
+      "utils.radicado.PREFIJO_PROPIO",
+      "utils.radicado._PATRON_PROPIO"
+     ]
     },
     {
      "id": "dedup_hilo_en_corrida",
      "descripcion": "Capa 2: si el conversation_id ya esta en Detector.vistos (hilos atendidos en ESTA corrida), es duplicado. El hilo se marca como visto pase lo que pase con las consultas.",
      "modulo": "pipeline/duplicados.py",
-     "funcion": "Detector.comprobar"
+     "funcion": "Detector.comprobar",
+     "usa": []
     },
     {
      "id": "dedup_hilo_en_buzon",
      "descripcion": "Capa 3: Graph GET /users/{buzon}/messages filtrando por conversationId; si algun correo del hilo tiene etiqueta de radicado, es duplicado. Apagada si dedup_desactivada() (MODO_TEST y no DEDUP_EN_PRUEBAS).",
      "modulo": "services/outlook.py",
-     "funcion": "OutlookService.hilo_ya_radicado"
+     "funcion": "OutlookService.hilo_ya_radicado",
+     "usa": []
     },
     {
      "id": "dedup_asunto",
      "descripcion": "Capa 4: busca correos radicados con el mismo asunto limpio (mismo remitente via $filter y luego $search por asunto, hasta PAGINAS_POR_ASUNTO paginas de RESULTADOS_POR_PAGINA_DE_ASUNTO, CANDIDATOS_POR_ASUNTO candidatos) y exige que sea el mismo caso (textos parecidos >= PARECIDO_DEL_MISMO_TEXTO o remitentes vinculados). Apagada con dedup_desactivada().",
      "modulo": "services/outlook.py",
-     "funcion": "OutlookService.buscar_etiqueta_ent_por_asunto"
+     "funcion": "OutlookService.buscar_etiqueta_ent_por_asunto",
+     "usa": [
+      "services.outlook.CANDIDATOS_POR_ASUNTO",
+      "services.outlook.PAGINAS_POR_ASUNTO",
+      "services.outlook.RESULTADOS_POR_PAGINA_DE_ASUNTO"
+     ]
     },
     {
      "id": "dedup_degradar_no_bloquear",
      "descripcion": "Si una capa falla o no esta configurada, el correo se procesa igual y se anota 'deduplicacion degradada: ...' en los avisos (tambien mira `ultimo_error` del servicio).",
      "modulo": "pipeline/duplicados.py",
-     "funcion": "Detector._preguntar"
+     "funcion": "Detector._preguntar",
+     "usa": []
     }
    ],
    "parametros": [
@@ -595,25 +692,47 @@
      "id": "reclamo_cuenta",
      "descripcion": "reclamos_previos = mayor N entre categorias 'EN-PROCESO:N'. Sin marca: intento 1. Con marca: intento N+1; si > MAX_RECLAMOS va a manual.",
      "modulo": "pipeline/reclamo.py",
-     "funcion": "decidir"
+     "funcion": "decidir",
+     "usa": [
+      "pipeline.reclamo.MAX_RECLAMOS",
+      "pipeline.reclamo.PREFIJO",
+      "pipeline.reclamo._PATRON"
+     ]
     },
     {
      "id": "reclamo_obligatorio",
      "descripcion": "La marca se escribe con obligatoria=True: cualquier fallo corta el correo (en_proceso o sin_reclamar).",
      "modulo": "pipeline/orquestador.py",
-     "funcion": "Orquestador._marcar"
+     "funcion": "Orquestador._marcar",
+     "usa": []
     },
     {
      "id": "marcas_familias",
      "descripcion": "Graph reemplaza la lista completa de categorias: poner una marca sustituye solo las de su familia (EN-PROCESO:, REINTENTO:, REVISION-MANUAL:, REENVIADO:, RADICADO/ENT) y conserva las categorias ajenas puestas por personas. Al cerrar (quitar_de_proceso) se retiran EN-PROCESO y REINTENTO.",
      "modulo": "pipeline/marcas.py",
-     "funcion": "fusionar"
+     "funcion": "fusionar",
+     "usa": [
+      "pipeline.marcas.DE_PROCESO",
+      "pipeline.marcas.EN_PROCESO",
+      "pipeline.marcas.FAMILIA_RADICADO",
+      "pipeline.marcas.PREFIJOS",
+      "pipeline.marcas.REENVIADO",
+      "pipeline.marcas.REINTENTO",
+      "pipeline.marcas.REVISION_MANUAL"
+     ]
     },
     {
      "id": "reclamo_etag",
      "descripcion": "OutlookService.marcar lee categorias+ETag y hace PATCH con If-Match; un 412 se traduce a OtraCorridaLoTomo.",
      "modulo": "services/outlook.py",
-     "funcion": "OutlookService.marcar"
+     "funcion": "OutlookService.marcar",
+     "usa": [
+      "services.outlook.ESPERA_ENTRE_INTENTOS_S",
+      "services.outlook.ESPERA_MAXIMA_POR_LIMITE_S",
+      "services.outlook.ESPERA_POR_DEFECTO_S",
+      "services.outlook.INTENTOS_POR_FALLO_DE_RED",
+      "services.outlook.INTENTOS_POR_LIMITE_DE_TASA"
+     ]
     }
    ],
    "parametros": [
@@ -824,55 +943,191 @@
      "id": "enr_remitente_excluido",
      "descripcion": "Si el remitente (direccion completa, minusculas) esta en REMITENTES_QUE_NO_SE_RADICAN -> destino NO_SE_RADICA.",
      "modulo": "pipeline/enrutamiento.py",
-     "funcion": "decidir"
+     "funcion": "decidir",
+     "usa": [
+      "pipeline.enrutamiento.DESTINO_MEDICINA_LABORAL",
+      "pipeline.enrutamiento.DESTINO_NOTIFICACIONES_JUDICIALES",
+      "pipeline.enrutamiento.DOMINIO_DE_DIGITALIZACION",
+      "pipeline.enrutamiento.JUDICIAL_KEYWORD_PATTERNS",
+      "pipeline.enrutamiento.REMITENTES_QUE_NO_SE_RADICAN",
+      "pipeline.enrutamiento.TOPE_DEL_CUERPO",
+      "pipeline.enrutamiento._DIRECCION",
+      "pipeline.enrutamiento._DOMINIO_DE_ENTE",
+      "pipeline.enrutamiento._ENCABEZADO_CITADO",
+      "pipeline.enrutamiento._ENTES",
+      "pipeline.enrutamiento._ENTE_EN_EL_ASUNTO",
+      "pipeline.enrutamiento._ENTE_QUE_REQUIERE",
+      "pipeline.enrutamiento._ES_DERECHO_DE_PETICION",
+      "pipeline.enrutamiento._JUDICIAL_EXTRA",
+      "pipeline.enrutamiento._JUNTA",
+      "pipeline.enrutamiento._LA_JUNTA_ACTUA",
+      "pipeline.enrutamiento._LA_RAMA_ACTUA",
+      "pipeline.enrutamiento._LISTA_DE_DESTINATARIOS",
+      "pipeline.enrutamiento._PIDE_SOBRE_LA_JUNTA",
+      "pipeline.enrutamiento._PIDE_SOBRE_LO_JUDICIAL",
+      "pipeline.enrutamiento._ROTULOS"
+     ]
     },
     {
      "id": "enr_sin_buzones",
      "descripcion": "Antes de buscar señales se retiran del asunto y cuerpo los encabezados citados (De:...Asunto:), las listas de destinatarios (Para/CC/...) y las direcciones de correo; se normaliza sin acentos y se miran solo los primeros TOPE_DEL_CUERPO caracteres del cuerpo.",
      "modulo": "pipeline/enrutamiento.py",
-     "funcion": "_sin_buzones"
+     "funcion": "_sin_buzones",
+     "usa": [
+      "pipeline.enrutamiento.TOPE_DEL_CUERPO",
+      "pipeline.enrutamiento._DIRECCION",
+      "pipeline.enrutamiento._ENCABEZADO_CITADO",
+      "pipeline.enrutamiento._LISTA_DE_DESTINATARIOS",
+      "pipeline.enrutamiento._ROTULOS"
+     ]
     },
     {
      "id": "enr_derecho_de_peticion",
      "descripcion": "Si dice 'derecho de peticion' o 'articulo 23 de la constitucion' y la Rama NO esta actuando (_LA_RAMA_ACTUA), se radica (Servicio al Cliente) sin mirar mas.",
      "modulo": "pipeline/enrutamiento.py",
-     "funcion": "_decidir_area"
+     "funcion": "_decidir_area",
+     "usa": [
+      "pipeline.enrutamiento.DESTINO_MEDICINA_LABORAL",
+      "pipeline.enrutamiento.DESTINO_NOTIFICACIONES_JUDICIALES",
+      "pipeline.enrutamiento.DOMINIO_DE_DIGITALIZACION",
+      "pipeline.enrutamiento.JUDICIAL_KEYWORD_PATTERNS",
+      "pipeline.enrutamiento.TOPE_DEL_CUERPO",
+      "pipeline.enrutamiento._DIRECCION",
+      "pipeline.enrutamiento._DOMINIO_DE_ENTE",
+      "pipeline.enrutamiento._ENCABEZADO_CITADO",
+      "pipeline.enrutamiento._ENTES",
+      "pipeline.enrutamiento._ENTE_EN_EL_ASUNTO",
+      "pipeline.enrutamiento._ENTE_QUE_REQUIERE",
+      "pipeline.enrutamiento._ES_DERECHO_DE_PETICION",
+      "pipeline.enrutamiento._JUDICIAL_EXTRA",
+      "pipeline.enrutamiento._JUNTA",
+      "pipeline.enrutamiento._LA_JUNTA_ACTUA",
+      "pipeline.enrutamiento._LA_RAMA_ACTUA",
+      "pipeline.enrutamiento._LISTA_DE_DESTINATARIOS",
+      "pipeline.enrutamiento._PIDE_SOBRE_LA_JUNTA",
+      "pipeline.enrutamiento._PIDE_SOBRE_LO_JUDICIAL",
+      "pipeline.enrutamiento._ROTULOS"
+     ]
     },
     {
      "id": "enr_judicial",
      "descripcion": "Judicial si alguna JUDICIAL_KEYWORD_PATTERNS (con \\b delante) aparece en asunto o cuerpo Y (el remitente es de un dominio de ente/Rama, o la Rama actua, o NO es alguien pidiendo cumplimiento de un fallo [_PIDE_SOBRE_LO_JUDICIAL]); o, sin palabra clave, si _LA_RAMA_ACTUA casa. Destino DESTINO_NOTIFICACIONES_JUDICIALES.",
      "modulo": "pipeline/enrutamiento.py",
-     "funcion": "_judicial"
+     "funcion": "_judicial",
+     "usa": [
+      "pipeline.enrutamiento.DESTINO_NOTIFICACIONES_JUDICIALES",
+      "pipeline.enrutamiento.JUDICIAL_KEYWORD_PATTERNS",
+      "pipeline.enrutamiento.TOPE_DEL_CUERPO",
+      "pipeline.enrutamiento._DOMINIO_DE_ENTE",
+      "pipeline.enrutamiento._LA_RAMA_ACTUA",
+      "pipeline.enrutamiento._PIDE_SOBRE_LO_JUDICIAL"
+     ]
     },
     {
      "id": "enr_ente_de_control",
      "descripcion": "Ente de control -> judicial si: el remitente es de _DOMINIO_DE_ENTE; o el ASUNTO nombra un ente (_ENTE_EN_EL_ASUNTO); o el texto nombra desacato/proceso ordinario laboral (_JUDICIAL_EXTRA); o el cuerpo presenta un requerimiento del ente (_ENTE_QUE_REQUIERE).",
      "modulo": "pipeline/enrutamiento.py",
-     "funcion": "_ente_de_control"
+     "funcion": "_ente_de_control",
+     "usa": [
+      "pipeline.enrutamiento.TOPE_DEL_CUERPO",
+      "pipeline.enrutamiento._DOMINIO_DE_ENTE",
+      "pipeline.enrutamiento._ENTES",
+      "pipeline.enrutamiento._ENTE_EN_EL_ASUNTO",
+      "pipeline.enrutamiento._ENTE_QUE_REQUIERE",
+      "pipeline.enrutamiento._JUDICIAL_EXTRA"
+     ]
     },
     {
      "id": "enr_digitalizacion",
      "descripcion": "Remitente que termina en DOMINIO_DE_DIGITALIZACION (@e-entrega.co) -> Medicina Laboral.",
      "modulo": "pipeline/enrutamiento.py",
-     "funcion": "_decidir_area"
+     "funcion": "_decidir_area",
+     "usa": [
+      "pipeline.enrutamiento.DESTINO_MEDICINA_LABORAL",
+      "pipeline.enrutamiento.DESTINO_NOTIFICACIONES_JUDICIALES",
+      "pipeline.enrutamiento.DOMINIO_DE_DIGITALIZACION",
+      "pipeline.enrutamiento.JUDICIAL_KEYWORD_PATTERNS",
+      "pipeline.enrutamiento.TOPE_DEL_CUERPO",
+      "pipeline.enrutamiento._DIRECCION",
+      "pipeline.enrutamiento._DOMINIO_DE_ENTE",
+      "pipeline.enrutamiento._ENCABEZADO_CITADO",
+      "pipeline.enrutamiento._ENTES",
+      "pipeline.enrutamiento._ENTE_EN_EL_ASUNTO",
+      "pipeline.enrutamiento._ENTE_QUE_REQUIERE",
+      "pipeline.enrutamiento._ES_DERECHO_DE_PETICION",
+      "pipeline.enrutamiento._JUDICIAL_EXTRA",
+      "pipeline.enrutamiento._JUNTA",
+      "pipeline.enrutamiento._LA_JUNTA_ACTUA",
+      "pipeline.enrutamiento._LA_RAMA_ACTUA",
+      "pipeline.enrutamiento._LISTA_DE_DESTINATARIOS",
+      "pipeline.enrutamiento._PIDE_SOBRE_LA_JUNTA",
+      "pipeline.enrutamiento._PIDE_SOBRE_LO_JUDICIAL",
+      "pipeline.enrutamiento._ROTULOS"
+     ]
     },
     {
      "id": "enr_junta",
      "descripcion": "Si nombra la Junta de Calificacion (_JUNTA) -> Medicina Laboral, SALVO que quien escribe pida algo sobre su propio tramite (_PIDE_SOBRE_LA_JUNTA) y la Junta no este actuando (_LA_JUNTA_ACTUA).",
      "modulo": "pipeline/enrutamiento.py",
-     "funcion": "_decidir_area"
+     "funcion": "_decidir_area",
+     "usa": [
+      "pipeline.enrutamiento.DESTINO_MEDICINA_LABORAL",
+      "pipeline.enrutamiento.DESTINO_NOTIFICACIONES_JUDICIALES",
+      "pipeline.enrutamiento.DOMINIO_DE_DIGITALIZACION",
+      "pipeline.enrutamiento.JUDICIAL_KEYWORD_PATTERNS",
+      "pipeline.enrutamiento.TOPE_DEL_CUERPO",
+      "pipeline.enrutamiento._DIRECCION",
+      "pipeline.enrutamiento._DOMINIO_DE_ENTE",
+      "pipeline.enrutamiento._ENCABEZADO_CITADO",
+      "pipeline.enrutamiento._ENTES",
+      "pipeline.enrutamiento._ENTE_EN_EL_ASUNTO",
+      "pipeline.enrutamiento._ENTE_QUE_REQUIERE",
+      "pipeline.enrutamiento._ES_DERECHO_DE_PETICION",
+      "pipeline.enrutamiento._JUDICIAL_EXTRA",
+      "pipeline.enrutamiento._JUNTA",
+      "pipeline.enrutamiento._LA_JUNTA_ACTUA",
+      "pipeline.enrutamiento._LA_RAMA_ACTUA",
+      "pipeline.enrutamiento._LISTA_DE_DESTINATARIOS",
+      "pipeline.enrutamiento._PIDE_SOBRE_LA_JUNTA",
+      "pipeline.enrutamiento._PIDE_SOBRE_LO_JUDICIAL",
+      "pipeline.enrutamiento._ROTULOS"
+     ]
     },
     {
      "id": "enr_orden",
      "descripcion": "Orden de evaluacion: remitente excluido > derecho de peticion > judicial > ente de control > dominio de digitalizacion > Junta > radicar.",
      "modulo": "pipeline/enrutamiento.py",
-     "funcion": "decidir"
+     "funcion": "decidir",
+     "usa": [
+      "pipeline.enrutamiento.DESTINO_MEDICINA_LABORAL",
+      "pipeline.enrutamiento.DESTINO_NOTIFICACIONES_JUDICIALES",
+      "pipeline.enrutamiento.DOMINIO_DE_DIGITALIZACION",
+      "pipeline.enrutamiento.JUDICIAL_KEYWORD_PATTERNS",
+      "pipeline.enrutamiento.REMITENTES_QUE_NO_SE_RADICAN",
+      "pipeline.enrutamiento.TOPE_DEL_CUERPO",
+      "pipeline.enrutamiento._DIRECCION",
+      "pipeline.enrutamiento._DOMINIO_DE_ENTE",
+      "pipeline.enrutamiento._ENCABEZADO_CITADO",
+      "pipeline.enrutamiento._ENTES",
+      "pipeline.enrutamiento._ENTE_EN_EL_ASUNTO",
+      "pipeline.enrutamiento._ENTE_QUE_REQUIERE",
+      "pipeline.enrutamiento._ES_DERECHO_DE_PETICION",
+      "pipeline.enrutamiento._JUDICIAL_EXTRA",
+      "pipeline.enrutamiento._JUNTA",
+      "pipeline.enrutamiento._LA_JUNTA_ACTUA",
+      "pipeline.enrutamiento._LA_RAMA_ACTUA",
+      "pipeline.enrutamiento._LISTA_DE_DESTINATARIOS",
+      "pipeline.enrutamiento._PIDE_SOBRE_LA_JUNTA",
+      "pipeline.enrutamiento._PIDE_SOBRE_LO_JUDICIAL",
+      "pipeline.enrutamiento._ROTULOS"
+     ]
     },
     {
      "id": "enr_no_bucle",
      "descripcion": "Si el reenvio volveria al mismo buzon que lo escribio (remitente == correo_destino), se radica en vez de devolverselo.",
      "modulo": "pipeline/enrutamiento.py",
-     "funcion": "_seria_un_bucle"
+     "funcion": "_seria_un_bucle",
+     "usa": []
     }
    ],
    "parametros": [
@@ -1367,13 +1622,25 @@
      "id": "fact_asunto",
      "descripcion": "Asunto con forma NIT;RAZON SOCIAL;NUMERO;TIPO (_ASUNTO_DE_FACTURA).",
      "modulo": "pipeline/facturas.py",
-     "funcion": "es_factura"
+     "funcion": "es_factura",
+     "usa": [
+      "pipeline.facturas.TOPE_DEL_CUERPO",
+      "pipeline.facturas._ASUNTO_DE_FACTURA",
+      "pipeline.facturas._CODIGO_DE_LA_DIAN",
+      "pipeline.facturas._DOCUMENTO_DE_LA_DIAN"
+     ]
     },
     {
      "id": "fact_cufe",
      "descripcion": "En los primeros TOPE_DEL_CUERPO caracteres: 'CUFE:'/'CUDE:' (_CODIGO_DE_LA_DIAN) o 'factura electronica de venta', 'nota credito/debito electronica', 'representacion grafica de la factura' (_DOCUMENTO_DE_LA_DIAN).",
      "modulo": "pipeline/facturas.py",
-     "funcion": "es_factura"
+     "funcion": "es_factura",
+     "usa": [
+      "pipeline.facturas.TOPE_DEL_CUERPO",
+      "pipeline.facturas._ASUNTO_DE_FACTURA",
+      "pipeline.facturas._CODIGO_DE_LA_DIAN",
+      "pipeline.facturas._DOCUMENTO_DE_LA_DIAN"
+     ]
     }
    ],
    "parametros": [
@@ -1478,7 +1745,8 @@
      "id": "dest_reenvio_sin_archivo_si_falla",
      "descripcion": "Si forward_email no existe o lanza, se anota el aviso y NO se mueve el correo.",
      "modulo": "pipeline/orquestador.py",
-     "funcion": "Orquestador._reenviar"
+     "funcion": "Orquestador._reenviar",
+     "usa": []
     }
    ],
    "parametros": [
@@ -1524,13 +1792,22 @@
      "id": "rem_dominio_interno",
      "descripcion": "es_buzon_de_positiva: la direccion termina en @positiva.gov.co o @positivaseguros.com.co.",
      "modulo": "utils/generic_filter.py",
-     "funcion": "es_buzon_de_positiva"
+     "funcion": "es_buzon_de_positiva",
+     "usa": [
+      "utils.generic_filter._INTERNAL_DOMAINS"
+     ]
     },
     {
      "id": "rem_externo_valido",
      "descripcion": "Correo externo valido = no interno y su parte local no contiene ninguna de _NON_HUMAN_LOCAL_PARTS (noreply, notificaciones, postmaster...). Se buscan con _EMAIL_REGEX en el cuerpo limpio.",
      "modulo": "utils/generic_filter.py",
-     "funcion": "tiene_remitente_externo_identificable"
+     "funcion": "tiene_remitente_externo_identificable",
+     "usa": [
+      "utils.generic_filter._EMAIL_REGEX",
+      "utils.generic_filter._INTERNAL_DOMAINS",
+      "utils.generic_filter._NON_HUMAN_LOCAL_PARTS",
+      "utils.generic_filter._NON_HUMAN_NAME_PATTERNS"
+     ]
     }
    ],
    "parametros": [
@@ -1661,19 +1938,22 @@
      "id": "adj_sin_servicio",
      "descripcion": "Sin outlook o con email.has_attachments False devuelve lista vacia.",
      "modulo": "pipeline/orquestador.py",
-     "funcion": "_descargar_adjuntos"
+     "funcion": "_descargar_adjuntos",
+     "usa": []
     },
     {
      "id": "adj_inline",
      "descripcion": "Se omiten los adjuntos con isInline=True y size < 20_000 bytes (literal).",
      "modulo": "pipeline/orquestador.py",
-     "funcion": "_descargar_adjuntos"
+     "funcion": "_descargar_adjuntos",
+     "usa": []
     },
     {
      "id": "adj_fallo_bitacora",
      "descripcion": "Un fallo al listar o descargar se registra en la bitacora con paso 'ADJUNTOS' (clasificado por pipeline.errores; uno sin firma reconocida es DESCONOCIDO/FATAL y mas tarde impide radicar con ERROR_INESPERADO, que se aplaza).",
      "modulo": "pipeline/orquestador.py",
-     "funcion": "_descargar_adjuntos"
+     "funcion": "_descargar_adjuntos",
+     "usa": []
     }
    ],
    "parametros": [
@@ -1717,13 +1997,20 @@
      "id": "vol_ruido",
      "descripcion": "No cuentan los adjuntos vacios ni los decorativos (nombre con outlook/signature/firma/logo/spacer/pixel o imageNNN).",
      "modulo": "pipeline/materializar.py",
-     "funcion": "es_ruido"
+     "funcion": "es_ruido",
+     "usa": [
+      "pipeline.materializar._IMAGEN_DE_FIRMA",
+      "pipeline.materializar._RUIDO"
+     ]
     },
     {
      "id": "vol_paginas",
      "descripcion": "Paginas: imagen = 1; PDF = page_count (tope LIMITE_PAGINAS_QUE_SE_CUENTAN; PDF protegido o ilegible = 0); otros = 0.",
      "modulo": "pipeline/volumen.py",
-     "funcion": "_paginas_de"
+     "funcion": "_paginas_de",
+     "usa": [
+      "pipeline.volumen.LIMITE_PAGINAS_QUE_SE_CUENTAN"
+     ]
     }
    ],
    "parametros": [
@@ -1851,19 +2138,24 @@
      "id": "dedup_hash",
      "descripcion": "Capa 5: hash = generate_email_hash(asunto, remitente, '|'.join(sorted(nombres_adjuntos))). Solo si hay cache; correr.py no la pasa, asi que en el Job no corre.",
      "modulo": "pipeline/duplicados.py",
-     "funcion": "comprobar_contenido"
+     "funcion": "comprobar_contenido",
+     "usa": []
     },
     {
      "id": "dedup_auditoria",
      "descripcion": "Capa 6: SupabaseService.email_exists(remitente, limpiar_asunto(asunto), recibido) sobre la tabla radicados_pqrd con piso de fecha = recibido - MARGEN_DE_ZONA_HORARIA. Solo si la capa 5 no respondio. Apagada con dedup_desactivada().",
      "modulo": "services/supabase_client.py",
-     "funcion": "SupabaseService.email_exists"
+     "funcion": "SupabaseService.email_exists",
+     "usa": [
+      "services.supabase_client.MARGEN_DE_ZONA_HORARIA"
+     ]
     },
     {
      "id": "dedup_cronometro_compartido",
      "descripcion": "Usa la misma etapa 'deduplicacion' del cronometro: etapas_ms['deduplicacion'] acumula las dos pasadas y la traza se emite dos veces con esa etapa.",
      "modulo": "pipeline/orquestador.py",
-     "funcion": "Orquestador.procesar"
+     "funcion": "Orquestador.procesar",
+     "usa": []
     }
    ],
    "parametros": [
@@ -1910,49 +2202,89 @@
      "id": "conv_hilo",
      "descripcion": "Corre en asyncio.to_thread para no bloquear el lote.",
      "modulo": "pipeline/orquestador.py",
-     "funcion": "procesar"
+     "funcion": "procesar",
+     "usa": []
     },
     {
      "id": "conv_descartes",
      "descripcion": "Se descartan: decorativos (es_ruido), vacios, contenido repetido (sha256) y adjuntos > LIMITE_BYTES_ADJUNTO.",
      "modulo": "pipeline/materializar.py",
-     "funcion": "materializar_adjuntos"
+     "funcion": "materializar_adjuntos",
+     "usa": [
+      "pipeline.materializar.LIMITE_BYTES_ADJUNTO",
+      "pipeline.materializar._IMAGEN_DE_FIRMA",
+      "pipeline.materializar._RUIDO"
+     ]
     },
     {
      "id": "conv_zip",
      "descripcion": "Un ZIP se expande un nivel (un ZIP dentro de otro no se vuelve a expandir).",
      "modulo": "pipeline/materializar.py",
-     "funcion": "materializar_adjuntos"
+     "funcion": "materializar_adjuntos",
+     "usa": [
+      "pipeline.materializar.LIMITE_BYTES_ADJUNTO",
+      "pipeline.materializar._IMAGEN_DE_FIRMA",
+      "pipeline.materializar._RUIDO"
+     ]
     },
     {
      "id": "conv_claves_pdf",
      "descripcion": "Para PDF protegidos se prueban como clave hasta 12 numeros de 6-12 digitos del asunto/cuerpo.",
      "modulo": "pipeline/materializar.py",
-     "funcion": "claves_candidatas_de"
+     "funcion": "claves_candidatas_de",
+     "usa": []
     },
     {
      "id": "conv_ocr_presupuesto",
      "descripcion": "OCR por documento hasta PRESUPUESTO_OCR_SEGUNDOS, por correo PRESUPUESTO_OCR_POR_CORREO_S compartido, y por pagina/imagen TIMEOUT_OCR_PAGINA_S. Solo PDF hasta LIMITE_PAGINAS_PDF paginas, texto hasta LIMITE_CARACTERES, hojas hasta LIMITE_FILAS_HOJA filas.",
      "modulo": "pipeline/conversion.py",
-     "funcion": "_pdf_a_markdown"
+     "funcion": "_pdf_a_markdown",
+     "usa": [
+      "pipeline.conversion.FRACCION_MAXIMA_DE_PAGINA",
+      "pipeline.conversion.FRACCION_MINIMA_DE_PAGINA",
+      "pipeline.conversion.LADO_MINIMO_DE_IMAGEN_PX",
+      "pipeline.conversion.LIMITE_CARACTERES",
+      "pipeline.conversion.LIMITE_FILAS_HOJA",
+      "pipeline.conversion.LIMITE_PAGINAS_PDF",
+      "pipeline.conversion.MAX_IMAGENES_POR_PAGINA",
+      "pipeline.conversion.PRESUPUESTO_OCR_POR_CORREO_S",
+      "pipeline.conversion.PRESUPUESTO_OCR_SEGUNDOS",
+      "pipeline.conversion.TIMEOUT_OCR_PAGINA_S",
+      "pipeline.conversion._CONTROL",
+      "pipeline.conversion._ESPACIOS_RAROS",
+      "pipeline.conversion._INVISIBLES"
+     ]
     },
     {
      "id": "conv_imagenes_incrustadas",
      "descripcion": "Imagenes dentro de un PDF solo se reconocen si su lado menor >= LADO_MINIMO_DE_IMAGEN_PX y ocupan entre FRACCION_MINIMA_DE_PAGINA y FRACCION_MAXIMA_DE_PAGINA de la pagina, maximo MAX_IMAGENES_POR_PAGINA por pagina.",
      "modulo": "pipeline/conversion.py",
-     "funcion": "_ocr_de_imagenes"
+     "funcion": "_ocr_de_imagenes",
+     "usa": [
+      "pipeline.conversion.FRACCION_MAXIMA_DE_PAGINA",
+      "pipeline.conversion.FRACCION_MINIMA_DE_PAGINA",
+      "pipeline.conversion.LADO_MINIMO_DE_IMAGEN_PX",
+      "pipeline.conversion.MAX_IMAGENES_POR_PAGINA",
+      "pipeline.conversion.PRESUPUESTO_OCR_SEGUNDOS",
+      "pipeline.conversion.TIMEOUT_OCR_PAGINA_S",
+      "pipeline.conversion._CONTROL",
+      "pipeline.conversion._ESPACIOS_RAROS",
+      "pipeline.conversion._INVISIBLES"
+     ]
     },
     {
      "id": "conv_ilegible",
      "descripcion": "Un adjunto cuyas paginas no dan texto queda como fallido (ESTADO_ERROR) y se registra en la bitacora con paso 'CONVERSION' (cuerpo=detalle; ADJUNTO_ILEGIBLE/ADJUNTO_PROTEGIDO/SIN_OCR si casa una firma; si no, DESCONOCIDO/FATAL).",
      "modulo": "pipeline/orquestador.py",
-     "funcion": "procesar"
+     "funcion": "procesar",
+     "usa": []
     },
     {
      "id": "conv_workspace",
      "descripcion": "Workspace en base_workspace/<id seguro> (temporal=False en el Job, queda en disco: correo.md, adjuntos/*.md, manifiesto); si base es None, temporal del sistema y se borra al cerrar.",
      "modulo": "pipeline/workspace.py",
-     "funcion": "Workspace.crear"
+     "funcion": "Workspace.crear",
+     "usa": []
     }
    ],
    "parametros": [
@@ -2330,13 +2662,18 @@
      "id": "san_aviso_alta",
      "descripcion": "Si hay sospechas de severidad ALTA se agrega el aviso 'inyeccion detectada: <categorias>'. No bloquea ni cambia el desenlace.",
      "modulo": "pipeline/orquestador.py",
-     "funcion": "procesar"
+     "funcion": "procesar",
+     "usa": []
     },
     {
      "id": "san_herramientas",
      "descripcion": "leer_documento y buscar_en_documentos pasan el texto por sanear_fragmento: anota [!] CONTENIDO SOSPECHOSO y lo envuelve en un bloque delimitado con marca aleatoria antes de darselo al modelo.",
      "modulo": "servidor_mcp/herramientas.py",
-     "funcion": "leer_documento"
+     "funcion": "leer_documento",
+     "usa": [
+      "servidor_mcp.herramientas.MAX_CARACTERES_RESPUESTA",
+      "servidor_mcp.herramientas.MAX_LINEAS_POR_LECTURA"
+     ]
     }
    ],
    "parametros": [
@@ -2618,55 +2955,297 @@
      "id": "ext_umbral",
      "descripcion": "Un hallazgo con confianza < UMBRAL_CONFIANZA (0.70) no se acepta: pasa a no_resueltos con motivo CONFIANZA_INSUFICIENTE y el candidato en el detalle.",
      "modulo": "pipeline/extraccion.py",
-     "funcion": "extraer_todo.registrar"
+     "funcion": "extraer_todo.registrar",
+     "usa": [
+      "pipeline.extraccion.ALCANCE_DE_LA_CLAUSULA_DE_APORTES",
+      "pipeline.extraccion.ALCANCE_DE_LA_FIRMA",
+      "pipeline.extraccion.ANTES_DEL_PAGADOR",
+      "pipeline.extraccion.CONFIANZA_DE_LA_GEOGRAFIA",
+      "pipeline.extraccion.DIFERENCIA_MAXIMA_ENTRE_ANIOS",
+      "pipeline.extraccion.DISTANCIA_DE_LA_MARCA_CONTRARIA",
+      "pipeline.extraccion.FACTOR_VENTAJA",
+      "pipeline.extraccion.LARGO_MINIMO_DIRECCION",
+      "pipeline.extraccion.MAX_DISTANCIA_NOMBRE_DEL_REMITENTE",
+      "pipeline.extraccion.MAX_DISTANCIA_NOMBRE_DOC",
+      "pipeline.extraccion.MAX_PALABRAS_NOMBRE",
+      "pipeline.extraccion.METODO_TIPO_PQRD_FIJO",
+      "pipeline.extraccion.PALABRAS_PARA_DAR_EL_NOMBRE_POR_COMPLETO",
+      "pipeline.extraccion.PENALIZACION_POR_RECORTE",
+      "pipeline.extraccion.SEPARACION_DENTRO_DEL_NOMBRE",
+      "pipeline.extraccion.SEXO_FEMENINO",
+      "pipeline.extraccion.SEXO_MASCULINO",
+      "pipeline.extraccion.TIPO_REMITENTE_AFECTADO",
+      "pipeline.extraccion.TOPE_DEL_BLOQUE_AJENO_DIRECCION",
+      "pipeline.extraccion.TOPE_PARA_LA_SOLICITUD",
+      "pipeline.extraccion.UMBRAL_CONFIANZA",
+      "pipeline.extraccion.VENTANA_DEL_TITULAR",
+      "pipeline.extraccion.VENTANA_DE_CONCORDANCIA",
+      "pipeline.extraccion._ACENTOS",
+      "pipeline.extraccion._ALGUNA_RACHA_DE_DOCUMENTO",
+      "pipeline.extraccion._ANTES_DEL_NOMBRE",
+      "pipeline.extraccion._ANTES_DEL_PAGADOR",
+      "pipeline.extraccion._ARRANQUE_DEL_HILO",
+      "pipeline.extraccion._AUTOIDENTIFICACION",
+      "pipeline.extraccion._BANDERAS_DE_MARCA",
+      "pipeline.extraccion._BLOQUE_DE_OTRO",
+      "pipeline.extraccion._CIERRE",
+      "pipeline.extraccion._CLAUSULA_DE_APORTES",
+      "pipeline.extraccion._CONECTOR_DOCUMENTO",
+      "pipeline.extraccion._DOS_ANIOS_PEGADOS",
+      "pipeline.extraccion._ES_CONMUTADOR",
+      "pipeline.extraccion._ETIQUETAS_AFECTADO",
+      "pipeline.extraccion._ETIQUETAS_SOLO_EN_EL_ASUNTO",
+      "pipeline.extraccion._FIN_DE_CLAUSULA",
+      "pipeline.extraccion._FIRMA_DE_EMPLEADOR",
+      "pipeline.extraccion._FORMA_DOBLE",
+      "pipeline.extraccion._FRASES_NO_AFECTADO",
+      "pipeline.extraccion._FRONTERA_DE_CELDA",
+      "pipeline.extraccion._GENERO_FEMENINO",
+      "pipeline.extraccion._GENERO_MASCULINO",
+      "pipeline.extraccion._MARCAS_EXCLUYENTES",
+      "pipeline.extraccion._MARCAS_TIPO",
+      "pipeline.extraccion._MARCA_DOCUMENTO",
+      "pipeline.extraccion._NIT_DE_POSITIVA",
+      "pipeline.extraccion._NOMBRE",
+      "pipeline.extraccion._NO_DETERMINANTE",
+      "pipeline.extraccion._NO_ES_AFECTADO",
+      "pipeline.extraccion._NO_ES_DOMICILIO",
+      "pipeline.extraccion._PALABRA",
+      "pipeline.extraccion._PALABRA_INTERIOR",
+      "pipeline.extraccion._PARTICULAS",
+      "pipeline.extraccion._PIDE_CORREGIR",
+      "pipeline.extraccion._PRIMERA_PERSONA",
+      "pipeline.extraccion._PRIMERA_PERSONA_FEMENINO",
+      "pipeline.extraccion._PRIMERA_PERSONA_MASCULINO",
+      "pipeline.extraccion._ROTULO_DIRECCION",
+      "pipeline.extraccion._SEXO_DECLARADO",
+      "pipeline.extraccion._SE_IDENTIFICA",
+      "pipeline.extraccion._SIGUIENTE_ROTULO",
+      "pipeline.extraccion._TIPOS_DE_ORGANIZACION",
+      "pipeline.extraccion._TIPO_POR_MARCA",
+      "pipeline.extraccion._TIPO_SOLICITUD_DECLARADO",
+      "pipeline.extraccion._TITULO_DE_ADJUNTO",
+      "pipeline.extraccion._TRAMITE_DE_OTRO",
+      "pipeline.extraccion._TRAMITE_PROPIO",
+      "pipeline.extraccion._VALOR_SEXO",
+      "pipeline.extraccion._VOCABULARIO_NO_NOMBRE"
+     ]
     },
     {
      "id": "ext_orden",
      "descripcion": "Orden: nombre_afectado -> numero_documento_afectado (desambigua con el nombre) -> tipo_documento_afectado -> telefono -> nombre_remitente -> sexo -> tipo_pqrd -> documento/tipo del remitente -> tipo_remitente -> tipo_solicitud -> direccion -> geografia (departamento/municipio).",
      "modulo": "pipeline/extraccion.py",
-     "funcion": "extraer_todo"
+     "funcion": "extraer_todo",
+     "usa": [
+      "pipeline.extraccion.ALCANCE_DE_LA_CLAUSULA_DE_APORTES",
+      "pipeline.extraccion.ALCANCE_DE_LA_FIRMA",
+      "pipeline.extraccion.ANTES_DEL_PAGADOR",
+      "pipeline.extraccion.CONFIANZA_DE_LA_GEOGRAFIA",
+      "pipeline.extraccion.DIFERENCIA_MAXIMA_ENTRE_ANIOS",
+      "pipeline.extraccion.DISTANCIA_DE_LA_MARCA_CONTRARIA",
+      "pipeline.extraccion.FACTOR_VENTAJA",
+      "pipeline.extraccion.LARGO_MINIMO_DIRECCION",
+      "pipeline.extraccion.MAX_DISTANCIA_NOMBRE_DEL_REMITENTE",
+      "pipeline.extraccion.MAX_DISTANCIA_NOMBRE_DOC",
+      "pipeline.extraccion.MAX_PALABRAS_NOMBRE",
+      "pipeline.extraccion.METODO_TIPO_PQRD_FIJO",
+      "pipeline.extraccion.PALABRAS_PARA_DAR_EL_NOMBRE_POR_COMPLETO",
+      "pipeline.extraccion.PENALIZACION_POR_RECORTE",
+      "pipeline.extraccion.SEPARACION_DENTRO_DEL_NOMBRE",
+      "pipeline.extraccion.SEXO_FEMENINO",
+      "pipeline.extraccion.SEXO_MASCULINO",
+      "pipeline.extraccion.TIPO_REMITENTE_AFECTADO",
+      "pipeline.extraccion.TOPE_DEL_BLOQUE_AJENO_DIRECCION",
+      "pipeline.extraccion.TOPE_PARA_LA_SOLICITUD",
+      "pipeline.extraccion.UMBRAL_CONFIANZA",
+      "pipeline.extraccion.VENTANA_DEL_TITULAR",
+      "pipeline.extraccion.VENTANA_DE_CONCORDANCIA",
+      "pipeline.extraccion._ACENTOS",
+      "pipeline.extraccion._ALGUNA_RACHA_DE_DOCUMENTO",
+      "pipeline.extraccion._ANTES_DEL_NOMBRE",
+      "pipeline.extraccion._ANTES_DEL_PAGADOR",
+      "pipeline.extraccion._ARRANQUE_DEL_HILO",
+      "pipeline.extraccion._AUTOIDENTIFICACION",
+      "pipeline.extraccion._BANDERAS_DE_MARCA",
+      "pipeline.extraccion._BLOQUE_DE_OTRO",
+      "pipeline.extraccion._CIERRE",
+      "pipeline.extraccion._CLAUSULA_DE_APORTES",
+      "pipeline.extraccion._CONECTOR_DOCUMENTO",
+      "pipeline.extraccion._DOS_ANIOS_PEGADOS",
+      "pipeline.extraccion._ES_CONMUTADOR",
+      "pipeline.extraccion._ETIQUETAS_AFECTADO",
+      "pipeline.extraccion._ETIQUETAS_SOLO_EN_EL_ASUNTO",
+      "pipeline.extraccion._FIN_DE_CLAUSULA",
+      "pipeline.extraccion._FIRMA_DE_EMPLEADOR",
+      "pipeline.extraccion._FORMA_DOBLE",
+      "pipeline.extraccion._FRASES_NO_AFECTADO",
+      "pipeline.extraccion._FRONTERA_DE_CELDA",
+      "pipeline.extraccion._GENERO_FEMENINO",
+      "pipeline.extraccion._GENERO_MASCULINO",
+      "pipeline.extraccion._MARCAS_EXCLUYENTES",
+      "pipeline.extraccion._MARCAS_TIPO",
+      "pipeline.extraccion._MARCA_DOCUMENTO",
+      "pipeline.extraccion._NIT_DE_POSITIVA",
+      "pipeline.extraccion._NOMBRE",
+      "pipeline.extraccion._NO_DETERMINANTE",
+      "pipeline.extraccion._NO_ES_AFECTADO",
+      "pipeline.extraccion._NO_ES_DOMICILIO",
+      "pipeline.extraccion._PALABRA",
+      "pipeline.extraccion._PALABRA_INTERIOR",
+      "pipeline.extraccion._PARTICULAS",
+      "pipeline.extraccion._PIDE_CORREGIR",
+      "pipeline.extraccion._PRIMERA_PERSONA",
+      "pipeline.extraccion._PRIMERA_PERSONA_FEMENINO",
+      "pipeline.extraccion._PRIMERA_PERSONA_MASCULINO",
+      "pipeline.extraccion._ROTULO_DIRECCION",
+      "pipeline.extraccion._SEXO_DECLARADO",
+      "pipeline.extraccion._SE_IDENTIFICA",
+      "pipeline.extraccion._SIGUIENTE_ROTULO",
+      "pipeline.extraccion._TIPOS_DE_ORGANIZACION",
+      "pipeline.extraccion._TIPO_POR_MARCA",
+      "pipeline.extraccion._TIPO_SOLICITUD_DECLARADO",
+      "pipeline.extraccion._TITULO_DE_ADJUNTO",
+      "pipeline.extraccion._TRAMITE_DE_OTRO",
+      "pipeline.extraccion._TRAMITE_PROPIO",
+      "pipeline.extraccion._VALOR_SEXO",
+      "pipeline.extraccion._VOCABULARIO_NO_NOMBRE"
+     ]
     },
     {
      "id": "ext_correcciones",
      "descripcion": "La identidad del afectado se busca sobre el texto sin las clausulas que piden anular/corregir un dato (_PIDE_CORREGIR).",
      "modulo": "pipeline/extraccion.py",
-     "funcion": "_sin_lo_que_se_pide_corregir"
+     "funcion": "_sin_lo_que_se_pide_corregir",
+     "usa": [
+      "pipeline.extraccion._FIN_DE_CLAUSULA",
+      "pipeline.extraccion._PIDE_CORREGIR"
+     ]
     },
     {
      "id": "ext_voz",
      "descripcion": "La voz del tramite (primera persona propia vs. de otro) se lee solo en el texto nuevo del remitente; si es propia y no de otro, el remitente es el afectado.",
      "modulo": "pipeline/extraccion.py",
-     "funcion": "voces_del_tramite"
+     "funcion": "voces_del_tramite",
+     "usa": [
+      "pipeline.extraccion._TRAMITE_DE_OTRO",
+      "pipeline.extraccion._TRAMITE_PROPIO"
+     ]
     },
     {
      "id": "ext_tipo_pqrd_fijo",
      "descripcion": "tipo_pqrd siempre 1 (Solicitud), confianza 1.0: es el unico tipo que radica este canal.",
      "modulo": "pipeline/extraccion.py",
-     "funcion": "extraer_tipo_pqrd"
+     "funcion": "extraer_tipo_pqrd",
+     "usa": [
+      "pipeline.extraccion.METODO_TIPO_PQRD_FIJO"
+     ]
     },
     {
      "id": "ext_tipo_solicitud",
      "descripcion": "tipo_solicitud solo si el asunto + primeros TOPE_PARA_LA_SOLICITUD caracteres nombran un tramite de _TIPO_SOLICITUD_DECLARADO (gana el primero; confianza 0.85); si no, REQUIERE_CLASIFICACION_SEMANTICA (lo resuelve el agente).",
      "modulo": "pipeline/extraccion.py",
-     "funcion": "extraer_tipo_solicitud"
+     "funcion": "extraer_tipo_solicitud",
+     "usa": [
+      "pipeline.extraccion.TOPE_PARA_LA_SOLICITUD",
+      "pipeline.extraccion._ACENTOS",
+      "pipeline.extraccion._TIPO_SOLICITUD_DECLARADO"
+     ]
     },
     {
      "id": "ext_ausencia_constatada",
      "descripcion": "Los pendientes con motivo en MOTIVOS_DE_AUSENCIA_CONSTATADA (SIN_TELEFONO, SIN_NINGUN_NUMERO_EN_EL_TEXTO) no se le piden al agente.",
      "modulo": "pipeline/extraccion.py",
-     "funcion": "Extraccion.campos_a_buscar"
+     "funcion": "Extraccion.campos_a_buscar",
+     "usa": [
+      "pipeline.extraccion.MOTIVOS_DE_AUSENCIA_CONSTATADA"
+     ]
     },
     {
      "id": "ext_a_confirmar",
      "descripcion": "Los hallazgos con a_confirmar se le dan al agente para confirmar o sustituir.",
      "modulo": "pipeline/extraccion.py",
-     "funcion": "Extraccion.campos_a_confirmar"
+     "funcion": "Extraccion.campos_a_confirmar",
+     "usa": []
     },
     {
      "id": "ext_contexto",
      "descripcion": "El contexto que se le pasa al agente es 'Asunto: ...' + las primeras 14 lineas no vacias del cuerpo, maximo 1800 caracteres (literales).",
      "modulo": "pipeline/extraccion.py",
-     "funcion": "extraer_todo"
+     "funcion": "extraer_todo",
+     "usa": [
+      "pipeline.extraccion.ALCANCE_DE_LA_CLAUSULA_DE_APORTES",
+      "pipeline.extraccion.ALCANCE_DE_LA_FIRMA",
+      "pipeline.extraccion.ANTES_DEL_PAGADOR",
+      "pipeline.extraccion.CONFIANZA_DE_LA_GEOGRAFIA",
+      "pipeline.extraccion.DIFERENCIA_MAXIMA_ENTRE_ANIOS",
+      "pipeline.extraccion.DISTANCIA_DE_LA_MARCA_CONTRARIA",
+      "pipeline.extraccion.FACTOR_VENTAJA",
+      "pipeline.extraccion.LARGO_MINIMO_DIRECCION",
+      "pipeline.extraccion.MAX_DISTANCIA_NOMBRE_DEL_REMITENTE",
+      "pipeline.extraccion.MAX_DISTANCIA_NOMBRE_DOC",
+      "pipeline.extraccion.MAX_PALABRAS_NOMBRE",
+      "pipeline.extraccion.METODO_TIPO_PQRD_FIJO",
+      "pipeline.extraccion.PALABRAS_PARA_DAR_EL_NOMBRE_POR_COMPLETO",
+      "pipeline.extraccion.PENALIZACION_POR_RECORTE",
+      "pipeline.extraccion.SEPARACION_DENTRO_DEL_NOMBRE",
+      "pipeline.extraccion.SEXO_FEMENINO",
+      "pipeline.extraccion.SEXO_MASCULINO",
+      "pipeline.extraccion.TIPO_REMITENTE_AFECTADO",
+      "pipeline.extraccion.TOPE_DEL_BLOQUE_AJENO_DIRECCION",
+      "pipeline.extraccion.TOPE_PARA_LA_SOLICITUD",
+      "pipeline.extraccion.UMBRAL_CONFIANZA",
+      "pipeline.extraccion.VENTANA_DEL_TITULAR",
+      "pipeline.extraccion.VENTANA_DE_CONCORDANCIA",
+      "pipeline.extraccion._ACENTOS",
+      "pipeline.extraccion._ALGUNA_RACHA_DE_DOCUMENTO",
+      "pipeline.extraccion._ANTES_DEL_NOMBRE",
+      "pipeline.extraccion._ANTES_DEL_PAGADOR",
+      "pipeline.extraccion._ARRANQUE_DEL_HILO",
+      "pipeline.extraccion._AUTOIDENTIFICACION",
+      "pipeline.extraccion._BANDERAS_DE_MARCA",
+      "pipeline.extraccion._BLOQUE_DE_OTRO",
+      "pipeline.extraccion._CIERRE",
+      "pipeline.extraccion._CLAUSULA_DE_APORTES",
+      "pipeline.extraccion._CONECTOR_DOCUMENTO",
+      "pipeline.extraccion._DOS_ANIOS_PEGADOS",
+      "pipeline.extraccion._ES_CONMUTADOR",
+      "pipeline.extraccion._ETIQUETAS_AFECTADO",
+      "pipeline.extraccion._ETIQUETAS_SOLO_EN_EL_ASUNTO",
+      "pipeline.extraccion._FIN_DE_CLAUSULA",
+      "pipeline.extraccion._FIRMA_DE_EMPLEADOR",
+      "pipeline.extraccion._FORMA_DOBLE",
+      "pipeline.extraccion._FRASES_NO_AFECTADO",
+      "pipeline.extraccion._FRONTERA_DE_CELDA",
+      "pipeline.extraccion._GENERO_FEMENINO",
+      "pipeline.extraccion._GENERO_MASCULINO",
+      "pipeline.extraccion._MARCAS_EXCLUYENTES",
+      "pipeline.extraccion._MARCAS_TIPO",
+      "pipeline.extraccion._MARCA_DOCUMENTO",
+      "pipeline.extraccion._NIT_DE_POSITIVA",
+      "pipeline.extraccion._NOMBRE",
+      "pipeline.extraccion._NO_DETERMINANTE",
+      "pipeline.extraccion._NO_ES_AFECTADO",
+      "pipeline.extraccion._NO_ES_DOMICILIO",
+      "pipeline.extraccion._PALABRA",
+      "pipeline.extraccion._PALABRA_INTERIOR",
+      "pipeline.extraccion._PARTICULAS",
+      "pipeline.extraccion._PIDE_CORREGIR",
+      "pipeline.extraccion._PRIMERA_PERSONA",
+      "pipeline.extraccion._PRIMERA_PERSONA_FEMENINO",
+      "pipeline.extraccion._PRIMERA_PERSONA_MASCULINO",
+      "pipeline.extraccion._ROTULO_DIRECCION",
+      "pipeline.extraccion._SEXO_DECLARADO",
+      "pipeline.extraccion._SE_IDENTIFICA",
+      "pipeline.extraccion._SIGUIENTE_ROTULO",
+      "pipeline.extraccion._TIPOS_DE_ORGANIZACION",
+      "pipeline.extraccion._TIPO_POR_MARCA",
+      "pipeline.extraccion._TIPO_SOLICITUD_DECLARADO",
+      "pipeline.extraccion._TITULO_DE_ADJUNTO",
+      "pipeline.extraccion._TRAMITE_DE_OTRO",
+      "pipeline.extraccion._TRAMITE_PROPIO",
+      "pipeline.extraccion._VALOR_SEXO",
+      "pipeline.extraccion._VOCABULARIO_NO_NOMBRE"
+     ]
     }
    ],
    "parametros": [
@@ -5916,6 +6495,223 @@
      "archivo": "utils/tipos_documento.py",
      "linea": 34
     }
+   ],
+   "busquedas": [
+    {
+     "funcion": "extraer_nombre_afectado",
+     "campos": [
+      "nombre_afectado"
+     ],
+     "nombre": "Nombre del afectado",
+     "descripcion": "Nombre del afectado, por cercania a una etiqueta o a su documento.",
+     "usa": [
+      "pipeline.extraccion.ALCANCE_DE_LA_CLAUSULA_DE_APORTES",
+      "pipeline.extraccion.ANTES_DEL_PAGADOR",
+      "pipeline.extraccion.MAX_PALABRAS_NOMBRE",
+      "pipeline.extraccion.PALABRAS_PARA_DAR_EL_NOMBRE_POR_COMPLETO",
+      "pipeline.extraccion.PENALIZACION_POR_RECORTE",
+      "pipeline.extraccion._ANTES_DEL_PAGADOR",
+      "pipeline.extraccion._CLAUSULA_DE_APORTES",
+      "pipeline.extraccion._CONECTOR_DOCUMENTO",
+      "pipeline.extraccion._ETIQUETAS_AFECTADO",
+      "pipeline.extraccion._ETIQUETAS_SOLO_EN_EL_ASUNTO",
+      "pipeline.extraccion._FRASES_NO_AFECTADO",
+      "pipeline.extraccion._MARCA_DOCUMENTO",
+      "pipeline.extraccion._NOMBRE",
+      "pipeline.extraccion._NO_DETERMINANTE",
+      "pipeline.extraccion._NO_ES_AFECTADO",
+      "pipeline.extraccion._PALABRA",
+      "pipeline.extraccion._PALABRA_INTERIOR",
+      "pipeline.extraccion._PARTICULAS",
+      "pipeline.extraccion._VOCABULARIO_NO_NOMBRE"
+     ]
+    },
+    {
+     "funcion": "extraer_documento",
+     "campos": [
+      "numero_documento_afectado"
+     ],
+     "nombre": "Documento del afectado",
+     "descripcion": "Documento de identidad, desambiguando entre varios candidatos.",
+     "usa": [
+      "pipeline.extraccion.DIFERENCIA_MAXIMA_ENTRE_ANIOS",
+      "pipeline.extraccion.FACTOR_VENTAJA",
+      "pipeline.extraccion.MAX_DISTANCIA_NOMBRE_DOC",
+      "pipeline.extraccion.SEPARACION_DENTRO_DEL_NOMBRE",
+      "pipeline.extraccion._ALGUNA_RACHA_DE_DOCUMENTO",
+      "pipeline.extraccion._BANDERAS_DE_MARCA",
+      "pipeline.extraccion._DOS_ANIOS_PEGADOS",
+      "pipeline.extraccion._ES_CONMUTADOR",
+      "pipeline.extraccion._NIT_DE_POSITIVA"
+     ]
+    },
+    {
+     "funcion": "extraer_tipo_documento",
+     "campos": [
+      "tipo_documento_afectado",
+      "tipo_documento_remitente"
+     ],
+     "nombre": "Tipo de documento",
+     "descripcion": "Tipo de documento por la marca textual que lo acompaña.",
+     "usa": [
+      "pipeline.extraccion._MARCAS_EXCLUYENTES",
+      "pipeline.extraccion._MARCAS_TIPO",
+      "pipeline.extraccion._TIPO_POR_MARCA"
+     ]
+    },
+    {
+     "funcion": "extraer_telefono",
+     "campos": [
+      "telefono_afectado"
+     ],
+     "nombre": "Teléfono",
+     "descripcion": "Telefono de contacto.",
+     "usa": [
+      "pipeline.extraccion.FACTOR_VENTAJA",
+      "pipeline.extraccion.MAX_DISTANCIA_NOMBRE_DOC",
+      "pipeline.extraccion.SEPARACION_DENTRO_DEL_NOMBRE"
+     ]
+    },
+    {
+     "funcion": "extraer_nombre_remitente",
+     "campos": [
+      "nombre_remitente"
+     ],
+     "nombre": "Nombre del remitente",
+     "descripcion": "Nombre del remitente por la cascada de `utils.generic_filter`, agregando evidencia y confianza segun la capa que lo resolvio.",
+     "usa": []
+    },
+    {
+     "funcion": "extraer_sexo",
+     "campos": [
+      "sexo_afectado"
+     ],
+     "nombre": "Sexo del afectado",
+     "descripcion": "Sexo, unicamente cuando el texto lo declara.",
+     "usa": [
+      "pipeline.extraccion.DISTANCIA_DE_LA_MARCA_CONTRARIA",
+      "pipeline.extraccion.FACTOR_VENTAJA",
+      "pipeline.extraccion.SEPARACION_DENTRO_DEL_NOMBRE",
+      "pipeline.extraccion.SEXO_FEMENINO",
+      "pipeline.extraccion.SEXO_MASCULINO",
+      "pipeline.extraccion.VENTANA_DE_CONCORDANCIA",
+      "pipeline.extraccion._ACENTOS",
+      "pipeline.extraccion._FORMA_DOBLE",
+      "pipeline.extraccion._FRONTERA_DE_CELDA",
+      "pipeline.extraccion._GENERO_FEMENINO",
+      "pipeline.extraccion._GENERO_MASCULINO",
+      "pipeline.extraccion._PRIMERA_PERSONA_FEMENINO",
+      "pipeline.extraccion._PRIMERA_PERSONA_MASCULINO",
+      "pipeline.extraccion._SEXO_DECLARADO",
+      "pipeline.extraccion._TITULO_DE_ADJUNTO",
+      "pipeline.extraccion._VALOR_SEXO"
+     ]
+    },
+    {
+     "funcion": "extraer_tipo_pqrd",
+     "campos": [
+      "tipo_pqrd"
+     ],
+     "nombre": "Tipo de PQRD",
+     "descripcion": "Tipo de PQRD: siempre Solicitud.",
+     "usa": [
+      "pipeline.extraccion.METODO_TIPO_PQRD_FIJO"
+     ]
+    },
+    {
+     "funcion": "extraer_documento_del_remitente",
+     "campos": [
+      "numero_documento_remitente"
+     ],
+     "nombre": "Documento del remitente",
+     "descripcion": "Documento de quien escribe, cuando el texto permite atribuirlo.",
+     "usa": [
+      "pipeline.extraccion.ALCANCE_DE_LA_FIRMA",
+      "pipeline.extraccion.FACTOR_VENTAJA",
+      "pipeline.extraccion.MAX_DISTANCIA_NOMBRE_DEL_REMITENTE",
+      "pipeline.extraccion.MAX_DISTANCIA_NOMBRE_DOC",
+      "pipeline.extraccion.SEPARACION_DENTRO_DEL_NOMBRE",
+      "pipeline.extraccion._ANTES_DEL_NOMBRE",
+      "pipeline.extraccion._AUTOIDENTIFICACION",
+      "pipeline.extraccion._CIERRE",
+      "pipeline.extraccion._CONECTOR_DOCUMENTO",
+      "pipeline.extraccion._ETIQUETAS_AFECTADO",
+      "pipeline.extraccion._MARCA_DOCUMENTO",
+      "pipeline.extraccion._NOMBRE",
+      "pipeline.extraccion._NO_DETERMINANTE",
+      "pipeline.extraccion._PALABRA",
+      "pipeline.extraccion._PALABRA_INTERIOR",
+      "pipeline.extraccion._PRIMERA_PERSONA",
+      "pipeline.extraccion._PRIMERA_PERSONA_EN_ETIQUETAS",
+      "pipeline.extraccion._SE_IDENTIFICA"
+     ]
+    },
+    {
+     "funcion": "extraer_tipo_remitente",
+     "campos": [
+      "tipo_remitente"
+     ],
+     "nombre": "Tipo de remitente",
+     "descripcion": "Tipo de remitente, solo cuando resulta de una identidad y no de una interpretacion.",
+     "usa": [
+      "pipeline.extraccion.TIPO_REMITENTE_AFECTADO",
+      "pipeline.extraccion._TIPOS_DE_ORGANIZACION",
+      "pipeline.extraccion._TRAMITE_DE_OTRO",
+      "pipeline.extraccion._TRAMITE_PROPIO"
+     ]
+    },
+    {
+     "funcion": "extraer_tipo_solicitud",
+     "campos": [
+      "tipo_solicitud"
+     ],
+     "nombre": "Tipo de solicitud",
+     "descripcion": "Resuelve solo si el texto nombra el tramite; si no, devuelve NoResuelto.",
+     "usa": [
+      "pipeline.extraccion.TOPE_PARA_LA_SOLICITUD",
+      "pipeline.extraccion._ACENTOS",
+      "pipeline.extraccion._TIPO_SOLICITUD_DECLARADO"
+     ]
+    },
+    {
+     "funcion": "extraer_direccion",
+     "campos": [
+      "direccion_afectado"
+     ],
+     "nombre": "Dirección",
+     "descripcion": "Domicilio del afectado, solo si el rotulo cae dentro de su bloque.",
+     "usa": [
+      "pipeline.extraccion.LARGO_MINIMO_DIRECCION",
+      "pipeline.extraccion.TOPE_DEL_BLOQUE_AJENO_DIRECCION",
+      "pipeline.extraccion.VENTANA_DEL_TITULAR",
+      "pipeline.extraccion._ACENTOS",
+      "pipeline.extraccion._BLOQUE_DE_OTRO",
+      "pipeline.extraccion._NO_ES_DOMICILIO",
+      "pipeline.extraccion._ROTULO_DIRECCION",
+      "pipeline.extraccion._SIGUIENTE_ROTULO"
+     ]
+    },
+    {
+     "funcion": "extraer_geografia",
+     "campos": [
+      "departamento_afectado",
+      "municipio_afectado"
+     ],
+     "nombre": "Departamento y municipio",
+     "descripcion": "Departamento y municipio de residencia, o lista vacia.",
+     "usa": [
+      "pipeline.extraccion.CONFIANZA_DE_LA_GEOGRAFIA"
+     ]
+    },
+    {
+     "funcion": "extraer_oficina",
+     "campos": [
+      "oficina"
+     ],
+     "nombre": "Oficina destino",
+     "descripcion": "Oficina destino a partir del tipo de solicitud.",
+     "usa": []
+    }
    ]
   },
   {
@@ -5953,67 +6749,179 @@
      "id": "ag_no_llamar",
      "descripcion": "Si campos_para_el_agente esta vacio no se llama al modelo (0 vueltas).",
      "modulo": "pipeline/agente.py",
-     "funcion": "resolver"
+     "funcion": "resolver",
+     "usa": [
+      "pipeline.agente.CABECERA",
+      "pipeline.agente.CATALOGO_DEL_CAMPO",
+      "pipeline.agente.CONFIANZA_MINIMA",
+      "pipeline.agente.CRITERIOS",
+      "pipeline.agente.ESQUEMAS_HERRAMIENTAS",
+      "pipeline.agente.LARGO_DE_LA_EXPLICACION",
+      "pipeline.agente.MAX_CARACTERES_HERRAMIENTA_VIEJA",
+      "pipeline.agente.MAX_CARACTERES_RESPUESTA_HERRAMIENTA",
+      "pipeline.agente.MAX_CORRECCIONES_DE_FORMATO",
+      "pipeline.agente.MAX_ITERACIONES",
+      "pipeline.agente.TURNOS_TRAS_AVISAR_QUE_NO_FALTA_NADA",
+      "pipeline.agente.VENTANA_HISTORIAL",
+      "pipeline.agente.VUELTAS_DE_AVISO",
+      "pipeline.agente.VUELTAS_POR_DEFECTO",
+      "pipeline.agente._INVOCACION_EN_TEXTO",
+      "pipeline.agente._MARCA_CRITERIOS"
+     ]
     },
     {
      "id": "ag_prompt",
      "descripcion": "Prompt de sistema = CABECERA + 'CRITERIOS POR CAMPO' + solo los criterios de los campos pedidos; la tarea incluye resumen_para_ia() y los catalogos de los campos-codigo pedidos.",
      "modulo": "pipeline/agente.py",
-     "funcion": "prompt_de_sistema"
+     "funcion": "prompt_de_sistema",
+     "usa": [
+      "pipeline.agente.CABECERA",
+      "pipeline.agente.CRITERIOS",
+      "pipeline.agente._MARCA_CRITERIOS"
+     ]
     },
     {
      "id": "ag_vueltas",
      "descripcion": "Maximo MAX_ITERACIONES vueltas de trabajo (cada vuelta = 1 llamada a generar). Las correcciones por escribir la invocacion en texto (hasta MAX_CORRECCIONES_DE_FORMATO) no cuentan como vuelta.",
      "modulo": "pipeline/agente.py",
-     "funcion": "resolver"
+     "funcion": "resolver",
+     "usa": [
+      "pipeline.agente.CABECERA",
+      "pipeline.agente.CATALOGO_DEL_CAMPO",
+      "pipeline.agente.CONFIANZA_MINIMA",
+      "pipeline.agente.CRITERIOS",
+      "pipeline.agente.ESQUEMAS_HERRAMIENTAS",
+      "pipeline.agente.LARGO_DE_LA_EXPLICACION",
+      "pipeline.agente.MAX_CARACTERES_HERRAMIENTA_VIEJA",
+      "pipeline.agente.MAX_CARACTERES_RESPUESTA_HERRAMIENTA",
+      "pipeline.agente.MAX_CORRECCIONES_DE_FORMATO",
+      "pipeline.agente.MAX_ITERACIONES",
+      "pipeline.agente.TURNOS_TRAS_AVISAR_QUE_NO_FALTA_NADA",
+      "pipeline.agente.VENTANA_HISTORIAL",
+      "pipeline.agente.VUELTAS_DE_AVISO",
+      "pipeline.agente.VUELTAS_POR_DEFECTO",
+      "pipeline.agente._INVOCACION_EN_TEXTO",
+      "pipeline.agente._MARCA_CRITERIOS"
+     ]
     },
     {
      "id": "ag_historial",
      "descripcion": "Se envia la tarea + las ultimas VENTANA_HISTORIAL*2 entradas del historial; las respuestas de herramienta que no son la ultima se recortan a MAX_CARACTERES_HERRAMIENTA_VIEJA; cada respuesta de herramienta se corta a MAX_CARACTERES_RESPUESTA_HERRAMIENTA.",
      "modulo": "pipeline/agente.py",
-     "funcion": "_compactar"
+     "funcion": "_compactar",
+     "usa": [
+      "pipeline.agente.MAX_CARACTERES_HERRAMIENTA_VIEJA",
+      "pipeline.agente.MAX_CARACTERES_RESPUESTA_HERRAMIENTA",
+      "pipeline.agente.VENTANA_HISTORIAL"
+     ]
     },
     {
      "id": "ag_aviso_vueltas",
      "descripcion": "Cuando iteracion >= max_iteraciones - VUELTAS_DE_AVISO y faltan campos, se le pide cerrar. Si ya no falta nada y vuelve a pedir herramientas mas de TURNOS_TRAS_AVISAR_QUE_NO_FALTA_NADA veces, se corta.",
      "modulo": "pipeline/agente.py",
-     "funcion": "resolver"
+     "funcion": "resolver",
+     "usa": [
+      "pipeline.agente.CABECERA",
+      "pipeline.agente.CATALOGO_DEL_CAMPO",
+      "pipeline.agente.CONFIANZA_MINIMA",
+      "pipeline.agente.CRITERIOS",
+      "pipeline.agente.ESQUEMAS_HERRAMIENTAS",
+      "pipeline.agente.LARGO_DE_LA_EXPLICACION",
+      "pipeline.agente.MAX_CARACTERES_HERRAMIENTA_VIEJA",
+      "pipeline.agente.MAX_CARACTERES_RESPUESTA_HERRAMIENTA",
+      "pipeline.agente.MAX_CORRECCIONES_DE_FORMATO",
+      "pipeline.agente.MAX_ITERACIONES",
+      "pipeline.agente.TURNOS_TRAS_AVISAR_QUE_NO_FALTA_NADA",
+      "pipeline.agente.VENTANA_HISTORIAL",
+      "pipeline.agente.VUELTAS_DE_AVISO",
+      "pipeline.agente.VUELTAS_POR_DEFECTO",
+      "pipeline.agente._INVOCACION_EN_TEXTO",
+      "pipeline.agente._MARCA_CRITERIOS"
+     ]
     },
     {
      "id": "ag_filtro_confianza",
      "descripcion": "Un hallazgo del agente se descarta si: el campo ya estaba resuelto y no era a confirmar; confianza < confianza_exigida(campo) (PISO_POR_CAMPO o CONFIANZA_MINIMA=0.60; tipo_solicitud piso 0.0); o el codigo no es numero / no esta en el catalogo. Si la confianza esta entre el piso del campo y 0.60 se acepta con aviso.",
      "modulo": "pipeline/agente.py",
-     "funcion": "resolver"
+     "funcion": "resolver",
+     "usa": [
+      "pipeline.agente.CABECERA",
+      "pipeline.agente.CATALOGO_DEL_CAMPO",
+      "pipeline.agente.CONFIANZA_MINIMA",
+      "pipeline.agente.CRITERIOS",
+      "pipeline.agente.ESQUEMAS_HERRAMIENTAS",
+      "pipeline.agente.LARGO_DE_LA_EXPLICACION",
+      "pipeline.agente.MAX_CARACTERES_HERRAMIENTA_VIEJA",
+      "pipeline.agente.MAX_CARACTERES_RESPUESTA_HERRAMIENTA",
+      "pipeline.agente.MAX_CORRECCIONES_DE_FORMATO",
+      "pipeline.agente.MAX_ITERACIONES",
+      "pipeline.agente.TURNOS_TRAS_AVISAR_QUE_NO_FALTA_NADA",
+      "pipeline.agente.VENTANA_HISTORIAL",
+      "pipeline.agente.VUELTAS_DE_AVISO",
+      "pipeline.agente.VUELTAS_POR_DEFECTO",
+      "pipeline.agente._INVOCACION_EN_TEXTO",
+      "pipeline.agente._MARCA_CRITERIOS"
+     ]
     },
     {
      "id": "ag_contradice_ausencia",
      "descripcion": "Si el agente reporta un campo cuyo motivo era de ausencia constatada, se acepta con aviso.",
      "modulo": "pipeline/agente.py",
-     "funcion": "resolver"
+     "funcion": "resolver",
+     "usa": [
+      "pipeline.agente.CABECERA",
+      "pipeline.agente.CATALOGO_DEL_CAMPO",
+      "pipeline.agente.CONFIANZA_MINIMA",
+      "pipeline.agente.CRITERIOS",
+      "pipeline.agente.ESQUEMAS_HERRAMIENTAS",
+      "pipeline.agente.LARGO_DE_LA_EXPLICACION",
+      "pipeline.agente.MAX_CARACTERES_HERRAMIENTA_VIEJA",
+      "pipeline.agente.MAX_CARACTERES_RESPUESTA_HERRAMIENTA",
+      "pipeline.agente.MAX_CORRECCIONES_DE_FORMATO",
+      "pipeline.agente.MAX_ITERACIONES",
+      "pipeline.agente.TURNOS_TRAS_AVISAR_QUE_NO_FALTA_NADA",
+      "pipeline.agente.VENTANA_HISTORIAL",
+      "pipeline.agente.VUELTAS_DE_AVISO",
+      "pipeline.agente.VUELTAS_POR_DEFECTO",
+      "pipeline.agente._INVOCACION_EN_TEXTO",
+      "pipeline.agente._MARCA_CRITERIOS"
+     ]
     },
     {
      "id": "ag_explicacion",
      "descripcion": "El texto final ('LISTO' o una frase) se guarda como explicacion (max LARGO_DE_LA_EXPLICACION) y va al aviso si el desenlace es manual por contenido.",
      "modulo": "pipeline/agente.py",
-     "funcion": "_explicacion_de_cierre"
+     "funcion": "_explicacion_de_cierre",
+     "usa": [
+      "pipeline.agente.ESQUEMAS_HERRAMIENTAS",
+      "pipeline.agente.LARGO_DE_LA_EXPLICACION",
+      "pipeline.agente._INVOCACION_EN_TEXTO"
+     ]
     },
     {
      "id": "ag_reintento",
      "descripcion": "Cualquier excepcion del agente se clasifica (pipeline.errores.clasificar); si debe_reintentar(clase, intento) y queda presupuesto, espera espera_para(clase, intento) recortada por presupuesto.recortar y repite. Sin tiempo: FalloDelModelo('TIEMPO_DE_CORRIDA_AGOTADO'); si no: FalloDelModelo(motivo de la bitacora o 'MODELO_NO_RESPONDIO').",
      "modulo": "pipeline/orquestador.py",
-     "funcion": "_resolver_con_reintento"
+     "funcion": "_resolver_con_reintento",
+     "usa": []
     },
     {
      "id": "ag_modelo",
      "descripcion": "ModeloVertex.generar: genai.Client(vertexai=True, project=GCP_PROJECT, location='global', base_url=https://aiplatform.googleapis.com, timeout=TIMEOUT_DEL_MODELO_MS) y generate_content(model='gemini-2.5-flash', temperature=0.1, system_instruction=sistema, tools=function_declarations). Corre en asyncio.to_thread.",
      "modulo": "pipeline/modelo.py",
-     "funcion": "ModeloVertex.generar"
+     "funcion": "ModeloVertex.generar",
+     "usa": [
+      "pipeline.modelo.TIMEOUT_DEL_MODELO_MS",
+      "pipeline.modelo._ROL_DE_LA_API",
+      "pipeline.modelo._ROL_POR_DEFECTO"
+     ]
     },
     {
      "id": "ag_agotado",
      "descripcion": "Si agota las vueltas, se agrega el aviso 'el agente agoto las vueltas sin cerrar' con el gasto por herramienta y las llamadas repetidas.",
      "modulo": "pipeline/orquestador.py",
-     "funcion": "procesar"
+     "funcion": "procesar",
+     "usa": []
     }
    ],
    "parametros": [
@@ -6815,19 +7723,32 @@
      "id": "rev_solo_lectura",
      "descripcion": "Recibe un Contexto propio y solo los esquemas de HERRAMIENTAS_DEL_REVISOR (listar, leer, buscar); cualquier otra herramienta se rechaza sin invocarse.",
      "modulo": "pipeline/revisor.py",
-     "funcion": "revisar"
+     "funcion": "revisar",
+     "usa": [
+      "pipeline.revisor.HERRAMIENTAS_DEL_REVISOR",
+      "pipeline.revisor.MAX_CARACTERES_RESPUESTA",
+      "pipeline.revisor.MAX_VUELTAS_DEL_REVISOR",
+      "pipeline.revisor.SISTEMA"
+     ]
     },
     {
      "id": "rev_vueltas",
      "descripcion": "Maximo MAX_VUELTAS_DEL_REVISOR llamadas al modelo; respuestas de herramienta cortadas a MAX_CARACTERES_RESPUESTA.",
      "modulo": "pipeline/revisor.py",
-     "funcion": "revisar"
+     "funcion": "revisar",
+     "usa": [
+      "pipeline.revisor.HERRAMIENTAS_DEL_REVISOR",
+      "pipeline.revisor.MAX_CARACTERES_RESPUESTA",
+      "pipeline.revisor.MAX_VUELTAS_DEL_REVISOR",
+      "pipeline.revisor.SISTEMA"
+     ]
     },
     {
      "id": "rev_no_decide",
      "descripcion": "El veredicto vuelve al agente como texto; no cambia ningun valor. Sus tokens NO se suman a Resultado.tokens_* ni a turnos_del_agente.",
      "modulo": "servidor_mcp/herramientas.py",
-     "funcion": "pedir_revision"
+     "funcion": "pedir_revision",
+     "usa": []
     }
    ],
    "parametros": [
@@ -6915,19 +7836,22 @@
      "id": "comb_precedencia",
      "descripcion": "Lo determinista tiene precedencia, salvo en los campos a confirmar que el agente respondio.",
      "modulo": "pipeline/agente.py",
-     "funcion": "combinar"
+     "funcion": "combinar",
+     "usa": []
     },
     {
      "id": "comb_oficina",
      "descripcion": "Si falta 'oficina' y hay tipo_solicitud, oficina = business_rules.get_office_id(tipo_solicitud) (tabla OFFICE_MAPPING), atribuida a ALGORITMO.",
      "modulo": "pipeline/extraccion.py",
-     "funcion": "extraer_oficina"
+     "funcion": "extraer_oficina",
+     "usa": []
     },
     {
      "id": "comb_heredar",
      "descripcion": "Solo con tipo_remitente == 3: numero/tipo_documento_remitente se copian del afectado si faltan (metodo 'remitente_es_el_afectado').",
      "modulo": "pipeline/orquestador.py",
-     "funcion": "_heredar_datos_del_afectado"
+     "funcion": "_heredar_datos_del_afectado",
+     "usa": []
     }
    ],
    "parametros": []
@@ -6961,37 +7885,69 @@
      "id": "reg_solo_huecos",
      "descripcion": "Solo rellena CAMPOS_DEL_REGISTRO que esten vacios (telefono, direccion, sexo, departamento, municipio); nunca sustituye un dato del correo. Confianza CONFIANZA_DEL_REGISTRO, atribucion REGISTRO.",
      "modulo": "pipeline/personas.py",
-     "funcion": "rellenar_desde_el_registro"
+     "funcion": "rellenar_desde_el_registro",
+     "usa": [
+      "pipeline.personas.CAMPOS_DEL_REGISTRO",
+      "pipeline.personas.CONFIANZA_DEL_REGISTRO",
+      "pipeline.personas.SEXO_DEL_GENERO_DEL_REGISTRO",
+      "pipeline.personas.VENTANA_JUNTO_AL_DOCUMENTO",
+      "pipeline.personas._ID_GEOGRAFICO"
+     ]
     },
     {
      "id": "reg_sexo_invertido",
      "descripcion": "El genero del registro se traduce con SEXO_DEL_GENERO_DEL_REGISTRO ({1:2, 2:1}); otros codigos se ignoran.",
      "modulo": "pipeline/personas.py",
-     "funcion": "_sexo_del_registro"
+     "funcion": "_sexo_del_registro",
+     "usa": [
+      "pipeline.personas.SEXO_DEL_GENERO_DEL_REGISTRO"
+     ]
     },
     {
      "id": "reg_correccion_nombre",
      "descripcion": "Si el nombre difiere (o falta) pero el texto escribe el nombre del registro a <= VENTANA_JUNTO_AL_DOCUMENTO caracteres del documento y el asunto/cuerpo (o el remitente) habla de esa persona, se corrige nombre_afectado con el del registro. Si es el mismo titular pero el extraido tiene palabras de mas, se limpia.",
      "modulo": "pipeline/personas.py",
-     "funcion": "rellenar_desde_el_registro"
+     "funcion": "rellenar_desde_el_registro",
+     "usa": [
+      "pipeline.personas.CAMPOS_DEL_REGISTRO",
+      "pipeline.personas.CONFIANZA_DEL_REGISTRO",
+      "pipeline.personas.SEXO_DEL_GENERO_DEL_REGISTRO",
+      "pipeline.personas.VENTANA_JUNTO_AL_DOCUMENTO",
+      "pipeline.personas._ID_GEOGRAFICO"
+     ]
     },
     {
      "id": "reg_fallo_no_bloquea",
      "descripcion": "Un fallo de consulta (ConsultaDePersonaFallo) solo agrega aviso; 404 = persona no encontrada, no invalida nada.",
      "modulo": "pipeline/personas.py",
-     "funcion": "rellenar_desde_el_registro"
+     "funcion": "rellenar_desde_el_registro",
+     "usa": [
+      "pipeline.personas.CAMPOS_DEL_REGISTRO",
+      "pipeline.personas.CONFIANZA_DEL_REGISTRO",
+      "pipeline.personas.SEXO_DEL_GENERO_DEL_REGISTRO",
+      "pipeline.personas.VENTANA_JUNTO_AL_DOCUMENTO",
+      "pipeline.personas._ID_GEOGRAFICO"
+     ]
     },
     {
      "id": "reg_cortocircuito",
      "descripcion": "Tras AGOTAMIENTOS_PARA_DEJAR_DE_PREGUNTAR timeouts seguidos (TIEMPO_MAXIMO cada uno), el cliente deja de consultar durante la corrida; cualquier respuesta reinicia la cuenta.",
      "modulo": "pipeline/personas.py",
-     "funcion": "ConsultaDePersonas._pedir"
+     "funcion": "ConsultaDePersonas._pedir",
+     "usa": [
+      "pipeline.personas.AGOTAMIENTOS_PARA_DEJAR_DE_PREGUNTAR",
+      "pipeline.personas.TIEMPO_MAXIMO"
+     ]
     },
     {
      "id": "reg_sigla",
      "descripcion": "La sigla del tipo se traduce con SIGLA_DEL_ENDPOINT; sin tipo o desconocido, SIGLA_POR_DEFECTO ('CC').",
      "modulo": "pipeline/personas.py",
-     "funcion": "_sigla"
+     "funcion": "_sigla",
+     "usa": [
+      "pipeline.personas.SIGLA_DEL_ENDPOINT",
+      "pipeline.personas.SIGLA_POR_DEFECTO"
+     ]
     }
    ],
    "parametros": [
@@ -7208,73 +8164,267 @@
      "id": "cmp_obligatorios",
      "descripcion": "Bloquea FALTA_CAMPO_OBLIGATORIO si falta alguno de OBLIGATORIOS (numero_documento_afectado, nombre_afectado, nombre_remitente, tipo_solicitud).",
      "modulo": "pipeline/compuerta.py",
-     "funcion": "validar"
+     "funcion": "validar",
+     "usa": [
+      "pipeline.compuerta.CONFIANZA_PARA_RADICAR",
+      "pipeline.compuerta.DIGITOS_QUE_NO_NOMBRAN",
+      "pipeline.compuerta.MAX_DIGITOS",
+      "pipeline.compuerta.MIN_DIGITOS",
+      "pipeline.compuerta.OBLIGATORIOS",
+      "pipeline.compuerta.PISO_POR_CAMPO",
+      "pipeline.compuerta.TIPOS_ALFANUMERICOS",
+      "pipeline.compuerta.TIPOS_DE_ORGANIZACION",
+      "pipeline.compuerta._CARGOS",
+      "pipeline.compuerta._CORREO_EN_TEXTO",
+      "pipeline.compuerta._DIRECCION_VACIA",
+      "pipeline.compuerta._IDENTIDAD_DE_POSITIVA",
+      "pipeline.compuerta._METODOS_QUE_NO_PRUEBAN_LA_FIRMA",
+      "pipeline.compuerta._MOTIVO_POR_CAMPO",
+      "pipeline.compuerta._MOTIVO_POR_CAUSA",
+      "pipeline.compuerta._MOTIVO_POR_CODIGO",
+      "pipeline.compuerta._RADICADO_EN_NOMBRE",
+      "pipeline.compuerta._SOLO_UN_NUMERO",
+      "pipeline.compuerta._TELEFONOS_DE_EJEMPLO",
+      "pipeline.compuerta._TIRADA_DE_DIGITOS"
+     ]
     },
     {
      "id": "cmp_evidencia",
      "descripcion": "SIN_EVIDENCIA (bloqueante) para todo hallazgo sin evidencia.",
      "modulo": "pipeline/compuerta.py",
-     "funcion": "validar"
+     "funcion": "validar",
+     "usa": [
+      "pipeline.compuerta.CONFIANZA_PARA_RADICAR",
+      "pipeline.compuerta.DIGITOS_QUE_NO_NOMBRAN",
+      "pipeline.compuerta.MAX_DIGITOS",
+      "pipeline.compuerta.MIN_DIGITOS",
+      "pipeline.compuerta.OBLIGATORIOS",
+      "pipeline.compuerta.PISO_POR_CAMPO",
+      "pipeline.compuerta.TIPOS_ALFANUMERICOS",
+      "pipeline.compuerta.TIPOS_DE_ORGANIZACION",
+      "pipeline.compuerta._CARGOS",
+      "pipeline.compuerta._CORREO_EN_TEXTO",
+      "pipeline.compuerta._DIRECCION_VACIA",
+      "pipeline.compuerta._IDENTIDAD_DE_POSITIVA",
+      "pipeline.compuerta._METODOS_QUE_NO_PRUEBAN_LA_FIRMA",
+      "pipeline.compuerta._MOTIVO_POR_CAMPO",
+      "pipeline.compuerta._MOTIVO_POR_CAUSA",
+      "pipeline.compuerta._MOTIVO_POR_CODIGO",
+      "pipeline.compuerta._RADICADO_EN_NOMBRE",
+      "pipeline.compuerta._SOLO_UN_NUMERO",
+      "pipeline.compuerta._TELEFONOS_DE_EJEMPLO",
+      "pipeline.compuerta._TIRADA_DE_DIGITOS"
+     ]
     },
     {
      "id": "cmp_confianza",
      "descripcion": "CONFIANZA_INSUFICIENTE si confianza < confianza_exigida(campo, CONFIANZA_PARA_RADICAR=0.60) (PISO_POR_CAMPO: tipo_solicitud 0.0). Bloquea si el campo es obligatorio; si no, lo corrige a vacio.",
      "modulo": "pipeline/compuerta.py",
-     "funcion": "validar"
+     "funcion": "validar",
+     "usa": [
+      "pipeline.compuerta.CONFIANZA_PARA_RADICAR",
+      "pipeline.compuerta.DIGITOS_QUE_NO_NOMBRAN",
+      "pipeline.compuerta.MAX_DIGITOS",
+      "pipeline.compuerta.MIN_DIGITOS",
+      "pipeline.compuerta.OBLIGATORIOS",
+      "pipeline.compuerta.PISO_POR_CAMPO",
+      "pipeline.compuerta.TIPOS_ALFANUMERICOS",
+      "pipeline.compuerta.TIPOS_DE_ORGANIZACION",
+      "pipeline.compuerta._CARGOS",
+      "pipeline.compuerta._CORREO_EN_TEXTO",
+      "pipeline.compuerta._DIRECCION_VACIA",
+      "pipeline.compuerta._IDENTIDAD_DE_POSITIVA",
+      "pipeline.compuerta._METODOS_QUE_NO_PRUEBAN_LA_FIRMA",
+      "pipeline.compuerta._MOTIVO_POR_CAMPO",
+      "pipeline.compuerta._MOTIVO_POR_CAUSA",
+      "pipeline.compuerta._MOTIVO_POR_CODIGO",
+      "pipeline.compuerta._RADICADO_EN_NOMBRE",
+      "pipeline.compuerta._SOLO_UN_NUMERO",
+      "pipeline.compuerta._TELEFONOS_DE_EJEMPLO",
+      "pipeline.compuerta._TIRADA_DE_DIGITOS"
+     ]
     },
     {
      "id": "cmp_catalogo",
      "descripcion": "tipo_remitente, tipo_documento_*, tipo_solicitud y sexo_afectado deben estar en su catalogo (FUERA_DE_CATALOGO / CATALOGO_NO_DISPONIBLE bloquean); un codigo en texto se corrige a entero.",
      "modulo": "pipeline/compuerta.py",
-     "funcion": "validar"
+     "funcion": "validar",
+     "usa": [
+      "pipeline.compuerta.CONFIANZA_PARA_RADICAR",
+      "pipeline.compuerta.DIGITOS_QUE_NO_NOMBRAN",
+      "pipeline.compuerta.MAX_DIGITOS",
+      "pipeline.compuerta.MIN_DIGITOS",
+      "pipeline.compuerta.OBLIGATORIOS",
+      "pipeline.compuerta.PISO_POR_CAMPO",
+      "pipeline.compuerta.TIPOS_ALFANUMERICOS",
+      "pipeline.compuerta.TIPOS_DE_ORGANIZACION",
+      "pipeline.compuerta._CARGOS",
+      "pipeline.compuerta._CORREO_EN_TEXTO",
+      "pipeline.compuerta._DIRECCION_VACIA",
+      "pipeline.compuerta._IDENTIDAD_DE_POSITIVA",
+      "pipeline.compuerta._METODOS_QUE_NO_PRUEBAN_LA_FIRMA",
+      "pipeline.compuerta._MOTIVO_POR_CAMPO",
+      "pipeline.compuerta._MOTIVO_POR_CAUSA",
+      "pipeline.compuerta._MOTIVO_POR_CODIGO",
+      "pipeline.compuerta._RADICADO_EN_NOMBRE",
+      "pipeline.compuerta._SOLO_UN_NUMERO",
+      "pipeline.compuerta._TELEFONOS_DE_EJEMPLO",
+      "pipeline.compuerta._TIRADA_DE_DIGITOS"
+     ]
     },
     {
      "id": "cmp_nombres",
      "descripcion": "Nombres: quita caracteres de formato invisibles (corrige); bloquea si es correo/URL; quita numeros >= DIGITOS_QUE_NO_NOMBRAN digitos o radicados pegados (corrige; bloquea si no queda nada); quita el cargo del remitente (_CARGOS) (corrige); bloquea NO_PARECE_UN_NOMBRE con el mismo criterio del extractor.",
      "modulo": "pipeline/compuerta.py",
-     "funcion": "validar"
+     "funcion": "validar",
+     "usa": [
+      "pipeline.compuerta.CONFIANZA_PARA_RADICAR",
+      "pipeline.compuerta.DIGITOS_QUE_NO_NOMBRAN",
+      "pipeline.compuerta.MAX_DIGITOS",
+      "pipeline.compuerta.MIN_DIGITOS",
+      "pipeline.compuerta.OBLIGATORIOS",
+      "pipeline.compuerta.PISO_POR_CAMPO",
+      "pipeline.compuerta.TIPOS_ALFANUMERICOS",
+      "pipeline.compuerta.TIPOS_DE_ORGANIZACION",
+      "pipeline.compuerta._CARGOS",
+      "pipeline.compuerta._CORREO_EN_TEXTO",
+      "pipeline.compuerta._DIRECCION_VACIA",
+      "pipeline.compuerta._IDENTIDAD_DE_POSITIVA",
+      "pipeline.compuerta._METODOS_QUE_NO_PRUEBAN_LA_FIRMA",
+      "pipeline.compuerta._MOTIVO_POR_CAMPO",
+      "pipeline.compuerta._MOTIVO_POR_CAUSA",
+      "pipeline.compuerta._MOTIVO_POR_CODIGO",
+      "pipeline.compuerta._RADICADO_EN_NOMBRE",
+      "pipeline.compuerta._SOLO_UN_NUMERO",
+      "pipeline.compuerta._TELEFONOS_DE_EJEMPLO",
+      "pipeline.compuerta._TIRADA_DE_DIGITOS"
+     ]
     },
     {
      "id": "cmp_documento",
      "descripcion": "Documento afectado/remitente: traduce digitos no ASCII (corrige); bloquea DOCUMENTO_NO_NUMERICO (salvo pasaporte/tipos alfanumericos), LONGITUD_IMPROBABLE (LONGITUD_POR_TIPO o fuera de MIN/MAX_DIGITOS), DOCUMENTO_DE_RELLENO (todos iguales), DV_NIT_INCORRECTO, DOCUMENTO_ES_DE_POSITIVA (_IDENTIDAD_DE_POSITIVA).",
      "modulo": "pipeline/compuerta.py",
-     "funcion": "_revisar_documento"
+     "funcion": "_revisar_documento",
+     "usa": [
+      "pipeline.compuerta.MAX_DIGITOS",
+      "pipeline.compuerta.MIN_DIGITOS",
+      "pipeline.compuerta.TIPOS_ALFANUMERICOS",
+      "pipeline.compuerta._IDENTIDAD_DE_POSITIVA"
+     ]
     },
     {
      "id": "cmp_naturaleza",
      "descripcion": "Razon social con documento de persona natural: bloquea EMPRESA_CON_DOCUMENTO_DE_PERSONA. Documento de organizacion con nombre sin forma de empresa: solo aviso.",
      "modulo": "pipeline/compuerta.py",
-     "funcion": "_revisar_naturaleza"
+     "funcion": "_revisar_naturaleza",
+     "usa": [
+      "pipeline.compuerta.TIPOS_DE_ORGANIZACION"
+     ]
     },
     {
      "id": "cmp_telefono",
      "descripcion": "Telefono (no bloquea, corrige a vacio): igual al documento, linea de Positiva, de ejemplo (_TELEFONOS_DE_EJEMPLO), digito repetido, secuencia >= 7, o inexistente en el plan de numeracion.",
      "modulo": "pipeline/compuerta.py",
-     "funcion": "_revisar_telefono"
+     "funcion": "_revisar_telefono",
+     "usa": [
+      "pipeline.compuerta._IDENTIDAD_DE_POSITIVA",
+      "pipeline.compuerta._TELEFONOS_DE_EJEMPLO"
+     ]
     },
     {
      "id": "cmp_direccion",
      "descripcion": "Direccion (no bloquea, corrige a vacio): marca de 'sin dato' (_DIRECCION_VACIA), contiene un correo, o es solo un numero.",
      "modulo": "pipeline/compuerta.py",
-     "funcion": "_revisar_direccion"
+     "funcion": "_revisar_direccion",
+     "usa": [
+      "pipeline.compuerta._CORREO_EN_TEXTO",
+      "pipeline.compuerta._DIRECCION_VACIA",
+      "pipeline.compuerta._SOLO_UN_NUMERO"
+     ]
     },
     {
      "id": "cmp_coherencia",
      "descripcion": "tipo_remitente 3 con nombres distintos y sin mismo documento: bloquea. tipo 1/2 con mismo nombre y sin documentos distintos: corrige a 3. tipo 1/2 con el mismo documento que el afectado y nombres distintos: retira el documento del remitente (bloquea si parece NIT de otro). Si quien firma lleva la cedula del afectado desde otro buzon, nombre_remitente = nombre_afectado.",
      "modulo": "pipeline/compuerta.py",
-     "funcion": "validar"
+     "funcion": "validar",
+     "usa": [
+      "pipeline.compuerta.CONFIANZA_PARA_RADICAR",
+      "pipeline.compuerta.DIGITOS_QUE_NO_NOMBRAN",
+      "pipeline.compuerta.MAX_DIGITOS",
+      "pipeline.compuerta.MIN_DIGITOS",
+      "pipeline.compuerta.OBLIGATORIOS",
+      "pipeline.compuerta.PISO_POR_CAMPO",
+      "pipeline.compuerta.TIPOS_ALFANUMERICOS",
+      "pipeline.compuerta.TIPOS_DE_ORGANIZACION",
+      "pipeline.compuerta._CARGOS",
+      "pipeline.compuerta._CORREO_EN_TEXTO",
+      "pipeline.compuerta._DIRECCION_VACIA",
+      "pipeline.compuerta._IDENTIDAD_DE_POSITIVA",
+      "pipeline.compuerta._METODOS_QUE_NO_PRUEBAN_LA_FIRMA",
+      "pipeline.compuerta._MOTIVO_POR_CAMPO",
+      "pipeline.compuerta._MOTIVO_POR_CAUSA",
+      "pipeline.compuerta._MOTIVO_POR_CODIGO",
+      "pipeline.compuerta._RADICADO_EN_NOMBRE",
+      "pipeline.compuerta._SOLO_UN_NUMERO",
+      "pipeline.compuerta._TELEFONOS_DE_EJEMPLO",
+      "pipeline.compuerta._TIRADA_DE_DIGITOS"
+     ]
     },
     {
      "id": "cmp_oficina",
      "descripcion": "Si la oficina no coincide con get_office_id(tipo_solicitud), se corrige (no bloquea).",
      "modulo": "pipeline/compuerta.py",
-     "funcion": "validar"
+     "funcion": "validar",
+     "usa": [
+      "pipeline.compuerta.CONFIANZA_PARA_RADICAR",
+      "pipeline.compuerta.DIGITOS_QUE_NO_NOMBRAN",
+      "pipeline.compuerta.MAX_DIGITOS",
+      "pipeline.compuerta.MIN_DIGITOS",
+      "pipeline.compuerta.OBLIGATORIOS",
+      "pipeline.compuerta.PISO_POR_CAMPO",
+      "pipeline.compuerta.TIPOS_ALFANUMERICOS",
+      "pipeline.compuerta.TIPOS_DE_ORGANIZACION",
+      "pipeline.compuerta._CARGOS",
+      "pipeline.compuerta._CORREO_EN_TEXTO",
+      "pipeline.compuerta._DIRECCION_VACIA",
+      "pipeline.compuerta._IDENTIDAD_DE_POSITIVA",
+      "pipeline.compuerta._METODOS_QUE_NO_PRUEBAN_LA_FIRMA",
+      "pipeline.compuerta._MOTIVO_POR_CAMPO",
+      "pipeline.compuerta._MOTIVO_POR_CAUSA",
+      "pipeline.compuerta._MOTIVO_POR_CODIGO",
+      "pipeline.compuerta._RADICADO_EN_NOMBRE",
+      "pipeline.compuerta._SOLO_UN_NUMERO",
+      "pipeline.compuerta._TELEFONOS_DE_EJEMPLO",
+      "pipeline.compuerta._TIRADA_DE_DIGITOS"
+     ]
     },
     {
      "id": "cmp_veredicto",
      "descripcion": "Algun bloqueante -> RECHAZADO; si no, con correcciones -> CORREGIDO (se aplican); si no, APROBADO.",
      "modulo": "pipeline/compuerta.py",
-     "funcion": "validar"
+     "funcion": "validar",
+     "usa": [
+      "pipeline.compuerta.CONFIANZA_PARA_RADICAR",
+      "pipeline.compuerta.DIGITOS_QUE_NO_NOMBRAN",
+      "pipeline.compuerta.MAX_DIGITOS",
+      "pipeline.compuerta.MIN_DIGITOS",
+      "pipeline.compuerta.OBLIGATORIOS",
+      "pipeline.compuerta.PISO_POR_CAMPO",
+      "pipeline.compuerta.TIPOS_ALFANUMERICOS",
+      "pipeline.compuerta.TIPOS_DE_ORGANIZACION",
+      "pipeline.compuerta._CARGOS",
+      "pipeline.compuerta._CORREO_EN_TEXTO",
+      "pipeline.compuerta._DIRECCION_VACIA",
+      "pipeline.compuerta._IDENTIDAD_DE_POSITIVA",
+      "pipeline.compuerta._METODOS_QUE_NO_PRUEBAN_LA_FIRMA",
+      "pipeline.compuerta._MOTIVO_POR_CAMPO",
+      "pipeline.compuerta._MOTIVO_POR_CAUSA",
+      "pipeline.compuerta._MOTIVO_POR_CODIGO",
+      "pipeline.compuerta._RADICADO_EN_NOMBRE",
+      "pipeline.compuerta._SOLO_UN_NUMERO",
+      "pipeline.compuerta._TELEFONOS_DE_EJEMPLO",
+      "pipeline.compuerta._TIRADA_DE_DIGITOS"
+     ]
     }
    ],
    "parametros": [
@@ -7682,19 +8832,31 @@
      "id": "bit_clasificar",
      "descripcion": "clasificar(estado, cuerpo, excepcion): primero firmas textuales (_FIRMAS, la primera que case; las 'solo_local' se ignoran si hubo respuesta HTTP), luego codigo HTTP (dado o buscado en el texto con _ESTADO_EN_TEXTO) via _POR_ESTADO, cualquier 5xx = ORIGEN_INALCANZABLE; si nada, DESCONOCIDO.",
      "modulo": "pipeline/errores.py",
-     "funcion": "clasificar"
+     "funcion": "clasificar",
+     "usa": [
+      "pipeline.errores.CLASES",
+      "pipeline.errores.DESCONOCIDO",
+      "pipeline.errores.POR_CODIGO",
+      "pipeline.errores._ESTADO_EN_TEXTO",
+      "pipeline.errores._FIRMAS",
+      "pipeline.errores._POR_ESTADO"
+     ]
     },
     {
      "id": "bit_reintento",
      "descripcion": "debe_reintentar = clase.reintentable y intento < clase.max_intentos. espera = min(espera_base_s * 2^(intento-1), TOPE_DE_ESPERA_S).",
      "modulo": "pipeline/errores.py",
-     "funcion": "debe_reintentar"
+     "funcion": "debe_reintentar",
+     "usa": [
+      "pipeline.errores.TOPE_DE_ESPERA_S"
+     ]
     },
     {
      "id": "bit_puede_radicar",
      "descripcion": "Se puede radicar si no hay fallos de severidad FATAL; las DEGRADA solo van a los avisos.",
      "modulo": "pipeline/errores.py",
-     "funcion": "Bitacora.puede_radicar"
+     "funcion": "Bitacora.puede_radicar",
+     "usa": []
     }
    ],
    "parametros": [
@@ -8074,55 +9236,140 @@
      "id": "rad_dry_run",
      "descripcion": "Sin radicador (modo --seco) devuelve 'DRY-RUN'. Con MODO_TEST, RadicacionService.radicar_pqrd graba el payload en TEST_OUTPUT_DIR/radicaciones.csv y devuelve id_radicado 'DRY-RUN-ENT'.",
      "modulo": "pipeline/orquestador.py",
-     "funcion": "_radicar"
+     "funcion": "_radicar",
+     "usa": []
     },
     {
      "id": "rad_otra_corrida",
      "descripcion": "Justo antes de radicar se relee el correo (get_email_by_id); si ya tiene etiqueta de radicado, se devuelve ese numero sin radicar de nuevo. Si no se puede releer, se radica igual con aviso.",
      "modulo": "pipeline/orquestador.py",
-     "funcion": "_radicado_por_otra_corrida"
+     "funcion": "_radicado_por_otra_corrida",
+     "usa": []
     },
     {
      "id": "rad_defectos",
      "descripcion": "Defaults anotados en 'suposiciones' (avisos 'por defecto: ...'): tipo_documento -> TIPO_DOCUMENTO_POR_DEFECTO (1, CC); tipo_remitente -> TIPO_REMITENTE_TERCERO (2); sexo -> SEXO_POR_DEFECTO (3, no determinado); tipo_solicitud -> TIPO_SOLICITUD_OTRA (14); oficina -> 15 (literal); departamento/municipio -> 6/149 (Bogota) ambos o ninguno; documento del remitente solo se hereda con tipo_remitente 3.",
      "modulo": "pipeline/radicador.py",
-     "funcion": "armar_payload"
+     "funcion": "armar_payload",
+     "usa": [
+      "pipeline.radicador.ACCESO_INFORMACION_PUBLICA",
+      "pipeline.radicador.CANAL_EMAIL_IA",
+      "pipeline.radicador.DEPARTAMENTO_POR_DEFECTO",
+      "pipeline.radicador.DESCRIPCION_ACCESO_INFORMACION",
+      "pipeline.radicador.LGTBIQ_NO_DECLARADO",
+      "pipeline.radicador.LISTADO_CONDICIONES",
+      "pipeline.radicador.MEDIO_RESPUESTA_CORREO",
+      "pipeline.radicador.MUNICIPIO_POR_DEFECTO",
+      "pipeline.radicador.SEXO_POR_DEFECTO",
+      "pipeline.radicador.TIPO_DOCUMENTO_POR_DEFECTO",
+      "pipeline.radicador.TIPO_PQRD_DEL_CANAL",
+      "pipeline.radicador.TIPO_PRODUCTO_ARL",
+      "pipeline.radicador.TIPO_REMITENTE_ES_EL_AFECTADO",
+      "pipeline.radicador.TIPO_REMITENTE_TERCERO",
+      "pipeline.radicador.TIPO_SOLICITUD_OTRA",
+      "pipeline.radicador.USUARIO_CREADOR"
+     ]
     },
     {
      "id": "rad_constantes_canal",
      "descripcion": "Fijos del canal: tipo PQRD 1, producto ARL 15, canal 7 (Email IA), medio de respuesta 1 (correo), usuario 'Asignador IA', listado de condiciones '[1]', acceso a informacion publica False, LGTBIQ False, descripcion acceso 2. Observaciones = fecha + asunto + primeros 2000 caracteres del cuerpo.",
      "modulo": "pipeline/radicador.py",
-     "funcion": "armar_payload"
+     "funcion": "armar_payload",
+     "usa": [
+      "pipeline.radicador.ACCESO_INFORMACION_PUBLICA",
+      "pipeline.radicador.CANAL_EMAIL_IA",
+      "pipeline.radicador.DEPARTAMENTO_POR_DEFECTO",
+      "pipeline.radicador.DESCRIPCION_ACCESO_INFORMACION",
+      "pipeline.radicador.LGTBIQ_NO_DECLARADO",
+      "pipeline.radicador.LISTADO_CONDICIONES",
+      "pipeline.radicador.MEDIO_RESPUESTA_CORREO",
+      "pipeline.radicador.MUNICIPIO_POR_DEFECTO",
+      "pipeline.radicador.SEXO_POR_DEFECTO",
+      "pipeline.radicador.TIPO_DOCUMENTO_POR_DEFECTO",
+      "pipeline.radicador.TIPO_PQRD_DEL_CANAL",
+      "pipeline.radicador.TIPO_PRODUCTO_ARL",
+      "pipeline.radicador.TIPO_REMITENTE_ES_EL_AFECTADO",
+      "pipeline.radicador.TIPO_REMITENTE_TERCERO",
+      "pipeline.radicador.TIPO_SOLICITUD_OTRA",
+      "pipeline.radicador.USUARIO_CREADOR"
+     ]
     },
     {
      "id": "rad_correo_afectado",
      "descripcion": "Correo del afectado = From, salvo buzon no humano/interno: entonces el primer correo externo del hilo, o vacio.",
      "modulo": "pipeline/radicador.py",
-     "funcion": "_correo_del_afectado"
+     "funcion": "_correo_del_afectado",
+     "usa": []
     },
     {
      "id": "rad_correo_html",
      "descripcion": "Siempre se adjunta 'correo.html' (asunto, de, fecha, cuerpo) salvo que ya venga uno con ese nombre.",
      "modulo": "pipeline/radicador.py",
-     "funcion": "documento_del_correo"
+     "funcion": "documento_del_correo",
+     "usa": []
     },
     {
      "id": "rad_reintento",
      "descripcion": "Solo se repite la escritura si debe_reintentar(clase, intento) Y la clase esta en SIN_EFECTO_EN_EL_SERVIDOR (Cloudflare, DNS, token): radicar no es idempotente. Una respuesta sin numero lanza error (RESPUESTA_SIN_RADICADO, no se repite). Adicionalmente RadicacionService reintenta internamente (max_attempts=3) ante 401 y ConnectError.",
      "modulo": "pipeline/radicador.py",
-     "funcion": "Radicador.radicar"
+     "funcion": "Radicador.radicar",
+     "usa": [
+      "pipeline.radicador.ACCESO_INFORMACION_PUBLICA",
+      "pipeline.radicador.CANAL_EMAIL_IA",
+      "pipeline.radicador.DEPARTAMENTO_POR_DEFECTO",
+      "pipeline.radicador.DESCRIPCION_ACCESO_INFORMACION",
+      "pipeline.radicador.LARGO_DEL_FALLO_EN_EL_LOG",
+      "pipeline.radicador.LGTBIQ_NO_DECLARADO",
+      "pipeline.radicador.LISTADO_CONDICIONES",
+      "pipeline.radicador.MEDIO_RESPUESTA_CORREO",
+      "pipeline.radicador.MUNICIPIO_POR_DEFECTO",
+      "pipeline.radicador.NOMBRE_DEL_CORREO",
+      "pipeline.radicador.SEXO_POR_DEFECTO",
+      "pipeline.radicador.TIPO_DOCUMENTO_POR_DEFECTO",
+      "pipeline.radicador.TIPO_PQRD_DEL_CANAL",
+      "pipeline.radicador.TIPO_PRODUCTO_ARL",
+      "pipeline.radicador.TIPO_REMITENTE_ES_EL_AFECTADO",
+      "pipeline.radicador.TIPO_REMITENTE_TERCERO",
+      "pipeline.radicador.TIPO_SOLICITUD_OTRA",
+      "pipeline.radicador.USUARIO_CREADOR"
+     ]
     },
     {
      "id": "rad_traza",
      "descripcion": "Tras radicar, crear_trazabilidad(proceso='PQRD<id>', secuencia=radicado, estado='Por asignar', tramite='PQRD', nombre='Asignador IA - <oficina>'). Un fallo se registra en la bitacora (paso TRAZABILIDAD) pero no deshace la radicacion.",
      "modulo": "pipeline/radicador.py",
-     "funcion": "Radicador._dejar_traza"
+     "funcion": "Radicador._dejar_traza",
+     "usa": [
+      "pipeline.radicador.ESTADO_POR_ASIGNAR",
+      "pipeline.radicador.TRAMITE",
+      "pipeline.radicador.USUARIO_CREADOR"
+     ]
     },
     {
      "id": "rad_log",
      "descripcion": "Cada intento emite 'radicacion enviada a SGDEA' con campos_enviados (cuerpo reemplazado por su largo), campos_vacios, por_defecto y adjuntos; cada rechazo emite 'radicacion rechazada: <clase>'.",
      "modulo": "pipeline/radicador.py",
-     "funcion": "Radicador.radicar"
+     "funcion": "Radicador.radicar",
+     "usa": [
+      "pipeline.radicador.ACCESO_INFORMACION_PUBLICA",
+      "pipeline.radicador.CANAL_EMAIL_IA",
+      "pipeline.radicador.DEPARTAMENTO_POR_DEFECTO",
+      "pipeline.radicador.DESCRIPCION_ACCESO_INFORMACION",
+      "pipeline.radicador.LARGO_DEL_FALLO_EN_EL_LOG",
+      "pipeline.radicador.LGTBIQ_NO_DECLARADO",
+      "pipeline.radicador.LISTADO_CONDICIONES",
+      "pipeline.radicador.MEDIO_RESPUESTA_CORREO",
+      "pipeline.radicador.MUNICIPIO_POR_DEFECTO",
+      "pipeline.radicador.NOMBRE_DEL_CORREO",
+      "pipeline.radicador.SEXO_POR_DEFECTO",
+      "pipeline.radicador.TIPO_DOCUMENTO_POR_DEFECTO",
+      "pipeline.radicador.TIPO_PQRD_DEL_CANAL",
+      "pipeline.radicador.TIPO_PRODUCTO_ARL",
+      "pipeline.radicador.TIPO_REMITENTE_ES_EL_AFECTADO",
+      "pipeline.radicador.TIPO_REMITENTE_TERCERO",
+      "pipeline.radicador.TIPO_SOLICITUD_OTRA",
+      "pipeline.radicador.USUARIO_CREADOR"
+     ]
     }
    ],
    "parametros": [
@@ -8528,13 +9775,19 @@
      "id": "cie_etiqueta",
      "descripcion": "Si el radicado no tiene forma ENT<numero>, se etiqueta como 'RADICADO:<valor>' y se avisa (contrato con SGDEA cambiado).",
      "modulo": "utils/radicado.py",
-     "funcion": "etiqueta_para"
+     "funcion": "etiqueta_para",
+     "usa": [
+      "utils.radicado.PATRON_RADICADO",
+      "utils.radicado.PREFIJO_PROPIO",
+      "utils.radicado._PATRON_PROPIO"
+     ]
     },
     {
      "id": "cie_mover",
      "descripcion": "Marca (quitando EN-PROCESO/REINTENTO) y mueve a OUTLOOK_FOLDER_RADICACION_EXITOSA; el id nuevo de Graph reemplaza email.id. Fallos solo se avisan.",
      "modulo": "pipeline/orquestador.py",
-     "funcion": "_archivar"
+     "funcion": "_archivar",
+     "usa": []
     }
    ],
    "parametros": [
@@ -8585,31 +9838,43 @@
      "id": "rm_aplazables",
      "descripcion": "Se aplazan: MODELO_NO_RESPONDIO, MODELO_SIN_PERMISO, SGDEA_CAIDO, CLOUDFLARE_403, PETICION_MAL_FORMADA, SIN_OCR, TIEMPO_DE_CORRIDA_AGOTADO, ERROR_INESPERADO.",
      "modulo": "pipeline/reintentos.py",
-     "funcion": "se_aplaza"
+     "funcion": "se_aplaza",
+     "usa": [
+      "pipeline.reintentos.MOTIVOS_QUE_SE_APLAZAN"
+     ]
     },
     {
      "id": "rm_tope",
      "descripcion": "intento = mayor REINTENTO:N + 1; si intento >= MAX_CICLOS ya no se aplaza (va a manual).",
      "modulo": "pipeline/reintentos.py",
-     "funcion": "decidir"
+     "funcion": "decidir",
+     "usa": [
+      "pipeline.reintentos.MAX_CICLOS",
+      "pipeline.reintentos.MOTIVOS_QUE_SE_APLAZAN",
+      "pipeline.reintentos.PREFIJO",
+      "pipeline.reintentos._PATRON"
+     ]
     },
     {
      "id": "rm_marca_no_escrita",
      "descripcion": "Si tras marcar REINTENTO las categorias no reflejan el intento (marcar devolvio None o fallo) y hay outlook, se cierra a manual para no reintentar sin cuenta.",
      "modulo": "pipeline/orquestador.py",
-     "funcion": "_a_revision_manual"
+     "funcion": "_a_revision_manual",
+     "usa": []
     },
     {
      "id": "rm_excepciones",
      "descripcion": "FalloDelModelo -> motivo de la excepcion; cualquier otra excepcion -> bitacora 'PIPELINE' y motivo de su clase o ERROR_INESPERADO; ambos pasan por aqui.",
      "modulo": "pipeline/orquestador.py",
-     "funcion": "procesar"
+     "funcion": "procesar",
+     "usa": []
     },
     {
      "id": "rm_log_no_radicado",
      "descripcion": "En rechazos de compuerta, contradicciones del registro o fatales de bitacora se emite 'no se radica: <motivo>' con campos_faltantes y campos_leidos.",
      "modulo": "pipeline/orquestador.py",
-     "funcion": "_registrar_lo_no_radicado"
+     "funcion": "_registrar_lo_no_radicado",
+     "usa": []
     }
    ],
    "parametros": [
@@ -8721,25 +9986,32 @@
      "id": "av_destino",
      "descripcion": "El aviso va SOLO a settings.CORREO_DE_AVISOS (vacio por defecto = no se envia) via forward_email; nunca a quien escribio. No se avisa con accion en_proceso o sin_reclamar.",
      "modulo": "pipeline/orquestador.py",
-     "funcion": "_avisar"
+     "funcion": "_avisar",
+     "usa": []
     },
     {
      "id": "av_detalle",
      "descripcion": "Detalle: en reenvio, la linea 'reenviado a ...'; en manual por contenido (motivo fuera de MOTIVOS_AJENOS_AL_CONTENIDO), la frase del agente o la lista de campos NO_RESUELTO; en otros casos vacio. Pie fijo PIE de IA.",
      "modulo": "pipeline/orquestador.py",
-     "funcion": "_detalle_del_aviso"
+     "funcion": "_detalle_del_aviso",
+     "usa": []
     },
     {
      "id": "av_telemetria",
      "descripcion": "Ejecucion.registrar(RegistroCorreo(...)) y contador.registrar('agente', modelo.nombre, tokens_entrada, tokens_salida, turnos=...). Al final: informe en RUTA_LOGS (disco o gs://) ejecuciones/<dia>/<hora>-<id>.txt, diario/<dia>.txt y serie.tsv.",
      "modulo": "pipeline/telemetria.py",
-     "funcion": "Ejecucion.escribir"
+     "funcion": "Ejecucion.escribir",
+     "usa": []
     },
     {
      "id": "av_consola",
      "descripcion": "correr emite una linea por correo (accion, motivo/radicado/area, por_que, vueltas, tokens, duracion) y el resumen del lote; las etapas solo se emiten si fallan o superan su umbral (UMBRAL_POR_ETAPA_MS / UMBRAL_ETAPA_LENTA_MS).",
      "modulo": "correr.py",
-     "funcion": "_paso"
+     "funcion": "_paso",
+     "usa": [
+      "correr.UMBRAL_ETAPA_LENTA_MS",
+      "correr.UMBRAL_POR_ETAPA_MS"
+     ]
     }
    ],
    "parametros": [
