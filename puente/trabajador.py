@@ -248,6 +248,314 @@ def instalar_ganchos() -> None:
 
     grabador.registrar_radicacion, grabador.registrar = _radicacion, _registrar
 
+    instalar_observadores()
+    instalar_reglas()
+
+
+# --------------------------------------------------------------- observadores
+#
+# Cada decisión de negocio del motor se anuncia como un evento `paso` (qué
+# etapa, qué decidió y por qué) y cada búsqueda de un campo como un evento
+# `busqueda` (qué buscó, si lo encontró, con qué confianza y dónde). Son
+# envoltorios que llaman a la función original sin tocar sus argumentos.
+
+def _corto(v: Any, n: int = 160) -> str:
+    s = v if isinstance(v, str) else json.dumps(v, ensure_ascii=False, default=str)
+    s = " ".join(s.split())
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
+def _paso(nodo: str, titulo: str, tono: str = "info", detalle: str = "", **datos: Any) -> None:
+    evento("paso", nodo=nodo, titulo=titulo, tono=tono, detalle=detalle[:1500], **datos)
+
+
+def _envolver(objeto: Any, nombre: str, despues, asincrona: bool = False) -> None:
+    """Cambia `objeto.nombre` (y sus copias importadas) por una versión que anuncia su resultado."""
+    import functools
+
+    original = getattr(objeto, nombre)
+
+    if asincrona:
+        @functools.wraps(original)
+        async def envoltorio(*a, **k):
+            r = await original(*a, **k)
+            try:
+                despues(r, a, k)
+            except Exception as e:  # anunciar nunca rompe el motor
+                evento("consola", linea=f"[visor] no se pudo anunciar {nombre}: {e}")
+            return r
+    else:
+        @functools.wraps(original)
+        def envoltorio(*a, **k):
+            r = original(*a, **k)
+            try:
+                despues(r, a, k)
+            except Exception as e:
+                evento("consola", linea=f"[visor] no se pudo anunciar {nombre}: {e}")
+            return r
+
+    setattr(objeto, nombre, envoltorio)
+    if inspect.ismodule(objeto):
+        _reemplazar_en_modulos(original, envoltorio)
+
+
+_FUNCION_DEL_CAMPO = {
+    "extraer_nombre_afectado": "nombre del afectado",
+    "extraer_documento": "documento del afectado",
+    "extraer_tipo_documento": "tipo de documento",
+    "extraer_telefono": "teléfono",
+    "extraer_nombre_remitente": "nombre del remitente",
+    "extraer_sexo": "sexo del afectado",
+    "extraer_tipo_pqrd": "tipo de PQRD",
+    "extraer_documento_del_remitente": "documento del remitente",
+    "extraer_tipo_remitente": "tipo de remitente",
+    "extraer_tipo_solicitud": "tipo de solicitud",
+    "extraer_direccion": "dirección",
+    "extraer_geografia": "departamento y municipio",
+    "extraer_oficina": "oficina destino",
+}
+
+
+def _umbral_vigente() -> float:
+    from pipeline import extraccion
+
+    f = inspect.unwrap(extraccion.extraer_todo)
+    return float(inspect.signature(f).parameters["umbral"].default)
+
+
+def instalar_observadores() -> None:
+    from pipeline import compuerta, extraccion, facturas, volumen, agente, conversion, enrutamiento
+    from pipeline import personas, saneamiento, duplicados
+    from utils import generic_filter
+
+    # --- búsquedas de la extracción determinista, campo por campo
+    def anunciar_busqueda(funcion: str):
+        def despues(r, a, k):
+            umbral = _actual.get("umbral") or UMBRAL_POR_DEFECTO
+            pares = [(h, None) for h in r] if isinstance(r, list) else [r]
+            if not pares:
+                evento("busqueda", funcion=funcion, que=_FUNCION_DEL_CAMPO.get(funcion, funcion),
+                       campo=funcion.replace("extraer_", ""), encontrado=False,
+                       motivo="SIN_CANDIDATO", detalle="no apareció en el texto")
+            for h, nr in pares:
+                if h is not None:
+                    evento("busqueda", funcion=funcion, que=_FUNCION_DEL_CAMPO.get(funcion, funcion),
+                           campo=h.campo, encontrado=True, valor=h.valor,
+                           confianza=round(h.confianza, 3), metodo=h.metodo,
+                           evidencia=_corto(h.evidencia, 260), umbral=umbral,
+                           aceptado=h.confianza >= umbral, a_confirmar=h.a_confirmar)
+                elif nr is not None:
+                    evento("busqueda", funcion=funcion, que=_FUNCION_DEL_CAMPO.get(funcion, funcion),
+                           campo=nr.campo, encontrado=False, motivo=nr.motivo,
+                           detalle=_corto(nr.detalle, 260))
+        return despues
+
+    global UMBRAL_POR_DEFECTO
+    UMBRAL_POR_DEFECTO = _umbral_vigente()
+    for funcion in _FUNCION_DEL_CAMPO:
+        if hasattr(extraccion, funcion):
+            _envolver(extraccion, funcion, anunciar_busqueda(funcion))
+
+    def fin_extraccion(r, a, k):
+        _paso("extraccion_determinista",
+              f"El algoritmo resolvió {len(r.hallazgos)} campos; {len(r.no_resueltos)} pasan al agente IA",
+              "ok" if not r.no_resueltos else "aviso",
+              "\n".join(f"{c}: {nr.motivo} {nr.detalle}" for c, nr in r.no_resueltos.items()),
+              resueltos=sorted(r.hallazgos), pendientes=sorted(r.no_resueltos))
+    _envolver(extraccion, "extraer_todo", fin_extraccion)
+
+    # --- deduplicación
+    def dedup(nodo: str, capas: str):
+        def despues(v, a, k):
+            if v:
+                _paso(nodo, f"Duplicado ({capas}): {v.motivo}", "aviso", f"radicado previo: {v.radicado}")
+            else:
+                _paso(nodo, f"No es duplicado ({capas})", "ok", v.motivo or "")
+        return despues
+    _envolver(duplicados.Detector, "comprobar", dedup("deduplicacion", "capas 1-4"), asincrona=True)
+    _envolver(duplicados.Detector, "comprobar_contenido", dedup("deduplicacion_contenido", "capas 5-6"), asincrona=True)
+
+    # --- enrutamiento, facturas, remitente
+    def ruta(r, a, k):
+        destino = getattr(r.destino, "value", str(r.destino))
+        textos = {"radicar": "Se radica en Positiva", "medicina_laboral": "Se reenvía a Medicina Laboral",
+                  "judicial": "Se reenvía a Notificaciones Judiciales", "no_se_radica": "Remitente excluido: no se radica"}
+        _paso("enrutamiento", textos.get(destino, destino), "ok" if destino == "radicar" else "aviso",
+              r.evidencia or "", destino=destino, correo_destino=r.correo_destino)
+    _envolver(enrutamiento, "decidir", ruta)
+
+    def factura(r, a, k):
+        if r:
+            _paso("facturas", "Es una factura electrónica: va a revisión manual", "aviso", r)
+        else:
+            _paso("facturas", "No es factura electrónica", "ok")
+    _envolver(facturas, "es_factura", factura)
+
+    def remitente(r, a, k):
+        _paso("remitente_identificable",
+              "Hay un remitente externo identificable" if r else "Ningún remitente externo en el hilo",
+              "ok" if r else "aviso", str(a[1] if len(a) > 1 else ""))
+    _envolver(generic_filter, "tiene_remitente_externo_identificable", remitente)
+
+    def medir(v, a, k):
+        _paso("volumen", f"{v.adjuntos} adjuntos útiles · {v.paginas} páginas · {v.megabytes:.1f} MB",
+              "aviso" if v.excesos else "ok", "; ".join(v.excesos or []))
+    _envolver(volumen, "medir", medir)
+
+    # --- conversión y OCR, documento por documento
+    def convertido(c, a, k):
+        nombre = a[1] if len(a) > 1 else k.get("nombre", "")
+        if c.error:
+            _paso("conversion_a_markdown", f"{nombre}: no se pudo leer", "error", c.error)
+            return
+        partes = [c.tipo_real or "?", f"{len(c.markdown):,} caracteres".replace(",", ".")]
+        if c.paginas:
+            partes.append(f"{c.paginas} pág.")
+        if c.ocr_aplicado:
+            partes.append("con OCR")
+        if c.paginas_ilegibles:
+            partes.append(f"{c.paginas_ilegibles} pág. ilegibles")
+        _paso("conversion_a_markdown", f"{nombre} → Markdown", "aviso" if c.paginas_ilegibles else "ok",
+              " · ".join(partes) + (f"\n{c.aviso}" if c.aviso else ""), ocr=c.ocr_aplicado)
+    _envolver(conversion, "convertir", convertido)
+
+    def sospechas(r, a, k):
+        if r:
+            _paso("saneamiento", f"{len(r)} posibles intentos de inyección", "aviso",
+                  "\n".join(f"línea {s.linea} · {s.categoria}: {_corto(s.fragmento, 90)}" for s in r[:8]))
+        else:
+            _paso("saneamiento", "Sin instrucciones sospechosas en el texto", "ok")
+    _envolver(saneamiento, "detectar", sospechas)
+
+    # --- combinación, registro y compuerta
+    def combinado(r, a, k):
+        _paso("combinacion", f"{len(r)} campos combinados (algoritmo + agente)", "ok",
+              ", ".join(sorted(r)))
+    _envolver(agente, "combinar", combinado)
+
+    def registro(r, a, k):
+        if r:
+            _paso("registro_de_personas", f"El registro completó {len(r)} campos", "ok",
+                  "\n".join(f"{c} = {_corto(getattr(h, 'valor', h), 80)}" for c, h in r.items()),
+                  campos={c: _corto(getattr(h, "valor", h), 120) for c, h in r.items()})
+        else:
+            _paso("registro_de_personas", "El registro no aportó campos nuevos", "info")
+    _envolver(personas, "rellenar_desde_el_registro", registro)
+
+
+UMBRAL_POR_DEFECTO = 0.7
+
+
+# ---------------------------------------------------- reglas personalizadas
+#
+# Reglas que se crean desde la web y corren dentro del motor en dos puntos:
+#  - entrada: antes de abrir los adjuntos, sobre asunto, cuerpo, remitente o
+#    nombres de adjuntos. Mandar a revisión manual usa el mismo camino que el
+#    motor usa para las facturas, con el motivo que diga la regla.
+#  - validacion: justo antes de la compuerta, sobre los campos ya resueltos.
+#    Puede fijar un valor, avisar o rechazar (revisión manual).
+
+_reglas: list = []
+_motivo_facturas: Dict[str, str] = {}
+
+
+def _cumple(regla: dict, texto: Any) -> tuple:
+    op = regla.get("operador", "coincide")
+    vacio = texto is None or str(texto).strip() == ""
+    if op == "falta":
+        return vacio, "el campo está vacío" if vacio else ""
+    if op == "existe":
+        return (not vacio), "el campo tiene valor" if not vacio else ""
+    banderas = re.IGNORECASE if regla.get("ignorarMayusculas", True) else 0
+    m = re.search(regla.get("patron") or "", "" if vacio else str(texto), banderas)
+    if op == "no_coincide":
+        return m is None, "no aparece el patrón"
+    return m is not None, f"coincide «{_corto(m.group(0), 80)}»" if m else ""
+
+
+def _anunciar_regla(regla: dict, cumple: bool, detalle: str) -> None:
+    evento("regla", id=regla.get("id"), nombre=regla.get("nombre"), punto=regla.get("punto"),
+           cumple=cumple, accion=regla.get("accion"), detalle=detalle, campo=regla.get("campo"),
+           valor=regla.get("valor") if regla.get("accion") == "fijar" else None,
+           motivo=regla.get("motivo") if cumple and regla.get("accion") == "manual" else "")
+
+
+def instalar_reglas() -> None:
+    import functools
+    from pipeline import compuerta, facturas
+    from pipeline.extraccion import Hallazgo
+
+    _motivo_facturas["original"] = facturas.MOTIVO
+    es_factura = facturas.es_factura
+
+    @functools.wraps(es_factura)
+    def con_reglas_de_entrada(asunto: str = "", cuerpo: str = "", *a, **k):
+        facturas.MOTIVO = _motivo_facturas["original"]
+        correo = _actual.get("correo") or {}
+        fuentes = {"asunto": asunto, "cuerpo": cuerpo, "remitente": correo.get("remitente", ""),
+                   "adjuntos": "\n".join(correo.get("adjuntos", []))}
+        for regla in [r for r in _reglas if r.get("punto") == "entrada"]:
+            try:
+                cumple, detalle = _cumple(regla, fuentes.get(regla.get("campo"), ""))
+            except re.error as e:
+                _anunciar_regla(regla, False, f"patrón inválido: {e}")
+                continue
+            _anunciar_regla(regla, cumple, detalle)
+            if cumple and regla.get("accion") == "manual":
+                facturas.MOTIVO = regla.get("motivo") or "REGLA_PERSONALIZADA"
+                return f"regla personalizada «{regla.get('nombre')}»: {detalle}"
+        return es_factura(asunto, cuerpo, *a, **k)
+
+    facturas.es_factura = con_reglas_de_entrada
+
+    validar = compuerta.validar
+
+    @functools.wraps(validar)
+    def con_reglas_de_validacion(hallazgos, *a, **k):
+        extra = []
+        for regla in [r for r in _reglas if r.get("punto") == "validacion"]:
+            campo = regla.get("campo", "")
+            h = hallazgos.get(campo)
+            try:
+                cumple, detalle = _cumple(regla, getattr(h, "valor", None) if h else None)
+            except re.error as e:
+                _anunciar_regla(regla, False, f"patrón inválido: {e}")
+                continue
+            _anunciar_regla(regla, cumple, detalle)
+            if not cumple:
+                continue
+            if regla.get("accion") == "fijar":
+                hallazgos[campo] = Hallazgo(campo=campo, valor=regla.get("valor", ""),
+                                            evidencia=f"regla personalizada «{regla.get('nombre')}»",
+                                            confianza=1.0, metodo=f"regla:{regla.get('id')}")
+            elif regla.get("accion") == "manual":
+                extra.append(compuerta.Reparo(campo=campo, codigo=regla.get("motivo") or "REGLA_PERSONALIZADA",
+                                              detalle=f"«{regla.get('nombre')}»: {detalle}", bloqueante=True))
+        d = validar(hallazgos, *a, **k)
+        if extra:
+            d.reparos.extend(extra)
+            d.veredicto = compuerta.Veredicto.RECHAZADO
+            d.motivo_manual = extra[0].codigo
+        return d
+
+    compuerta.validar = con_reglas_de_validacion
+    _reemplazar_en_modulos(validar, con_reglas_de_validacion)
+    # El observador va por fuera: el dictamen que se anuncia ya trae las reglas.
+    _envolver(compuerta, "validar", _anunciar_dictamen)
+
+
+def _anunciar_dictamen(d, a, k) -> None:
+    veredicto = getattr(d.veredicto, "value", str(d.veredicto))
+    textos = {"aprobado": "Aprobado: se puede radicar", "corregido": "Aprobado con correcciones",
+              "rechazado": f"Rechazado: {d.motivo_manual}"}
+    _paso("compuerta", textos.get(veredicto, veredicto),
+          "error" if veredicto == "rechazado" else "aviso" if veredicto == "corregido" else "ok",
+          "\n".join(f"{'✗' if r.bloqueante else '•'} {r.codigo} · {r.campo}: {r.detalle}" for r in d.reparos[:20]),
+          veredicto=veredicto,
+          reparos=[{"campo": r.campo, "codigo": r.codigo, "detalle": str(r.detalle)[:200], "bloqueante": r.bloqueante}
+                   for r in d.reparos[:30]],
+          correcciones={c: _corto(v, 80) for c, v in (d.correcciones or {}).items()})
+
 
 # -------------------------------------------------------------- configuración
 
@@ -273,7 +581,7 @@ _POR_DEFECTO = {
 
 
 def _cambiar_por_defecto(modulo: str, funcion: str, parametro: str, valor: Any) -> None:
-    f = getattr(importlib.import_module(modulo), funcion)
+    f = inspect.unwrap(getattr(importlib.import_module(modulo), funcion))
     if f.__kwdefaults__ and parametro in f.__kwdefaults__:
         _defaults_previos.append((f, "kw", dict(f.__kwdefaults__)))
         f.__kwdefaults__ = {**f.__kwdefaults__, parametro: valor}
@@ -463,6 +771,9 @@ async def procesar(orden: Dict[str, Any]) -> None:
     if _registro is None:
         _registro = ConsultaDePersonas(url_base=settings.MS_SGDEA_BETA_URL)
     buzon = BuzonLocal(carpeta, crudo)
+    de = (crudo.get("from") or {}).get("emailAddress") or {}
+    _actual["correo"] = {"remitente": f"{de.get('name', '')} <{de.get('address', '')}>",
+                         "adjuntos": [a.get("name", "") for a in crudo.get("_adjuntos", [])]}
     servicio = RadicacionService(timeout=45)
     orq = Orquestador(modelo=modelo, outlook=buzon, radicador=Radicador(servicio=servicio),
                       base_workspace=str(TRABAJO / "ws" / _actual["corrida"]),
@@ -510,12 +821,16 @@ async def principal() -> None:
         if orden.get("cmd") == "procesar":
             _actual["corrida"] = orden["corrida"]
             fallidas = aplicar_configuracion(orden.get("parametros", {}), orden.get("entorno", {}))
+            _reglas[:] = [r for r in orden.get("reglas", []) if isinstance(r, dict) and r.get("activa", True)]
+            _actual["umbral"] = _umbral_vigente()
             if fallidas:
                 evento("configuracion", fallidas=fallidas)
             try:
                 await procesar(orden)
             finally:
                 restaurar_configuracion()
+                _reglas.clear()
+                _actual["correo"] = None
                 evento("libre")
                 _actual["corrida"] = None
         elif orden.get("cmd") == "ping":
