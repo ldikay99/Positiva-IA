@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { appendFile, mkdir } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { config } from "./config.ts";
@@ -44,6 +44,8 @@ export class Motor extends EventEmitter {
   private siguienteId = 1;
   private deseados = 0;
   errorInicio = "";
+  /** Los últimos eventos de todas las corridas, para la vista de logs. */
+  readonly recientes: Evento[] = [];
 
   constructor() {
     super();
@@ -191,6 +193,10 @@ export class Motor extends EventEmitter {
   }
 
   private publicar(e: Evento): void {
+    if (e.tipo !== "motor") {
+      this.recientes.push(e);
+      if (this.recientes.length > 4000) this.recientes.splice(0, this.recientes.length - 4000);
+    }
     this.emit("evento", e);
   }
 
@@ -203,6 +209,26 @@ export class Motor extends EventEmitter {
     await mkdir(carpeta, { recursive: true });
     const { eventos, ...resto } = c;
     await appendFile(join(carpeta, `${new Date().toISOString().slice(0, 10)}.jsonl`), JSON.stringify({ ...resto, eventos }) + "\n", "utf8");
+  }
+
+  /** Las corridas de días anteriores, para que el historial sobreviva a un reinicio. */
+  async cargarHistorial(maximo = 500): Promise<void> {
+    const carpeta = join(config.datos, "corridas");
+    const archivos = (await readdir(carpeta).catch(() => [])).filter((a) => a.endsWith(".jsonl")).sort().reverse();
+    const leidas: Corrida[] = [];
+    for (const a of archivos) {
+      const lineas = (await readFile(join(carpeta, a), "utf8")).trim().split("\n").filter(Boolean).reverse();
+      for (const l of lineas) {
+        try {
+          leidas.push(JSON.parse(l) as Corrida);
+        } catch {
+          /* línea cortada */
+        }
+        if (leidas.length >= maximo) break;
+      }
+      if (leidas.length >= maximo) break;
+    }
+    for (const c of leidas.reverse()) if (!this.corridas.has(c.id)) this.corridas.set(c.id, c);
   }
 
   detener(): void {

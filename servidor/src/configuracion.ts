@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir } from "node:fs/promises";
+import { readFile, writeFile, mkdir, appendFile, readdir, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
 import { config } from "./config.ts";
@@ -9,14 +9,30 @@ export const MODELOS = ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.5
 const esquema = z.object({
   parametros: z.record(z.string(), z.unknown()).default({}),
   entorno: z.record(z.string(), z.string()).default({}),
-  ia: z.object({ modelo: z.string().min(1), ubicacion: z.string().min(1) }).default({ modelo: "gemini-2.5-flash", ubicacion: "global" }),
+  ia: z
+    .object({
+      modelo: z.string().min(1),
+      ubicacion: z.string().min(1),
+      temperatura: z.number().min(0).max(2).nullable().default(null),
+    })
+    .default({ modelo: "gemini-2.5-flash", ubicacion: "global", temperatura: null }),
   concurrencia: z.number().int().min(1).max(config.trabajadoresMax).default(2),
   topeSegundos: z.number().int().min(30).max(1800).default(600),
 });
 
 export type Configuracion = z.infer<typeof esquema>;
 
+export interface Cambio {
+  t: number;
+  clave: string;
+  antes: unknown;
+  despues: unknown;
+  nota?: string;
+}
+
 const ruta = () => join(config.datos, "configuracion.json");
+const rutaHistorial = () => join(config.datos, "historial.jsonl");
+const carpetaPerfiles = () => join(config.datos, "perfiles");
 let actual: Configuracion = esquema.parse({});
 
 export async function cargar(): Promise<Configuracion> {
@@ -32,7 +48,7 @@ export function obtener(): Configuracion {
   return actual;
 }
 
-/** Solo se aceptan parámetros que el catálogo marca como ajustables en caliente. */
+/** Solo se aceptan parámetros que el catálogo permite ajustar desde el visor. */
 export function validar(entrada: unknown): { ok: true; valor: Configuracion } | { ok: false; error: string } {
   const r = esquema.safeParse(entrada);
   if (!r.success) return { ok: false, error: r.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") };
@@ -44,8 +60,81 @@ export function validar(entrada: unknown): { ok: true; valor: Configuracion } | 
   return { ok: true, valor: r.data };
 }
 
-export async function guardar(c: Configuracion): Promise<void> {
+function plano(c: Configuracion): Record<string, unknown> {
+  const p: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(c.parametros)) p[k] = v;
+  for (const [k, v] of Object.entries(c.entorno)) p[`entorno.${k}`] = v;
+  p["ia.modelo"] = c.ia.modelo;
+  p["ia.ubicacion"] = c.ia.ubicacion;
+  p["ia.temperatura"] = c.ia.temperatura;
+  p.concurrencia = c.concurrencia;
+  p.topeSegundos = c.topeSegundos;
+  return p;
+}
+
+export function diferencias(a: Configuracion, b: Configuracion): Omit<Cambio, "t">[] {
+  const pa = plano(a);
+  const pb = plano(b);
+  const claves = new Set([...Object.keys(pa), ...Object.keys(pb)]);
+  return [...claves]
+    .filter((k) => JSON.stringify(pa[k]) !== JSON.stringify(pb[k]))
+    .map((k) => ({ clave: k, antes: pa[k] ?? null, despues: pb[k] ?? null }));
+}
+
+export async function guardar(c: Configuracion, nota?: string): Promise<Omit<Cambio, "t">[]> {
+  const cambios = diferencias(actual, c);
   actual = c;
   await mkdir(config.datos, { recursive: true });
   await writeFile(ruta(), JSON.stringify(c, null, 2), "utf8");
+  const t = Date.now();
+  if (cambios.length) await appendFile(rutaHistorial(), cambios.map((x) => JSON.stringify({ t, ...x, nota })).join("\n") + "\n", "utf8");
+  return cambios;
+}
+
+export async function historial(limite = 300): Promise<Cambio[]> {
+  try {
+    const lineas = (await readFile(rutaHistorial(), "utf8")).trim().split("\n").filter(Boolean);
+    return lineas.slice(-limite).map((l) => JSON.parse(l) as Cambio).reverse();
+  } catch {
+    return [];
+  }
+}
+
+const NOMBRE_PERFIL = /^[\w áéíóúñÁÉÍÓÚÑ.-]{1,60}$/;
+
+export async function perfiles(): Promise<{ nombre: string; t: number; cambios: number; descripcion: string }[]> {
+  const nombres = (await readdir(carpetaPerfiles()).catch(() => [])).filter((n) => n.endsWith(".json"));
+  const lista = await Promise.all(
+    nombres.map(async (n) => {
+      const p = JSON.parse(await readFile(join(carpetaPerfiles(), n), "utf8")) as { nombre: string; t: number; descripcion: string; configuracion: Configuracion };
+      return { nombre: p.nombre, t: p.t, descripcion: p.descripcion, cambios: Object.keys(p.configuracion.parametros).length + Object.keys(p.configuracion.entorno).length };
+    }),
+  );
+  return lista.sort((a, b) => b.t - a.t);
+}
+
+export async function guardarPerfil(nombre: string, descripcion: string): Promise<boolean> {
+  if (!NOMBRE_PERFIL.test(nombre)) return false;
+  await mkdir(carpetaPerfiles(), { recursive: true });
+  await writeFile(join(carpetaPerfiles(), `${nombre}.json`), JSON.stringify({ nombre, descripcion, t: Date.now(), configuracion: actual }, null, 2), "utf8");
+  return true;
+}
+
+export async function leerPerfil(nombre: string): Promise<Configuracion | null> {
+  if (!NOMBRE_PERFIL.test(nombre)) return null;
+  try {
+    const p = JSON.parse(await readFile(join(carpetaPerfiles(), `${nombre}.json`), "utf8")) as { configuracion: unknown };
+    const v = validar(p.configuracion);
+    return v.ok ? v.valor : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function borrarPerfil(nombre: string): Promise<boolean> {
+  if (!NOMBRE_PERFIL.test(nombre)) return false;
+  return unlink(join(carpetaPerfiles(), `${nombre}.json`)).then(
+    () => true,
+    () => false,
+  );
 }

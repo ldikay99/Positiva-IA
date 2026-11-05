@@ -54,6 +54,8 @@ const POR_DEFECTO = new Set([
   "pipeline.extraccion.UMBRAL_CONFIANZA",
   "pipeline.revisor.MAX_VUELTAS_DEL_REVISOR",
   "pipeline.agente.MAX_ITERACIONES",
+  // El trabajador cambia solo las descripciones, en la misma lista que usa el orquestador.
+  "pipeline.agente.ESQUEMAS_HERRAMIENTAS",
 ]);
 
 type ParametroCrudo = Omit<Parametro, "ajuste" | "motivo_fijo">;
