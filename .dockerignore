@@ -1,0 +1,8 @@
+**/node_modules
+**/dist
+**/__pycache__
+datos
+.env
+.git
+motor/tests
+motor/harness
