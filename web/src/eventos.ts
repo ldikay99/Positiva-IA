@@ -248,7 +248,7 @@ export function narrar(catalogo: Catalogo | null, corrida: Corrida | undefined):
 
 // ------------------------------------------------------------- la solicitud
 
-export type Fuente = "algoritmo" | "ia" | "registro" | "regla" | "a_la_ia" | "sin_resolver" | "buscando";
+export type Fuente = "algoritmo" | "ia" | "registro" | "regla" | "compuerta" | "a_la_ia" | "sin_resolver" | "buscando";
 
 export interface EstadoCampo {
   campo: string;
@@ -259,6 +259,23 @@ export interface EstadoCampo {
   confianza?: number;
   nota?: string;
   reparo?: string;
+  /** Lo que dijo la compuerta del campo, en palabras. */
+  reparoDetalle?: string;
+  /** El valor que tenía antes de que la compuerta lo cambiara o lo vaciara. */
+  antes?: string;
+}
+
+/** Los reparos de la compuerta en palabras: el código queda para el detalle. */
+const REPARO_LEGIBLE: Record<string, string> = {
+  NIT_DE_ENTIDAD_EN_PERSONA: "un NIT de empresa en una persona",
+  NOMBRE_SIN_FORMA_DE_EMPRESA: "el nombre no tiene forma de empresa",
+  EMPRESA_CON_DOCUMENTO_DE_PERSONA: "una empresa con documento de persona",
+  DOCUMENTO_DE_OTRA_PERSONA: "el documento es de otra persona",
+  CONFIANZA_BAJA: "poca confianza",
+};
+
+function reparoLegible(codigo: string): string {
+  return REPARO_LEGIBLE[codigo] ?? codigo.toLowerCase().replace(/_/g, " ");
 }
 
 /** Cómo va quedando cada campo de la solicitud a medida que avanza la corrida. */
@@ -284,11 +301,19 @@ export function solicitud(corrida: Corrida | undefined): EstadoCampo[] {
     } else if (e.tipo === "regla" && e.cumple && e.accion === "fijar" && e.campo) {
       fijar(String(e.campo), { fuente: "regla", valor: e.valor, confianza: 1, nota: `regla «${String(e.nombre)}»` });
     } else if (e.tipo === "paso" && e.nodo === "compuerta" && Array.isArray(e.reparos)) {
-      for (const r of e.reparos as { campo: string; codigo: string; bloqueante: boolean }[]) if (r.campo && m.has(r.campo)) fijar(r.campo, { reparo: `${r.codigo}${r.bloqueante ? "" : " (corregido)"}` });
+      for (const r of e.reparos as { campo: string; codigo: string; bloqueante: boolean; detalle?: string }[]) {
+        if (r.campo && m.has(r.campo)) fijar(r.campo, { reparo: `${reparoLegible(r.codigo)}${r.bloqueante ? "" : " · corregido"}`, reparoDetalle: `${r.codigo}${r.detalle ? `: ${r.detalle}` : ""}` });
+      }
     } else if (e.tipo === "resultado" && e.hallazgos) {
       const atrib = (e.atribucion ?? {}) as Record<string, string>;
       for (const [c, h] of Object.entries(e.hallazgos as Record<string, { valor: unknown; confianza: number; metodo: string }>)) {
         const origen = atrib[c];
+        const ev = String((h as { evidencia?: string }).evidencia ?? "");
+        if (h.metodo === "compuerta") {
+          // La compuerta cambió o vació el valor: es ella la que decide lo que se envía.
+          fijar(c, { valor: h.valor, confianza: undefined, fuente: "compuerta", antes: /antes ([^)]*)\)/.exec(ev)?.[1], nota: ev || "lo corrigió la compuerta" });
+          continue;
+        }
         fijar(c, { valor: h.valor, confianza: h.confianza, fuente: origen === "ia" ? "ia" : origen === "registro" ? "registro" : String(h.metodo).startsWith("regla:") ? "regla" : "algoritmo", nota: h.metodo });
       }
       for (const c of (e.sin_resolver as string[] | undefined) ?? []) fijar(c, { fuente: "sin_resolver", nota: "nadie lo resolvió" });
@@ -303,6 +328,7 @@ export const NOMBRE_FUENTE: Record<Fuente, string> = {
   ia: "IA",
   registro: "Registro",
   regla: "Regla",
+  compuerta: "Compuerta",
   a_la_ia: "Pasa a la IA",
   sin_resolver: "Sin resolver",
   buscando: "Buscando",

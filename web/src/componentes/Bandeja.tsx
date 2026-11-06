@@ -90,10 +90,11 @@ function PanelBuzon() {
   }, [n, cargar]);
 
   const correos = buzon?.correos ?? [];
-  const cuantos = marcados.length || correos.length;
+  const cuantos = marcados.length;
   const lanzar = async () => {
     setCorriendo(true);
     try {
+      if (!marcados.length) return;
       await correr(n, marcados);
       avisar(`${cuantos} correo${cuantos === 1 ? "" : "s"} del buzón real corriendo como el job`);
       setMarcados([]);
@@ -148,9 +149,11 @@ function PanelBuzon() {
         {buzon && !buzon.error && !correos.length && <div className="vacio">La carpeta del job está vacía.</div>}
       </div>
       <footer className="bandeja-pie">
-        <span className="crece chico texto-2">{marcados.length ? <><b>{marcados.length}</b> elegidos</> : "Todos los de la lista, en este orden"}</span>
-        <button className="boton primario" disabled={corriendo || !correos.length} onClick={() => void lanzar()}>
-          {corriendo ? <span className="girando" /> : <Icono n="play" tam={14} />}Correr {cuantos || ""} como el job
+        <span className="crece chico texto-2">
+          {marcados.length ? <><b>{marcados.length}</b> elegido{marcados.length === 1 ? "" : "s"} · <button className="enlace" onClick={() => setMarcados([])}>Limpiar</button></> : <>Elige los correos que quieras correr · <button className="enlace" onClick={() => setMarcados(correos.map((c) => c.id))}>Elegir todos</button></>}
+        </span>
+        <button className="boton primario" disabled={corriendo || !marcados.length} onClick={() => void lanzar()}>
+          {corriendo ? <span className="girando" /> : <Icono n="play" tam={14} />}{marcados.length ? `Correr ${marcados.length} como el job` : "Correr como el job"}
         </button>
       </footer>
     </>

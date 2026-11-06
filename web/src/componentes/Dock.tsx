@@ -52,7 +52,11 @@ export const BloqueTramo = memo(function BloqueTramo({ tr, t0, plegado = false }
   );
 });
 
-const COLOR_FUENTE: Record<string, string> = { algoritmo: "azul", ia: "violeta", registro: "turquesa", regla: "rosa", a_la_ia: "ambar", sin_resolver: "rojo", buscando: "gris" };
+const COLOR_FUENTE: Record<string, string> = { algoritmo: "azul", ia: "violeta", registro: "turquesa", regla: "rosa", compuerta: "ambar", a_la_ia: "ambar", sin_resolver: "rojo", buscando: "gris" };
+
+function vacio(v: unknown): boolean {
+  return v === undefined || v === null || v === "";
+}
 
 export function TablaSolicitud({ campos, compacta = false }: { campos: EstadoCampo[]; compacta?: boolean }) {
   if (!campos.length) return <div className="vacio chico">Los campos aparecen aquí a medida que el algoritmo y la IA los encuentran.</div>;
@@ -61,14 +65,16 @@ export function TablaSolicitud({ campos, compacta = false }: { campos: EstadoCam
       {campos.map((c) => (
         <motion.div key={c.campo} layout="position" className={`campo-fila f-${c.fuente}`} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }}>
           <span className="campo-estado">
-            {c.fuente === "sin_resolver" ? <Icono n="cerrar" tam={12} strokeWidth={2.4} /> : c.fuente === "a_la_ia" || c.fuente === "buscando" ? <Icono n="reloj" tam={12} /> : <Icono n="ok" tam={12} strokeWidth={2.4} />}
+            {c.fuente === "sin_resolver" ? <Icono n="cerrar" tam={12} strokeWidth={2.4} /> : c.fuente === "compuerta" ? <Icono n="escudo" tam={12} /> : c.fuente === "a_la_ia" || c.fuente === "buscando" ? <Icono n="reloj" tam={12} /> : <Icono n="ok" tam={12} strokeWidth={2.4} />}
           </span>
           <span className="campo-nombre">{c.nombre}{c.obligatorio && <i title="Obligatorio para radicar">*</i>}</span>
-          <span className="campo-valor mono" title={c.nota}>{c.valor !== undefined && c.valor !== null && c.valor !== "" ? String(c.valor) : <span className="texto-3">{c.nota || "—"}</span>}</span>
+          <span className="campo-valor mono" title={c.nota}>
+            {!vacio(c.valor) ? String(c.valor) : c.fuente === "compuerta" ? <span className="texto-3">vacío{c.antes ? ` · tenía ${c.antes}` : ""}</span> : <span className="texto-3">{c.nota || "—"}</span>}
+          </span>
           <span className="campo-meta">
             <span className={`ficha tono-${COLOR_FUENTE[c.fuente]}`}>{NOMBRE_FUENTE[c.fuente]}</span>
             {c.confianza !== undefined && <span className="barra-conf mini" title={`${Math.round(c.confianza * 100)} %`}><i style={{ width: `${Math.round(c.confianza * 100)}%` }} /></span>}
-            {c.reparo && <span className="ficha tono-rojo" title="Reparo de la compuerta">{c.reparo}</span>}
+            {c.reparo && <span className={`ficha ${c.reparo.endsWith("corregido") ? "tono-ambar" : "tono-rojo"}`} title={c.reparoDetalle ?? "Reparo de la compuerta"}>Compuerta: {c.reparo}</span>}
           </span>
         </motion.div>
       ))}
