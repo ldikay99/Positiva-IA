@@ -155,6 +155,15 @@ export const NOMBRES_DESENLACE: Record<string, string> = {
   cancelada: "Cancelada",
 };
 
+// Nombre corto para las fichas de la bandeja, donde caben dos desenlaces en una línea.
+export const NOMBRES_CORTOS_DESENLACE: Record<string, string> = {
+  ...NOMBRES_DESENLACE,
+  radicado: "Radicado",
+  manual: "Manual",
+  reenviado: "Reenviado",
+  en_proceso: "Otra corrida",
+};
+
 export const TONO_DESENLACE: Record<string, string> = {
   radicado: "verde",
   manual: "rojo",

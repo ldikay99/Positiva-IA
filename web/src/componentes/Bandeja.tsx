@@ -2,7 +2,7 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "rea
 import { AnimatePresence, motion } from "motion/react";
 import { usar } from "../estado.ts";
 import { Icono } from "../iconos.tsx";
-import { NOMBRES_DESENLACE, TONO_DESENLACE } from "../progreso.ts";
+import { NOMBRES_CORTOS_DESENLACE, NOMBRES_DESENLACE, TONO_DESENLACE } from "../progreso.ts";
 import type { Correo, Corrida } from "../tipos.ts";
 
 const ALTO_FILA = 98;
@@ -44,7 +44,7 @@ const FilaCorreo = memo(function FilaCorreo({ c, u, marcado, abierto, top }: { c
         <div className="fila correo-fichas">
           <span className="ficha mono">{c.caso}</span>
           {adjuntos > 0 && <span className="ficha"><Icono n="adjunto" tam={11} />{adjuntos}</span>}
-          {c.desenlaceProduccion && <span className={`ficha tono-${TONO_DESENLACE[c.desenlaceProduccion] ?? ""}`} title={`En producción: ${c.motivoProduccion || c.desenlaceProduccion}`}>Prod · {NOMBRES_DESENLACE[c.desenlaceProduccion] ?? c.desenlaceProduccion}</span>}
+          {c.desenlaceProduccion && <span className={`ficha tono-${TONO_DESENLACE[c.desenlaceProduccion] ?? ""}`} title={`En producción: ${NOMBRES_DESENLACE[c.desenlaceProduccion] ?? c.desenlaceProduccion}${c.motivoProduccion ? ` · ${c.motivoProduccion}` : ""}`}>Prod · {NOMBRES_CORTOS_DESENLACE[c.desenlaceProduccion] ?? c.desenlaceProduccion}</span>}
           {accion && (
             <button
               className={`ficha boton-ficha solida tono-${TONO_DESENLACE[accion] ?? "azul"}`}
@@ -55,10 +55,10 @@ const FilaCorreo = memo(function FilaCorreo({ c, u, marcado, abierto, top }: { c
                   enfocar({ tipo: "corrida", id: u.id });
                 }
               }}
-              title="Ver esta corrida"
+              title={`Ver esta corrida${NOMBRES_DESENLACE[accion] ? ` · ${NOMBRES_DESENLACE[accion]}` : ""}`}
             >
               {accion === "procesando" ? <span className="girando" /> : null}
-              Aquí · {NOMBRES_DESENLACE[accion] ?? (accion === "en_cola" ? "en cola" : "procesando")}
+              Aquí · {NOMBRES_CORTOS_DESENLACE[accion] ?? (accion === "en_cola" ? "en cola" : "procesando")}
             </button>
           )}
         </div>
