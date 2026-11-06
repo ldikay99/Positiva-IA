@@ -1,0 +1,20 @@
+.DS_Store
+__pycache__
+
+# Variables de entorno / secretos (NUNCA commitear)
+.env
+.env.example
+.env.local
+.env.*.local
+*credentials*.json
+*.pem
+*.key
+
+# Salidas del MODO_TEST (contienen PII real) -> NUNCA subir
+# (NO ignorar *.csv en general: juzgados_actualizada.csv es dato real versionado)
+salidas_prueba/
+
+# Claude Code local
+.claude/
+.agents/
+.local_test/

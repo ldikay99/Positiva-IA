@@ -1,0 +1,530 @@
+{
+ "nodos": [
+  {
+   "id": "remitente",
+   "nombre": "Validar remitente judicial",
+   "descripcion": "Solo un hilo que provenga de un despacho de la Rama Judicial sigue: el buzón interno aparece en casi todos los hilos por los reenvíos y no autoriza.",
+   "etapa_cronometro": "remitente",
+   "categoria": "filtro",
+   "usa_ia": false,
+   "modulo": "Tutelas/main.py",
+   "funciones": [
+    "buscar_correo_judicial"
+   ],
+   "siguientes": [
+    "tramite",
+    "no_radicado"
+   ],
+   "desenlaces": [
+    {
+     "accion": "manual",
+     "cuando": "DOMINIO-DE-CORREO-INVALIDO"
+    }
+   ],
+   "reglas": [
+    {
+     "id": "remitente_0",
+     "descripcion": "Acepta solo remitentes de los dominios de DOMINIOS_JUDICIALES; el primer correo judicial del hilo es el origen que se reporta a SGDEA.",
+     "modulo": "Tutelas/main.py",
+     "funcion": "buscar_correo_judicial"
+    }
+   ],
+   "parametros": []
+  },
+  {
+   "id": "tramite",
+   "nombre": "Identificar tipo de trámite",
+   "descripcion": "Sigue si algún correo del hilo menciona una tutela o notifica una actuación procesal (esta última queda sujeta a encontrar un radicado válido).",
+   "etapa_cronometro": "tramite",
+   "categoria": "filtro",
+   "usa_ia": false,
+   "modulo": "Tutelas/main.py",
+   "funciones": [
+    "detectar_tutela",
+    "_buscar_enlace_sharepoint"
+   ],
+   "siguientes": [
+    "radicado",
+    "no_radicado"
+   ],
+   "desenlaces": [
+    {
+     "accion": "manual",
+     "cuando": "NO-ES-TUTELA"
+    }
+   ],
+   "reglas": [
+    {
+     "id": "tramite_0",
+     "descripcion": "detectar_tutela y detectar_actuacion_judicial, por expresiones regulares, sobre cualquier correo del hilo.",
+     "modulo": "Tutelas/main.py",
+     "funcion": "detectar_tutela"
+    },
+    {
+     "id": "tramite_1",
+     "descripcion": "Si el expediente llega por enlace (SharePoint) y no hay PDF adjunto, no se radica: la documentación vive detrás del enlace.",
+     "modulo": "Tutelas/main.py",
+     "funcion": "_buscar_enlace_sharepoint"
+    }
+   ],
+   "parametros": []
+  },
+  {
+   "id": "radicado",
+   "nombre": "Extraer el radicado de 23 dígitos",
+   "descripcion": "La IA (Vertex) extrae radicado, juzgado, ciudad y documento del afectado; si falla, se busca por expresión regular en el texto.",
+   "etapa_cronometro": "radicado",
+   "categoria": "ia",
+   "usa_ia": true,
+   "modulo": "Tutelas/main.py",
+   "funciones": [
+    "procesar_hilo"
+   ],
+   "siguientes": [
+    "juzgado",
+    "radicado_pdf",
+    "no_radicado"
+   ],
+   "desenlaces": [
+    {
+     "accion": "manual",
+     "cuando": "SIN-RADICADO-ENCONTRADO"
+    }
+   ],
+   "reglas": [
+    {
+     "id": "radicado_0",
+     "descripcion": "ai.extraer_todo con temperatura 0 y respuesta JSON; luego extraer_radicado_regex.",
+     "modulo": "Tutelas/main.py",
+     "funcion": "procesar_hilo"
+    }
+   ],
+   "parametros": []
+  },
+  {
+   "id": "radicado_pdf",
+   "nombre": "Buscar el radicado en los anexos PDF",
+   "descripcion": "Si el correo no trae el radicado, lee los PDF (texto propio, Tesseract) y como último recurso la IA multimodal sobre el PDF; el radicado debe coincidir con el corto del asunto.",
+   "etapa_cronometro": "radicado_pdf",
+   "categoria": "ocr",
+   "usa_ia": false,
+   "modulo": "Tutelas/main.py",
+   "funciones": [
+    "procesar_hilo"
+   ],
+   "siguientes": [
+    "juzgado",
+    "no_radicado"
+   ],
+   "desenlaces": [
+    {
+     "accion": "manual",
+     "cuando": "SIN-RADICADO-ENCONTRADO"
+    }
+   ],
+   "reglas": [
+    {
+     "id": "radicado_pdf_0",
+     "descripcion": "_extraer_texto_pdf (PyMuPDF y Tesseract) y ai.extraer_radicado_de_pdf; _radicado_coincide_con_corto.",
+     "modulo": "Tutelas/main.py",
+     "funcion": "procesar_hilo"
+    }
+   ],
+   "parametros": []
+  },
+  {
+   "id": "juzgado",
+   "nombre": "Ubicar el juzgado",
+   "descripcion": "Busca el juzgado por el código (12 primeros dígitos del radicado) y, si no, por nombre y ciudad.",
+   "etapa_cronometro": "juzgado",
+   "categoria": "datos",
+   "usa_ia": false,
+   "modulo": "Tutelas/main.py",
+   "funciones": [
+    "buscar_juzgado"
+   ],
+   "siguientes": [
+    "anexos",
+    "no_radicado"
+   ],
+   "desenlaces": [
+    {
+     "accion": "manual",
+     "cuando": "JUZGADO-NO-ENCONTRADO"
+    }
+   ],
+   "reglas": [
+    {
+     "id": "juzgado_0",
+     "descripcion": "juzgados.buscar_juzgado: por código sin caracteres no numéricos; si no, nombre y municipio.",
+     "modulo": "Tutelas/main.py",
+     "funcion": "buscar_juzgado"
+    }
+   ],
+   "parametros": []
+  },
+  {
+   "id": "anexos",
+   "nombre": "Recopilar los anexos",
+   "descripcion": "Reúne los adjuntos de todos los correos del hilo sin las imágenes de firma; exige al menos un PDF.",
+   "etapa_cronometro": "anexos",
+   "categoria": "documentos",
+   "usa_ia": false,
+   "modulo": "Tutelas/main.py",
+   "funciones": [
+    "procesar_hilo"
+   ],
+   "siguientes": [
+    "duplicados",
+    "no_radicado"
+   ],
+   "desenlaces": [
+    {
+     "accion": "manual",
+     "cuando": "SIN-DOCUMENTACION-ADJUNTA"
+    }
+   ],
+   "reglas": [
+    {
+     "id": "anexos_0",
+     "descripcion": "obtener_adjuntos y descargar_adjunto de cada correo; descarta las imágenes incrustadas.",
+     "modulo": "Tutelas/main.py",
+     "funcion": "procesar_hilo"
+    }
+   ],
+   "parametros": []
+  },
+  {
+   "id": "duplicados",
+   "nombre": "Verificar si ya fue radicada",
+   "descripcion": "Calcula la llave del radicado y de cada documento y las reclama en Redis; si ya estaban, es un duplicado.",
+   "etapa_cronometro": "duplicados",
+   "categoria": "filtro",
+   "usa_ia": false,
+   "modulo": "Tutelas/main.py",
+   "funciones": [
+    "_clave_dedup"
+   ],
+   "siguientes": [
+    "radicar",
+    "no_radicado"
+   ],
+   "desenlaces": [
+    {
+     "accion": "manual",
+     "cuando": "RADICADO-DUPLICADO"
+    }
+   ],
+   "reglas": [
+    {
+     "id": "duplicados_0",
+     "descripcion": "_clave_dedup y _claves_por_documento; redis.reclamar (SET NX). En el visor, Redis va en memoria.",
+     "modulo": "Tutelas/main.py",
+     "funcion": "_clave_dedup"
+    }
+   ],
+   "parametros": []
+  },
+  {
+   "id": "radicar",
+   "nombre": "Radicar en SGDEA",
+   "descripcion": "Genera el PDF del hilo y radica la tutela con los archivos individuales.",
+   "etapa_cronometro": "radicar",
+   "categoria": "integracion",
+   "usa_ia": false,
+   "modulo": "Tutelas/main.py",
+   "funciones": [
+    "radicar_tutela"
+   ],
+   "siguientes": [
+    "trazabilidad",
+    "no_radicado"
+   ],
+   "desenlaces": [
+    {
+     "accion": "manual",
+     "cuando": "ERROR-RADICAR"
+    }
+   ],
+   "reglas": [
+    {
+     "id": "radicar_0",
+     "descripcion": "sgdea._generar_pdf_hilo y sgdea.radicar_tutela (POST /tutela) con reintentos; en el visor se anota la carga y no se envía.",
+     "modulo": "Tutelas/main.py",
+     "funcion": "radicar_tutela"
+    }
+   ],
+   "parametros": []
+  },
+  {
+   "id": "trazabilidad",
+   "nombre": "Registrar trazabilidad",
+   "descripcion": "Consulta el radicado creado y registra la trazabilidad.",
+   "etapa_cronometro": "trazabilidad",
+   "categoria": "integracion",
+   "usa_ia": false,
+   "modulo": "Tutelas/main.py",
+   "funciones": [
+    "crear_trazabilidad"
+   ],
+   "siguientes": [
+    "informar"
+   ],
+   "desenlaces": [],
+   "reglas": [
+    {
+     "id": "trazabilidad_0",
+     "descripcion": "obtener_info_radicado y crear_trazabilidad.",
+     "modulo": "Tutelas/main.py",
+     "funcion": "crear_trazabilidad"
+    }
+   ],
+   "parametros": []
+  },
+  {
+   "id": "informar",
+   "nombre": "Informar la radicación",
+   "descripcion": "Responde al buzón interno con el número de radicado.",
+   "etapa_cronometro": "informar",
+   "categoria": "salida",
+   "usa_ia": false,
+   "modulo": "Tutelas/main.py",
+   "funciones": [
+    "responder_radicacion_exitosa"
+   ],
+   "siguientes": [
+    "archivar"
+   ],
+   "desenlaces": [],
+   "reglas": [
+    {
+     "id": "informar_0",
+     "descripcion": "responder_radicacion_exitosa (en el visor, anotado).",
+     "modulo": "Tutelas/main.py",
+     "funcion": "responder_radicacion_exitosa"
+    }
+   ],
+   "parametros": []
+  },
+  {
+   "id": "archivar",
+   "nombre": "Archivar el hilo en TUTELAS",
+   "descripcion": "Marca el hilo como procesado y lo mueve a la carpeta TUTELAS.",
+   "etapa_cronometro": "archivar",
+   "categoria": "salida",
+   "usa_ia": false,
+   "modulo": "Tutelas/main.py",
+   "funciones": [
+    "mover_hilo_a_tutelas"
+   ],
+   "siguientes": [],
+   "desenlaces": [],
+   "reglas": [
+    {
+     "id": "archivar_0",
+     "descripcion": "redis.marcar_procesado y mover_hilo_a_tutelas (en el visor, anotado).",
+     "modulo": "Tutelas/main.py",
+     "funcion": "mover_hilo_a_tutelas"
+    }
+   ],
+   "parametros": []
+  },
+  {
+   "id": "no_radicado",
+   "nombre": "No se radica",
+   "descripcion": "Responde al buzón interno con el motivo, etiqueta el hilo y lo devuelve a la bandeja de entrada.",
+   "terminal": true,
+   "categoria": "salida",
+   "etapa_cronometro": null,
+   "siguientes": [],
+   "desenlaces": [
+    {
+     "accion": "manual",
+     "cuando": "cualquier etiqueta de operaciones.py"
+    }
+   ],
+   "reglas": [
+    {
+     "id": "nr_1",
+     "descripcion": "Etiquetas: DOMINIO-DE-CORREO-INVALIDO, NO-ES-TUTELA, CORREO-CON-ENLACE, SIN-RADICADO-ENCONTRADO, SIN-DOCUMENTACION-ADJUNTA, JUZGADO-NO-ENCONTRADO, RADICADO-DUPLICADO, RADICACION-POR-CONFIRMAR, ERROR-RADICAR, ERROR-INESPERADO.",
+     "modulo": "Tutelas/operaciones.py",
+     "funcion": "_mover_hilo_fallido"
+    }
+   ],
+   "parametros": []
+  }
+ ],
+ "aristas": [
+  {
+   "desde": "remitente",
+   "hacia": "tramite",
+   "etiqueta": "sigue"
+  },
+  {
+   "desde": "remitente",
+   "hacia": "no_radicado",
+   "etiqueta": "DOMINIO-DE-CORREO-INVALIDO"
+  },
+  {
+   "desde": "tramite",
+   "hacia": "radicado",
+   "etiqueta": "sigue"
+  },
+  {
+   "desde": "tramite",
+   "hacia": "no_radicado",
+   "etiqueta": "NO-ES-TUTELA"
+  },
+  {
+   "desde": "radicado",
+   "hacia": "juzgado",
+   "etiqueta": "sigue"
+  },
+  {
+   "desde": "radicado",
+   "hacia": "radicado_pdf",
+   "etiqueta": "no está en el correo"
+  },
+  {
+   "desde": "radicado",
+   "hacia": "no_radicado",
+   "etiqueta": "SIN-RADICADO-ENCONTRADO"
+  },
+  {
+   "desde": "radicado_pdf",
+   "hacia": "juzgado",
+   "etiqueta": "sigue"
+  },
+  {
+   "desde": "radicado_pdf",
+   "hacia": "no_radicado",
+   "etiqueta": "SIN-RADICADO-ENCONTRADO"
+  },
+  {
+   "desde": "juzgado",
+   "hacia": "anexos",
+   "etiqueta": "sigue"
+  },
+  {
+   "desde": "juzgado",
+   "hacia": "no_radicado",
+   "etiqueta": "JUZGADO-NO-ENCONTRADO"
+  },
+  {
+   "desde": "anexos",
+   "hacia": "duplicados",
+   "etiqueta": "sigue"
+  },
+  {
+   "desde": "anexos",
+   "hacia": "no_radicado",
+   "etiqueta": "SIN-DOCUMENTACION-ADJUNTA"
+  },
+  {
+   "desde": "duplicados",
+   "hacia": "radicar",
+   "etiqueta": "sigue"
+  },
+  {
+   "desde": "duplicados",
+   "hacia": "no_radicado",
+   "etiqueta": "RADICADO-DUPLICADO"
+  },
+  {
+   "desde": "radicar",
+   "hacia": "trazabilidad",
+   "etiqueta": "sigue"
+  },
+  {
+   "desde": "radicar",
+   "hacia": "no_radicado",
+   "etiqueta": "ERROR-RADICAR"
+  },
+  {
+   "desde": "trazabilidad",
+   "hacia": "informar",
+   "etiqueta": "sigue"
+  },
+  {
+   "desde": "informar",
+   "hacia": "archivar",
+   "etiqueta": "sigue"
+  }
+ ],
+ "fases": [
+  {
+   "id": "recepcion",
+   "nombre": "Recepción",
+   "nodos": [
+    "remitente",
+    "tramite"
+   ]
+  },
+  {
+   "id": "extraccion",
+   "nombre": "Radicado y juzgado",
+   "nodos": [
+    "radicado",
+    "radicado_pdf",
+    "juzgado"
+   ]
+  },
+  {
+   "id": "documentos",
+   "nombre": "Anexos y duplicados",
+   "nodos": [
+    "anexos",
+    "duplicados"
+   ]
+  },
+  {
+   "id": "radicacion",
+   "nombre": "Radicación",
+   "nodos": [
+    "radicar",
+    "trazabilidad",
+    "informar",
+    "archivar"
+   ]
+  }
+ ],
+ "herramientas_agente": [],
+ "desenlaces": [
+  {
+   "accion": "radicado",
+   "descripcion": "Radicado en SGDEA"
+  },
+  {
+   "accion": "manual",
+   "descripcion": "No se radica: vuelve a la bandeja con su etiqueta"
+  }
+ ],
+ "proveedores": [
+  {
+   "id": "graph",
+   "nombre": "Microsoft Graph (buzón de tutelas)",
+   "tipo": "buzon"
+  },
+  {
+   "id": "vertex",
+   "nombre": "Vertex AI (Gemini)",
+   "tipo": "ia"
+  },
+  {
+   "id": "juzgados",
+   "nombre": "Tabla de juzgados",
+   "tipo": "registro_personas"
+  },
+  {
+   "id": "sgdea",
+   "nombre": "SGDEA · radicación de tutelas",
+   "tipo": "sgdea"
+  },
+  {
+   "id": "redis",
+   "nombre": "Redis (deduplicación)",
+   "tipo": "cache"
+  }
+ ],
+ "variables_entorno": []
+}

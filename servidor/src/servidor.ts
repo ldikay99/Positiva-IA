@@ -11,15 +11,72 @@ import * as bandeja from "./bandeja.ts";
 import * as buzon from "./buzon.ts";
 import * as configuracion from "./configuracion.ts";
 import { Motor, type Evento } from "./motor.ts";
+import * as flujos from "./flujos.ts";
+import { EventEmitter } from "node:events";
 
 const app = Fastify({ logger: { level: process.env.NIVEL_LOG ?? "info" }, bodyLimit: 4 * 1024 * 1024 });
-const motor = new Motor();
+// Un pool de trabajadores por flujo. Los eventos de todos salen por el mismo
+// bus, cada uno con su flujo, y la web muestra solo los del flujo elegido.
+const bus = new EventEmitter();
+bus.setMaxListeners(0);
+const motores = new Map<string, Motor>();
+
+function motorDe(id: string): Motor | null {
+  const existente = motores.get(id);
+  if (existente) return existente;
+  const f = flujos.obtener(id);
+  if (!f) return null;
+  const m = new Motor(f.id, f.trabajador, () => (f.tipo === "declarativo" ? { definicion: flujos.obtener(f.id)?.definicion } : {}));
+  m.on("evento", (e: Evento) => bus.emit("evento", e));
+  motores.set(id, m);
+  void m.cargarHistorial();
+  m.ajustar(f.id === "pqrd" ? configuracion.obtener().concurrencia : 2);
+  return m;
+}
+
+const flujoDe = (q: unknown): string => (typeof q === "string" && q ? q : "pqrd");
 
 await app.register(websocket);
 
-app.get("/api/salud", async () => ({ ok: true, ...motor.estado() }));
+app.get<{ Querystring: { flujo?: string } }>("/api/salud", async (req) => {
+  const m = motorDe(flujoDe(req.query.flujo)) ?? motor;
+  return { ok: true, ...m.estado(), flujo: m.flujo };
+});
 
-app.get("/api/catalogo", async () => catalogo());
+app.get<{ Querystring: { flujo?: string } }>("/api/catalogo", async (req, res) => {
+  const c = flujos.catalogoDe(flujoDe(req.query.flujo));
+  return c ?? res.code(404).send({ error: "ese flujo no existe" });
+});
+
+// -------------------------------------------------------------------- flujos
+
+const sinDefinicion = (f: flujos.Flujo) => ({ ...f, trabajador: undefined, definicion: undefined, nodos: f.definicion?.nodos.length });
+
+app.get("/api/flujos", async () => flujos.listar().map(sinDefinicion));
+
+app.get<{ Params: { id: string } }>("/api/flujos/:id", async (req, res) => {
+  const f = flujos.obtener(req.params.id);
+  return f ? { ...f, trabajador: undefined } : res.code(404).send({ error: "ese flujo no existe" });
+});
+
+app.post("/api/flujos/validar", async (req) => flujos.validar((req.body as { definicion?: unknown })?.definicion ?? req.body));
+
+app.put<{ Params: { id: string } }>("/api/flujos/:id", async (req, res) => {
+  const def = ((req.body as { definicion?: unknown })?.definicion ?? req.body) as Record<string, unknown>;
+  const r = await flujos.guardar({ ...def, id: req.params.id });
+  if (!r.ok) return res.code(400).send({ error: "el flujo no es válido", problemas: r.problemas });
+  bus.emit("evento", { tipo: "flujo_guardado", corrida: null, t: Date.now() / 1000, flujo: r.flujo!.id, version: r.flujo!.version });
+  return { flujo: { ...r.flujo, trabajador: undefined } };
+});
+
+app.delete<{ Params: { id: string } }>("/api/flujos/:id", async (req, res) => {
+  const ok = await flujos.borrar(req.params.id);
+  if (!ok) return res.code(404).send({ error: "solo se borran los flujos creados aquí" });
+  motores.get(req.params.id)?.detener();
+  motores.delete(req.params.id);
+  bus.emit("evento", { tipo: "flujo_borrado", corrida: null, t: Date.now() / 1000, flujo: req.params.id });
+  return { ok: true };
+});
 
 // ------------------------------------------------------------------- bandeja
 
@@ -105,6 +162,7 @@ const pedido = z.object({
   /** Juntos como una corrida del job: un orquestador, de a `concurrencia`, de a uno por remitente. */
   comoElJob: z.boolean().optional(),
   concurrencia: z.number().int().min(1).max(10).optional(),
+  flujo: z.string().optional(),
 });
 
 app.post("/api/corridas", async (req, res) => {
@@ -113,14 +171,53 @@ app.post("/api/corridas", async (req, res) => {
   const invalidos = r.data.casos.filter((c) => !bandeja.casoValido(c));
   if (invalidos.length) return res.code(400).send({ error: `casos inválidos: ${invalidos.join(", ")}` });
   const conf = configuracion.obtener();
-  if (r.data.comoElJob && r.data.casos.length > 1) {
-    const { lote, corridas } = motor.encolarLote(r.data.casos, conf, r.data.concurrencia ?? 0);
-    return corridas.map((c) => ({ id: c.id, caso: c.caso, lote }));
+  const f = flujos.obtener(flujoDe(r.data.flujo));
+  const m = f ? motorDe(f.id) : null;
+  if (!f || !m) return res.code(404).send({ error: "ese flujo no existe" });
+  if (r.data.comoElJob && f.lote && r.data.casos.length > 1) {
+    const { lote, corridas } = m.encolarLote(r.data.casos, conf, r.data.concurrencia ?? 0);
+    return corridas.map((c) => ({ id: c.id, caso: c.caso, lote, flujo: f.id }));
   }
   return r.data.casos.map((caso) => {
-    const c = motor.encolar(caso, conf);
-    return { id: c.id, caso: c.caso };
+    const c = m.encolar(caso, conf);
+    return { id: c.id, caso: c.caso, flujo: f.id };
   });
+});
+
+// ------------------------------------------------------------------ chat IA
+
+const pedidoDeChat = z.object({
+  mensajes: z.array(z.object({ rol: z.enum(["usuario", "asistente"]), texto: z.string().max(20000) })).min(1).max(60),
+  flujo: z.string().nullish(),
+  modelo: z.string().max(60).nullish(),
+});
+
+/**
+ * El chat: corre `puente/asistente.py`, que trabaja con herramientas sobre esta
+ * misma API, y devuelve cada paso apenas ocurre (una línea JSON por paso).
+ */
+app.post("/api/chat", async (req, res) => {
+  const r = pedidoDeChat.safeParse(req.body);
+  if (!r.success) return res.code(400).send({ error: "pedido inválido" });
+  res.hijack();
+  res.raw.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-cache", "X-Accel-Buffering": "no" });
+  const p = spawn(config.python, [resolve(config.raiz, "puente", "asistente.py")], {
+    env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUNBUFFERED: "1", API_INTERNA: `http://127.0.0.1:${config.puerto}` },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  p.stdout.setEncoding("utf8").on("data", (t: string) => res.raw.write(t));
+  let errores = "";
+  p.stderr.setEncoding("utf8").on("data", (t: string) => (errores += t));
+  p.on("exit", (codigo) => {
+    if (codigo) res.raw.write(JSON.stringify({ tipo: "error", texto: errores.trim().split(String.fromCharCode(10)).pop() || `el asistente terminó con código ${codigo}` }) + String.fromCharCode(10));
+    res.raw.end();
+  });
+  // Si quien pidió se va, el asistente se detiene. El cierre de la petición
+  // no sirve: ocurre apenas se termina de leer el cuerpo.
+  res.raw.on("close", () => {
+    if (p.exitCode === null) p.kill();
+  });
+  p.stdin.end(JSON.stringify(r.data));
 });
 
 // ----------------------------------------------------------- buzón real
@@ -164,17 +261,20 @@ app.post("/api/buzon/correr", async (req, res) => {
   }
 });
 
-app.delete("/api/corridas/cola", async () => ({ canceladas: motor.cancelarCola() }));
+app.delete<{ Querystring: { flujo?: string } }>("/api/corridas/cola", async (req) => ({ canceladas: motorDe(flujoDe(req.query.flujo))?.cancelarCola() ?? 0 }));
 
-app.get("/api/corridas", async () =>
-  [...motor.corridas.values()]
+app.get<{ Querystring: { flujo?: string } }>("/api/corridas", async (req) =>
+  [...(motorDe(flujoDe(req.query.flujo))?.corridas.values() ?? [])]
     .map(({ eventos, configuracion: conf, ...c }) => ({ ...c, modelo: conf.ia.modelo, nEventos: eventos.length }))
     .sort((a, b) => b.creada - a.creada),
 );
 
 app.get<{ Params: { id: string } }>("/api/corridas/:id", async (req, res) => {
-  const c = motor.corridas.get(req.params.id);
-  return c ?? res.code(404).send({ error: "no existe" });
+  for (const m of motores.values()) {
+    const c = m.corridas.get(req.params.id);
+    if (c) return c;
+  }
+  return res.code(404).send({ error: "no existe" });
 });
 
 // Hojas renderizadas y texto por hoja de cada corrida: los escribe el trabajador
@@ -194,19 +294,19 @@ app.get<{ Params: { id: string; "*": string } }>("/api/corridas/:id/archivos/*",
     .send(createReadStream(ruta));
 });
 
-app.get("/api/eventos/recientes", async () => motor.recientes.slice(-1500));
+app.get<{ Querystring: { flujo?: string } }>("/api/eventos/recientes", async (req) => motorDe(flujoDe(req.query.flujo))?.recientes.slice(-1500) ?? []);
 
 app.get("/api/eventos", { websocket: true }, (socket) => {
   const enviar = (e: Evento) => {
     if (socket.readyState === socket.OPEN) socket.send(JSON.stringify(e));
   };
-  enviar({ tipo: "motor", corrida: null, t: Date.now() / 1000, ...motor.estado() });
-  motor.on("evento", enviar);
-  socket.on("close", () => motor.off("evento", enviar));
+  for (const m of motores.values()) enviar({ tipo: "motor", corrida: null, t: Date.now() / 1000, flujo: m.flujo, ...m.estado() });
+  bus.on("evento", enviar);
+  socket.on("close", () => bus.off("evento", enviar));
 });
 
 function publicarConfiguracion(cambios: number): void {
-  motor.emit("evento", { tipo: "configuracion_guardada", corrida: null, t: Date.now() / 1000, cambios, configuracion: configuracion.obtener() });
+  bus.emit("evento", { tipo: "configuracion_guardada", corrida: null, t: Date.now() / 1000, flujo: "pqrd", cambios, configuracion: configuracion.obtener() });
 }
 
 if (existsSync(config.web)) {
@@ -214,14 +314,15 @@ if (existsSync(config.web)) {
   app.setNotFoundHandler((req, res) => (req.url.startsWith("/api/") ? res.code(404).send({ error: "no existe" }) : res.sendFile("index.html")));
 }
 
-const conf = await configuracion.cargar();
+await configuracion.cargar();
+await flujos.cargar();
 catalogo();
-await motor.cargarHistorial();
-motor.ajustar(conf.concurrencia);
+const motor = motorDe("pqrd")!;
+for (const f of flujos.listar()) if (f.tipo === "codigo") motorDe(f.id);
 
 for (const senal of ["SIGINT", "SIGTERM"] as const) {
   process.on(senal, () => {
-    motor.detener();
+    for (const m of motores.values()) m.detener();
     void app.close().then(() => process.exit(0));
   });
 }

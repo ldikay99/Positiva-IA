@@ -19,6 +19,8 @@ export type EstadoCorrida = "en_cola" | "procesando" | "terminada" | "fallida";
 
 export interface Corrida {
   id: string;
+  /** El flujo al que pertenece: las corridas de un flujo nunca se mezclan con las de otro. */
+  flujo: string;
   caso: string;
   /** Si corrió con otros como una corrida del job: un solo orquestador para todos. */
   lote?: string;
@@ -42,7 +44,7 @@ interface Trabajador {
 /** Lo que espera trabajador: un correo suelto o un lote entero, que va a un solo trabajador. */
 type Pedido = { tipo: "uno"; corrida: Corrida } | { tipo: "lote"; id: string; corridas: Corrida[]; concurrencia: number };
 
-/** Pool de trabajadores de Python: cada uno atiende un correo a la vez. */
+/** Pool de trabajadores de Python de UN flujo: cada uno atiende un correo (o un lote) a la vez. */
 export class Motor extends EventEmitter {
   private trabajadores: Trabajador[] = [];
   private cola: Pedido[] = [];
@@ -53,8 +55,16 @@ export class Motor extends EventEmitter {
   /** Los últimos eventos de todas las corridas, para la vista de logs. */
   readonly recientes: Evento[] = [];
 
-  constructor() {
+  readonly flujo: string;
+  private readonly trabajador: string;
+  /** Lo que el flujo agrega a cada orden (la definición de un flujo declarativo). */
+  private readonly ordenExtra: () => Record<string, unknown>;
+
+  constructor(flujo = "pqrd", trabajador: string = config.trabajador, ordenExtra: () => Record<string, unknown> = () => ({})) {
     super();
+    this.flujo = flujo;
+    this.trabajador = trabajador;
+    this.ordenExtra = ordenExtra;
     this.setMaxListeners(0);
   }
 
@@ -79,6 +89,7 @@ export class Motor extends EventEmitter {
   private nueva(caso: string, configuracion: Configuracion, lote?: string): Corrida {
     const corrida: Corrida = {
       id: `${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "")}-${randomUUID().slice(0, 6)}`,
+      flujo: this.flujo,
       caso,
       ...(lote ? { lote } : {}),
       estado: "en_cola",
@@ -120,7 +131,7 @@ export class Motor extends EventEmitter {
   }
 
   private lanzar(): void {
-    const proceso = spawn(config.python, [config.trabajador], {
+    const proceso = spawn(config.python, [this.trabajador], {
       env: { ...process.env, PYTHONUNBUFFERED: "1", PYTHONIOENCODING: "utf-8", RUTA_BANDEJA: config.bandeja, RUTA_VIVO: config.vivo, RUTA_TRABAJO: join(config.datos, "trabajo") },
       stdio: ["pipe", "pipe", "pipe"],
     });
@@ -218,7 +229,7 @@ export class Motor extends EventEmitter {
         corrida.inicio = Date.now();
       }
       const c = corridas[0]!.configuracion;
-      const comun = { parametros: c.parametros, entorno: c.entorno, ia: c.ia, tope_s: c.topeSegundos, reglas: c.reglas.filter((r) => r.activa) };
+      const comun = { parametros: c.parametros, entorno: c.entorno, ia: c.ia, tope_s: c.topeSegundos, reglas: c.reglas.filter((r) => r.activa), ...this.ordenExtra() };
       const orden =
         pedido.tipo === "uno"
           ? { cmd: "procesar", corrida: pedido.corrida.id, caso: pedido.corrida.caso, ...comun }
@@ -237,6 +248,7 @@ export class Motor extends EventEmitter {
   }
 
   private publicar(e: Evento): void {
+    e.flujo = this.flujo;
     if (e.tipo !== "motor") {
       this.recientes.push(e);
       if (this.recientes.length > 4000) this.recientes.splice(0, this.recientes.length - 4000);
@@ -245,7 +257,7 @@ export class Motor extends EventEmitter {
   }
 
   private publicarEstado(): void {
-    this.emit("evento", { tipo: "motor", corrida: null, t: Date.now() / 1000, ...this.estado() });
+    this.emit("evento", { tipo: "motor", corrida: null, t: Date.now() / 1000, flujo: this.flujo, ...this.estado() });
   }
 
   private async guardar(c: Corrida): Promise<void> {
@@ -272,7 +284,11 @@ export class Motor extends EventEmitter {
       }
       if (leidas.length >= maximo) break;
     }
-    for (const c of leidas.reverse()) if (!this.corridas.has(c.id)) this.corridas.set(c.id, c);
+    // Las corridas de antes de los flujos eran todas de PQRD.
+    for (const c of leidas.reverse()) {
+      c.flujo ??= "pqrd";
+      if (c.flujo === this.flujo && !this.corridas.has(c.id)) this.corridas.set(c.id, c);
+    }
   }
 
   detener(): void {

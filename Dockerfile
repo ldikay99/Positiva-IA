@@ -50,9 +50,11 @@ COPY --from=node /usr/local/bin/node /usr/local/bin/node
 WORKDIR /app
 COPY motor/requirements.txt motor/requirements.txt
 COPY puente/requirements.txt puente/requirements.txt
-RUN pip install --no-cache-dir -r motor/requirements.txt -r puente/requirements.txt
+COPY motores/tutelas/requirements.txt motores/tutelas/requirements.txt
+RUN pip install --no-cache-dir -r motor/requirements.txt -r puente/requirements.txt -r motores/tutelas/requirements.txt
 
 COPY motor/ motor/
+COPY motores/ motores/
 COPY puente/ puente/
 COPY catalogo/ catalogo/
 COPY --from=servidor /src/servidor/package.json servidor/package.json
