@@ -8,7 +8,7 @@ export interface Nota {
 }
 
 const CLAVE_NOTAS = "positiva-ia:notas:v1";
-export const CLAVE_POSICIONES = "positiva-ia:posiciones:v5";
+export const CLAVE_POSICIONES = "positiva-ia:posiciones:v6";
 
 export function leerLocal<T>(clave: string, defecto: T): T {
   try {
@@ -39,7 +39,7 @@ export async function pedir<T>(ruta: string, init?: RequestInit): Promise<T> {
   return cuerpo;
 }
 
-export type Vista = "flujo" | "corridas" | "logs" | "herramientas" | "proveedores" | "configuracion";
+export type Vista = "flujo" | "adjuntos" | "corridas" | "logs" | "herramientas" | "proveedores" | "configuracion";
 export type Foco = { tipo: "nodo"; id: string } | { tipo: "regla"; id: string } | { tipo: "correo"; caso: string } | { tipo: "corrida"; id: string } | null;
 
 export interface Aviso {

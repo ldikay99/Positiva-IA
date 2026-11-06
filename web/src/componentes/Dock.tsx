@@ -106,6 +106,7 @@ export function Dock({ plegado, alternar }: { plegado: boolean; alternar: () => 
   const corridas = usar((s) => s.corridas);
   const verCorrida = usar((s) => s.verCorrida);
   const enfocar = usar((s) => s.enfocar);
+  const irA = usar((s) => s.irA);
   const [vista, setVista] = useState<"vivo" | "logs" | "consola">("vivo");
   const [seguir, setSeguir] = useState(true);
   const [filtro, setFiltro] = useState("");
@@ -160,6 +161,7 @@ export function Dock({ plegado, alternar }: { plegado: boolean; alternar: () => 
             return <option key={id} value={id}>{c.caso} · {c.resultado ? (NOMBRES_DESENLACE[String(c.resultado.accion)] ?? String(c.resultado.accion)) : c.estado === "en_cola" ? "en cola" : "procesando"}</option>;
           })}
         </select>
+        {corrida && <button className="boton chico" onClick={() => irA("adjuntos")} title="Cada adjunto hoja por hoja: imagen, texto, búsquedas y origen de cada dato"><Icono n="documento" tam={13} />Ver hojas</button>}
         {corrida && <button className="boton chico" onClick={() => enfocar({ tipo: "corrida", id: corrida.id })}>Resultado</button>}
         {vista !== "vivo" && <div className="campo-icono filtro-dock"><Icono n="buscar" tam={13} /><input className="campo chico-campo" placeholder="Filtrar" value={filtro} onChange={(e) => setFiltro(e.target.value)} /></div>}
         <button className={`boton-mini ${seguir ? "activo" : ""}`} title="Seguir al final" onClick={() => setSeguir(!seguir)}><Icono n="abajo" tam={14} /></button>

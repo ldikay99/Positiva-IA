@@ -27,6 +27,8 @@ import { ajustado, conValor } from "../parametros.ts";
 import { NOMBRES_DESENLACE, TONO_DESENLACE, progreso, segundos, type Progreso } from "../progreso.ts";
 import type { Catalogo, Corrida, EstadoNodo, Nodo as NodoCatalogo, Regla } from "../tipos.ts";
 import { MenuContextual, type Opcion } from "./MenuContextual.tsx";
+import { lectura, urlArchivo } from "../adjuntos.ts";
+import "./adjuntos.css";
 
 const ANCHO = 248;
 const ANCHO_FIN = 204;
@@ -45,6 +47,9 @@ interface DatosEtapa extends Record<string, unknown> {
   extra: string[];
   ajustes: number;
   modelo: string;
+  /** Miniaturas de las hojas que se van leyendo: «url|método» o «leyendo|url». */
+  hojas?: string[];
+  hojasMas?: number;
 }
 interface DatosRegla extends Record<string, unknown> {
   regla: Regla;
@@ -114,8 +119,25 @@ const NodoEtapa = memo(function NodoEtapa({ data, selected }: NodeProps<Node<Dat
       </div>
       <div className="nodo-titulo">{n.nombre}</div>
       <div className="nodo-desc">{n.descripcion}</div>
+      {data.hojas && data.hojas.length > 0 && (
+        <div className="nodo-hojas" title="Hojas leídas en esta corrida">
+          {data.hojas.map((h, i) => {
+            if (h.startsWith("leyendo|")) {
+              const src = h.slice(8);
+              return <span key={`l${i}`} className="nodo-hoja leyendo">{src && <img src={src} alt="" draggable={false} />}<span className="escaneo" /></span>;
+            }
+            const [src, metodo] = h.split("|");
+            return (
+              <motion.span key={src} className={`nodo-hoja m-${metodo}`} initial={{ opacity: 0, y: 6, scale: 0.8 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ type: "spring", stiffness: 500, damping: 30 }}>
+                <img src={src} alt="" draggable={false} />
+              </motion.span>
+            );
+          })}
+          {data.hojasMas ? <span className="nodo-hojas-mas">+{data.hojasMas}</span> : null}
+        </div>
+      )}
       <div className="nodo-pie">
-        {data.cat === "ia" && data.modelo && <span className="dato ia"><Icono n="chispa" tam={10} />{data.modelo}</span>}
+        {(data.cat === "ia" || data.cat === "vision" || data.cat === "correccion") && data.modelo && <span className="dato ia"><Icono n="chispa" tam={10} />{data.modelo}</span>}
         {data.ms > 0 && <span className="dato"><Icono n="reloj" tam={10} />{segundos(data.ms)}</span>}
         {data.veces > 1 && <span className="dato">×{data.veces}</span>}
         {data.extra.map((x) => <span key={x} className="dato">{x}</span>)}
@@ -385,6 +407,9 @@ function lados(o: Posicion, d: Posicion): [string, string] {
 
 function extras(n: NodoCatalogo, p: Progreso): string[] {
   if (!p.nodos[n.id]) return [];
+  if (n.id === "conversion_a_markdown" && p.hojas) return [`${p.hojas} hoja${p.hojas === 1 ? "" : "s"}`];
+  if (n.id === "transcripcion_vision") return [`${p.imagenesVision} imagen${p.imagenesVision === 1 ? "" : "es"}`];
+  if (n.id === "indice_por_hoja") return p.consultasIndice ? [`${p.consultasIndice} búsqueda${p.consultasIndice === 1 ? "" : "s"}`] : ["índice consultado"];
   if (n.id === "revisor" && p.vueltasRevisor) return [`${p.vueltasRevisor} vueltas`];
   if (n.usa_ia && p.vueltas) return [`${p.vueltas} vueltas`, `${(p.tokensEntrada + p.tokensSalida).toLocaleString("es-CO")} tokens`];
   if (n.id === "registro_de_personas" && p.consultas) return [`${p.consultas} consulta${p.consultas > 1 ? "s" : ""}`];
@@ -574,6 +599,16 @@ export function Lienzo() {
   const idsBorrador = useMemo(() => new Set(borradores.filter((b) => !(configuracion?.reglas ?? []).some((r) => r.id === b.id)).map((b) => b.id)), [borradores, configuracion]);
 
   const p = useMemo(() => progreso(catalogo, corrida), [catalogo, corrida]);
+  // Las hojas que el motor ya leyó (y la que está leyendo) se ven sobre el nodo de conversión.
+  const hojasVivas = useMemo(() => {
+    if (!corrida) return { hojas: [] as string[], mas: 0 };
+    const l = lectura(corrida);
+    const todas: string[] = [];
+    for (const d of l.documentos) for (const h of d.hojas) if (h.mini) todas.push(`${urlArchivo(corrida.id, h.mini)}|${h.metodo}`);
+    if (l.enCurso) todas.push(`leyendo|${l.enCurso.mini ? urlArchivo(corrida.id, l.enCurso.mini) : ""}`);
+    const max = 7;
+    return { hojas: todas.slice(-max), mas: Math.max(0, todas.length - max) };
+  }, [corrida]);
   const disposicion = useMemo(() => (catalogo ? disponer(catalogo, reglas) : null), [catalogo, reglas]);
   const asunto = useMemo(() => (corrida ? (bandeja.find((c) => c.caso === corrida.caso)?.asunto ?? String(corrida.eventos.find((e) => e.tipo === "inicio")?.asunto ?? "")) : ""), [corrida, bandeja]);
   const evaluadas = useMemo(() => {
@@ -624,7 +659,7 @@ export function Lienzo() {
         if (x.type === "etapa" || x.type === "final") {
           const n = (x.data as DatosEtapa).nodo;
           const est = p.nodos[n.id];
-          datos = { nodo: n, cat: categoria(n), estado: est?.estado ?? "inactivo", ms: est?.ms ?? 0, veces: est?.veces ?? 0, extra: extras(n, p), ajustes: n.parametros.filter((q) => ajustado(q, configuracion)).length, modelo: configuracion?.ia.modelo ?? "" };
+          datos = { nodo: n, cat: categoria(n), estado: est?.estado ?? "inactivo", ms: est?.ms ?? 0, veces: est?.veces ?? 0, extra: extras(n, p), ajustes: n.parametros.filter((q) => ajustado(q, configuracion)).length, modelo: configuracion?.ia.modelo ?? "", ...(n.id === "conversion_a_markdown" ? { hojas: hojasVivas.hojas, hojasMas: hojasVivas.mas } : {}) };
         } else if (x.type === "extremo") {
           datos = { tipo: (x.data as DatosExtremo).tipo, corrida, asunto };
         } else if (x.type === "regla") {
@@ -639,7 +674,7 @@ export function Lienzo() {
         return { ...x, data: mismoDato ? x.data : datos!, selected: sel };
       }),
     );
-  }, [p, configuracion, foco, corrida, asunto, reglas, idsBorrador, evaluadas, notas]);
+  }, [p, configuracion, foco, corrida, asunto, reglas, idsBorrador, evaluadas, notas, hojasVivas]);
 
   const principal = useMemo(() => {
     if (!catalogo) return new Set<string>();

@@ -120,6 +120,34 @@ export function describir(e: Evento, _catalogo?: Catalogo | null): Omit<Paso, "i
       return { tono: e.severidad === "ERROR" ? "error" : e.severidad === "WARNING" ? "aviso" : "info", icono: "logs", titulo: String(e.mensaje), extra: String(e.severidad ?? ""), detalle: json(e.campos) };
     case "configuracion":
       return { tono: "error", icono: "alerta", titulo: "Ajustes que no se aplicaron", detalle: json(e.fallidas) };
+    case "adjunto_inicio":
+      return { tono: "info", icono: "adjunto", titulo: `Abre ${String(e.nombre)}`, extra: Number(e.paginas) ? `${String(e.paginas)} hojas` : String(e.tipo_archivo ?? "") };
+    case "hoja": {
+      const m = String(e.metodo);
+      const como = m === "texto" ? "texto propio" : m === "vision" ? "transcrita por visión" : m === "ilegible" ? "sin texto" : `OCR ${e.confianza ? pct(e.confianza) : ""}`;
+      const extra = [como, Number(e.girada) ? `girada ${String(e.girada)}°` : "", e.relectura_200 ? "releída a 200 ppp" : "", segundos(Number(e.ms ?? 0))].filter(Boolean).join(" · ");
+      return { tono: m === "ilegible" ? "aviso" : m === "vision" ? "ia" : "tenue", icono: m === "vision" ? "ojo" : m === "texto" ? "documento" : "escaner", titulo: `Hoja ${String(e.pagina)}${Number(e.total) ? ` de ${String(e.total)}` : ""}`, extra, confianza: typeof e.confianza === "number" ? e.confianza : undefined };
+    }
+    case "vision":
+      return { tono: e.ok ? "ia" : "error", icono: "ojo", titulo: e.ok ? `Gemini transcribe con visión la hoja ${String(e.pagina ?? "")}` : "La transcripción por visión falló", extra: e.ok ? `${String(e.caracteres ?? 0)} caracteres · ${segundos(Number(e.ms ?? 0))}` : undefined, detalle: e.error ? String(e.error) : undefined };
+    case "consulta": {
+      const quien = e.quien === "revisor" ? "El revisor" : "La IA";
+      const res = (e.resultados as { nombre: string; pagina: number | null }[]) ?? [];
+      const donde = res.slice(0, 3).map((r) => `${r.nombre}${r.pagina ? ` hoja ${r.pagina}` : ""}`).join(", ");
+      return { tono: "herramienta", icono: "buscar", titulo: e.modo === "consultar" ? `${quien} pregunta al índice «${corto(e.consulta, 60)}»` : `${quien} busca «${corto(e.consulta, 60)}»`, extra: `${String(e.total ?? 0)} resultado${Number(e.total) === 1 ? "" : "s"}${donde ? ` · ${donde}` : ""}` };
+    }
+    case "correccion":
+      return e.fase === "inicio"
+        ? { tono: "aviso", icono: "deshacer", titulo: `Se devuelve a la IA para corregir: ${Object.keys((e.campos as object) ?? {}).map(nombreCampo).join(", ")}`, extra: e.origen === "revisor" ? "lo objetó el revisor" : "lo rechazó la compuerta", detalle: json(e.campos) }
+        : { tono: "ia", icono: "deshacer", titulo: `Corrección terminada: la compuerta dice ${String(e.veredicto)}`, extra: segundos(Number(e.ms ?? 0)), detalle: json(e.campos) };
+    case "revision":
+      if (e.fase === "fin" && e.ok) {
+        const v = Object.values((e.veredictos as Record<string, { veredicto: string }>) ?? {});
+        const objeta = v.filter((x) => x.veredicto !== "OK").length;
+        return { tono: objeta ? "aviso" : "ok", icono: "escudo", titulo: objeta ? `El revisor objeta ${objeta} de ${v.length} campos` : `El revisor da por buenos los ${v.length} campos`, extra: segundos(Number(e.ms ?? 0)), detalle: json(e.veredictos) };
+      }
+      if (e.fase === "decision" && ((e.se_mantienen as unknown[]) ?? []).length) return { tono: "info", icono: "escudo", titulo: "Lo que el texto prueba se mantiene pese al revisor", detalle: ((e.se_mantienen as string[]) ?? []).join("\n") };
+      return null;
     default:
       return null;
   }

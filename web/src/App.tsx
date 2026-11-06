@@ -8,10 +8,12 @@ import { Lienzo } from "./componentes/Lienzo.tsx";
 import { Inspector } from "./componentes/Inspector.tsx";
 import { Dock } from "./componentes/Dock.tsx";
 import { MenuContextual, type Opcion } from "./componentes/MenuContextual.tsx";
+import { VistaAdjuntos } from "./componentes/Adjuntos.tsx";
 import { VistaConfiguracion, VistaCorridas, VistaHerramientas, VistaLogs, VistaProveedores } from "./componentes/Vistas.tsx";
 
 const NAVEGACION: { id: Vista; nombre: string; icono: NombreIcono }[] = [
   { id: "flujo", nombre: "Flujo", icono: "flujo" },
+  { id: "adjuntos", nombre: "Adjuntos", icono: "documento" },
   { id: "corridas", nombre: "Corridas", icono: "corridas" },
   { id: "logs", nombre: "Logs", icono: "logs" },
   { id: "herramientas", nombre: "Herramientas", icono: "herramientas" },
@@ -288,6 +290,7 @@ export default function App() {
           <AnimatePresence mode="wait" initial={false}>
             <motion.div key={vista} className="contenido-vista" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.16, ease: "easeOut" }}>
               {vista === "flujo" && <EspacioFlujo ancho={ancho} bandejaVisible={bandeja} cerrarBandeja={() => setBandeja(false)} />}
+              {vista === "adjuntos" && <VistaAdjuntos />}
               {vista === "corridas" && <VistaCorridas />}
               {vista === "logs" && <VistaLogs />}
               {vista === "herramientas" && <VistaHerramientas />}

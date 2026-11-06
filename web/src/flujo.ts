@@ -2,7 +2,7 @@ import type { NombreIcono } from "./iconos.tsx";
 import type { Nodo, Regla } from "./tipos.ts";
 
 /** Qué tipo de pieza es cada nodo: define su ícono, su tono y la etiqueta que lo distingue. */
-export type Categoria = "entrada" | "filtro" | "ruta" | "documentos" | "ocr" | "busqueda" | "ia" | "datos" | "validacion" | "integracion" | "salida" | "final" | "regla";
+export type Categoria = "entrada" | "filtro" | "ruta" | "documentos" | "ocr" | "busqueda" | "indice" | "ia" | "vision" | "correccion" | "datos" | "validacion" | "integracion" | "salida" | "final" | "regla";
 
 export const CATEGORIAS: Record<Categoria, { nombre: string; icono: NombreIcono; tono: string }> = {
   entrada: { nombre: "Entrada", icono: "bandeja", tono: "pizarra" },
@@ -11,7 +11,10 @@ export const CATEGORIAS: Record<Categoria, { nombre: string; icono: NombreIcono;
   documentos: { nombre: "Documentos", icono: "documento", tono: "turquesa" },
   ocr: { nombre: "OCR · Conversión", icono: "escaner", tono: "turquesa" },
   busqueda: { nombre: "Búsqueda por reglas", icono: "buscar", tono: "azul" },
+  indice: { nombre: "Índice y búsqueda", icono: "capas", tono: "azul" },
   ia: { nombre: "IA · Gemini", icono: "chispa", tono: "violeta" },
+  vision: { nombre: "IA · visión", icono: "ojo", tono: "violeta" },
+  correccion: { nombre: "IA · corrección", icono: "deshacer", tono: "violeta" },
   datos: { nombre: "Datos", icono: "base", tono: "turquesa" },
   validacion: { nombre: "Validación", icono: "escudo", tono: "verde" },
   integracion: { nombre: "Integración SGDEA", icono: "enviar", tono: "azul" },
@@ -32,6 +35,9 @@ const CATEGORIA_DEL_NODO: Record<string, Categoria> = {
   volumen: "filtro",
   deduplicacion_contenido: "filtro",
   conversion_a_markdown: "ocr",
+  transcripcion_vision: "vision",
+  indice_por_hoja: "indice",
+  correccion: "correccion",
   saneamiento: "validacion",
   extraccion_determinista: "busqueda",
   agente: "ia",
@@ -55,9 +61,9 @@ export function categoria(n: Nodo): Categoria {
 export const FASES: { id: string; nombre: string; nodos: string[] }[] = [
   { id: "recepcion", nombre: "Recepción", nodos: ["__inicio", "lote", "deduplicacion", "reclamo"] },
   { id: "clasificacion", nombre: "Clasificación", nodos: ["enrutamiento", "facturas", "destino_del_correo", "remitente_identificable"] },
-  { id: "documentos", nombre: "Documentos y OCR", nodos: ["descarga_adjuntos", "volumen", "deduplicacion_contenido", "conversion_a_markdown", "saneamiento"] },
-  { id: "extraccion", nombre: "Extracción e IA", nodos: ["extraccion_determinista", "agente", "revisor", "combinacion"] },
-  { id: "validacion", nombre: "Validación", nodos: ["registro_de_personas", "compuerta", "bitacora"] },
+  { id: "documentos", nombre: "Documentos y OCR", nodos: ["descarga_adjuntos", "volumen", "deduplicacion_contenido", "conversion_a_markdown", "transcripcion_vision", "saneamiento"] },
+  { id: "extraccion", nombre: "Extracción e IA", nodos: ["extraccion_determinista", "indice_por_hoja", "agente", "combinacion"] },
+  { id: "validacion", nombre: "Validación", nodos: ["registro_de_personas", "compuerta", "correccion", "revisor", "bitacora"] },
   { id: "radicacion", nombre: "Radicación", nodos: ["radicacion", "cierre_outlook", "aviso_y_cierre", "__fin"] },
 ];
 

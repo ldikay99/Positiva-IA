@@ -19,6 +19,9 @@ export interface Progreso {
   herramientas: Record<string, number>;
   consultas: number;
   escrituras: number;
+  hojas: number;
+  imagenesVision: number;
+  consultasIndice: number;
 }
 
 /** El nodo final del diagrama al que lleva cada desenlace del motor. */
@@ -41,7 +44,7 @@ export function nodoDeEtapa(catalogo: Catalogo, etapa: string, vez = 0): Nodo | 
 
 /** Qué nodos recorrió una corrida, en qué orden y con qué resultado, a partir de sus eventos. */
 export function progreso(catalogo: Catalogo | null, corrida: Corrida | undefined): Progreso {
-  const p: Progreso = { nodos: {}, desenlace: null, vueltas: 0, vueltasRevisor: 0, tokensEntrada: 0, tokensSalida: 0, herramientas: {}, consultas: 0, escrituras: 0 };
+  const p: Progreso = { nodos: {}, desenlace: null, vueltas: 0, vueltasRevisor: 0, tokensEntrada: 0, tokensSalida: 0, herramientas: {}, consultas: 0, escrituras: 0, hojas: 0, imagenesVision: 0, consultasIndice: 0 };
   if (!catalogo || !corrida) return p;
   let orden = 0;
   const vecesPorEtapa: Record<string, number> = {};
@@ -71,8 +74,17 @@ export function progreso(catalogo: Catalogo | null, corrida: Corrida | undefined
       else p.vueltas += 1;
       p.tokensEntrada += Number(e.tokens_entrada ?? 0);
       p.tokensSalida += Number(e.tokens_salida ?? 0);
-    } else if (e.tipo === "modelo_inicio" && e.quien === "revisor") {
-      if (catalogo.nodos.some((n) => n.id === "revisor")) marcar("revisor", { estado: "activo" });
+    } else if ((e.tipo === "vision" || e.tipo === "hoja") && catalogo.nodos.some((n) => n.id === "transcripcion_vision")) {
+      // La visión ocurre dentro de la conversión: se dibuja justo después de ella.
+      if (e.tipo === "vision") {
+        const base = p.nodos.conversion_a_markdown?.orden ?? orden;
+        marcar("transcripcion_vision", { estado: "hecho", veces: (p.nodos.transcripcion_vision?.veces ?? 0) + 1, ...(p.nodos.transcripcion_vision ? {} : { orden: base + 0.3 }) });
+        p.imagenesVision += 1;
+      } else p.hojas += 1;
+    } else if ((e.tipo === "consulta" || e.tipo === "lectura" || e.tipo === "inventario") && catalogo.nodos.some((n) => n.id === "indice_por_hoja")) {
+      const base = p.nodos.conversion_a_markdown?.orden ?? orden;
+      marcar("indice_por_hoja", { estado: "hecho", veces: (p.nodos.indice_por_hoja?.veces ?? 0) + 1, ...(p.nodos.indice_por_hoja ? {} : { orden: base + 0.6 }) });
+      if (e.tipo === "consulta") p.consultasIndice += 1;
     } else if (e.tipo === "herramienta") {
       const h = String(e.herramienta);
       p.herramientas[h] = (p.herramientas[h] ?? 0) + 1;
@@ -84,7 +96,6 @@ export function progreso(catalogo: Catalogo | null, corrida: Corrida | undefined
       p.desenlace = String(e.accion ?? "");
     }
   }
-  if (p.nodos.revisor?.estado === "activo" && p.nodos.agente?.estado !== "activo") p.nodos.revisor.estado = "hecho";
 
   // Las etapas que el motor no cronometra (reclamo, facturas, destino,
   // combinación, bitácora…) se dan por recorridas si el correo pasó por una
@@ -119,7 +130,7 @@ export function progreso(catalogo: Catalogo | null, corrida: Corrida | undefined
   while (cambio) {
     cambio = false;
     for (const n of catalogo.nodos) {
-      if (n.etapa_cronometro || n.terminal || p.nodos[n.id] || n.id === "revisor") continue;
+      if (n.etapa_cronometro || n.terminal || p.nodos[n.id] || n.id === "transcripcion_vision" || n.id === "indice_por_hoja") continue;
       if (alcanzaVisitado(n.id, predecesores) && alcanzaVisitado(n.id, sucesores)) {
         const antes = (predecesores[n.id] ?? []).map((x) => p.nodos[x]?.orden ?? 0);
         marcar(n.id, { estado: "hecho", orden: Math.max(0, ...antes) + 0.5 });
