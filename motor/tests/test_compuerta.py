@@ -279,10 +279,14 @@ def test_un_nombre_de_persona_con_nit_no_bloquea():
     El NIT de una persona natural ES su cedula, y un empleador puede serlo:
     "la empresa JHON MAURICIO GOMEZ PEÑA (NIT 81367440)". Bloquear ese par
     manda a revision manual una radicacion valida.
+
+    El NIT de una persona juridica (nueve digitos por 8 o 9 mas el de
+    verificacion) junto a un nombre de persona SI bloquea: ver
+    test_compuerta_campo_por_campo.py.
     """
     from servidor_mcp.herramientas import _digito_verificacion_nit
 
-    base = "900123456"
+    base = "81367440"
     d = validar(_completo(
         numero_documento_afectado=_h(
             "numero_documento_afectado",
@@ -568,8 +572,12 @@ class TestFormaDelDocumento:
 
         base = "900123456"
         bueno = base + str(_digito_verificacion_nit(base))
+        # El NIT de una entidad va con el nombre de una entidad: junto al de
+        # una persona es NIT_DE_ENTIDAD_EN_PERSONA, que no es lo que se mide.
+        nombre = campo.replace("numero_documento", "nombre")
         d = validar(_completo(**{campo: _h(campo, bueno),
-                                 tipo: _h(tipo, 10)}))
+                                 tipo: _h(tipo, 10),
+                                 nombre: _h(nombre, "COMERCIALIZADORA EL ROBLE SAS")}))
         assert not any(r.campo == campo for r in d.reparos), \
             [r.codigo for r in d.reparos]
 

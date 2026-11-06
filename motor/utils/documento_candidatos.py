@@ -30,6 +30,8 @@ _SEPARADORES = r".\s\-`´'‘’"
 # "01223884". Un documento alfanumerico se reconoce entero, con su propio
 # patron, no cortandole las letras.
 _TOKEN = re.compile(rf"(?<![A-Za-z0-9])\d[\d{_SEPARADORES}]{{2,16}}\d")
+# Un numero con comas de miles: "5,963,862".
+_COMA_DE_MILES = re.compile(r"(?<![\d,.])\d{1,3}(?:,\d{3}){1,3}(?![\d,])")
 
 # Longitudes admitidas. Los numeros SIN marca de contexto pasan por una
 # ventana estrecha; los que la traen se miden contra el rango completo de
@@ -99,6 +101,8 @@ _PREFIJO_TELEFONO = re.compile(
 )
 _PREFIJO_REFERENCIA = re.compile(
     r"\b(?:recibo|acta|libro|orden|oficio|factura|resoluci[oó]n|escritura|"
+    # "Reg profesional:" es el registro del medico, abreviado.
+    r"reg\.?\s+(?:profesional|m[eé]dico)|"
     r"matr[ií]cula|registro|proceso|c[oó]digo|snies|cuenta|p[oó]liza|"
     r"contrato|autorizaci[oó]n|pila|planilla|remesa|comprobante)\b[\s\w]{0,16}?"
     r"(?:no\.?|n[°º]\.?|nro\.?|#|:)[\s.\-]*[a-z]?[\s.\-]*$"
@@ -108,8 +112,8 @@ _PREFIJO_REFERENCIA = re.compile(
 # viene con palabras en medio: "Cedula de extranjeria No. 123456".
 _MARCA_PEGADA = re.compile(
     r"\b(?:c\.?\s?c\.?|c\.?\s?e\.?|t\.?\s?i\.?|n\.?\s?i\.?t\.?"
-    r"|p\.?\s?p\.?\s?t\.?|p\.?\s?e\.?\s?p\.?|c[eé]dula|documento"
-    r"|identificaci[oó]n|nuip|registro\s+civil)\b"
+    r"|p\.?\s?p\.?\s?t\.?|p\.?\s?t\.?|p\.?\s?e\.?\s?p\.?|c[eé]dula|documento"
+    r"|identificaci[oó]n|nuip|registro\s+civil|protecci[oó]n\s+temporal)\b"
 )
 # Que tipo dice el rotulo PEGADO al numero, de la marca mas especifica a la
 # menos. Es distinto de las banderas `tiene_*`, que miran toda la ventana: el
@@ -118,6 +122,12 @@ _MARCA_PEGADA = re.compile(
 _MARCAS_TIPO_PEGADAS = (
     ("PA", re.compile(r"\bpasaporte\b|\bp\.?\s?a\.?\b")),
     ("NI", re.compile(r"\bn\.?\s?i\.?t\.?\b")),
+    # El permiso por proteccion temporal se escribe "PPT" o, como lo abrevia el
+    # catalogo de SGDEA, "PT": "IDENTIFICACION: PT 5,963,862". Sin esta marca
+    # el numero quedaba sin tipo y se enviaba como cedula.
+    ("PT", re.compile(r"\bp\.?\s?p\.?\s?t\.?\b|\bp\.?\s?t\.?\b"
+                      r"|protecci[oó]n\s+temporal")),
+    ("PE", re.compile(r"\bp\.?\s?e\.?\s?p\.?\b|especial\s+de\s+permanencia")),
     ("CE", re.compile(r"\bc\.?\s?e\.?\b|c[eé]dula\s+de\s+extranjer[ií]a")),
     ("TI", re.compile(r"\bt\.?\s?i\.?\b|tarjeta\s+de\s+identidad")),
     ("CC", re.compile(r"\bc\.?\s?c\.?\b|c[eé]dula\s+de\s+ciudadan[ií]a")),
@@ -125,11 +135,14 @@ _MARCAS_TIPO_PEGADAS = (
 # Documentos de persona natural. Si una aparicion trae uno de estos pegado y
 # otra trae NIT, manda el de persona: en la planilla de aportes la columna del
 # aportante se rotula NIT y un independiente escribe ahi su cedula.
-TIPOS_PEGADOS_DE_PERSONA = ("PA", "CE", "TI", "CC")
+TIPOS_PEGADOS_DE_PERSONA = ("PA", "PT", "PE", "CE", "TI", "CC")
 
 
 def _tipo_pegado(antes: str) -> str:
     """Sigla del tipo que rotula el numero, o cadena vacia."""
+    # Las casillas del menu impreso no rotulan nada: en "identificado con X TI
+    # CE No. 7040374537" la casilla marcada es la de CC, que quedo tachada.
+    antes = sin_leyendas(antes)
     for sigla, patron in _MARCAS_TIPO_PEGADAS:
         if patron.search(antes):
             return sigla
@@ -204,7 +217,17 @@ def extraer_candidatos_documento(texto: str) -> List[Dict]:
             "tiene_pasaporte": True,
         })
 
-    for m in _TOKEN.finditer(texto):
+    # Algunos sistemas escriben el documento con comas de miles ("PT
+    # 5,963,862"). La coma tambien separa importes, asi que solo se lee como
+    # separador cuando el numero lleva delante un rotulo de documento. Se
+    # cambia por un punto, que ocupa lo mismo: las posiciones no se mueven.
+    def _coma_de_documento(m: "re.Match") -> str:
+        previo = " ".join(texto[max(0, m.start() - _ANTES): m.start()].split()).lower()
+        return m.group(0).replace(",", ".") if _MARCA_PEGADA.search(previo) else m.group(0)
+
+    barrido = _COMA_DE_MILES.sub(_coma_de_documento, texto)
+
+    for m in _TOKEN.finditer(barrido):
         if any(m.start() < fin and ini < m.end() for ini, fin in tomados):
             continue  # cae dentro de un correo, una URL o un pasaporte
         raw = m.group(0)

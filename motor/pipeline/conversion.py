@@ -16,7 +16,7 @@ import time
 import unicodedata
 import zipfile
 from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from typing import Callable, List, Optional, Tuple
 
 # Cuantos hilos abre tesseract POR DENTRO en cada llamada. No tiene nada que ver
 # con la concurrencia del pipeline, que sigue procesando cinco correos a la vez.
@@ -43,19 +43,35 @@ LIMITE_FILAS_HOJA = 2_000
 # frenar el lote entero por un solo adjunto. Al agotarse se deja de aplicar OCR
 # y las paginas restantes quedan marcadas, que es preferible a un job que se
 # queda colgado sin explicacion.
-PRESUPUESTO_OCR_SEGUNDOS = 90.0
+#
+# Medido sobre los 913 adjuntos del buzon con los topes anteriores (90 s por
+# documento y 180 s por correo): de 242 paginas que quedaron sin texto, 196 se
+# perdieron por presupuesto y solo 46 porque no tenian nada que leer. La IA
+# nunca veia esas hojas. Las corridas de produccion duran unos tres minutos de
+# una ventana de treinta, y el presupuesto de la corrida (`PRESUPUESTO_S`)
+# sigue mandando: un correo que no alcance se aplaza, no se pierde.
+PRESUPUESTO_OCR_SEGUNDOS = 240.0
 
 # Presupuesto de OCR del CORREO ENTERO, repartido entre sus adjuntos. El de
 # arriba acota un documento; sin este, un correo con dieciseis adjuntos
 # escaneados los multiplica y se lleva la ventana de media hora entre corridas.
-# Tres minutos son tres veces el peor correo medido sobre los adjuntos reales
-# del buzon, asi que no recorta trabajo normal y si acota el caso patologico.
-PRESUPUESTO_OCR_POR_CORREO_S = 180.0
+# Siete minutos: la lectura a 300 dpi con segunda pasada de cifras cuesta unos
+# diez segundos por hoja, y con el tope anterior de tres minutos un correo con
+# un expediente escaneado se quedaba a medias. Sigue acotando el caso
+# patologico (decenas de escaneos) dentro de la ventana de la corrida.
+PRESUPUESTO_OCR_POR_CORREO_S = 420.0
 
 # Tope por pagina. El presupuesto del documento solo se comprueba ANTES de cada
 # pagina, asi que una sola pagina lenta lo desborda entero: se han visto
 # conversiones de veinte minutos con el presupuesto en noventa segundos.
-TIMEOUT_OCR_PAGINA_S = 25.0
+TIMEOUT_OCR_PAGINA_S = 40.0
+# Tope de imagenes u hojas ilegibles para tesseract que se transcriben con el
+# modelo, por correo.
+MAX_IMAGENES_IA_POR_CORREO = 8
+# Parte del tope que se le da a la lectura a 300 dpi; lo que sobre es para
+# releer la hoja a la resolucion de respaldo si la primera se corta.
+FRACCION_DEL_TOPE_A_300_DPI = 0.65
+DPI_DE_RESPALDO_OCR = 200
 
 # Lado menor, en pixeles, desde el que una imagen incrustada puede llevar un
 # documento. Por debajo es un logo, una firma escaneada o un separador, y pasarla
@@ -82,6 +98,54 @@ FRACCION_MAXIMA_DE_PAGINA = 0.60
 # Cuantas imagenes incrustadas se leen por pagina. Una pagina con veinte
 # miniaturas no lleva veinte documentos.
 MAX_IMAGENES_POR_PAGINA = 4
+
+# ── Preparacion de la imagen antes del OCR ──
+#
+# Por debajo de este ancho tesseract pierde digitos: las fotos de cedula llegan
+# a 600 px y se leian como ruido. Por encima del maximo no gana precision y si
+# tarda mas. 1600 y no 1700: un A4 a 200 dpi mide 1654 px y reescalarlo para
+# ganar un 3 % de ancho solo cuesta tiempo, que es lo que falta (paginas
+# perdidas por presupuesto).
+ANCHO_MINIMO_OCR_PX = 1600
+ANCHO_MAXIMO_OCR_PX = 3000
+# Resolucion de render de una pagina escaneada. Medido sobre 203 hojas
+# escaneadas reales del buzon que traen la capa de texto del escaner como
+# referencia, contando los numeros de documento con marca (CC, NIT...):
+#   200 dpi 64 %, 300 dpi 80 %, 350 dpi 73 %, 400 dpi 67 %.
+# A 300 los digitos pequenos dejan de confundirse; por encima tesseract parte
+# los trazos y vuelve a perderlos.
+DPI_MINIMO_OCR = 300
+DPI_MAXIMO_OCR = 300
+# La inclinacion fina se busca en este rango; mas alla es una rotacion, que la
+# resuelve el OSD. Se mide sobre una miniatura: a 700 px las lineas de texto
+# siguen separadas y cuesta poco.
+INCLINACION_MAXIMA_GRADOS = 5.0
+PASO_INCLINACION_GRADOS = 0.5
+LADO_MINIATURA_PX = 700
+# Confianza minima del OSD para girar: por debajo suele equivocarse en paginas
+# con poco texto y gira una pagina que estaba bien.
+CONFIANZA_MINIMA_OSD = 2.0
+# Si el OSD no esta seguro y la lectura es muy mala, se prueba cada giro sobre
+# una miniatura de este lado mayor (tres veces mas rapida que la hoja entera).
+# Un giro solo se elige si mejora la confianza al menos en esto.
+LADO_SONDEO_GIRO_PX = 1000
+MEJORA_MINIMA_POR_GIRO = 0.10
+# Una lectura por debajo de esta confianza, o con menos caracteres utiles que
+# el minimo, se considera floja: solo entonces se mira el giro y se relee. Casi
+# todas las paginas vienen derechas y el OSD es otra pasada de tesseract (casi
+# un segundo por pagina). Una pagina de lado o al reves sale por debajo de 0,40
+# y un escaneo derecho mediocre entre 0,60 y 0,80: con 0,80 se pagaba el OSD en
+# paginas que no lo necesitaban.
+CONFIANZA_REINTENTO_OSD = 0.60
+MINIMO_CARACTERES_OCR = 40
+# Por debajo de esta confianza la pagina se marca como lectura dudosa en el
+# markdown, para que quien lea los datos de ahi los verifique.
+CONFIANZA_DUDOSA = 0.55
+# Solo español. Medido sobre treinta adjuntos escaneados del buzon, ya
+# preparados: "spa+eng" y "spa" sacan los mismos caracteres utiles, los mismos
+# numeros de documento y la misma proporcion de ruido, y "spa" tarda un 23 %
+# menos. Con paginas perdidas por presupuesto, ese tiempo vale mas que el ingles.
+IDIOMAS_OCR = "spa"
 
 # Firmas de tipo por bytes iniciales.
 _FIRMAS: Tuple[Tuple[bytes, str], ...] = (
@@ -113,6 +177,10 @@ class PresupuestoDeOcr:
     total_s: float = field(
         default_factory=lambda: PRESUPUESTO_OCR_POR_CORREO_S)
     gastado_s: float = 0.0
+    # Imagenes que todavia se le pueden pasar al modelo cuando tesseract no
+    # las lee. Cada una es una llamada (~0,002 USD y ~10 s).
+    imagenes_ia: int = field(
+        default_factory=lambda: MAX_IMAGENES_IA_POR_CORREO)
 
     def queda(self) -> float:
         return max(0.0, self.total_s - self.gastado_s)
@@ -344,6 +412,7 @@ def _pdf_a_markdown(
                     continue
                 if not texto.strip():
                     paginas_sin_texto += 1
+                    confianza = None
                     if time.monotonic() - inicio_ocr >= tope:
                         ocr, fallo_ocr = "", (
                             del_correo.motivo() if manda_el_correo
@@ -352,9 +421,13 @@ def _pdf_a_markdown(
                                  f"este documento"
                         )
                     else:
-                        ocr, fallo_ocr = _ocr_de_pagina(pagina)
+                        lectura = _ocr_de_pagina(pagina, del_correo)
+                        ocr, fallo_ocr = lectura
+                        confianza = getattr(lectura, "confianza", None)
                     if ocr:
-                        partes.append(f"## Pagina {i + 1} (OCR)\n\n{ocr}")
+                        partes.append(
+                            f"## Pagina {i + 1} {_marca_ocr(confianza)}\n\n"
+                            + _linea_dudosa(confianza, "pagina") + ocr)
                         continue
                     paginas_ilegibles += 1
                     if fallo_ocr and fallo_ocr not in motivos_ocr:
@@ -375,7 +448,7 @@ def _pdf_a_markdown(
                 # revision manual por falta de un documento que si estaba.
                 queda = tope - (time.monotonic() - inicio_ocr)
                 leido, sin_leer, motivo = _ocr_de_imagenes(
-                    doc, pagina, vistas, queda)
+                    doc, pagina, vistas, queda, del_correo)
                 if leido:
                     bloque += "\n\n" + leido
                     imagenes_leidas += len(leido.split("### Imagen")) - 1
@@ -430,8 +503,9 @@ def _pdf_a_markdown(
     return Conversion(
         markdown=_encabezado(nombre, md),
         tipo_real="pdf",
+        # "(OCR" y no "(OCR)": el encabezado puede llevar la confianza detras.
         ocr_aplicado=(paginas_sin_texto > 0 or imagenes_leidas > 0)
-                     and "(OCR)" in md,
+                     and "(OCR" in md,
         truncado=truncado,
         aviso="; ".join(avisos),
         paginas_ilegibles=paginas_ilegibles,
@@ -439,28 +513,419 @@ def _pdf_a_markdown(
     )
 
 
-def _texto_de_imagen(imagen, segundos: float) -> Tuple[str, str]:
+def _marca_ocr(confianza: Optional[float]) -> str:
     """
-    OCR de una imagen ya cargada, con tope de tiempo. Devuelve (texto, motivo).
+    Lo que va entre parentesis en el encabezado de un bloque leido por OCR.
 
-    El tope lo aplica tesseract: sin el, una sola pagina puede tardar minutos y
-    desbordar el presupuesto del documento, que solo se comprueba entre paginas.
+    Siempre empieza por "(OCR": `ocr_aplicado` lo busca asi en el markdown.
     """
+    if confianza is None:
+        return "(OCR)"
+    return f"(OCR, confianza {confianza:.2f})"
+
+
+def _linea_dudosa(confianza: Optional[float], que: str) -> str:
+    """Aviso en el propio markdown cuando la lectura salio poco fiable."""
+    if confianza is None or confianza >= CONFIANZA_DUDOSA:
+        return ""
+    return f"_(lectura dudosa: verificar los datos de esta {que})_\n\n"
+
+
+def _umbral_otsu(gris) -> int:
+    """Umbral de Otsu a partir del histograma, sin numpy ni OpenCV."""
+    hist = gris.histogram()[:256]
+    total = sum(hist)
+    suma_total = sum(i * h for i, h in enumerate(hist))
+    peso_fondo = suma_fondo = 0.0
+    mejor, umbral = -1.0, 127
+    for t in range(256):
+        peso_fondo += hist[t]
+        if peso_fondo == 0:
+            continue
+        peso_frente = total - peso_fondo
+        if peso_frente == 0:
+            break
+        suma_fondo += t * hist[t]
+        media_fondo = suma_fondo / peso_fondo
+        media_frente = (suma_total - suma_fondo) / peso_frente
+        varianza = peso_fondo * peso_frente * (media_fondo - media_frente) ** 2
+        if varianza > mejor:
+            mejor, umbral = varianza, t
+    return umbral
+
+
+def _tinta(gris):
+    """Imagen binaria con la tinta en blanco (255) y el fondo en negro."""
+    umbral = _umbral_otsu(gris)
+    return gris.point([255 if v <= umbral else 0 for v in range(256)])
+
+
+def _medias_de_filas(imagen) -> List[int]:
+    """Media de cada fila. Reducir a un pixel de ancho con BOX la calcula en C."""
+    from PIL import Image
+
+    return list(imagen.resize((1, imagen.height), Image.BOX).tobytes())
+
+
+def _puntaje_inclinacion(tinta, angulo: float) -> float:
+    """Varianza de las diferencias del perfil de filas: maxima con las lineas derechas."""
+    from PIL import Image
+
+    perfil = _medias_de_filas(tinta.rotate(angulo, resample=Image.NEAREST))
+    difs = [b - a for a, b in zip(perfil, perfil[1:])]
+    if not difs:
+        return 0.0
+    media = sum(difs) / len(difs)
+    return sum((d - media) ** 2 for d in difs) / len(difs)
+
+
+def _estimar_inclinacion(gris) -> float:
+    """
+    Angulo que endereza las lineas de texto, por perfil de proyeccion: las
+    filas de una pagina derecha alternan entre llenas y vacias, y esa varianza
+    es maxima en el angulo correcto. Primero cada grado y luego se afina
+    alrededor del mejor, sobre una miniatura.
+    """
+    miniatura = gris.copy()
+    miniatura.thumbnail((LADO_MINIATURA_PX, LADO_MINIATURA_PX))
+    tinta = _tinta(miniatura)
+    tope = int(INCLINACION_MAXIMA_GRADOS)
+    grueso = [float(a) for a in range(-tope, tope + 1)]
+    mejor = max(grueso, key=lambda a: _puntaje_inclinacion(tinta, a))
+    fino = [mejor + d for d in (-PASO_INCLINACION_GRADOS, PASO_INCLINACION_GRADOS)]
+    mejor = max([mejor] + fino, key=lambda a: _puntaje_inclinacion(tinta, a))
+    return round(mejor, 2)
+
+
+def _recortar_bordes(gris):
+    """Quita el marco oscuro que deja el escaner alrededor de la hoja."""
+    from PIL import Image
+
+    tinta = _tinta(gris)
+    ancho, alto = gris.size
+    # Una fila o columna con mas del 90 % de tinta es marco, no texto.
+    filas = [i for i, v in enumerate(_medias_de_filas(tinta)) if v < 0.9 * 255]
+    columnas = [i for i, v in enumerate(
+        tinta.resize((ancho, 1), Image.BOX).tobytes()) if v < 0.9 * 255]
+    if not filas or not columnas:
+        return gris
+    margen = 10
+    arriba, abajo = max(0, filas[0] - margen), min(alto, filas[-1] + margen)
+    izq, der = max(0, columnas[0] - margen), min(ancho, columnas[-1] + margen)
+    # Solo se recorta si sobra al menos el 60 % de la hoja: si no, el umbral
+    # confundio una pagina muy cargada con un borde.
+    if (abajo - arriba) * (der - izq) < 0.6 * ancho * alto:
+        return gris
+    return gris.crop((izq, arriba, der, abajo))
+
+
+def _preparar_para_ocr(imagen):
+    """
+    Escala de grises, ancho util, inclinacion fina, sin marco y con contraste.
+
+    Devuelve (imagen, pasos). El giro de 90 o 180 grados NO se hace aqui: es
+    otra pasada de tesseract y casi todas las paginas vienen derechas, asi que
+    solo se busca si la primera lectura sale floja (ver `_texto_de_imagen`).
+    """
+    from PIL import Image, ImageOps
+
+    pasos: List[str] = []
+    try:
+        # Las fotos del movil traen el giro en el EXIF, no en los pixeles.
+        imagen = ImageOps.exif_transpose(imagen)
+    except Exception:
+        pass
+    gris = imagen.convert("L")
+
+    if gris.width < ANCHO_MINIMO_OCR_PX:
+        factor = ANCHO_MINIMO_OCR_PX / gris.width
+        gris = gris.resize(
+            (ANCHO_MINIMO_OCR_PX, max(1, int(gris.height * factor))), Image.LANCZOS)
+        pasos.append(f"ampliada x{factor:.1f}")
+    elif gris.width > ANCHO_MAXIMO_OCR_PX:
+        factor = ANCHO_MAXIMO_OCR_PX / gris.width
+        gris = gris.resize(
+            (ANCHO_MAXIMO_OCR_PX, max(1, int(gris.height * factor))), Image.LANCZOS)
+        pasos.append(f"reducida x{factor:.2f}")
+
+    inclinacion = _estimar_inclinacion(gris)
+    # Si el mejor angulo cae en el borde del rango no es una inclinacion: la
+    # hoja esta de lado o no tiene renglones, y "enderezarla" 5 grados la
+    # estropea (foto de una orden medica tomada de lado).
+    if PASO_INCLINACION_GRADOS <= abs(inclinacion) < INCLINACION_MAXIMA_GRADOS:
+        gris = gris.rotate(inclinacion, resample=Image.BICUBIC, expand=True,
+                           fillcolor=255)
+        pasos.append(f"enderezada {inclinacion}")
+
+    recortada = _recortar_bordes(gris)
+    if recortada.size != gris.size:
+        pasos.append("bordes recortados")
+        gris = recortada
+
+    return ImageOps.autocontrast(gris, cutoff=1), pasos
+
+
+def _orientacion(gris, segundos: float) -> Tuple[int, float]:
+    """Grados a girar segun el OSD de tesseract y su confianza; (0, 0) si no se pudo."""
     import pytesseract
 
     try:
-        return normalizar(pytesseract.image_to_string(
-            imagen, lang="spa+eng", timeout=max(1.0, segundos))), ""
+        datos = pytesseract.image_to_osd(
+            gris, config="--psm 0", output_type=pytesseract.Output.DICT,
+            timeout=max(1.0, segundos))
+        return (int(datos.get("rotate", 0)) % 360,
+                float(datos.get("orientation_conf", 0.0)))
+    except Exception:
+        # El OSD falla en paginas con poco texto; no es un fallo de la lectura.
+        return 0, 0.0
+
+
+def _caracteres_utiles(texto: str) -> int:
+    return len(re.findall(r"[0-9A-Za-zÁÉÍÓÚÑÜáéíóúñü]", texto or ""))
+
+
+def _vale_mas(texto_a: str, conf_a: float, texto_b: str, conf_b: float) -> bool:
+    """
+    Si la lectura A es mejor que la B: caracteres utiles por confianza. Solo la
+    confianza premiaria leer tres palabras seguras sobre un parrafo entero.
+    """
+    return _caracteres_utiles(texto_a) * conf_a > _caracteres_utiles(texto_b) * conf_b
+
+
+def _floja(texto: str, confianza: float) -> bool:
+    return (confianza < CONFIANZA_REINTENTO_OSD
+            or _caracteres_utiles(texto) < MINIMO_CARACTERES_OCR)
+
+
+def _texto_y_confianza(datos: dict) -> Tuple[str, float]:
+    """
+    Reconstruye el texto de `image_to_data` y su confianza 0-1, promediada por
+    palabra y ponderada por su longitud. Los parrafos quedan separados por una
+    linea en blanco, como los dejaba `image_to_string`.
+    """
+    lineas: dict = {}
+    suma = peso = 0.0
+    for i, palabra in enumerate(datos.get("text", [])):
+        palabra = (palabra or "").strip()
+        try:
+            conf = float(datos["conf"][i])
+        except (TypeError, ValueError):
+            continue
+        if not palabra or conf < 0:
+            continue
+        clave = (datos["block_num"][i], datos["par_num"][i], datos["line_num"][i])
+        lineas.setdefault(clave, []).append(palabra)
+        suma += conf * len(palabra)
+        peso += len(palabra)
+    partes: List[str] = []
+    anterior = None
+    for clave, palabras in sorted(lineas.items()):
+        if anterior is not None:
+            partes.append("\n\n" if clave[:2] != anterior[:2] else "\n")
+        partes.append(" ".join(palabras))
+        anterior = clave
+    return normalizar("".join(partes)), (suma / peso / 100.0) if peso else 0.0
+
+
+def _tesseract(gris, segundos: float) -> Tuple[str, float]:
+    import pytesseract
+
+    datos = pytesseract.image_to_data(
+        gris, lang=IDIOMAS_OCR, config="--oem 1 --psm 3",
+        output_type=pytesseract.Output.DICT, timeout=max(1.0, segundos))
+    return _texto_y_confianza(datos)
+
+
+def _texto_de_imagen(imagen, segundos: float, preparar: bool = True,
+                     presupuesto: Optional["PresupuestoDeOcr"] = None
+                     ) -> Tuple[str, Optional[float], str]:
+    """
+    OCR de una imagen con tesseract y, si no la pudo leer, con el modelo.
+
+    Tesseract no lee una foto de celular de una orden medica sobre fondo
+    oscuro, ni el rotulo blanco diminuto de una captura de radiografia: el
+    modelo con vision si (medido sobre fotos reales de un correo del buzon). Se
+    le pasa solo lo que tesseract dejo flojo, con un tope de imagenes por
+    correo en `presupuesto`, porque cada una cuesta una llamada. Lo transcrito
+    se marca como tal: es lectura de un modelo, no del documento.
+    """
+    texto, confianza, motivo = _texto_de_imagen_tesseract(
+        imagen, segundos, preparar)
+    return _con_respaldo_ia(imagen, texto, confianza, motivo, presupuesto)
+
+
+def _con_respaldo_ia(imagen, texto: str, confianza: Optional[float],
+                     motivo: str, presupuesto: Optional["PresupuestoDeOcr"]
+                     ) -> Tuple[str, Optional[float], str]:
+    """La lectura de tesseract, o la del modelo si tesseract la dejo floja."""
+    transcribir = TRANSCRIPTOR_IA
+    if (transcribir is None or presupuesto is None
+            or presupuesto.imagenes_ia <= 0
+            or not _floja(texto, confianza or 0.0)):
+        return texto, confianza, motivo
+    presupuesto.imagenes_ia -= 1
+    try:
+        salida = io.BytesIO()
+        imagen.convert("RGB").save(salida, format="JPEG", quality=90)
+        transcrito = normalizar(transcribir(salida.getvalue()) or "")
+    except Exception:
+        return texto, confianza, motivo
+    if (transcrito and transcrito.strip().upper() != "SIN_TEXTO"
+            and _caracteres_utiles(transcrito) > _caracteres_utiles(texto)):
+        return MARCA_TRANSCRITO_POR_IA + "\n\n" + transcrito, None, ""
+    return texto, confianza, motivo
+
+
+# Lo que el modelo transcribe de una imagen va precedido de esta linea, para
+# que quien lea los datos de ahi sepa que no salen del OCR del documento.
+MARCA_TRANSCRITO_POR_IA = (
+    "_(transcrito por IA desde la imagen, que el OCR no pudo leer: "
+    "verificar las cifras)_")
+
+# Funcion que transcribe una imagen (bytes JPEG) con el modelo, o None. La
+# pone el orquestador cuando trabaja con Vertex; en pruebas y sin modelo queda
+# en None y el OCR es solo tesseract.
+TRANSCRIPTOR_IA: Optional[Callable[[bytes], str]] = None
+
+
+def _texto_de_imagen_tesseract(imagen, segundos: float,
+                               preparar: bool = True) -> Tuple[str, float, str]:
+    """
+    OCR de una imagen ya cargada, con tope de tiempo. Devuelve
+    (texto, confianza 0-1, motivo_del_fallo).
+
+    La imagen se prepara antes (ver `_preparar_para_ocr`) y se lee una vez sin
+    mirar el giro. Solo si esa lectura sale floja se busca si esta de lado o al
+    reves (ver `_giro_probable`) y se relee girada, quedandose con la de mayor
+    confianza: es lo que rescata las fotos de cedula tomadas de lado.
+
+    Todo cabe en `segundos`: el OSD y la relectura usan lo que deja la primera
+    lectura, y si se cortan por tiempo se conserva la primera. Sin tope una
+    sola pagina puede tardar minutos y desbordar el presupuesto del documento,
+    que solo se comprueba entre paginas.
+    """
+    limite = time.monotonic() + segundos
+    try:
+        # Una hoja de PDF renderizada ya viene derecha, a 300 dpi y con buen
+        # contraste: el enderezado, el recorte y el autocontraste le borran
+        # trazos a los digitos (sobre las 203 hojas de referencia, 80 % de
+        # numeros de documento sin preparar y 74 % preparando). Lo que si
+        # necesita preparacion es la foto suelta: pequeña, de lado, con EXIF.
+        if preparar:
+            gris, _pasos = _preparar_para_ocr(imagen)
+        else:
+            gris = _sin_cuadricula(imagen.convert("L"))
+    except Exception as e:
+        return "", 0.0, f"no se pudo preparar la imagen ({type(e).__name__}: {e})"
+    try:
+        texto, confianza = _tesseract(gris, limite - time.monotonic())
     except RuntimeError:
         # Es lo que lanza pytesseract cuando se agota su propio timeout.
-        return "", f"el OCR de una pagina paso de {segundos:.0f}s y se corto"
+        return "", 0.0, f"el OCR de una pagina paso de {segundos:.0f}s y se corto"
     except Exception as e:
-        return "", f"el OCR fallo ({type(e).__name__}: {e})"
+        return "", 0.0, f"el OCR fallo ({type(e).__name__}: {e})"
+
+    if preparar and _floja(texto, confianza) and limite - time.monotonic() > 2:
+        # La preparacion no siempre ayuda: en una foto de celular de una hoja
+        # de lado, ampliar y "enderezar" dentro de +-5 grados la deja ilegible,
+        # cuando tesseract la leia tal como llego (medido sobre ordenes medicas
+        # fotografiadas). Se lee tambien la imagen sin preparar y gana la mejor.
+        try:
+            cruda = imagen.convert("L")
+            texto_c, confianza_c = _tesseract(cruda, limite - time.monotonic())
+            if _vale_mas(texto_c, confianza_c, texto, confianza):
+                texto, confianza, gris = texto_c, confianza_c, cruda
+        except Exception:
+            pass
+
+    if _floja(texto, confianza) and limite - time.monotonic() > 2:
+        rotacion = _giro_probable(gris, confianza, limite)
+        queda = limite - time.monotonic()
+        if rotacion and queda > 1:
+            # Grados en sentido horario; PIL gira antihorario.
+            girada = gris.rotate(-rotacion, expand=True, fillcolor=255)
+            try:
+                texto2, confianza2 = _tesseract(girada, queda)
+            except Exception:
+                # Se corto la relectura: la primera lectura sigue valiendo.
+                texto2, confianza2 = "", 0.0
+            if confianza2 > confianza:
+                texto, confianza = texto2, confianza2
+    return texto, round(confianza, 2), ""
 
 
-def _ocr_de_pagina(pagina) -> Tuple[str, str]:
+def _giro_probable(gris, confianza: float, limite: float) -> int:
     """
-    OCR de una pagina. Devuelve (texto, motivo_del_fallo).
+    Grados (horarios) que probablemente enderezan una lectura floja; 0 si no
+    hay motivo para girar.
+
+    Primero el OSD de tesseract, que es una sola pasada. Pero con poco texto
+    —justo el caso de una cedula— el OSD duda o se equivoca: medido sobre
+    imagenes sinteticas, con una cedula de lado o al reves daba confianza por
+    debajo de 1 o giro 0. Si no esta seguro y la lectura es muy mala, se lee
+    una miniatura en cada giro y manda la confianza de tesseract. La lectura
+    completa del giro elegido se compara despues con la primera, asi que un
+    giro equivocado nunca empeora el resultado; solo cuesta tiempo.
+    """
+    queda = limite - time.monotonic()
+    rotacion, seguridad = _orientacion(gris, max(1.0, queda / 3))
+    if rotacion and seguridad >= CONFIANZA_MINIMA_OSD:
+        return rotacion
+    if confianza >= CONFIANZA_DUDOSA:
+        return 0
+    miniatura = gris.copy()
+    miniatura.thumbnail((LADO_SONDEO_GIRO_PX, LADO_SONDEO_GIRO_PX))
+    mejor, mejor_confianza = 0, confianza + MEJORA_MINIMA_POR_GIRO
+    for grados in (90, 270, 180):
+        # Se deja tiempo para la relectura completa del giro que gane.
+        queda = limite - time.monotonic()
+        if queda < 4:
+            break
+        try:
+            _t, sondeo = _tesseract(
+                miniatura.rotate(-grados, expand=True, fillcolor=255), queda / 3)
+        except Exception:
+            continue
+        if sondeo > mejor_confianza:
+            mejor, mejor_confianza = grados, sondeo
+        if mejor_confianza >= CONFIANZA_REINTENTO_OSD:
+            # Ya no es una lectura floja: los demas giros no van a ganar.
+            break
+    return mejor
+
+
+class _LecturaDePagina(tuple):
+    """
+    (texto, motivo) de una pagina, con la confianza del OCR como atributo.
+
+    Sigue siendo un par para quien lo desempaqueta en dos —y para los dobles de
+    prueba que devuelven una tupla simple—; la confianza se lee con getattr.
+    """
+
+    confianza: Optional[float]
+
+    def __new__(cls, texto: str, motivo: str,
+                confianza: Optional[float] = None):
+        lectura = super().__new__(cls, (texto, motivo))
+        lectura.confianza = confianza
+        return lectura
+
+
+def _dpi_de_pagina(pagina) -> int:
+    """La resolucion que lleva la pagina al ancho minimo de OCR, entre topes."""
+    try:
+        ancho_pt = float(pagina.rect.width) or 612.0
+    except Exception:
+        return DPI_MINIMO_OCR
+    necesario = int(-(-ANCHO_MINIMO_OCR_PX * 72 // ancho_pt))
+    return max(DPI_MINIMO_OCR, min(DPI_MAXIMO_OCR, necesario))
+
+
+def _ocr_de_pagina(pagina, presupuesto: Optional["PresupuestoDeOcr"] = None
+                   ) -> Tuple[str, str]:
+    """
+    OCR de una pagina. Devuelve (texto, motivo_del_fallo), con la confianza
+    en el atributo `confianza` del par (ver `_LecturaDePagina`).
 
     No revienta si falta tesseract: el binario no siempre esta instalado. Pero
     el motivo se devuelve, porque "el OCR no corrio" y "el documento no dice
@@ -469,15 +934,99 @@ def _ocr_de_pagina(pagina) -> Tuple[str, str]:
     """
     falta = _motor_de_ocr_que_falta()
     if falta:
-        return "", f"no hay motor de OCR instalado ({falta})"
+        return _LecturaDePagina("", f"no hay motor de OCR instalado ({falta})")
     from PIL import Image
 
+    # El render cuenta dentro del tope de la pagina.
+    inicio = time.monotonic()
     try:
-        pix = pagina.get_pixmap(dpi=200)
+        pix = pagina.get_pixmap(dpi=_dpi_de_pagina(pagina))
         imagen = Image.open(io.BytesIO(pix.tobytes("png")))
     except Exception as e:
-        return "", f"el OCR fallo ({type(e).__name__}: {e})"
-    return _texto_de_imagen(imagen, TIMEOUT_OCR_PAGINA_S)
+        return _LecturaDePagina("", f"el OCR fallo ({type(e).__name__}: {e})")
+    # A 300 dpi una hoja densa con el job cargado puede pasar del tope y
+    # perderse entera. Se le deja a la lectura principal solo parte del tope,
+    # para que si se corta quede tiempo de leerla a 200 dpi: una lectura algo
+    # peor es mejor que una hoja que la IA nunca ve.
+    queda = max(1.0, TIMEOUT_OCR_PAGINA_S * FRACCION_DEL_TOPE_A_300_DPI
+                - (time.monotonic() - inicio))
+    texto, confianza, motivo = _texto_de_imagen(imagen, queda, preparar=False)
+    if not texto and motivo:
+        queda = TIMEOUT_OCR_PAGINA_S - (time.monotonic() - inicio)
+        if queda > 3:
+            try:
+                pix = pagina.get_pixmap(dpi=DPI_DE_RESPALDO_OCR)
+                menor = Image.open(io.BytesIO(pix.tobytes("png")))
+                texto, confianza, motivo2 = _texto_de_imagen(
+                    menor, queda, preparar=False)
+                motivo = motivo2 if not texto else ""
+            except Exception:
+                pass
+    texto, confianza, motivo = _con_respaldo_ia(
+        imagen, texto, confianza, motivo, presupuesto)
+    return _LecturaDePagina(texto, motivo, confianza if texto else None)
+
+
+def _tramos_de_tinta(tinta, largo: int):
+    """
+    Pixeles que forman parte de un tramo horizontal de tinta de al menos
+    `largo` pixeles seguidos. Para los verticales se le pasa la traspuesta.
+    """
+    import numpy as np
+
+    ancho = tinta.shape[1]
+    suma = np.cumsum(np.pad(tinta.astype(np.int32), ((0, 0), (1, 0))), axis=1)
+    # Donde EMPIEZA un tramo completo de `largo`.
+    empieza = (suma[:, largo:] - suma[:, :-largo]) == largo
+    empieza = np.pad(empieza.astype(np.int32),
+                     ((0, 0), (0, ancho - empieza.shape[1])))
+    # Un pixel es del tramo si alguno de los `largo` anteriores lo empezo.
+    acumulado = np.pad(np.cumsum(empieza, axis=1), ((0, 0), (largo, 0)))
+    return (acumulado[:, largo:] - acumulado[:, :ancho]) > 0
+
+
+def _sin_cuadricula(gris):
+    """
+    La hoja sin las lineas de tabla.
+
+    Las planillas y listados traen cada cedula dentro de una celda, y la raya de
+    la celda pegada a los digitos hace que tesseract los lea como otra cosa o no
+    los lea. Una linea de tabla es un tramo de tinta recto mucho mas largo que
+    cualquier letra; se borra eso y nada mas. Sobre las 203 hojas de referencia,
+    los numeros de documento recuperados pasan de 80 % a 84 % en una lectura, y
+    la lectura es mas rapida.
+
+    Si numpy no esta (viene con pandas), la hoja se lee como esta.
+    """
+    try:
+        import numpy as np
+        from PIL import Image
+    except ImportError:
+        return gris
+    try:
+        a = np.asarray(gris)
+        if a.ndim != 2 or min(a.shape) < 50:
+            return gris
+        # Umbral de Otsu.
+        hist = np.bincount(a.ravel(), minlength=256).astype(np.float64)
+        peso = np.cumsum(hist)
+        masa = np.cumsum(hist * np.arange(256))
+        total = peso[-1]
+        varianza = (masa[-1] * peso - masa * total) ** 2 / np.maximum(
+            peso * (total - peso), 1)
+        tinta = a <= int(np.argmax(varianza))
+        # Una vigesimoquinta parte del ancho: a 300 dpi son unos 100 px, y la
+        # palabra mas larga de una linea de texto no hace un tramo continuo.
+        largo = max(40, a.shape[1] // 25)
+        lineas = (_tramos_de_tinta(tinta, largo)
+                  | _tramos_de_tinta(tinta.T, largo).T)
+        if not lineas.any():
+            return gris
+        limpia = a.copy()
+        limpia[lineas] = 255
+        return Image.fromarray(limpia)
+    except Exception:
+        return gris
 
 
 def _motor_de_ocr_que_falta() -> str:
@@ -491,7 +1040,8 @@ def _motor_de_ocr_que_falta() -> str:
 
 
 def _ocr_de_imagenes(
-    doc, pagina, vistas: set, segundos_restantes: float
+    doc, pagina, vistas: set, segundos_restantes: float,
+    presupuesto: Optional["PresupuestoDeOcr"] = None,
 ) -> Tuple[str, int, str]:
     """
     Lee las imagenes incrustadas de una pagina que YA tiene texto.
@@ -547,11 +1097,14 @@ def _ocr_de_imagenes(
             motivo = f"no se pudo abrir una imagen incrustada ({type(e).__name__})"
             continue
         inicio = time.monotonic()
-        texto, fallo = _texto_de_imagen(
-            imagen, min(TIMEOUT_OCR_PAGINA_S, segundos_restantes))
+        texto, confianza, fallo = _texto_de_imagen(
+            imagen, min(TIMEOUT_OCR_PAGINA_S, segundos_restantes),
+            presupuesto=presupuesto)
         segundos_restantes -= time.monotonic() - inicio
         if texto.strip():
-            bloques.append(f"### Imagen incrustada (OCR)\n\n{texto}")
+            bloques.append(
+                f"### Imagen incrustada {_marca_ocr(confianza)}\n\n"
+                + _linea_dudosa(confianza, "imagen") + texto)
             continue
         if fallo:
             sin_leer += 1
@@ -633,10 +1186,12 @@ def _imagen_a_markdown(
         # El OCR no admite todos los modos de color: CMYK de un escaner, paleta
         # con transparencia o 16 bits por canal lo hacen fallar. RGB y escala de
         # grises los acepta siempre, y convertir no pierde nada legible.
+        # (El giro del EXIF se aplica al preparar la imagen para el OCR.)
         if imagen.mode not in ("RGB", "L"):
             imagen = imagen.convert("RGB")
-        texto, fallo = _texto_de_imagen(
-            imagen, min(TIMEOUT_OCR_PAGINA_S, del_correo.queda()))
+        texto, confianza, fallo = _texto_de_imagen(
+            imagen, min(TIMEOUT_OCR_PAGINA_S, del_correo.queda()),
+            presupuesto=del_correo)
         if fallo:
             return Conversion(tipo_real="imagen", paginas=1,
                               paginas_ilegibles=1, aviso=fallo)
@@ -649,7 +1204,9 @@ def _imagen_a_markdown(
             tipo_real="imagen", ocr_aplicado=True,
             markdown=_encabezado(nombre, "_(imagen sin texto reconocible)_"),
         )
-    md, truncado = _truncar(texto)
+    md, truncado = _truncar(
+        f"## Imagen {_marca_ocr(confianza)}\n\n"
+        + _linea_dudosa(confianza, "imagen") + texto)
     return Conversion(
         markdown=_encabezado(nombre, md),
         tipo_real="imagen", ocr_aplicado=True, truncado=truncado,

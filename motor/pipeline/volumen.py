@@ -19,6 +19,7 @@ para poder apretarlos mirando datos, sin desplegar.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
@@ -43,9 +44,16 @@ def _tope(nombre: str, por_defecto: int) -> int:
     return valor if valor > 0 else por_defecto
 
 
-MAX_ADJUNTOS = _tope("MAX_ADJUNTOS_POR_CORREO", 15)
-MAX_PAGINAS = _tope("MAX_PAGINAS_POR_CORREO", 40)
-MAX_MEGABYTES = _tope("MAX_MEGABYTES_POR_CORREO", 25)
+# Lo que el job lee bien en una corrida. Medido el 2026-11-05 sobre correos
+# reales: el OCR a 300 dpi cuesta unos 5 s por hoja escaneada y cada correo
+# tiene 420 s de OCR (`conversion.PRESUPUESTO_OCR_POR_CORREO_S`), unas 80 hojas;
+# las paginas con texto nativo no gastan OCR. Con los topes anteriores (15
+# adjuntos, 40 paginas, 25 MB) correos completos y legibles —una empresa que
+# manda la historia clinica y las fotos de las ordenes, un derecho de peticion
+# con la tutela y sus anexos— iban a manual sin que nadie leyera nada.
+MAX_ADJUNTOS = _tope("MAX_ADJUNTOS_POR_CORREO", 30)
+MAX_PAGINAS = _tope("MAX_PAGINAS_POR_CORREO", 80)
+MAX_MEGABYTES = _tope("MAX_MEGABYTES_POR_CORREO", 50)
 
 
 @dataclass
@@ -114,9 +122,18 @@ def medir(adjuntos: Optional[Sequence[Tuple[str, bytes]]]) -> Volumen:
     """
     from pipeline.materializar import es_ruido
 
-    utiles: List[Tuple[str, bytes]] = [
-        (n, d) for n, d in (adjuntos or []) if d and not es_ruido(n)
-    ]
+    # Ni los decorativos ni las copias: un hilo reenviado repite el mismo PDF
+    # con otro nombre y la conversion lo descarta, asi que no pesa.
+    utiles: List[Tuple[str, bytes]] = []
+    vistos = set()
+    for n, d in (adjuntos or []):
+        if not d or es_ruido(n):
+            continue
+        huella = hashlib.sha256(d).hexdigest()
+        if huella in vistos:
+            continue
+        vistos.add(huella)
+        utiles.append((n, d))
     octetos = sum(len(d) for _, d in utiles)
     paginas = sum(_paginas_de(d, n) for n, d in utiles)
     v = Volumen(adjuntos=len(utiles), paginas=paginas,

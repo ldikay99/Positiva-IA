@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Sequence
+from typing import Any, Dict, List, Optional, Sequence
 
 from pipeline.modelo import Modelo, Turno
 from servidor_mcp.herramientas import Contexto, invocar
@@ -46,21 +46,63 @@ nombre_afectado — tiene que ser el nombre de la PERSONA del caso.
   notificaciones"), si es una razon social ("... S.A.S.", "... Ltda",
   "Agencia de ...") cuando el documento es de persona, o si es el texto de un
   tramite en vez de un nombre ("Informacion Prioritaria", "Solicitud de ...").
+  Rechazalo tambien si es un trozo de frase ("ENCONTRABA LABORANDO", "ANTES DE
+  INICIAR LABORES", "NO APLICA"), una parte del cuerpo o un diagnostico
+  ("RODILLA DERECHA"), o lleva pegada una palabra que no es del nombre.
   Quien firma el correo NO es el afectado si el correo habla de otra persona.
+  Si el correo habla de un trabajador, el afectado es el trabajador y no la
+  empresa. Si el valor ya es una entidad con su NIT, no lo cambies.
+  Pero si la empresa pide algo PARA SI MISMA (estado de cuenta o cartera, paz
+  y salvo, habilitar su usuario, asesoria o capacitacion, copias de las
+  afiliaciones de sus trabajadores), la afectada es la empresa con su NIT, y
+  su representante legal o quien firma no lo es.
+  Rechazalo si la persona aparece en el texto con OTRO papel: el medico o
+  profesional que firma (lleva R.M., registro o tarjeta profesional, o va tras
+  "Impresion realizada por"), el supervisor, ordenador del gasto o
+  contratante de un contrato o certificado, el representante legal o gerente
+  que firma por una empresa, o quien firma una carta sobre "el trabajador X".
+  El "Señor(a) X" con que empieza una respuesta de Positiva citada en el hilo
+  es el destinatario de esa respuesta, no por eso la persona del tramite.
+  Si el correo trata de VARIAS personas con documento (una lista de
+  trabajadores), responde SIN RESPALDO: no hay una sola persona del caso.
 
 nombre_remitente — quien escribe. Mismo criterio: un buzon no es una persona.
+  Si escribe una entidad (ESE, empresa, alcaldia) desde su buzon, el remitente
+  es la entidad con su razon social. Quien FIRMA el mensaje es el remitente
+  aunque escriba desde el buzon de otro (de su empresa, de un familiar). Un
+  buzon de positiva.gov.co es un reenvio interno: el remitente es quien
+  escribio originalmente, en el hilo, nunca Positiva.
 
 numero_documento_afectado — tiene que pertenecer a la persona nombrada.
   Rechazalo si en el documento aparece junto a OTRO nombre, si es un numero de
-  telefono, un radicado, un NIT de una empresa cuando el afectado es persona, o
-  un numero que en el texto identifica a un tercero.
+  telefono, un radicado, un siniestro, un folio, una factura, una poliza, un
+  codigo de barras, un registro medico (RM) o la cedula del medico o del
+  profesional que firma, el NIT de una empresa cuando el afectado es persona,
+  o un numero que en el texto identifica a un tercero (demandante, apoderado).
+
+numero_documento_remitente — el de quien escribe, con el mismo criterio.
+
+tipo_documento_afectado y tipo_documento_remitente — el tipo que el texto le
+  da a ESE numero. Un NIT con nombre de persona, o una cedula con nombre de
+  empresa, no cuadra. Los codigos son: 1 cedula de ciudadania (CC), 2 cedula
+  de extranjeria (CE), 4 permiso por proteccion temporal (PPT, que tambien se
+  escribe "PT"), 5 permiso especial de permanencia (PEP), 6 tarjeta de
+  identidad (TI), 7 registro civil o NUIP, 10 NIT, 11 pasaporte. Si el texto
+  rotula el numero con otro tipo, responde CAMBIAR a ese codigo.
+
+tipo_remitente — 3 si quien escribe es la persona del caso (habla de "mi
+  incapacidad", firma con su propia cedula); 1 si es otra persona a titulo
+  personal (familiar, apoderado); 2 si escribe una empresa o entidad. Es 3
+  aunque el buzon tenga otro nombre si quien firma es el afectado.
 
 municipio_afectado y departamento_afectado — donde VIVE el afectado.
   La ciudad que sigue a "cedula de ciudadania No. NNN de X" es donde se
   EXPIDIO el documento, no donde vive. Rechazala.
 
 tipo_solicitud — tiene que corresponder a lo que el correo PIDE, no a lo que
-  menciona de paso.
+  menciona de paso. Una IPS o clinica que cobra facturas es 28 (cuentas
+  medicas), no 8; la indemnizacion por incapacidad permanente parcial es 16;
+  preguntar si se esta activo o afiliado no es 7.
 
 COMO RESPONDES:
 Una linea por campo revisado, y nada mas. Sin preambulo y sin despedida.
@@ -79,7 +121,7 @@ Cuando termines, escribe REVISADO en la ultima linea."""
 # Solo lectura. El revisor no reporta hallazgos ni consulta el registro: mira
 # lo que hay en los documentos y responde en texto.
 HERRAMIENTAS_DEL_REVISOR = ("listar_documentos", "leer_documento",
-                            "buscar_en_documentos")
+                            "buscar_en_documentos", "consultar_documentos")
 
 VEREDICTOS = ("OK", "CAMBIAR", "SIN RESPALDO")
 
@@ -128,10 +170,22 @@ class Revision:
         return "\n".join(lineas)
 
 
-def _tarea(valores: Dict[str, Any]) -> str:
-    lineas = ["Comprueba estos valores contra los documentos del caso:"]
+def _tarea(valores: Dict[str, Any], notas: Optional[Dict[str, str]] = None,
+           contexto: str = "") -> str:
+    lineas = []
+    if contexto:
+        lineas += ["ENCABEZADO DEL CORREO:", contexto, ""]
+    lineas.append("Comprueba estos valores contra los documentos del caso:")
     for campo in sorted(valores):
         lineas.append(f"  {campo} = {valores[campo]}")
+        nota = (notas or {}).get(campo)
+        if nota:
+            lineas.append(f"      donde aparece: {nota}")
+    if notas:
+        # Con los extractos delante, la mayoria se decide sin herramientas:
+        # cada vuelta reenvia el prompt entero.
+        lineas += ["", "Lo de 'donde aparece' son extractos del texto: si con "
+                   "eso basta para decidir, responde sin buscar mas."]
     return "\n".join(lineas)
 
 
@@ -176,19 +230,24 @@ def revisar(
     valores: Dict[str, Any],
     esquemas: Sequence[Dict[str, Any]],
     max_vueltas: int = MAX_VUELTAS_DEL_REVISOR,
+    notas: Optional[Dict[str, str]] = None,
+    contexto: str = "",
 ) -> Revision:
     """
     Corre al revisor sobre los valores que se van a enviar.
 
     `esquemas` son los de las herramientas de lectura, ya filtrados por quien
     llama: el revisor no puede reportar hallazgos ni consultar el registro.
+    `notas` son, por campo, los extractos del texto donde aparece el valor, y
+    `contexto` el asunto y el remitente: con eso la mayoria se decide en una
+    vuelta.
     """
     resultado = Revision()
     if not valores:
         return resultado
 
     historial: List[Dict[str, str]] = []
-    tarea = {"rol": "usuario", "contenido": _tarea(valores)}
+    tarea = {"rol": "usuario", "contenido": _tarea(valores, notas, contexto)}
 
     for vuelta in range(1, max_vueltas + 1):
         resultado.vueltas = vuelta

@@ -165,11 +165,17 @@ def listar_documentos(ctx: Contexto) -> Resultado:
 
 
 def leer_documento(
-    ctx: Contexto, documento: str, desde: int = 0, lineas: int = 60
+    ctx: Contexto, documento: str, desde: int = 0, lineas: int = 60,
+    pagina: Optional[int] = None,
 ) -> Resultado:
-    """Lee un fragmento de un documento por rango de lineas."""
+    """
+    Lee un fragmento de un documento por rango de lineas, o una pagina
+    entera (`pagina`) de un adjunto con secciones `## Pagina N`.
+    """
     if not documento:
         return Resultado(ok=False, error="falta el argumento 'documento'")
+    if pagina not in (None, ""):
+        return _leer_pagina(ctx, documento, pagina)
     if lineas <= 0:
         return Resultado(ok=False, error="'lineas' debe ser mayor que cero")
     if lineas > MAX_LINEAS_POR_LECTURA:
@@ -183,12 +189,35 @@ def leer_documento(
     try:
         texto = ctx.workspace.leer(documento, desde=desde, hasta=desde + lineas)
     except FileNotFoundError:
-        disponibles = [d["id"] for d in ctx.workspace.listar()]
-        return Resultado(
-            ok=False,
-            error=f"no existe el documento '{documento}'. "
-                  f"Disponibles: {', '.join(disponibles) or '(ninguno)'}",
-        )
+        return _no_existe(ctx, documento)
+    return _contenido_leido(documento, texto, {"desde": desde})
+
+
+def _no_existe(ctx: Contexto, documento: str) -> Resultado:
+    disponibles = [d["id"] for d in ctx.workspace.listar()]
+    return Resultado(
+        ok=False,
+        error=f"no existe el documento '{documento}'. "
+              f"Disponibles: {', '.join(disponibles) or '(ninguno)'}",
+    )
+
+
+def _leer_pagina(ctx: Contexto, documento: str, pagina: Any) -> Resultado:
+    try:
+        numero = int(pagina)
+    except (TypeError, ValueError):
+        return Resultado(ok=False, error="'pagina' debe ser un numero entero")
+    try:
+        texto, inicio = ctx.workspace.leer_pagina(documento, numero)
+    except FileNotFoundError:
+        return _no_existe(ctx, documento)
+    except ValueError as e:
+        return Resultado(ok=False, error=str(e))
+    return _contenido_leido(documento, texto, {"pagina": numero, "desde": inicio})
+
+
+def _contenido_leido(documento: str, texto: str,
+                     ubicacion: Dict[str, Any]) -> Resultado:
     acotado, truncado = _acotar(texto)
     # El contenido de un adjunto viene de un tercero desconocido: se anota lo
     # sospechoso y se envuelve en el bloque delimitado que el prompt del sistema
@@ -198,7 +227,7 @@ def leer_documento(
         ok=True,
         datos={
             "documento": documento,
-            "desde": desde,
+            **ubicacion,
             "contenido": saneado.markdown,
             "sospechas": [
                 {"categoria": s.categoria, "severidad": s.severidad.value,
@@ -321,6 +350,47 @@ def buscar_en_documentos(
         datos={"total": total, "mostrados": len(recortados), "coincidencias": recortados},
         truncado=total > len(recortados),
     )
+
+
+# Tramos que devuelve una consulta, y cuanto texto entre todos. La respuesta
+# de una herramienta se reenvia en cada vuelta y el agente la recorta a unos
+# 2.500 caracteres: mas fragmentos llegarian cortados.
+TRAMOS_POR_CONSULTA = 3
+MAX_TRAMOS_POR_CONSULTA = 5
+MAX_CARACTERES_CONSULTA = 1_800
+
+
+def consultar_documentos(
+    ctx: Contexto, pregunta: str, maximo: int = TRAMOS_POR_CONSULTA
+) -> Resultado:
+    """
+    Los tramos de los documentos que mejor responden a una pregunta.
+
+    Recuperacion lexica (BM25) sobre texto sin tildes ni mayusculas: sirve
+    cuando no se sabe el texto exacto que hay que buscar ("cedula del
+    trabajador accidentado", "fecha de la incapacidad").
+    """
+    if not pregunta or not str(pregunta).strip():
+        return Resultado(ok=False, error="falta el argumento 'pregunta'")
+    if len(str(pregunta)) > 300:
+        return Resultado(ok=False, error="la pregunta es demasiado larga: "
+                                         "usa las palabras clave del dato")
+    try:
+        maximo = int(maximo)
+    except (TypeError, ValueError):
+        maximo = TRAMOS_POR_CONSULTA
+    maximo = min(max(1, maximo), MAX_TRAMOS_POR_CONSULTA)
+    tramos = ctx.workspace.consultar(
+        str(pregunta), maximo=maximo, caracteres=MAX_CARACTERES_CONSULTA)
+    if not tramos:
+        return Resultado(ok=True, datos={
+            "tramos": [],
+            "nota": "ninguna palabra de la pregunta aparece en los documentos",
+        })
+    # Igual que una lectura: es texto de un tercero.
+    for t in tramos:
+        t["texto"] = sanear_fragmento(t["texto"], t["documento"]).markdown
+    return Resultado(ok=True, datos={"tramos": tramos})
 
 
 # ── Herramientas de catalogo ──
@@ -674,6 +744,7 @@ HERRAMIENTAS: Dict[str, Callable[..., Resultado]] = {
     "listar_documentos": listar_documentos,
     "leer_documento": leer_documento,
     "buscar_en_documentos": buscar_en_documentos,
+    "consultar_documentos": consultar_documentos,
     "consultar_catalogo": consultar_catalogo,
     "validar_documento": validar_documento,
     "consultar_persona": consultar_persona,

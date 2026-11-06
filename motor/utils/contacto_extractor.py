@@ -56,6 +56,23 @@ _SIGUIENTE_SECCION = re.compile(
 TOPE_DEL_BLOQUE_AJENO = 300
 
 
+# La seccion del empleador de un formulario (el FURAT abre con "I
+# IDENTIFICACION GENERAL DEL EMPLEADOR"): razon social, sede principal, centro
+# de trabajo, cada uno con su telefono. Es mas larga que el bloque de un
+# rotulo suelto y la cierra el rotulo de la seccion siguiente ("II INFORMACION
+# DE LA PERSONA..."), asi que lleva su propio tope.
+_SECCION_DEL_EMPLEADOR = re.compile(
+    r"(?i)(?:identificaci[oó]n\s+(?:general\s+)?del\s+empleador"
+    r"|(?:datos|informaci[oó]n)\s+(?:general\s+)?del\s+empleador)")
+TOPE_DE_LA_SECCION_DEL_EMPLEADOR = 1500
+# Lo que abre los datos de la persona: cierra la seccion del empleador aunque
+# el formulario no numere sus secciones.
+_SECCION_DE_LA_PERSONA = re.compile(
+    r"(?i)(?:datos|informaci[oó]n)\s+(?:general\s+)?(?:del|de\s+la)\s+"
+    r"(?:trabajador|trabajadora|afiliad[oa]|accidentad[oa]|paciente|persona)"
+    r"|persona\s+que\s+se\s+accident")
+
+
 def _bloques_de_otro_sujeto(texto: str) -> List[tuple]:
     """Tramos (inicio, fin) del texto que dan los datos de un tercero."""
     tramos = []
@@ -64,7 +81,73 @@ def _bloques_de_otro_sujeto(texto: str) -> List[tuple]:
         fin = min(siguiente.start() if siguiente else len(texto),
                   m.start() + TOPE_DEL_BLOQUE_AJENO)
         tramos.append((m.start(), fin))
+    for m in _SECCION_DEL_EMPLEADOR.finditer(texto):
+        fin = m.start() + TOPE_DE_LA_SECCION_DEL_EMPLEADOR
+        for cierre in (_SIGUIENTE_SECCION, _SECCION_DE_LA_PERSONA):
+            siguiente = cierre.search(texto, m.end())
+            if siguiente:
+                fin = min(fin, siguiente.start())
+        tramos.append((m.start(), min(fin, len(texto))))
     return tramos
+
+
+# Lo que delata el renglon de contacto de una ENTIDAD: el membrete o el pie de
+# pagina de una clinica, una empresa o un laboratorio ("NIT ... Tel: ...
+# Correo: atencionalusuario@..."), su conmutador, su PBX, una extension, su
+# pagina web. El telefono que va en ese renglon contesta en la entidad, no en
+# casa del afectado, aunque lleve el rotulo "Tel:" igual que el suyo.
+_MARCA_DE_ENTIDAD = re.compile(
+    r"(?i)\bnit\b|\bpbx\b|\bconmutador\b|\braz[oó]n\s+social\b"
+    r"|\bl[ií]nea\s*(?::|de\s+atenci[oó]n|de\s+servicio|gratuita|nacional"
+    r"|segura|amiga|[uú]nica|directa|01\s*8000)"
+    r"|\bext(?:\.|ensi[oó]n)?\s*:?\s*\d|\bcont[aá]ctenos\b|\bdirectos?\s*:"
+    r"|\bwww\.|\bweb\s*:|\bs\.\s?a\.\s?s\b|\bltda\b|grandes\s+contribuyentes"
+    r"|(?:atenci[oó]n|info|contacto|servicio|notificaci[oó]n|pqr|radicaci[oó]n"
+    r"|recepci[oó]n|citas|facturaci[oó]n)[\w.-]*@")
+# Cuanto del renglon, a cada lado del numero, se mira. Un parrafo de prosa
+# convertido de HTML puede ser un solo renglon largo: mirarlo entero haria que
+# "estoy en linea con..." dicho lejos del numero decidiera por el.
+VENTANA_DEL_MEMBRETE = 60
+
+
+def _en_renglon_de_entidad(texto: str, inicio: int, fin: int) -> bool:
+    """Si el numero va en el renglon de contacto de una entidad."""
+    ini_renglon = texto.rfind("\n", 0, inicio) + 1
+    fin_renglon = texto.find("\n", fin)
+    if fin_renglon < 0:
+        fin_renglon = len(texto)
+    tramo = (texto[max(ini_renglon, inicio - VENTANA_DEL_MEMBRETE):inicio]
+             + " " + texto[fin:min(fin_renglon, fin + VENTANA_DEL_MEMBRETE)])
+    return bool(_MARCA_DE_ENTIDAD.search(tramo))
+
+
+def _renglones_de_entidad(texto: str, apariciones: List[tuple]) -> List[tuple]:
+    """Las apariciones de un numero que caen en un renglon de entidad."""
+    return [(i, f) for i, f in apariciones if _en_renglon_de_entidad(texto, i, f)]
+
+
+def solo_en_renglones_de_entidad(numero: str, texto: str) -> bool:
+    """
+    Si el telefono aparece en el texto y TODAS sus apariciones van en el
+    membrete o el renglon de contacto de una entidad.
+
+    Mismo criterio con el que `extraer_telefonos` lo descarta; se expone para
+    que la compuerta lo aplique tambien al numero que propone el agente.
+    Basta una aparicion fuera de esos renglones (los datos del paciente, la
+    firma de quien escribe) para que el numero pueda ser del afectado.
+    """
+    buscado = normalizar_telefono(numero).lstrip("+")
+    if not buscado or not texto:
+        return False
+    apariciones = []
+    for m in _TEL_TOKEN.finditer(texto):
+        digitos = re.sub(r"\D", "", m.group(0))
+        if digitos.startswith("57") and len(digitos) in (11, 12):
+            digitos = digitos[2:]
+        if digitos == buscado:
+            apariciones.append((m.start(), m.end()))
+    return bool(apariciones) and all(
+        _en_renglon_de_entidad(texto, i, f) for i, f in apariciones)
 
 
 def _contexto(texto: str, inicio: int, fin: int) -> str:
@@ -269,8 +352,14 @@ def _sin_los_de_otro_sujeto(candidatos, apariciones, texto) -> List[Dict]:
     Basta UNA aparicion fuera de esos bloques para conservar el numero: el mismo
     telefono puede estar en el membrete del medico y tambien en los datos del
     paciente, y entonces si es suyo.
+
+    Cuentan como de un tercero el bloque que abre un rotulo ajeno (jefe
+    inmediato, registro medico) y el renglon de contacto de una entidad
+    (membrete o pie de una clinica, una empresa, un laboratorio).
     """
     bloques = _bloques_de_otro_sujeto(texto)
+    for posiciones in apariciones.values():
+        bloques.extend(_renglones_de_entidad(texto, posiciones))
     if not bloques:
         return candidatos
 

@@ -886,9 +886,9 @@ story.append(P(
 story.append(tabla(
     ["Por correo", "Media", "Mediana", "p95", "Máximo", "Tope"],
     [
-        ["Adjuntos", "2,0", "1", "5", "21", "15 (`MAX_ADJUNTOS_POR_CORREO`)"],
-        ["Páginas", "4,7", "2", "19", "48", "40 (`MAX_PAGINAS_POR_CORREO`)"],
-        ["Tamaño", "1,7 MB", "0,3 MB", "9,8 MB", "15,1 MB", "25 MB (`MAX_MEGABYTES_POR_CORREO`)"],
+        ["Adjuntos", "2,0", "1", "5", "21", "30 (`MAX_ADJUNTOS_POR_CORREO`), sin contar copias"],
+        ["Páginas", "4,7", "2", "19", "48", "80 (`MAX_PAGINAS_POR_CORREO`)"],
+        ["Tamaño", "1,7 MB", "0,3 MB", "9,8 MB", "15,1 MB", "50 MB (`MAX_MEGABYTES_POR_CORREO`)"],
     ],
     anchos=[3.6 * cm, 2.0 * cm, 2.2 * cm, 1.8 * cm, 2.0 * cm, 5.4 * cm],
 ))

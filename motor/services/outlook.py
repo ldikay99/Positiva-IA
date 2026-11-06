@@ -18,6 +18,8 @@ from pipeline.marcas import OtraCorridaLoTomo  # noqa: F401  (se reexporta)
 # es la que reclama el correo, y perderla deja el correo sin dueño para la
 # corrida siguiente.
 INTENTOS_POR_LIMITE_DE_TASA = 4
+# Veces que se vuelve a pedir la bandeja cuando Graph la devuelve cortada.
+INTENTOS_POR_RESPUESTA_CORTADA = 3
 # Tope de una sola espera. El job corre cada media hora y atiende un lote: una
 # espera larga la pagan los correos que vienen detras.
 ESPERA_MAXIMA_POR_LIMITE_S = 20.0
@@ -140,9 +142,23 @@ class OutlookService:
             "$orderby": "receivedDateTime asc",
         }
 
-        response = await self._consultar(url, params)
-        response.raise_for_status()
-        messages = response.json().get("value", [])
+        # Graph devuelve a veces la respuesta cortada a mitad del JSON (se vio
+        # en produccion con 255 KB: "Expecting ',' delimiter"). Era la corrida
+        # entera la que se caia sin procesar nada. Es una lectura: repetirla no
+        # tiene efecto, y si sigue cortada se piden menos correos, que es lo
+        # que la acorta.
+        messages = None
+        for intento in range(INTENTOS_POR_RESPUESTA_CORTADA):
+            response = await self._consultar(url, params)
+            response.raise_for_status()
+            try:
+                messages = response.json().get("value", [])
+                break
+            except ValueError:
+                if intento + 1 == INTENTOS_POR_RESPUESTA_CORTADA:
+                    raise
+                params = dict(params, **{"$top": max(1, int(params["$top"]) // 2)})
+                await asyncio.sleep(2 * (intento + 1))
 
         # Agrupar por conversationId: tomar solo el mas reciente de cada hilo
         seen_conversations = {}

@@ -38,6 +38,7 @@ _SIGLAS: Tuple[Tuple[str, str], ...] = (
     ("ti", r"\bt\.?\s?i\.?\b"),
     ("pa", r"\bp\.?\s?a\.?\b"),
     ("ppt", r"\bp\.?\s?p\.?\s?t\.?\b"),
+    ("pt", r"\bp\.?\s?t\.?\b"),
     ("pep", r"\bp\.?\s?e\.?\s?p\.?\b"),
     ("pe", r"\bp\.?\s?e\.?\b"),
     ("rc", r"\br\.?\s?c\.?\b"),
@@ -59,7 +60,8 @@ _COMPILADAS = tuple((n, re.compile(p, re.IGNORECASE)) for n, p in _SIGLAS)
 #   TI   10 u 11, el NUIP del menor.
 #   NP   igual que la TI: el registro civil usa el mismo NUIP.
 #   CE   6 o 7, las asigna Migracion Colombia.
-#   PPT  8 o 9.
+#   PPT  7, el que expide Migracion Colombia hoy ("PPT 2133540"); se admite
+#        de 6 a 9 porque los primeros y los de otros sistemas varian.
 #   PE   15, el permiso especial de permanencia.
 #   NI   9, mas el digito de verificacion cuando viene con el.
 #   CD   6 a 10, carne diplomatico.
@@ -69,7 +71,7 @@ LONGITUD_POR_TIPO: Dict[int, Tuple[int, int]] = {
     int(TipoDocumento.TI): (10, 11),
     int(TipoDocumento.NP): (10, 11),
     int(TipoDocumento.CE): (6, 7),
-    int(TipoDocumento.PPT): (8, 9),
+    int(TipoDocumento.PPT): (6, 9),
     int(TipoDocumento.PE): (15, 15),
     int(TipoDocumento.NI): (9, 10),
     int(TipoDocumento.CD): (6, 10),
@@ -191,15 +193,22 @@ def tramos_de_leyenda(texto: str) -> List[Tuple[int, int]]:
     con tres o mas siglas DISTINTAS es una leyenda de formulario.
     """
     posiciones = posiciones_de_siglas(texto)
-    if len(posiciones) < SIGLAS_PARA_SER_LEYENDA:
+    if len(posiciones) < 2:
         return []
 
     tramos: List[Tuple[int, int]] = []
     cadena: List[Tuple[int, str]] = []
 
     def cerrar() -> None:
-        if len({s for _, s in cadena}) >= SIGLAS_PARA_SER_LEYENDA:
+        distintas = len({s for _, s in cadena})
+        if distintas >= SIGLAS_PARA_SER_LEYENDA:
             tramos.append((cadena[0][0], cadena[-1][0] + 8))
+        elif distintas >= 2 and _pegadas_sin_palabra(texto, cadena):
+            # Hasta el final exacto de la ultima sigla: el numero puede ir
+            # pegado detras y no se puede borrar ni una cifra suya.
+            ultima, sigla = cadena[-1]
+            m = dict(_COMPILADAS)[sigla].match(texto, ultima)
+            tramos.append((cadena[0][0], m.end() if m else ultima + len(sigla)))
 
     for posicion, sigla in posiciones:
         if cadena:
@@ -212,6 +221,30 @@ def tramos_de_leyenda(texto: str) -> List[Tuple[int, int]]:
     if cadena:
         cerrar()
     return _fusionar(tramos)
+
+
+# Lo que puede haber entre dos casillas de un menu: espacios, signos y la "x"
+# con que se marca una. "CC o TI" lleva una palabra en medio y es una pregunta.
+_ENTRE_CASILLAS = re.compile(r"^[\s.,;:/|()\[\]_\-]*(?:x[\s.,;:/|()\[\]_\-]*)?$",
+                             re.IGNORECASE)
+
+
+def _pegadas_sin_palabra(texto: str, cadena: List[Tuple[int, str]]) -> bool:
+    """
+    Si las siglas de la cadena van una tras otra sin palabra en medio.
+
+    "identificado con X TI CE No." es el menu impreso con la casilla de CC
+    tachada: dos siglas seguidas no declaran nada, porque nadie escribe dos
+    tipos para un mismo documento. Con un conector en medio ("CC o TI") si es
+    una pregunta, y no se toca.
+    """
+    for (anterior, sigla), (posicion, _) in zip(cadena, cadena[1:]):
+        rx = dict(_COMPILADAS)[sigla]
+        m = rx.match(texto, anterior)
+        fin = m.end() if m else anterior + len(sigla)
+        if not _ENTRE_CASILLAS.match(texto[fin:posicion]):
+            return False
+    return True
 
 
 def _fusionar(tramos: List[Tuple[int, int]]) -> List[Tuple[int, int]]:

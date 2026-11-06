@@ -32,7 +32,9 @@ import tempfile
 import unicodedata
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+
+from pipeline import indice
 
 # Estados posibles de un archivo materializado. Explicitos para que un fallo
 # de conversion quede registrado en lugar de desaparecer.
@@ -41,6 +43,11 @@ ESTADO_VACIO = "sin_contenido"
 ESTADO_NO_SOPORTADO = "tipo_no_soportado"
 ESTADO_ERROR = "error_conversion"
 ESTADO_DEMASIADO_GRANDE = "excede_limite"
+
+# Caracteres que pueden ocupar entre todos los indices por hoja del
+# inventario. El agente recorta cada respuesta de herramienta a unos 2.500, y
+# el resto del inventario (ids, nombres, tamaños) tambien tiene que caber.
+PRESUPUESTO_INDICE = 1_000
 
 
 @dataclass
@@ -193,7 +200,13 @@ class Workspace:
     # ── Lectura, que es lo que consumiran las herramientas MCP ──
 
     def listar(self) -> List[Dict[str, Any]]:
-        """Inventario sin contenido, para que la IA decida que leer."""
+        """
+        Inventario sin contenido, para que la IA decida que leer.
+
+        Cada adjunto con secciones de pagina lleva su indice por hoja, una
+        linea corta por hoja o rango ("p2-4 historia_clinica",
+        "p5 cedula ocr0.58 id1:CC"): dice donde mirar sin mandar el texto.
+        """
         salida: List[Dict[str, Any]] = []
         for nombre, ruta in (("correo", self.raiz / "correo.md"),
                              ("hilo", self.raiz / "hilo.md")):
@@ -204,16 +217,107 @@ class Workspace:
                     "caracteres": len(texto),
                     "lineas": texto.count("\n") + 1,
                 })
+        hojas_por_doc: Dict[int, List[Any]] = {}
         for entrada in self.manifiesto.entradas:
-            salida.append({
+            doc: Dict[str, Any] = {
                 "id": Path(entrada.ruta_md).stem,
                 "tipo": "adjunto",
                 "nombre_original": entrada.nombre_original,
                 "caracteres": entrada.caracteres_md,
                 "estado": entrada.estado,
                 "ocr": entrada.ocr_aplicado,
-            })
+            }
+            if entrada.estado == ESTADO_OK:
+                hojas, clase = self._indice_de(Path(entrada.ruta_md))
+                if hojas:
+                    hojas_por_doc[len(salida)] = hojas
+                    doc["paginas"] = indice.describir_paginas(
+                        [], hojas=hojas)
+                elif clase:
+                    doc["clase"] = clase
+            salida.append(doc)
+        self._comprimir_indices(salida, hojas_por_doc)
         return salida
+
+    def _comprimir_indices(self, salida: List[Dict[str, Any]],
+                           hojas_por_doc: Dict[int, List[Any]]) -> None:
+        """
+        Sube el nivel de agrupacion del indice mas largo hasta que todos
+        juntos quepan en `PRESUPUESTO_INDICE`: el inventario viaja en una
+        respuesta que el agente recorta, y lo que se corta no se ve.
+        """
+        nivel = {i: indice.NIVEL_DETALLE for i in hojas_por_doc}
+
+        def largo(i: int) -> int:
+            return len(json.dumps(salida[i]["paginas"], ensure_ascii=False))
+
+        while sum(largo(i) for i in hojas_por_doc) > PRESUPUESTO_INDICE:
+            candidatos = [i for i in hojas_por_doc
+                          if nivel[i] < indice.NIVELES[-1]]
+            if not candidatos:
+                break
+            i = max(candidatos, key=largo)
+            nivel[i] += 1
+            salida[i]["paginas"] = indice.describir_paginas(
+                [], hojas=hojas_por_doc[i], nivel=nivel[i])
+
+    def _ids_de_documentos(self) -> List[str]:
+        """Los documentos legibles, sin calcular el indice por hoja."""
+        ids = [n for n in ("correo", "hilo") if (self.raiz / f"{n}.md").exists()]
+        ids.extend(Path(e.ruta_md).stem for e in self.manifiesto.entradas
+                   if e.ruta_md and e.estado == ESTADO_OK)
+        return ids
+
+    def _lineas_de(self, id_documento: str) -> Optional[List[str]]:
+        ruta = self._resolver(id_documento)
+        if ruta is None or not ruta.exists():
+            return None
+        return ruta.read_text(encoding="utf-8").splitlines()
+
+    def _indice_de(self, ruta_md: Path) -> Tuple[List[Any], str]:
+        """
+        Las hojas de un adjunto (o, si no tiene paginas, la clase del texto
+        entero), cacheadas por ruta, tamaño y fecha: el inventario se pide en
+        cada correo y clasificar es leer el documento entero.
+        """
+        ruta = ruta_md if ruta_md.is_absolute() else self.raiz / ruta_md
+        if not ruta.exists():
+            ruta = self._resolver(ruta_md.stem) or ruta
+        if not ruta.exists():
+            return [], ""
+        try:
+            st = ruta.stat()
+            clave = (str(ruta), st.st_size, st.st_mtime_ns)
+        except OSError:
+            return [], ""
+        cache = self.__dict__.setdefault("_cache_indice", {})
+        if clave not in cache:
+            lineas = ruta.read_text(encoding="utf-8").splitlines()
+            paginas = indice.paginas_de(lineas)
+            if paginas:
+                cache[clave] = (indice.hojas_de(lineas, paginas), "")
+            else:
+                cache[clave] = ([], indice.describir_texto("\n".join(lineas)))
+        return cache[clave]
+
+    def leer_pagina(self, id_documento: str, pagina: int) -> Tuple[str, int]:
+        """
+        Una seccion `## Pagina N` entera. Devuelve el texto y la linea donde
+        empieza, para que la IA pueda seguir leyendo por rango si se corta.
+        """
+        lineas = self._lineas_de(id_documento)
+        if lineas is None:
+            raise FileNotFoundError(f"documento no encontrado: {id_documento}")
+        paginas = indice.paginas_de(lineas)
+        for p in paginas:
+            if p.numero == pagina:
+                return "\n".join(lineas[p.inicio:p.fin]), p.inicio
+        if not paginas:
+            raise ValueError(
+                f"'{id_documento}' no tiene secciones de pagina: lee por lineas")
+        raise ValueError(
+            f"'{id_documento}' no tiene pagina {pagina}; tiene de "
+            f"{paginas[0].numero} a {paginas[-1].numero}")
 
     def leer(self, id_documento: str, desde: int = 0, hasta: int = 0) -> str:
         """
@@ -236,28 +340,141 @@ class Workspace:
         """
         Busca en todos los documentos y devuelve ubicaciones con contexto.
 
-        Cada resultado trae documento, numero de linea y las lineas vecinas.
+        Cada resultado trae documento, numero de linea, pagina (si el
+        documento tiene secciones de pagina) y las lineas vecinas.
+
+        La busqueda no depende de como lo escribio el OCR: patron y texto se
+        comparan sin tildes ni mayusculas ("cedula" encuentra "CÉDULA"), un
+        dato partido por un salto de linea se encuentra igual, y una cifra de
+        cinco o mas digitos admite separadores de miles ("1087995336"
+        encuentra "1.087.995.336").
         """
+        cifra = indice.patron_de_cifra(patron)
+        fuente = cifra if cifra is not None else indice.plegar_patron(patron)
         try:
-            regex = re.compile(patron, re.IGNORECASE)
+            regex = re.compile(fuente, re.IGNORECASE)
         except re.error as e:
             raise ValueError(f"patron invalido: {e}") from e
         resultados: List[Dict[str, Any]] = []
-        for doc in self.listar():
-            ruta = self._resolver(doc["id"])
-            if ruta is None or not ruta.exists():
+        for id_doc in self._ids_de_documentos():
+            lineas = self._lineas_de(id_doc)
+            if lineas is None:
                 continue
-            lineas = ruta.read_text(encoding="utf-8").splitlines()
-            for n, linea in enumerate(lineas):
-                if regex.search(linea):
-                    ini, fin = max(0, n - contexto), min(len(lineas), n + contexto + 1)
-                    resultados.append({
-                        "documento": doc["id"],
-                        "linea": n,
-                        "coincidencia": linea.strip()[:200],
-                        "contexto": "\n".join(lineas[ini:fin]),
-                    })
+            plegadas = [indice.plegar(l) for l in lineas]
+            paginas = indice.paginas_de(lineas)
+            n = 0
+            while n < len(lineas):
+                m = regex.search(plegadas[n])
+                cruza = False
+                if m is None and n + 1 < len(lineas):
+                    # El OCR parte las frases donde se le acaba el renglon.
+                    # Solo cuenta si la coincidencia cruza el salto: si cabe
+                    # entera en la siguiente, se reporta en la siguiente.
+                    corte = len(plegadas[n])
+                    unidas = plegadas[n] + " " + plegadas[n + 1]
+                    for mu in regex.finditer(unidas):
+                        if mu.start() < corte < mu.end() and mu.end() > mu.start():
+                            m, cruza = mu, True
+                            break
+                if m is None or m.end() == m.start():
+                    n += 1
+                    continue
+                if cruza:
+                    original = lineas[n] + " " + lineas[n + 1]
+                else:
+                    original = lineas[n]
+                ini = max(0, n - contexto)
+                fin = min(len(lineas), n + (2 if cruza else 1) + contexto)
+                resultado = {
+                    "documento": id_doc,
+                    "linea": n,
+                    "coincidencia": _alrededor(original, m.start(), m.end(), 200),
+                    "contexto": _acotar_contexto(
+                        lineas[ini:fin], n - ini, m.start(), m.end()),
+                }
+                pagina = indice.pagina_de_linea(paginas, n)
+                if pagina is not None:
+                    resultado["pagina"] = pagina
+                resultados.append(resultado)
+                n += 2 if cruza else 1
         return resultados
+
+    def consultar(self, pregunta: str, maximo: int = 3,
+                  caracteres: int = 1800) -> List[Dict[str, Any]]:
+        """
+        Los tramos que mejor responden a una pregunta, por BM25.
+
+        Se puntuan ventanas de unas quince lineas dentro de cada pagina (o del
+        documento, si no tiene paginas) sobre texto plegado. Devuelve como
+        mucho `maximo` tramos que no se solapan, y entre todos no pasan de
+        `caracteres`: la respuesta de una herramienta viaja en cada vuelta.
+        """
+        consulta = indice.terminos(pregunta)
+        if not consulta:
+            return []
+        tramos: List[Tuple[str, Optional[int], int, int]] = []
+        tokens: List[List[str]] = []
+        cache_lineas: Dict[str, List[str]] = {}
+        for id_doc in self._ids_de_documentos():
+            lineas = self._lineas_de(id_doc)
+            if not lineas:
+                continue
+            cache_lineas[id_doc] = lineas
+            paginas = indice.paginas_de(lineas)
+            secciones = ([(p.numero, p.inicio + 1, p.fin) for p in paginas]
+                         or [(None, 0, len(lineas))])
+            for numero, ini, fin in secciones:
+                utiles = [i for i in range(ini, fin) if lineas[i].strip()]
+                if not utiles:
+                    continue
+                paso = _VENTANA_LINEAS // 2
+                for k in range(0, max(1, len(utiles) - paso), paso):
+                    grupo = utiles[k:k + _VENTANA_LINEAS]
+                    tramos.append((id_doc, numero, grupo[0], grupo[-1] + 1))
+                    tokens.append(indice.terminos(
+                        "\n".join(lineas[grupo[0]:grupo[-1] + 1])))
+        if not tramos:
+            return []
+        bm25 = indice.BM25(tokens)
+        # Lo que se pregunto pesa entero; sus sinonimos ("cedula" -> "cc"),
+        # la mitad.
+        pesos = indice.expandir(consulta)
+        puntuados = sorted(
+            ((bm25.puntaje(i, pesos), i) for i in range(len(tramos))),
+            key=lambda x: -x[0])
+        maximo = max(1, maximo)
+        elegidos: List[Tuple[float, int]] = []
+        for puntaje, i in puntuados:
+            if puntaje <= 0 or len(elegidos) >= maximo:
+                break
+            doc, _, ini, fin = tramos[i]
+            if any(tramos[j][0] == doc and tramos[j][2] < fin and ini < tramos[j][3]
+                   for _, j in elegidos):
+                continue
+            # El mismo soporte adjunto dos veces no es un segundo hallazgo.
+            if any(tokens[j] == tokens[i] for _, j in elegidos):
+                continue
+            elegidos.append((puntaje, i))
+        if not elegidos:
+            return []
+        por_tramo = max(200, caracteres // len(elegidos))
+        terminos_consulta = set(pesos)
+        salida: List[Dict[str, Any]] = []
+        for puntaje, i in elegidos:
+            doc, pagina, ini, fin = tramos[i]
+            lineas = cache_lineas[doc]
+            # La linea del tramo con mas terminos de la pregunta es el centro.
+            mejor = max(range(ini, fin), key=lambda n: (
+                len(terminos_consulta & set(indice.terminos(lineas[n]))), -n))
+            desde, hasta, texto = _recortar_alrededor(lineas, ini, fin, mejor,
+                                                      por_tramo, terminos_consulta)
+            fragmento: Dict[str, Any] = {"documento": doc}
+            if pagina is not None:
+                fragmento["pagina"] = pagina
+            fragmento.update({"linea": desde, "puntaje": round(puntaje, 2),
+                              "texto": texto})
+            salida.append(fragmento)
+        return salida
 
     def _resolver(self, id_documento: str) -> Optional[Path]:
         if id_documento in ("correo", "correo.md"):
@@ -278,11 +495,71 @@ class Workspace:
         el pipeline no debe mandar todo al modelo.
         """
         partes: List[str] = []
-        for doc in self.listar():
-            ruta = self._resolver(doc["id"])
+        for id_doc in self._ids_de_documentos():
+            ruta = self._resolver(id_doc)
             if ruta and ruta.exists():
                 partes.append(ruta.read_text(encoding="utf-8"))
         return "\n\n".join(partes)
+
+
+# Lineas no vacias por ventana de la consulta BM25.
+_VENTANA_LINEAS = 15
+# Tope del contexto de una coincidencia: el OCR deja paginas enteras en una
+# sola linea, y sin tope una coincidencia traeria la pagina completa.
+_MAX_CONTEXTO_BUSQUEDA = 800
+
+
+def _alrededor(texto: str, inicio: int, fin: int, largo: int) -> str:
+    """El trozo de `texto` de unos `largo` caracteres centrado en [inicio, fin)."""
+    if len(texto) <= largo:
+        return texto.strip()
+    sobra = max(0, largo - (fin - inicio))
+    desde = max(0, inicio - sobra // 2)
+    hasta = min(len(texto), desde + largo)
+    desde = max(0, hasta - largo)
+    return ("…" if desde > 0 else "") + texto[desde:hasta].strip() + (
+        "…" if hasta < len(texto) else "")
+
+
+def _acotar_contexto(lineas: List[str], fila: int, inicio: int, fin: int) -> str:
+    """Las lineas vecinas, recortadas alrededor de la coincidencia si son largas."""
+    unido = "\n".join(lineas)
+    if len(unido) <= _MAX_CONTEXTO_BUSQUEDA:
+        return unido
+    base = sum(len(l) + 1 for l in lineas[:fila])
+    return _alrededor(unido, base + inicio, base + fin, _MAX_CONTEXTO_BUSQUEDA)
+
+
+def _recortar_alrededor(lineas: List[str], ini: int, fin: int, centro: int,
+                        limite: int, terminos: set) -> Tuple[int, int, str]:
+    """
+    Lineas del tramo [ini, fin) que caben en `limite`, creciendo desde
+    `centro` hacia los dos lados. Si la linea central sola no cabe, se corta
+    alrededor del primer termino de la pregunta que aparezca en ella.
+    """
+    linea = lineas[centro]
+    if len(linea) > limite:
+        plegada = indice.plegar(linea)
+        pos = 0
+        for m in indice.PALABRA.finditer(plegada):
+            if indice.raiz(m.group(0)) in terminos:
+                pos = m.start()
+                break
+        return centro, centro + 1, _alrededor(linea, pos, pos + 1, limite)
+    desde, hasta, total = centro, centro + 1, len(linea)
+    while True:
+        crecio = False
+        if desde > ini and total + len(lineas[desde - 1]) + 1 <= limite:
+            desde -= 1
+            total += len(lineas[desde]) + 1
+            crecio = True
+        if hasta < fin and total + len(lineas[hasta]) + 1 <= limite:
+            total += len(lineas[hasta]) + 1
+            hasta += 1
+            crecio = True
+        if not crecio:
+            break
+    return desde, hasta, "\n".join(lineas[desde:hasta]).strip("\n")
 
 
 def sha256_de(datos: bytes) -> str:

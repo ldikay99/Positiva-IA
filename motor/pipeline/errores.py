@@ -148,6 +148,16 @@ CLASES: Tuple[Clase, ...] = (
         descripcion="el adjunto tiene contraseña y su contenido no se puede leer",
     ),
     Clase(
+        codigo="ADJUNTO_NO_LEIDO",
+        severidad=Severidad.DEGRADA,
+        reintentable=False, max_intentos=1, espera_base_s=0.0,
+        motivo_manual="ADJUNTO_NO_LEIDO",
+        descripcion=(
+            "un adjunto no se pudo convertir (formato no soportado, archivo "
+            "danado): se pierde ese adjunto, no el correo. Si el dato que "
+            "faltaba estaba ahi, la compuerta lo manda a manual igual"),
+    ),
+    Clase(
         codigo="ADJUNTO_ILEGIBLE",
         severidad=Severidad.DEGRADA,
         reintentable=False, max_intentos=1, espera_base_s=0.0,
@@ -228,6 +238,10 @@ _FIRMAS: Tuple[Tuple[str, str, bool], ...] = (
      r"(?:password|encrypted)[^.\n]{0,20}(?:protected|pdf|document)",
      True),
     ("SIN_OCR", r"tesseractnotfound|tesseract\s+is\s+not\s+installed", True),
+    # Un .msg o un .xls de Office 97 no se convierte. Antes caia en DESCONOCIDO,
+    # que es fatal, y el correo entero se aplazaba aunque ya tuviera todos sus
+    # datos: la corrida siguiente volvia a fallar igual.
+    ("ADJUNTO_NO_LEIDO", r"tipo\s+no\s+soportado\s+para\s+conversion", True),
     # Un escaneo que ni el extractor de texto ni el OCR resolvieron. Es del
     # adjunto, no del sistema: reintentarlo da exactamente lo mismo.
     ("ADJUNTO_ILEGIBLE", r"sin\s+texto\s+extra[ií]ble|p[aá]ginas\s+sin\s+texto",

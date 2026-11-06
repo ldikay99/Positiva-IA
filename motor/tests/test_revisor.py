@@ -74,7 +74,8 @@ def test_el_revisor_solo_lee_documentos():
     segundo extractor y no un revisor.
     """
     assert set(HERRAMIENTAS_DEL_REVISOR) == {
-        "listar_documentos", "leer_documento", "buscar_en_documentos"}
+        "listar_documentos", "leer_documento", "buscar_en_documentos",
+        "consultar_documentos"}
 
 
 def test_una_herramienta_de_escritura_se_le_rechaza(ctx):

@@ -101,6 +101,29 @@ def claves_candidatas_de(texto: str) -> List[str]:
     return vistos[:12]  # tope: probar claves no debe volverse fuerza bruta
 
 
+def claves_de_los_adjuntos(ws: Workspace) -> List[str]:
+    """
+    Documentos de identidad que aparecen en los adjuntos ya convertidos, los
+    que llevan marca de documento primero. Son las claves que se prueban en un
+    PDF protegido que no abrio con lo del correo.
+    """
+    from utils.documento_candidatos import extraer_candidatos_documento
+
+    try:
+        texto = ws.texto_completo()
+    except Exception:
+        return []
+    candidatos = extraer_candidatos_documento(texto)
+    marcados = [c["numero"] for c in candidatos
+                if c.get("marca_pegada") or c.get("tiene_cc") or c.get("tiene_nit")]
+    resto = [c["numero"] for c in candidatos if c["numero"] not in marcados]
+    vistos: List[str] = []
+    for n in marcados + resto:
+        if n not in vistos:
+            vistos.append(n)
+    return vistos[:12]  # tope: probar claves no debe volverse fuerza bruta
+
+
 def materializar_adjuntos(
     ws: Workspace,
     adjuntos: Iterable[Tuple[str, bytes]],
@@ -123,8 +146,24 @@ def materializar_adjuntos(
     # se lleva la ventana entre corridas.
     presupuesto = PresupuestoDeOcr()
     quedaron_sin_convertir: List[str] = []
+    # PDF con contraseña que no abrieron las claves del correo. Se reintentan
+    # al final con los documentos que aparecieron en los OTROS adjuntos: el
+    # ciudadano protege el resumen de su historia con su cedula, y la cedula
+    # esta en la orden medica que mando al lado, no en el cuerpo.
+    protegidos: List[Tuple[str, bytes]] = []
+    reintento_hecho = False
 
-    while pendientes:
+    while pendientes or (protegidos and not reintento_hecho):
+        if not pendientes:
+            reintento_hecho = True
+            # Aunque no haya claves nuevas se vuelven a pasar: asi quedan en el
+            # manifiesto con su error y no desaparecen sin rastro.
+            nuevas = [c for c in claves_de_los_adjuntos(ws)
+                      if c not in (claves_candidatas or [])]
+            claves_candidatas = list(claves_candidatas or []) + nuevas
+            for _n, d in protegidos:
+                vistos_hash.discard(sha256_de(d))
+            pendientes, protegidos = protegidos, []
         nombre, datos = pendientes.pop(0)
         indice += 1
 
@@ -205,6 +244,11 @@ def materializar_adjuntos(
             sha256=digest,
             ocr_aplicado=conv.ocr_aplicado,
         )
+
+        if (conv.error and "contraseña de usuario" in conv.error
+                and not reintento_hecho):
+            protegidos.append((nombre, datos))
+            continue
 
         if conv.error:
             entrada.estado = (

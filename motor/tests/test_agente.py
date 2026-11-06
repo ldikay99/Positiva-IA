@@ -319,12 +319,37 @@ def test_se_le_recuerda_que_campos_faltan(ctx):
     assert "tipo_solicitud" in segunda
 
 
-def test_cuando_no_falta_nada_se_le_pide_terminar(ctx):
+def test_cuando_no_falta_nada_se_cierra_sin_pedir_listo(ctx):
+    """
+    Con todo reportado, la vuelta que solo pedia escribir LISTO reenviaba el
+    prompt entero para no cambiar nada, y era la que agotaba el tope.
+    """
     modelo = ModeloFalso(turnos=[
         _reporte("nombre_afectado", "Juan Perez"),
         Turno(texto="LISTO"),
     ])
-    resolver(modelo, ctx, _pendiente("nombre_afectado"))
+    r = resolver(modelo, ctx, _pendiente("nombre_afectado"))
+    assert modelo.veces_llamado == 1
+    assert r.hallazgos["nombre_afectado"].valor == "Juan Perez"
+    assert not r.agotado
+    assert r.traza == [{"vuelta": 1, "herramientas": ["reportar_hallazgo"],
+                        "campos_nuevos": 1, "pendientes": 0}]
+
+
+def test_con_algo_a_confirmar_sin_reportar_se_le_pide_terminar(ctx):
+    """Lo que tenia que confirmar puede ser correcto y no reportarse: decide el."""
+    extraccion = Extraccion(
+        hallazgos={"tipo_remitente": Hallazgo(
+            campo="tipo_remitente", valor=2, evidencia="e", confianza=0.8,
+            metodo="m", a_confirmar="dudoso")},
+        no_resueltos={"nombre_afectado": NoResuelto(
+            "nombre_afectado", "SIN_ETIQUETA_DE_AFECTADO", "x")},
+    )
+    modelo = ModeloFalso(turnos=[
+        _reporte("nombre_afectado", "Juan Perez"),
+        Turno(texto="LISTO"),
+    ])
+    resolver(modelo, ctx, extraccion)
     segunda = "\n".join(m["contenido"] for m in modelo.recibidos[1]["mensajes"])
     assert "Responde LISTO" in segunda
 
@@ -764,7 +789,6 @@ def test_sin_nada_pendiente_el_bucle_no_da_mas_vueltas(ctx):
     r = resolver(modelo, ctx, _pendiente("sexo_afectado"), max_iteraciones=8)
 
     assert r.hallazgos["sexo_afectado"].valor == 1
-    # Vuelta 1: reporta y se le avisa que no falta nada. Vuelta 2: vuelve a
-    # pedir herramientas, y ahi se cierra.
-    assert r.iteraciones == 2
-    assert any("sin nada pendiente" in a for a in r.avisos), r.avisos
+    # Vuelta 1: reporta todo lo pendiente y ahi se cierra, sin la vuelta de LISTO.
+    assert r.iteraciones == 1
+    assert not r.agotado

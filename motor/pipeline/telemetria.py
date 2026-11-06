@@ -99,6 +99,7 @@ MOTIVOS_MANUAL = {
                                  "ninguna persona natural",
     "ADJUNTO_PROTEGIDO": "el adjunto con el soporte tiene contraseña",
     "ADJUNTO_ILEGIBLE": "el adjunto no se pudo convertir",
+    "ADJUNTO_NO_LEIDO": "un adjunto en un formato que no se convierte",
     "SIN_OCR": "imagen sin motor de OCR disponible",
     "VALIDACION_RECHAZO": "la compuerta final rechazo los datos por incoherentes",
     "INYECCION_DETECTADA": "se detecto un intento de manipular al modelo",

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from models.enums import (
@@ -28,11 +28,15 @@ from utils.documento_candidatos import (
     tipo_pegado_que_manda,
 )
 from utils.generic_filter import (
+    _es_de_un_buzon_interno,
+    _nombre_plausible_o_vacio,
     es_la_misma_persona,
     es_nombre_persona_valido,
     extraer_nombre_remitente_real,
     is_buzon_no_humano,
+    nombres_de_firma,
     palabras_de_cargo,
+    parece_razon_social,
 )
 from utils.tipos_documento import (
     MAX_DIGITOS,
@@ -367,7 +371,15 @@ def extraer_documento(
 
     con_marca = [c for c in candidatos
                  if any(c.get(k) for k in _BANDERAS_DE_MARCA)]
-    if len(con_marca) == 1:
+    # Un NIT no gana por ser el unico marcado si otro numero lleva pegado un
+    # rotulo de persona ("Identificacion: 65.735.022"): el correo de una
+    # entidad sobre una persona trae los dos, y elegir el NIT da por afectada
+    # a la entidad. Decide quien lee el texto.
+    nit_frente_a_persona = (
+        len(con_marca) == 1 and con_marca[0].get("tiene_nit")
+        and any(c is not con_marca[0] and c.get("marca_pegada")
+                and c.get("tipo_pegado") != "NI" for c in candidatos))
+    if len(con_marca) == 1 and not nit_frente_a_persona:
         c = con_marca[0]
         return Hallazgo(
             campo=campo,
@@ -380,6 +392,8 @@ def extraer_documento(
 
     # Con varios marcados gana el mas cercano al nombre del afectado, medido en
     # caracteres sobre el texto completo y no dentro del contexto del candidato.
+    if nit_frente_a_persona:
+        con_marca = [c for c in candidatos if c is con_marca[0] or c.get("marca_pegada")]
     if nombre_afectado and len(con_marca) > 1:
         elegido = _mas_cercano_al_nombre(texto, con_marca, nombre_afectado)
         if elegido is not None:
@@ -393,7 +407,8 @@ def extraer_documento(
             ), None
 
     # Todos los marcados coinciden: da igual cual se tome.
-    if con_marca and len({c["numero"] for c in con_marca}) == 1:
+    if (con_marca and len({c["numero"] for c in con_marca}) == 1
+            and not nit_frente_a_persona):
         c = con_marca[0]
         return Hallazgo(
             campo=campo, valor=c["numero"],
@@ -698,7 +713,7 @@ def extraer_documento_del_remitente(
 # solo decide si ninguna otra encaja.
 _MARCAS_TIPO = (
     (TipoDocumento.NI, r"\bnit\b|r[eé]gimen\s+com[uú]n|persona\s+jur[ií]dica"),
-    (TipoDocumento.PPT, r"\bp\.?\s?p\.?\s?t\.?\b|permiso\s+por\s+protecci[oó]n"),
+    (TipoDocumento.PPT, r"\bp\.?\s?p\.?\s?t\.?\b|permiso\s+(?:por|de)\s+protecci[oó]n"),
     (TipoDocumento.PE, r"\bp\.?\s?e\.?\s?p\.?\b|permiso\s+especial\s+de\s+permanencia"),
     (TipoDocumento.PA, r"\bpasaporte\b|\bp\.?\s?a\.?\b"),
     (TipoDocumento.CD, r"carn[eé]\s+diplom[aá]tico"),
@@ -924,10 +939,14 @@ def extraer_nombre_remitente(
     sender_name: str = "",
     nombres_hilo: Optional[Sequence[Tuple[str, str]]] = None,
     cuerpo_actual: str = "",
+    texto_adjuntos: str = "",
 ) -> Tuple[Optional[Hallazgo], Optional[NoResuelto]]:
     """
     Nombre del remitente por la cascada de `utils.generic_filter`, agregando
     evidencia y confianza segun la capa que lo resolvio.
+
+    Los adjuntos solo se usan para precisar lo que la cascada ya eligio: quien
+    firma la carta de una razon social, o el nombre entero de uno abreviado.
     """
     campo = "nombre_remitente"
     nombre = extraer_nombre_remitente_real(
@@ -942,6 +961,18 @@ def extraer_nombre_remitente(
             f"el 'De:' trae '{from_name[:40]}', y no hay nombre en sender, "
             f"hilo, encabezado de reenvio ni firma",
         )
+    # Un buzon institucional se llama por su area ("Gestion del Talento
+    # Humano", "Seguridad y Salud en el Trabajo Uniatlantico") o por su
+    # dominio ("planeacion mani-casanare.gov.co"). La compuerta lo rechaza con
+    # este mismo criterio, asi que aceptarlo aqui solo manda el correo a manual:
+    # se deja pendiente para que el modelo lea la firma y reporte la entidad.
+    motivo = motivo_por_el_que_no_es_un_nombre(nombre)
+    if motivo:
+        return None, NoResuelto(
+            campo, "AREA_O_BUZON_EN_VEZ_DE_NOMBRE",
+            f"'{nombre[:60]}' {motivo}: quien escribe se busca en la firma, "
+            f"y si es una entidad se reporta la entidad",
+        )
     # La confianza depende de que capa resolvio: el display name del 'De:' es
     # mas fiable que una firma interpretada del cuerpo.
     if nombre == from_name:
@@ -950,11 +981,172 @@ def extraer_nombre_remitente(
         origen, confianza = "campo 'sender' de Graph", 0.90
     else:
         origen, confianza = "cuerpo del correo (encabezado de reenvio o firma)", 0.78
+    evidencia = f"resuelto por {origen}"
+
+    # Una razon social escribe por medio de una persona. Si una persona firma
+    # junto a ella, quien escribe es esa persona: la organizacion es el
+    # membrete o el buzon, no el remitente.
+    if parece_razon_social(nombre):
+        persona = (_persona_que_firma_por(nombre, cuerpo_hilo)
+                   or _firma_de_la_carta(nombre, texto_adjuntos, cuerpo_hilo))
+        if persona:
+            evidencia += f" | '{nombre}' es la organizacion; firma '{persona}'"
+            nombre, confianza = persona, 0.78
+
     return Hallazgo(
         campo=campo, valor=nombre,
-        evidencia=f"resuelto por {origen}",
+        evidencia=evidencia,
         confianza=confianza, metodo="cascada_nombre_remitente",
     ), None
+
+
+def desplegar_iniciales(h: Optional[Hallazgo], texto: str) -> Optional[Hallazgo]:
+    """
+    El hallazgo de un nombre con sus iniciales desplegadas, si el texto lo trae
+    entero (ver `_sin_abreviar`).
+
+    Se aplica al final de la extraccion, no al resolver el nombre: con la
+    inicial, "JORGE A. BARRERA" sigue siendo la misma persona que "JORGE AIRIO
+    BARRERA" —una errata del adjunto— y las decisiones de identidad (el
+    documento del remitente, si es el afectado) no deben depender de que forma
+    del nombre se escribio en cada sitio.
+    """
+    if h is None:
+        return h
+    completo = _sin_abreviar(str(h.valor), texto)
+    if completo == h.valor:
+        return h
+    return Hallazgo(
+        campo=h.campo, valor=completo,
+        evidencia=f"{h.evidencia} | forma completa de '{h.valor}' en el texto",
+        confianza=h.confianza, metodo=h.metodo, a_confirmar=h.a_confirmar,
+    )
+
+
+_LINEA_DE_ENCABEZADO = re.compile(
+    r"(?i)^[ \t>]*(?:de|from|para|to|cc|enviado|sent|asunto|subject|fecha|date)"
+    r"[ \t]*:")
+# Cuantas lineas no vacias alrededor de la razon social se miran para hallar a
+# quien firma por ella. Una firma ocupa nombre, cargo y empresa.
+LINEAS_DE_LA_FIRMA = 3
+# Hasta donde se lee el mensaje que encabeza la razon social: su firma.
+TOPE_DEL_MENSAJE = 3000
+
+
+def _persona_que_firma_por(razon_social: str, cuerpo: str) -> str:
+    """
+    La persona que firma por una razon social, o cadena vacia.
+
+    Dos formas: la razon social es una linea de la firma —y la persona va en
+    las lineas vecinas— o es el nombre del buzon en un "De: EMPRESA <correo>",
+    y la persona firma el mensaje que sigue a ese encabezado.
+    """
+    lineas = (cuerpo or "").splitlines()
+    clave = _normaliza(razon_social)
+    if not clave:
+        return ""
+
+    def persona(linea: str) -> str:
+        if _LINEA_DE_ENCABEZADO.match(linea):
+            return ""
+        candidato = _nombre_plausible_o_vacio(linea, min_tokens=2)
+        if (not candidato or parece_razon_social(candidato)
+                or _es_de_un_buzon_interno(candidato, cuerpo)):
+            return ""
+        return candidato
+
+    for i, linea in enumerate(lineas):
+        if clave not in _normaliza(linea):
+            continue
+        if _LINEA_DE_ENCABEZADO.match(linea):
+            # El mensaje que sigue al encabezado, hasta el siguiente "De:".
+            resto = "\n".join(lineas[i + 1:])[:TOPE_DEL_MENSAJE]
+            corte = re.search(r"(?im)^[ \t>]*(?:de|from)[ \t]*:", resto)
+            mensaje = resto[:corte.start()] if corte else resto
+            for firma in nombres_de_firma(mensaje):
+                if not parece_razon_social(firma) and \
+                        not _es_de_un_buzon_interno(firma, cuerpo):
+                    return firma
+            continue
+        if len(_normaliza(linea)) > len(clave) + 40:
+            continue  # la razon social va en prosa, no en una firma
+        vecinas = []
+        for paso in range(1, LINEAS_DE_LA_FIRMA + 1):
+            for j in (i - paso, i + paso):
+                if 0 <= j < len(lineas) and lineas[j].strip():
+                    vecinas.append(lineas[j])
+        for vecina in vecinas:
+            encontrada = persona(vecina)
+            if encontrada:
+                return encontrada
+    return ""
+
+
+def _firma_de_la_carta(razon_social: str, texto_adjuntos: str,
+                       cuerpo: str) -> str:
+    """
+    Quien firma, en un adjunto, la carta de la razon social; o cadena vacia.
+
+    El correo de una empresa a menudo lo firma solo el area ("Seguridad y Salud
+    en el Trabajo, CONSTRUCTORA X SAS") y la carta adjunta lleva el nombre de
+    la persona. En un adjunto hay mas nombres que en un correo —el trabajador,
+    el medico—, asi que solo vale el que va tras una despedida ("Atentamente,")
+    y a pocas lineas de la razon social.
+    """
+    if not texto_adjuntos:
+        return ""
+    clave = _normaliza(razon_social)
+    lineas = texto_adjuntos.splitlines()
+    con_la_empresa = [i for i, l in enumerate(lineas) if clave in _normaliza(l)]
+    if not con_la_empresa:
+        return ""
+    for nombre in nombres_de_firma(texto_adjuntos):
+        if parece_razon_social(nombre) or _es_de_un_buzon_interno(nombre, cuerpo):
+            continue
+        suyas = [i for i, l in enumerate(lineas) if nombre in l]
+        if any(abs(i - j) <= LINEAS_DE_LA_FIRMA
+               for i in suyas for j in con_la_empresa):
+            return nombre
+    return ""
+
+
+# Una inicial: una letra sola, con o sin punto.
+_INICIAL = re.compile(r"^([A-Za-zÁÉÍÓÚÑáéíóúñ])\.?$")
+
+
+def _sin_abreviar(nombre: str, texto: str) -> str:
+    """
+    El nombre con sus iniciales desplegadas, si el texto lo trae entero.
+
+    "JORGE A. BARRERA NOSSA" en la firma y "JORGE ALIRIO BARRERA NOSSA" en el
+    cuerpo son la misma persona, y el registro necesita el nombre completo. Se
+    exige que coincidan TODAS las demas palabras. Si el texto trae dos
+    despliegues —uno de ellos con una errata de OCR o de digitacion— gana el
+    que mas se repite; empatados, no se sabe cual es el bueno y no se toca.
+    """
+    palabras = (nombre or "").split()
+    if not any(_INICIAL.match(p) for p in palabras):
+        return nombre
+    partes = []
+    for p in palabras:
+        m = _INICIAL.match(p)
+        partes.append(
+            rf"{m.group(1)}[a-záéíóúñ]{{2,}}" if m else re.escape(p))
+    patron = re.compile(r"\b" + r"\s+".join(partes) + r"\b", re.IGNORECASE)
+    cuenta: Dict[str, int] = {}
+    original: Dict[str, str] = {}
+    for m in patron.finditer(texto or ""):
+        forma = " ".join(m.group(0).split())
+        cuenta[forma.lower()] = cuenta.get(forma.lower(), 0) + 1
+        original.setdefault(forma.lower(), forma)
+    if not cuenta:
+        return nombre
+    orden = sorted(cuenta.values(), reverse=True)
+    if len(orden) > 1 and orden[0] == orden[1]:
+        return nombre
+    forma = original[max(cuenta, key=cuenta.get)]
+    # Se conserva la caja con la que venia el nombre.
+    return forma.upper() if nombre.isupper() else forma
 
 
 _ETIQUETAS_AFECTADO = (
@@ -1087,6 +1279,8 @@ legal identificacion gerente talento humano nombre nombres apellido apellidos
 principal suplente
 calle carrera avenida diagonal transversal apto apartamento piso kilometro
 manzana torre bloque edificio local conjunto urbanizacion
+fecha area rodilla derecha izquierda izquierdo ortopedia electronica
+controversia junta juntas nequi daviplata ibc caja pcl pclo
 """.split()) | palabras_de_cargo()
 # Los cargos se heredan de `utils.generic_filter` en vez de repetirse aqui: son
 # el mismo concepto —un cargo no es el nombre de nadie— y con dos listas
@@ -1227,6 +1421,10 @@ def _candidato_afectado(texto: str, bruto: str, inicio: int,
         " ".join((bruto or "").split()))
     if not candidato or not es_nombre_persona_valido(candidato):
         return None
+    # La etiqueta se encontro pero lo que la sigue es la frase, no la persona:
+    # "trabajador QUE SE ENCONTRABA LABORANDO", "paciente VALORADO POR".
+    if motivo_de_frase(candidato):
+        return None
     # Las palabras en minuscula no pueden sostener el nombre por si solas: se
     # admiten en medio del nombre pero el candidato tiene que seguir teniendo
     # dos palabras capitalizadas. Sin esto, la relajacion depende de que el
@@ -1260,6 +1458,77 @@ def _candidato_afectado(texto: str, bruto: str, inicio: int,
     )
 
 
+# ── Un trozo de frase no es un nombre ──
+#
+# "ENCONTRABA LABORANDO REALIZANDO", "ANTES DE INICIAR LABORES", "VALORADO POR
+# ORTOPEDIA", "NO APLICA": la etiqueta ("trabajador", "paciente") se encontro
+# y lo que la sigue es la frase, no la persona. El vocabulario no alcanza a
+# listar toda la lengua; la forma de la frase si se reconoce.
+
+# Mas palabras que estas no es un nombre: dos nombres, dos apellidos y dos
+# particulas ya son seis.
+MAX_PALABRAS_DE_UN_NOMBRE = 6
+
+# Palabras gramaticales que un nombre no lleva en ninguna posicion. Las
+# particulas de apellido ("de", "del", "la", "y") no estan: "Maria del Mar de
+# la Hoz y Perez" es un nombre.
+_PALABRAS_DE_FRASE = frozenset("""
+el los un una unos unas al en por para con sin que se lo le les su sus
+antes despues durante segun desde hasta sobre entre hacia mediante tras contra
+no si ni ya muy mas aun tambien cuando donde como porque pero aplica
+""".split())
+# Al principio tampoco: "LA ROSA" puede ser apellido en medio, pero un nombre
+# que EMPIEZA por articulo es el arranque de una frase.
+_ARRANQUE_DE_FRASE = _PALABRAS_DE_FRASE | frozenset("las".split())
+
+# Gerundios e imperfectos. Hay nombres de pila con esa terminacion, y van
+# aparte.
+_VERBO_CONJUGADO = re.compile(
+    r"^[a-z]{3,}(?:iendo|yendo|ando|aban|aba|ieron|aron|ndose)$")
+_NOMBRES_CON_FORMA_DE_VERBO = frozenset("""
+fernando hernando armando orlando rolando ernando arnando fernanda hernanda
+armanda orlanda rolanda ferrando durando
+""".split())
+# Sustantivos abstractos en -cion/-sion. Algunos son nombres de pila.
+_SUSTANTIVO_ABSTRACTO = re.compile(r"^[a-z]{3,}(?:cion|sion|ciones|siones)$")
+_NOMBRES_EN_CION = frozenset("""
+concepcion asuncion encarnacion ascension purificacion anunciacion
+""".split())
+
+_VALORES_DE_RELLENO = frozenset({
+    "no aplica", "n a", "na", "ninguno", "ninguna", "sin informacion",
+    "no registra", "no reporta", "desconocido", "sin dato", "sin datos",
+    "no informa", "pendiente", "por definir",
+})
+
+
+def motivo_de_frase(nombre: str) -> str:
+    """Por que el texto es un trozo de frase y no un nombre, o cadena vacia."""
+    palabras = [_normaliza(p).strip(".,;:()\"'") for p in str(nombre or "").split()]
+    palabras = [p for p in palabras if p]
+    if not palabras:
+        return ""
+    if " ".join(re.findall(r"[a-z]+", " ".join(palabras))) in _VALORES_DE_RELLENO:
+        return "es un valor de relleno, no un nombre"
+    if len(palabras) > MAX_PALABRAS_DE_UN_NOMBRE:
+        return f"tiene {len(palabras)} palabras: es una frase, no un nombre"
+    if palabras[0] in _ARRANQUE_DE_FRASE:
+        return f"empieza por '{palabras[0]}': es el arranque de una frase"
+    gramaticales = [p for p in palabras if p in _PALABRAS_DE_FRASE]
+    if gramaticales:
+        return ("lleva palabras de una frase que un nombre no lleva: "
+                + ", ".join(gramaticales))
+    verbos = [p for p in palabras if _VERBO_CONJUGADO.match(p)
+              and p not in _NOMBRES_CON_FORMA_DE_VERBO]
+    if verbos:
+        return "lleva verbos conjugados: " + ", ".join(verbos)
+    abstractos = [p for p in palabras if _SUSTANTIVO_ABSTRACTO.match(p)
+                  and p not in _NOMBRES_EN_CION]
+    if abstractos:
+        return "lleva sustantivos de tramite: " + ", ".join(abstractos)
+    return ""
+
+
 def motivo_por_el_que_no_es_un_nombre(nombre: str) -> str:
     """
     Por que ese texto no puede ser el nombre de una persona, o cadena vacia.
@@ -1285,6 +1554,9 @@ def motivo_por_el_que_no_es_un_nombre(nombre: str) -> str:
         return ajeno_al_caso
     if parece_razon_social(limpio):
         return ""
+    frase = motivo_de_frase(limpio)
+    if frase:
+        return frase
     palabras = limpio.split()
     if len(palabras) < 2:
         return "una sola palabra no identifica a nadie"
@@ -1450,6 +1722,40 @@ def _conciliar_con_el_asunto(
     )
 
 
+def _desborda_el_tope(frase: str) -> bool:
+    """
+    Si la frase con forma de nombre trae mas palabras de las que caben en uno.
+
+    En un asunto en mayusculas no hay como separar el tramite del nombre: en
+    "NIEGA PERMISO SINDICAL AURA VANEGAS" todo es capitalizado y el tope de
+    cuatro palabras corta por delante, dejando "NIEGA PERMISO SINDICAL AURA".
+    Cuando hubo que cortar, donde empieza el nombre es una adivinanza; se deja
+    al modelo, que lee la frase. Lo mismo con cualquier palabra que falte en el
+    vocabulario: el criterio es la forma, no una lista.
+    """
+    _, cabeza, _ = _recortar_vocabulario(" ".join(frase.split()))
+    resto = " ".join(frase.split()[len(cabeza):])
+    propias = [p for p in resto.split()
+               if _normaliza(p).strip(".,;:") not in _PARTICULAS]
+    return len(propias) > MAX_PALABRAS_NOMBRE
+
+
+# Por debajo de esta confianza el nombre salio de una regla debil: hubo que
+# recortar la frase, se leyo detras del documento o es lo unico con forma de
+# nombre en el asunto. Ahi es donde el algoritmo radicaba trozos de frase
+# ("No Retenido Nuevo", "IBC Caja"); se le da al agente a confirmar.
+CONFIANZA_DE_UN_NOMBRE_FIRME = 0.86
+
+
+def _a_confirmar_si_es_debil(h: Hallazgo) -> Hallazgo:
+    if h.a_confirmar or h.confianza >= CONFIANZA_DE_UN_NOMBRE_FIRME:
+        return h
+    return replace(h, a_confirmar=(
+        f"lo leyo una regla debil ({h.metodo}): confirma en el correo que es "
+        f"el nombre completo de la persona del caso y no un trozo de frase, un "
+        f"area o una entidad"))
+
+
 def extraer_nombre_afectado(
     texto: str, asunto: str = ""
 ) -> Tuple[Optional[Hallazgo], Optional[NoResuelto]]:
@@ -1529,7 +1835,8 @@ def extraer_nombre_afectado(
     elif del_asunto is not None:
         elegido = del_asunto
     if elegido is not None:
-        return _completar_con_el_texto(texto or "", elegido, intentos), None
+        return _a_confirmar_si_es_debil(
+            _completar_con_el_texto(texto or "", elegido, intentos)), None
 
     # El asunto suele traer el nombre solo, sin etiqueta. Se acepta con menos
     # confianza y solo si es lo unico con forma de nombre que hay. Se exige
@@ -1539,6 +1846,7 @@ def extraer_nombre_afectado(
         encontrados = [
             m for m in re.finditer(_NOMBRE, asunto)
             if not (set(_normaliza(m.group(0)).split()) & _PARTICULAS)
+            and not _desborda_el_tope(m.group(0))
             and _candidato_afectado(asunto, m.group(0), m.start(), "asunto", 0.72)
         ]
         if len(encontrados) == 1:
@@ -1547,7 +1855,7 @@ def extraer_nombre_afectado(
                 "unico_nombre_en_el_asunto", 0.72,
             )
             if h is not None:
-                return h, None
+                return _a_confirmar_si_es_debil(h), None
 
     solo_empresa = _nits_sin_documento_de_persona(texto or "")
     if solo_empresa:
@@ -1921,6 +2229,28 @@ def voces_del_tramite(texto_del_remitente: str) -> Tuple[str, str]:
             de_otro.group(0) if de_otro else "")
 
 
+# Despedida seguida del nombre en la misma linea, aunque el texto venga
+# corrido y sin salto: "...rehabilitacion.Atentamente,CARLOS PEREZ".
+_DESPEDIDA_EN_LINEA = re.compile(
+    r"(?i)(?:atentamente|cordialmente|respetuosamente|atte)\s*[,.:;]?\s*"
+    r"([^\n,.:;]{5,70})")
+
+
+def firmantes_del_mensaje(texto: str) -> List[str]:
+    """
+    Los nombres que firman el mensaje, en orden.
+
+    Recibe solo el texto del mensaje que se procesa —sin el hilo citado—:
+    la firma de un mensaje anterior es de otra persona.
+    """
+    nombres = list(nombres_de_firma(texto))
+    for m in _DESPEDIDA_EN_LINEA.finditer(texto or ""):
+        nombre = _nombre_plausible_o_vacio(m.group(1).strip(), min_tokens=2)
+        if nombre and nombre not in nombres:
+            nombres.append(nombre)
+    return [n for n in nombres if not parece_razon_social(n)]
+
+
 def extraer_tipo_remitente(
     documento_afectado: str = "",
     documento_remitente: str = "",
@@ -1986,6 +2316,21 @@ def extraer_tipo_remitente(
             evidencia=f"remitente y afectado son '{nombre_afectado}'",
             confianza=0.88, metodo="mismo_nombre_que_el_afectado",
         ), None
+
+    # Quien firma el mensaje es quien escribe, venga del buzon que venga: un
+    # trabajador que escribe desde el correo de la empresa, o desde el de un
+    # familiar, firma con su nombre. Si esa firma es la del afectado, es el.
+    # No vale si la firma se declara empleador: ahi el "afectado" se pudo
+    # tomar de esa misma firma.
+    if not firma_de_empleador and not de_organizacion and nombre_afectado:
+        for firmante in firmantes_del_mensaje(texto_del_remitente):
+            if _mismo_nombre(firmante, nombre_afectado):
+                return Hallazgo(
+                    campo=campo, valor=TIPO_REMITENTE_AFECTADO,
+                    evidencia=f"el mensaje lo firma '{firmante}', que es el "
+                              f"afectado",
+                    confianza=0.85, metodo="firma_del_afectado",
+                ), None
 
     propia, de_otro = voces_del_tramite(texto_del_remitente)
     if propia and not de_otro:
@@ -2064,13 +2409,27 @@ METODOS_POR_DEFECTO = frozenset({METODO_TIPO_PQRD_FIJO})
 
 # La primera que case decide: las especificas van antes que las genericas.
 _TIPO_SOLICITUD_DECLARADO = (
+    # Las facturas de un prestador son cuentas medicas, no aportes: van antes
+    # del estado de cartera, que una clinica tambien escribe.
+    (28, r"\bglosas?\b|cuentas\s+m[eé]dicas"),
     (8,  r"estado\s+de\s+(?:cuenta|cartera)"),
     # La preposicion es opcional: "Devolucion aportes", "PAGO INCAPACIDAD".
     (26, r"devoluci[oó]n\s+(?:de\s+)?(?:los\s+)?aportes"),
     (26, r"\bmora\b[^.]{0,60}\baportes\b|\baportes\b[^.]{0,60}\bmora\b"),
+    # La constitucion en mora es el cobro de aportes adeudados: quien responde
+    # a ella discute un pago de aportes, no pide su estado de cuenta.
+    (26, r"constituci[oó]n\s+en\s+mora"),
     (16, r"pago\s+(?:de\s+)?(?:la\s+)?incapacidad"
          r"|reconocimiento\s+de\s+(?:la\s+)?incapacidad"
-         r"|incapacidad(?:es)?\s+(?:no\s+)?(?:pagad|reconocid)"),
+         r"|incapacidad(?:es)?\s+(?:no\s+)?(?:pagad|reconocid)"
+         # La indemnizacion por incapacidad permanente parcial se paga tras un
+         # dictamen, y el dictamen no la vuelve una controversia.
+         r"|indemnizaci[oó]n\s+(?:por\s+)?(?:la\s+)?(?:incapacidad|ipp\b)"
+         r"|incapacidad\s+permanente\s+parcial"),
+    # Preguntar si se esta activo es el estado de la afiliacion, aunque el
+    # mismo correo nombre la junta que califico.
+    (12, r"\bactiv[oa]\s+o\s+inactiv[oa]|\bsi\s+(?:estoy|esta|sigo)\s+"
+         r"(?:activ[oa]|afiliad[oa])"),
     (7,  r"\bdictamen\b|\bcontroversia\b|\bp[ec]l\b"
          r"|junta\s+(?:regional|nacional)\s+de\s+calificaci[oó]n"
          r"|p[eé]rdida\s+de\s+capacidad\s+laboral"),
@@ -2097,19 +2456,44 @@ TOPE_PARA_LA_SOLICITUD = 1500
 def extraer_tipo_solicitud(
     asunto: str, cuerpo: str,
 ) -> Tuple[Optional[Hallazgo], Optional[NoResuelto]]:
-    """Resuelve solo si el texto nombra el tramite; si no, devuelve NoResuelto."""
-    campo = "tipo_solicitud"
-    texto = f"{asunto or ''}\n{(cuerpo or '')[:TOPE_PARA_LA_SOLICITUD]}"
-    plano = _sin_acentos(texto)
+    """
+    Resuelve solo si el texto nombra el tramite; si no, devuelve NoResuelto.
 
-    for codigo, patron in _TIPO_SOLICITUD_DECLARADO:
-        m = re.search(patron, plano, re.IGNORECASE)
-        if not m:
+    El asunto es el titulo de la peticion: si nombra un tramite, ese decide. Si
+    solo lo nombra el cuerpo, y nombra tramites de DOS codigos distintos, la
+    palabra que aparece no dice cual se pide y cual se menciona de paso ("no soy
+    pensionado", "la incapacidad ya termino, pido cita"). El de mas prioridad se
+    conserva, pero el agente lo confirma leyendo la peticion.
+    """
+    campo = "tipo_solicitud"
+    asunto = asunto or ""
+    inicio = (cuerpo or "")[:TOPE_PARA_LA_SOLICITUD]
+
+    def nombrados(texto: str) -> List[Tuple[int, "re.Match"]]:
+        plano = _sin_acentos(texto)
+        vistos: List[Tuple[int, re.Match]] = []
+        for codigo, patron in _TIPO_SOLICITUD_DECLARADO:
+            m = re.search(patron, plano, re.IGNORECASE)
+            if m and all(c != codigo for c, _ in vistos):
+                vistos.append((codigo, m))
+        return vistos
+
+    for texto, del_asunto in ((asunto, True), (inicio, False)):
+        vistos = nombrados(texto)
+        if not vistos:
             continue
+        codigo, m = vistos[0]
+        otros = [c for c, _ in vistos[1:]]
+        a_confirmar = "" if del_asunto or not otros else (
+            f"el cuerpo nombra tramites de varios codigos "
+            f"({', '.join(str(c) for c in [codigo] + otros)}): confirmar cual "
+            f"es el que se PIDE y cual solo se menciona")
         return Hallazgo(
             campo=campo, valor=int(codigo),
-            evidencia=f"el texto nombra el tramite: \"{_cita(texto, m.start())}\"",
+            evidencia=f"el {'asunto' if del_asunto else 'texto'} nombra el "
+                      f"tramite: \"{_cita(texto, m.start())}\"",
             confianza=0.85, metodo="tramite_nombrado_en_el_texto",
+            a_confirmar=a_confirmar,
         ), None
 
     return None, NoResuelto(
@@ -2140,17 +2524,44 @@ _NO_ES_DOMICILIO = re.compile(r"(?i)\bconsultorio\b")
 
 # Donde termina el valor cuando los campos van seguidos en la misma linea, sin
 # barra ni salto que los separe.
+#
+# El rotulo con dos puntos corta tambien cuando va PEGADO al valor: un
+# formulario HTML con un campo por <li> se convierte en "CALLE 21 N 14-19E-mail:
+# ...", sin espacio entre la direccion y el rotulo siguiente. Pegado se acepta
+# tras una cifra o un signo, o con el salto de minuscula a mayuscula
+# ("Sur 4-10 apto 2Barrio:"); dentro de una palabra no ("CARLOS:"). Un
+# separador de lista (" * ", "•", ";") delante tambien lo abre.
+_ROTULOS_DE_FORMULARIO = (
+    r"correo(?:\s+electr[oó]nico)?|e-?mail|tel[eé]fonos?|tel|celular|cel"
+    r"|m[oó]vil|fax|whatsapp|ciudad|municipio|departamento|pa[ií]s|barrio"
+    r"|nacionalidad|ocupaci[oó]n|eps|arl|zona|estrato|documento|c[eé]dula"
+    r"|identificaci[oó]n|tipo\s+de\s+documento|nombres?|apellidos?|sexo|g[eé]nero"
+    r"|edad|fecha|comentarios?|observaci[oó]n(?:es)?")
 _SIGUIENTE_ROTULO = re.compile(
-    r"(?i)\s+(?:correo|e-?mail|tel[eé]fono|celular|m[oó]vil|fax|ciudad|"
-    r"municipio|departamento|pa[ií]s|barrio|nacionalidad|ocupaci[oó]n|"
-    r"eps|arl|zona|estrato)\b(?:\s+\w+)?[ \t]*:"
+    r"(?:\s*[*•·;]\s*|\s+|(?<=[\d.,#)\-])|(?<=[a-zñáéíóú])(?=[A-ZÑÁÉÍÓÚ]))"
+    rf"(?i:{_ROTULOS_DE_FORMULARIO})\b(?:[ \t]+\w+)?[ \t]*:"
     # El rotulo del dato siguiente no siempre lleva dos puntos: en una linea
     # corrida se escribe "Cel 3105551234" o "Tel. 6013334444". Sin este corte
     # la direccion se traga el telefono y llega asi al registro.
-    r"|\s+(?:cel(?:ular)?|tel(?:efono)?|m[oó]vil|whatsapp|contacto|fax)"
+    r"|\s+(?i:cel(?:ular)?|tel(?:[eé]fono)?|m[oó]vil|whatsapp|contacto|fax)"
     r"\.?\s*[:#]?\s*(?=\d)"
     # Un correo electronico tampoco es parte de la direccion.
     r"|\s+(?=[\w.+-]+@[\w-]+\.[\w.]{2,})")
+
+
+def cortar_en_el_rotulo_siguiente(valor: str) -> str:
+    """
+    El valor de un campo de formulario sin el rotulo del campo siguiente ni lo
+    que venga detras: "CALLE 21 N 14-19E-mail: x@y.co" -> "CALLE 21 N 14-19".
+
+    Lo usa la extraccion al leer la direccion y la compuerta para limpiar la
+    que llegue de cualquier origen.
+    """
+    texto = str(valor or "")
+    corte = _SIGUIENTE_ROTULO.search(texto)
+    if corte:
+        texto = texto[:corte.start()]
+    return texto.strip(" \t*•·;,-")
 
 # Cuanto se mira hacia atras para encontrar al titular del bloque, y cuanto
 # para descartar el rotulo de otro sujeto.
@@ -2158,6 +2569,33 @@ VENTANA_DEL_TITULAR = 320
 TOPE_DEL_BLOQUE_AJENO_DIRECCION = 260
 
 LARGO_MINIMO_DIRECCION = 5
+
+
+def _en_la_fila_del_afectado(plano: str, posicion: int, ancla_nombre: str,
+                             ancla_doc: str) -> bool:
+    """
+    Si el rotulo cae en una fila de tabla que empieza por el afectado.
+
+    Una planilla de afiliacion es una tabla: la cabecera de columnas trae
+    "NIT EMPLEADOR" o "RAZON SOCIAL", y debajo cada fila es el registro de UNA
+    persona. La direccion que va en la fila cuyo documento es el del afectado
+    es suya, aunque la cabecera nombre al empleador justo encima. Se exige que
+    sea una fila ("|"), que el documento o el nombre del afectado vaya en ella
+    antes del rotulo, y que entre ambos no se nombre a otro sujeto.
+    """
+    inicio = plano.rfind("\n", 0, posicion) + 1
+    fila = plano[inicio:posicion]
+    if not fila.lstrip().startswith("|"):
+        return False
+    celdas = [c.strip() for c in fila.split("|")]
+    pos = -1
+    if ancla_doc and ancla_doc in celdas:
+        pos = fila.find(ancla_doc)
+    elif ancla_nombre and ancla_nombre in fila:
+        pos = fila.find(ancla_nombre)
+    if pos < 0:
+        return False
+    return not _BLOQUE_DE_OTRO.search(fila[pos:])
 
 
 def extraer_direccion(
@@ -2185,20 +2623,19 @@ def extraer_direccion(
     vistas = 0
     for m in _ROTULO_DIRECCION.finditer(plano):
         valor = re.split(r"[|\n]", texto[m.end():], maxsplit=1)[0].strip()
-        corte = _SIGUIENTE_ROTULO.search(valor)
-        if corte:
-            valor = valor[:corte.start()].strip()
+        valor = cortar_en_el_rotulo_siguiente(valor)
         if len(valor) < LARGO_MINIMO_DIRECCION or _NO_ES_DOMICILIO.search(valor):
             continue
         vistas += 1
         cabecera = plano[max(0, m.start() - TOPE_DEL_BLOQUE_AJENO_DIRECCION):m.start()]
-        if _BLOQUE_DE_OTRO.search(cabecera):
-            continue
         antes = plano[max(0, m.start() - VENTANA_DEL_TITULAR):m.start()]
-        titular = (ancla_nombre and ancla_nombre in antes) or (
-            ancla_doc and ancla_doc in antes)
-        if not titular:
-            continue
+        if not _en_la_fila_del_afectado(plano, m.start(), ancla_nombre, ancla_doc):
+            if _BLOQUE_DE_OTRO.search(cabecera):
+                continue
+            titular = (ancla_nombre and ancla_nombre in antes) or (
+                ancla_doc and ancla_doc in antes)
+            if not titular:
+                continue
         return Hallazgo(
             campo=campo, valor=valor,
             evidencia=f"bajo un rotulo de direccion en el bloque del afectado: "
@@ -2433,7 +2870,7 @@ def extraer_todo(
     registrar(extraer_nombre_remitente(
         from_name, from_address, cuerpo,
         sender_name=sender_name, nombres_hilo=nombres_hilo,
-        cuerpo_actual=cuerpo_actual or cuerpo,
+        cuerpo_actual=cuerpo_actual or cuerpo, texto_adjuntos=texto_adjuntos,
     ))
     registrar(extraer_sexo(
         completo, nombre_afectado=nombre_af,
@@ -2485,11 +2922,66 @@ def extraer_todo(
     for h in extraer_geografia(completo):
         registrar((h, None))
 
+    # Con todas las decisiones de identidad ya tomadas, el nombre del remitente
+    # se registra entero.
+    if "nombre_remitente" in hallazgos:
+        hallazgos["nombre_remitente"] = desplegar_iniciales(
+            hallazgos["nombre_remitente"], completo)
+
     encabezado = "\n".join(
         [l for l in (cuerpo or "").splitlines() if l.strip()][:14]
     )[:1800]
+    contexto = f"Asunto: {asunto}\n\n{encabezado}"
+    adjuntos = asuntos_de_los_adjuntos(texto_adjuntos)
+    if adjuntos:
+        contexto += ("\n\nADJUNTOS (nombre del archivo y asunto que declara "
+                     "el escrito):\n" + adjuntos)
     return Extraccion(
         hallazgos=hallazgos,
         no_resueltos=no_resueltos,
-        contexto=f"Asunto: {asunto}\n\n{encabezado}",
+        contexto=contexto,
     )
+
+
+# El rotulo con que un escrito declara de que trata.
+_ROTULO_DE_ASUNTO = re.compile(
+    r"(?im)^[ \t#*>|]*(?:asunto|referencia|ref\.?)[ \t]*:[ \t]*(.*)$")
+# Un escrito se presenta en su primera pagina; mas abajo un "Asunto:" es el de
+# otro documento citado.
+CARACTERES_DEL_ENCABEZADO_DEL_ADJUNTO = 4000
+LARGO_DEL_ASUNTO_DEL_ADJUNTO = 300
+MAX_ADJUNTOS_EN_EL_CONTEXTO = 6
+
+
+def asuntos_de_los_adjuntos(texto_adjuntos: str) -> str:
+    """
+    Una linea por adjunto: el nombre del archivo y el asunto que declara.
+
+    Muchos correos son solo la carta de remision ("Adjunto derecho de peticion
+    con sus anexos"): el cuerpo dice la FORMA del escrito y lo que se pide va en
+    el adjunto. Sin esto el agente clasifica la intencion del correo sin verla.
+    El nombre del archivo suele resumirla, y el "ASUNTO:" del escrito la dice.
+    """
+    if not texto_adjuntos:
+        return ""
+    # Cada adjunto convertido empieza por "# <nombre del archivo>".
+    partes = re.split(r"(?m)^# (?=\S)", texto_adjuntos)
+    lineas = []
+    for parte in partes[1:]:
+        titulo, _, resto = parte.partition("\n")
+        titulo = " ".join(titulo.split())
+        if not titulo:
+            continue
+        linea = f"- {titulo[:LARGO_DEL_ASUNTO_DEL_ADJUNTO]}"
+        m = _ROTULO_DE_ASUNTO.search(resto[:CARACTERES_DEL_ENCABEZADO_DEL_ADJUNTO])
+        if m:
+            # El asunto sigue en los renglones de abajo hasta el primer blanco.
+            cola = resto[m.end():m.end() + 2 * LARGO_DEL_ASUNTO_DEL_ADJUNTO]
+            cola = cola.split("\n\n", 1)[0]
+            asunto = " ".join(f"{m.group(1)} {cola}".split())
+            if asunto:
+                linea += f" | ASUNTO: {asunto[:LARGO_DEL_ASUNTO_DEL_ADJUNTO]}"
+        lineas.append(linea)
+        if len(lineas) >= MAX_ADJUNTOS_EN_EL_CONTEXTO:
+            break
+    return "\n".join(lineas)

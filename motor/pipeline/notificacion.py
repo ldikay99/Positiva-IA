@@ -70,6 +70,8 @@ MOTIVO_PARA_EL_CORREO = {
         "Uno de los documentos adjuntos esta protegido con contraseña.",
     "ADJUNTO_ILEGIBLE":
         "No fue posible leer uno de los documentos adjuntos.",
+    "ADJUNTO_NO_LEIDO":
+        "Uno de los documentos adjuntos esta en un formato que no se pudo leer.",
     "SIN_OCR":
         "No fue posible extraer el texto de un documento adjunto.",
     "VALIDACION_RECHAZO":

@@ -33,7 +33,7 @@ def test_el_correo_corriente_no_se_corta():
 
 def test_el_percentil_95_del_buzon_tampoco_se_corta():
     """Cinco adjuntos y diecinueve paginas se siguen procesando."""
-    adjuntos = [(f"soporte-{i}.pdf", _pdf(4)) for i in range(4)]
+    adjuntos = [(f"soporte-{i}.pdf", _pdf(4, f"soporte {i}")) for i in range(4)]
     adjuntos.append(("historia.pdf", _pdf(3)))
     v = volumen.medir(adjuntos)
 
@@ -56,7 +56,8 @@ def test_demasiadas_paginas_cortan_el_correo():
 
 
 def test_demasiados_adjuntos_cortan_el_correo():
-    adjuntos = [(f"a-{i}.pdf", _pdf(1)) for i in range(volumen.MAX_ADJUNTOS + 1)]
+    adjuntos = [(f"a-{i}.pdf", _pdf(1, f"anexo {i}"))
+                for i in range(volumen.MAX_ADJUNTOS + 1)]
     v = volumen.medir(adjuntos)
 
     assert v.se_pasa is True
@@ -156,3 +157,22 @@ def test_el_desenlace_lo_decidio_el_contenido_del_correo():
     from pipeline.telemetria import lo_decidio_el_contenido
 
     assert lo_decidio_el_contenido(volumen.MOTIVO) is True
+
+
+def test_las_copias_del_mismo_adjunto_no_cuentan():
+    """Un hilo reenviado repite el mismo PDF con otro nombre."""
+    copia = _pdf(3)
+    adjuntos = [(f"resumen ({i}).pdf", copia) for i in range(volumen.MAX_ADJUNTOS + 5)]
+    v = volumen.medir(adjuntos)
+
+    assert v.adjuntos == 1 and v.paginas == 3
+    assert v.se_pasa is False
+
+
+def test_los_topes_admiten_un_expediente_completo():
+    """
+    Una empresa que manda la historia clinica, las ordenes fotografiadas y el
+    FURAT (unos veinte adjuntos) o un derecho de peticion con la tutela y sus
+    anexos (unas cincuenta paginas) se leen, no se cortan.
+    """
+    assert volumen.MAX_ADJUNTOS >= 25 and volumen.MAX_PAGINAS >= 60

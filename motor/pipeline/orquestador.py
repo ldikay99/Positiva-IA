@@ -19,6 +19,7 @@ from pipeline.agente import (
     resolver,
 )
 from pipeline.compuerta import Veredicto
+from pipeline.correccion import campos_a_corregir, extraccion_para_corregir
 from pipeline.duplicados import Detector
 from pipeline.enrutamiento import (
     MOTIVO_REMITENTE_EXCLUIDO,
@@ -27,13 +28,20 @@ from pipeline.enrutamiento import (
     decidir,
 )
 from pipeline.errores import (
+    DESCONOCIDO,
+    POR_CODIGO,
     Bitacora,
     FalloDelModelo,
     clasificar,
     debe_reintentar,
     espera_para,
 )
-from pipeline.extraccion import Hallazgo, extraer_todo
+from models.enums import TipoDocumento
+from pipeline.extraccion import (
+    Hallazgo,
+    extraer_todo,
+    motivo_por_el_que_no_es_un_nombre,
+)
 from pipeline.materializar import materializar
 from pipeline.modelo import Modelo
 from pipeline import notificacion, reclamo, reintentos
@@ -47,13 +55,148 @@ from pipeline.telemetria import (
     RegistroCorreo,
     explica_el_desenlace,
 )
-from servidor_mcp.herramientas import Contexto
+from servidor_mcp.herramientas import CATALOGOS, Contexto
 from utils.generic_filter import (
     es_buzon_de_positiva,
     tiene_remitente_externo_identificable,
 )
 from utils.html_cleaner import clean_html_content
 from utils.radicado import etiqueta_para
+
+
+# Lo que el revisor comprueba siempre antes de radicar. Son los campos que, mal
+# puestos, radican a nombre de otra persona.
+CAMPOS_DE_IDENTIDAD = (
+    "nombre_afectado", "numero_documento_afectado", "tipo_documento_afectado",
+    "nombre_remitente", "numero_documento_remitente", "tipo_documento_remitente",
+    "tipo_remitente",
+)
+# Lo que viaja al revisor. Ademas de la identidad, el tipo de solicitud: antes
+# lo revisaba porque el agente pedia la revision al cerrar, y sin ella el
+# corpus perdio cinco aciertos de tipo_solicitud. Va en la misma llamada.
+CAMPOS_REVISADOS = CAMPOS_DE_IDENTIDAD + ("tipo_solicitud",)
+
+# Cuanto texto se le muestra al revisor alrededor de cada aparicion.
+ANCHO_DEL_EXTRACTO = 90
+EXTRACTOS_POR_CAMPO = 2
+
+
+def extractos_del_valor(valor: Any, texto_plegado: str,
+                        maximo: int = EXTRACTOS_POR_CAMPO,
+                        ancho: int = ANCHO_DEL_EXTRACTO) -> List[str]:
+    """
+    Donde aparece el valor en el texto del correo, ya plegado: las cifras con
+    sus separadores y el nombre con sus palabras en orden.
+    """
+    import re
+
+    crudo = str(valor or "")
+    digitos = compuerta._digitos_ascii(crudo).lstrip("0")
+    if digitos and len(digitos) >= 5 and digitos == re.sub(r"\D", "", crudo).lstrip("0"):
+        patron = re.compile(r"(?<!\d)0*" + r"[.\s,'\-]?".join(digitos) + r"(?!\d)")
+    else:
+        palabras = [re.escape(p) for p in re.findall(r"[a-z]+", compuerta._normaliza(crudo))
+                    if len(p) > 1]
+        if not palabras:
+            return []
+        patron = re.compile(r"\b" + r"\W+(?:\w+\W+)?".join(palabras) + r"\b")
+    salida = []
+    for m in patron.finditer(texto_plegado or ""):
+        salida.append("..." + texto_plegado[max(0, m.start() - ancho): m.end() + ancho // 2]
+                      + "...")
+        if len(salida) >= maximo:
+            break
+    return salida
+
+
+# Del lado del remitente el revisor solo aconseja, salvo en el nombre que no lo
+# es. Quien es "el remitente" en un hilo reenviado, en un buzon de Positiva o
+# cuando el afectado escribe desde el correo de otro es una convencion del
+# negocio que la compuerta ya aplica; en el corpus el revisor la contradecia
+# (cambiaba a quien firma por el nombre del buzon y el tipo 3 por 1 o 2) y
+# empeoraba tipo_remitente y el documento del remitente sin arreglar nada.
+CAMPOS_EN_LOS_QUE_EL_REVISOR_SOLO_AVISA = frozenset({
+    "tipo_remitente", "numero_documento_remitente", "tipo_documento_remitente",
+})
+# Campos en los que el revisor puede proponer otro valor (CAMBIAR) pero nunca
+# dejarlos vacios: el tipo de solicitud es obligatorio y "no respaldado" ahi
+# significa duda entre dos tipos, no ausencia. En el corpus, quitarlo mando a
+# manual tres correos que estaban bien.
+CAMPOS_QUE_EL_REVISOR_NO_QUITA = frozenset({"tipo_solicitud"})
+
+
+def _reparos_de_identidad(revision: Any, valores: Dict[str, Any],
+                          texto: str = "",
+                          avisos: Optional[List[str]] = None) -> Dict[str, str]:
+    """
+    {campo: motivo} de lo que el revisor contradice entre los valores dados y
+    hay que devolver al agente.
+
+    Un CAMBIAR al mismo valor no contradice nada. El motivo lleva el valor que
+    propone, para que el agente lo compruebe en el texto. No se devuelven:
+
+    - los campos del remitente en que el revisor solo aconseja (quedan en
+      `avisos`);
+    - el nombre del remitente que el revisor quiere CAMBIAR cuando el que va
+      ya es un nombre: entre quien firma y el nombre del buzon decide la
+      compuerta;
+    - el documento del afectado que el texto rotula como de identidad junto a
+      su nombre: ahi lo determinista es prueba y la opinion del revisor no.
+    """
+    salida: Dict[str, str] = {}
+    for campo, r in (getattr(revision, "reparos", None) or {}).items():
+        if campo not in valores or not r.contradice:
+            continue
+        if campo in CAMPOS_EN_LOS_QUE_EL_REVISOR_SOLO_AVISA or (
+                campo in CAMPOS_QUE_EL_REVISOR_NO_QUITA
+                and r.veredicto != "CAMBIAR") or (
+                campo == "nombre_remitente" and r.veredicto == "CAMBIAR"
+                and not motivo_por_el_que_no_es_un_nombre(str(valores[campo]))):
+            if avisos is not None:
+                avisos.append(f"el revisor aconseja en {campo}: {r.veredicto} "
+                              f"{r.valor[:60]} ({r.detalle[:100]})")
+            continue
+        if (campo == "numero_documento_afectado" and texto
+                and compuerta.documento_junto_al_nombre(
+                    valores[campo], valores.get("nombre_afectado"), texto)):
+            if avisos is not None:
+                avisos.append(
+                    f"el revisor rechazo {campo}, pero el texto lo rotula como "
+                    f"documento junto al nombre del afectado: se mantiene")
+            continue
+        # "No aparece" de un numero que el texto escribe pegado al nombre del
+        # afectado es falso: el revisor no lo encontro (en el asunto, con
+        # puntos en medio). Solo el SIN RESPALDO; un CAMBIAR propone otro.
+        if (campo == "numero_documento_afectado" and texto
+                and r.veredicto != "CAMBIAR"
+                and compuerta.numero_pegado_al_nombre(
+                    valores[campo], valores.get("nombre_afectado"), texto)):
+            if avisos is not None:
+                avisos.append(
+                    f"el revisor no encontro {campo}, pero el texto lo escribe "
+                    f"pegado al nombre del afectado: se mantiene")
+            continue
+        # El nombre del afectado que el texto da con su cedula rotulada
+        # ("ASEGURADA X c.c. N"): que el correo diga "mi madre" no lo contradice,
+        # y si es otra persona lo detectan las reglas fijas de la compuerta.
+        if (campo in ("nombre_afectado", "tipo_documento_afectado") and texto
+                and r.veredicto != "CAMBIAR"
+                and valores.get("numero_documento_afectado")
+                and compuerta.documento_junto_al_nombre(
+                    valores["numero_documento_afectado"],
+                    valores.get("nombre_afectado"), texto)):
+            if avisos is not None:
+                avisos.append(
+                    f"el revisor rechazo {campo}, pero el texto da ese nombre con "
+                    f"su documento rotulado: se mantiene")
+            continue
+        if (r.veredicto == "CAMBIAR" and r.valor
+                and compuerta._normaliza(r.valor) == compuerta._normaliza(valores[campo])):
+            continue
+        propuesta = f" (propone '{r.valor[:60]}')" if r.valor else ""
+        salida[campo] = (f"REVISOR_{r.veredicto.replace(' ', '_')}{propuesta}: "
+                         f"{r.detalle or 'el revisor no lo encuentra respaldado'}")
+    return salida
 
 
 @dataclass
@@ -85,6 +228,10 @@ class Resultado:
     razon_del_reenvio: str = ""
     # Que capa de deduplicacion lo detecto. Solo con `accion == "duplicado"`.
     razon_del_duplicado: str = ""
+    # Lo que paso en la compuerta, la ronda de correccion y el revisor
+    # obligatorio: veredicto inicial, campos devueltos, reparos del revisor y
+    # cuantas llamadas costo. Lo lee el harness de punta a punta.
+    revision: Dict[str, Any] = field(default_factory=dict)
 
     # Se llama al terminar cada etapa, con (correo, etapa, ms, fallo). Sirve
     # para que la consola muestre el avance paso a paso: con una sola linea por
@@ -168,6 +315,11 @@ class Orquestador:
         presupuesto: Optional[Presupuesto] = None,
     ) -> None:
         self.modelo = modelo
+        # Lo que tesseract no lee (fotos de celular, rotulos diminutos) lo
+        # transcribe el mismo modelo, si tiene vision. Sin el, solo tesseract.
+        from pipeline import conversion
+
+        conversion.TRANSCRIPTOR_IA = getattr(modelo, "transcribir_imagen", None)
         self.outlook = outlook
         self.radicador = radicador
         self.sgdea = sgdea
@@ -354,10 +506,17 @@ class Orquestador:
             try:
                 res.avisos.extend(ws.manifiesto.avisos)
                 for entrada in ws.manifiesto.fallidos:
-                    bitacora.registrar(
+                    fallo = bitacora.registrar(
                         "CONVERSION", f"{entrada.nombre_original}: {entrada.detalle}",
                         cuerpo=entrada.detalle,
                     )
+                    # Un adjunto que no se convierte es un adjunto perdido, no
+                    # un correo perdido: la conversion es local y repetirla da
+                    # lo mismo. Si lo que no se pudo clasificar se dejara
+                    # fatal, el correo se aplazaria en cada corrida para
+                    # siempre aunque ya tuviera todos sus datos.
+                    if fallo.clase is DESCONOCIDO:
+                        fallo.clase = POR_CODIGO["ADJUNTO_NO_LEIDO"]
 
                 texto_adjuntos = "\n\n".join(
                     ws.leer(Path(e.ruta_md).stem)
@@ -389,9 +548,20 @@ class Orquestador:
                         cuerpo_actual=cuerpo,
                     )
 
+                # Lo que el registro le devuelve al agente tambien es una
+                # fuente: un nombre leido ahi esta sustentado aunque el correo
+                # solo traiga la cedula. Se guarda para la compuerta.
+                consultas_del_agente: List[Dict[str, Any]] = []
+
+                def _consultar_y_anotar(documento, *resto):
+                    datos = self._consultar_persona(documento, *resto)
+                    if datos:
+                        consultas_del_agente.append(datos)
+                    return datos
+
                 ctx = Contexto(
                     workspace=ws,
-                    consultar_persona=self._consultar_persona,
+                    consultar_persona=_consultar_y_anotar,
                     # Lo que ya esta resuelto viaja al revisor aunque el agente
                     # no lo reporte: forma parte de lo que se va a enviar.
                     resueltos={c: h.valor
@@ -438,8 +608,14 @@ class Orquestador:
                         res.atribucion["oficina"] = Origen.ALGORITMO
 
                 # Cuando el remitente ES el afectado, los datos se copian aqui
-                # y no en el radicador, para que la compuerta los valide.
-                self._heredar_datos_del_afectado(hallazgos, res)
+                # y no en el radicador, para que la compuerta los valide. Aqui
+                # van tambien las reglas fijas de identidad, que leen el correo.
+                self._heredar_datos_del_afectado(
+                    hallazgos, res,
+                    fuentes=self._fuentes_del_correo(
+                        email, cuerpo, texto_adjuntos, ws, consultas_del_agente),
+                    correo_remitente=(email.from_address.address
+                                      if email.from_address else ""))
 
                 # Va antes de la compuerta para que lo del registro pase por las
                 # mismas comprobaciones que lo del correo.
@@ -468,14 +644,9 @@ class Orquestador:
                         email, res.motivo_manual, res.avisos, res)
                     return await self._cerrar(res, inicio, bitacora, email)
 
-                with res.cronometrar("compuerta"):
-                    dictamen = compuerta.validar(
-                        hallazgos, ctx.catalogos,
-                        motivos_no_resueltos={
-                            campo: nr.motivo
-                            for campo, nr in resolucion.sin_resolver.items()
-                        },
-                    )
+                hallazgos, dictamen = await self._validar_y_corregir(
+                    ctx, determinista, hallazgos, resolucion, bitacora, res,
+                    email, cuerpo, texto_adjuntos, ws, consultas_del_agente)
                 if dictamen.veredicto is Veredicto.CORREGIDO:
                     hallazgos = compuerta.aplicar(hallazgos, dictamen)
                     res.avisos.extend(compuerta.avisos(dictamen))
@@ -628,6 +799,38 @@ class Orquestador:
                 bitacora.registrar("ADJUNTOS", f"fallo {nombre}", excepcion=e)
         return salida
 
+    @staticmethod
+    def _fuentes_del_correo(
+        email: EmailMessage, cuerpo: str, texto_adjuntos: str, ws: Any,
+        consultas: List[Dict[str, Any]],
+    ) -> str:
+        """
+        Todo lo que el agente pudo leer, para que la compuerta compruebe que
+        lo que propuso esta ahi: asunto, remitente, cuerpo, hilo, adjuntos y
+        las respuestas del registro de personas.
+        """
+        partes = [email.subject or "", cuerpo or "", texto_adjuntos or ""]
+        for direccion in (email.from_address, email.sender):
+            if direccion:
+                partes += [direccion.name or "", direccion.address or ""]
+        try:
+            partes.append(ws.texto_completo())
+        except Exception:
+            pass  # sin el workspace queda lo demas
+        def _hojas(v: Any):
+            if isinstance(v, dict):
+                for x in v.values():
+                    yield from _hojas(x)
+            elif isinstance(v, (list, tuple)):
+                for x in v:
+                    yield from _hojas(x)
+            elif isinstance(v, (str, int)) and not isinstance(v, bool):
+                yield str(v)
+
+        for datos in consultas:
+            partes.extend(_hojas(datos))
+        return "\n".join(partes)
+
     def _nombres_hilo(self, email: EmailMessage) -> List[Tuple[str, str]]:
         pares = []
         if email.from_address:
@@ -638,16 +841,29 @@ class Orquestador:
 
     @staticmethod
     def _heredar_datos_del_afectado(
-        hallazgos: Dict[str, Hallazgo], res: Resultado
+        hallazgos: Dict[str, Hallazgo], res: Resultado,
+        fuentes: str = "", correo_remitente: str = "",
     ) -> None:
         """
-        Copia los datos del afectado al remitente cuando son la misma persona.
+        Reglas fijas de identidad, antes de la compuerta para que las valide:
 
-        Solo con `tipo_remitente == 3`. Para un familiar o un tercero, copiar
-        registra a otra persona con la cedula del trabajador; eso lo rechaza la
-        compuerta y aqui no se hace.
+        - el afectado que es una entidad va con su NIT y tipo NIT;
+        - si el firmante es el afectado, su cedula es la del afectado;
+        - el buzon de una entidad que se nombra en su dominio escribe por ella;
+        - con `tipo_remitente == 3`, los datos del afectado pasan al remitente.
+
+        La ultima solo con `tipo_remitente == 3`. Para un familiar o un
+        tercero, copiar registra a otra persona con la cedula del trabajador;
+        eso lo rechaza la compuerta y aqui no se hace.
         """
         from pipeline.radicador import TIPO_REMITENTE_ES_EL_AFECTADO
+
+        if fuentes:
+            texto = compuerta._texto_para_roles(fuentes)
+            Orquestador._afectado_que_es_entidad(hallazgos, res, fuentes, texto)
+            Orquestador._firmante_que_es_el_afectado(hallazgos, res, texto)
+            Orquestador._entidad_que_escribe(
+                hallazgos, res, fuentes, correo_remitente)
 
         tipo = hallazgos.get("tipo_remitente")
         if tipo is None or tipo.valor != TIPO_REMITENTE_ES_EL_AFECTADO:
@@ -664,6 +880,226 @@ class Orquestador:
                 metodo="remitente_es_el_afectado",
             )
             res.atribucion[f"{campo}_remitente"] = Origen.ALGORITMO
+
+    @staticmethod
+    def _poner(hallazgos, res, campo, valor, evidencia, confianza, metodo):
+        anterior = hallazgos.get(campo)
+        if anterior is not None and str(anterior.valor) == str(valor):
+            return
+        hallazgos[campo] = Hallazgo(campo=campo, valor=valor, evidencia=evidencia,
+                                    confianza=confianza, metodo=metodo)
+        res.atribucion[campo] = Origen.ALGORITMO
+        res.avisos.append(
+            f"regla de identidad {metodo}: {campo} "
+            f"'{str(anterior.valor)[:40] if anterior else ''}' -> '{str(valor)[:40]}'")
+
+    @staticmethod
+    def _afectado_que_es_entidad(hallazgos, res, fuentes: str, texto: str) -> None:
+        """
+        El afectado es una entidad identificada con su NIT: tipo NIT y su NIT.
+
+        Tambien cuando el nombre leido es el final del de la entidad ("CAMILO
+        RUEDA" de "ESE CENTRO DE SALUD CAMILO RUEDA NIT ..."): sin esto la
+        compuerta ve un nombre de persona con un NIT y lo manda a manual.
+        Solo si el documento que se lleva no es ya de persona junto a ese nombre.
+        """
+        from utils.tipos_documento import TIPOS_DE_ORGANIZACION
+
+        h_nom = hallazgos.get("nombre_afectado")
+        if h_nom is None or not h_nom.valor:
+            return
+        h_doc = hallazgos.get("numero_documento_afectado")
+        h_tipo = hallazgos.get("tipo_documento_afectado")
+        try:
+            tipo = int(h_tipo.valor) if h_tipo is not None else None
+        except (TypeError, ValueError):
+            tipo = None
+        if (h_doc is not None and h_doc.valor and tipo not in TIPOS_DE_ORGANIZACION
+                and compuerta.documento_junto_al_nombre(h_doc.valor, h_nom.valor, texto)):
+            return
+        hallada = compuerta.entidad_del_afectado(h_nom.valor, fuentes)
+        if hallada is None:
+            return
+        nombre, nit = hallada
+        evidencia = f"el afectado es la entidad '{nombre[:60]}', con NIT {nit} junto a su nombre"
+        metodo = "afectado_que_es_una_entidad"
+        Orquestador._poner(hallazgos, res, "nombre_afectado", nombre, evidencia,
+                           max(h_nom.confianza, 0.85), metodo)
+        Orquestador._poner(hallazgos, res, "numero_documento_afectado", nit,
+                           evidencia, 0.9, metodo)
+        Orquestador._poner(hallazgos, res, "tipo_documento_afectado",
+                           int(TipoDocumento.NI), evidencia, 0.9, metodo)
+
+    @staticmethod
+    def _firmante_que_es_el_afectado(hallazgos, res, texto: str) -> None:
+        """
+        La cedula con que firma quien escribe es la del afectado si son la misma
+        persona: el texto pone el nombre del afectado junto a ella con rotulo de
+        identidad, o `tipo_remitente == 3`.
+
+        Si el afectado ya tiene documento, solo se sustituye cuando el texto no
+        lo da como suyo y el del firmante si: "identificado con el siniestro
+        no. N" no es una cedula, y la del firmante esta junto a su nombre.
+        """
+        from pipeline.radicador import TIPO_REMITENTE_ES_EL_AFECTADO
+        from utils.tipos_documento import TIPOS_DE_ORGANIZACION
+
+        def valor(campo):
+            h = hallazgos.get(campo)
+            return h.valor if h is not None else None
+
+        h_rem = hallazgos.get("numero_documento_remitente")
+        nombre = valor("nombre_afectado")
+        if (h_rem is None or not h_rem.valor or not nombre
+                or h_rem.metodo == "remitente_es_el_afectado"
+                or motivo_por_el_que_no_es_un_nombre(str(nombre))):
+            return
+        try:
+            tipo_rem = int(valor("tipo_documento_remitente"))
+        except (TypeError, ValueError):
+            tipo_rem = None
+        if tipo_rem in TIPOS_DE_ORGANIZACION:
+            return  # un NIT no es la cedula de nadie
+        rem = compuerta._digitos_ascii(h_rem.valor)
+        af = compuerta._digitos_ascii(valor("numero_documento_afectado"))
+        if not rem or rem == af:
+            return
+        junto = compuerta.documento_junto_al_nombre(rem, nombre, texto)
+        es_tipo_3 = valor("tipo_remitente") == TIPO_REMITENTE_ES_EL_AFECTADO
+        if not (junto or es_tipo_3):
+            return
+        if af and (not junto
+                   or compuerta.documento_junto_al_nombre(af, nombre, texto)):
+            return
+        evidencia = (f"el firmante es el afectado: su documento {rem} aparece "
+                     f"con rotulo de identidad junto al nombre del afectado"
+                     if junto else
+                     f"el remitente es el afectado y firma con el documento {rem}")
+        metodo = "documento_del_firmante_que_es_el_afectado"
+        Orquestador._poner(hallazgos, res, "numero_documento_afectado", rem,
+                           evidencia, h_rem.confianza, metodo)
+        if tipo_rem is not None:
+            Orquestador._poner(hallazgos, res, "tipo_documento_afectado",
+                               tipo_rem, evidencia, h_rem.confianza, metodo)
+
+    @staticmethod
+    def _tramite_de_la_empresa(hallazgos, res, email, cuerpo: str,
+                               fuentes: str) -> None:
+        """
+        La empresa que pide algo para si misma es la afectada, con su NIT.
+
+        El estado de cuenta, el paz y salvo, la habilitacion de un usuario, la
+        asesoria o las copias de las afiliaciones de sus trabajadores son
+        tramites de la empresa. Quien los firma —el representante legal, el
+        gerente, la persona que escribe— es el remitente, no el afectado: su
+        cedula junto a su nombre es correcta, pero radicar con ella deja el
+        tramite de la empresa a nombre de una persona.
+
+        Se aplica solo si el afectado elegido es esa persona (quien escribe, o
+        alguien sin documento propio, o presentado como su representante) y el
+        correo identifica a la organizacion que escribe con su NIT. Si no se
+        encuentra el NIT, no se toca: la compuerta lo manda a revisar.
+        """
+        from utils.tipos_documento import TIPOS_DE_ORGANIZACION
+
+        def valor(campo):
+            h = hallazgos.get(campo)
+            return h.valor if h is not None else None
+
+        nombre = valor("nombre_afectado")
+        if not nombre or not compuerta._es_nombre_de_persona(nombre):
+            return
+        try:
+            tipo_af = int(valor("tipo_documento_afectado"))
+        except (TypeError, ValueError):
+            tipo_af = None
+        principal = f"{email.subject or ''}\n{cuerpo or ''}"
+        if not compuerta.tramite_de_la_empresa(principal):
+            return
+        buzon = email.from_address.name if email.from_address else ""
+        correo = email.from_address.address if email.from_address else ""
+        hallada = compuerta.empresa_con_nit(
+            fuentes, valor("nombre_remitente"), correo, buzon)
+        if hallada is None:
+            return
+        razon_social, nit = hallada
+        texto = compuerta._texto_para_roles(fuentes)
+        doc = compuerta._digitos_ascii(valor("numero_documento_afectado"))
+        doc_rem = compuerta._digitos_ascii(valor("numero_documento_remitente"))
+        remitente = valor("nombre_remitente")
+        escribe = (valor("tipo_remitente") == 3
+                   or (doc and doc == doc_rem)
+                   or compuerta.es_la_misma_persona(
+                       compuerta._normaliza(nombre), compuerta._normaliza(remitente))
+                   or compuerta.es_la_misma_persona(
+                       compuerta._normaliza(nombre), compuerta._normaliza(buzon)))
+        sin_documento_propio = (not doc or tipo_af in TIPOS_DE_ORGANIZACION
+                                or doc[:9] == nit)
+        if not (escribe or sin_documento_propio
+                or compuerta.presentado_como_representante(nombre, texto)):
+            return
+
+        evidencia = (f"la empresa pide un tramite propio: el afectado es "
+                     f"'{razon_social[:60]}', con NIT {nit} en el correo; "
+                     f"'{nombre}' firma por ella")
+        metodo = "tramite_de_la_empresa"
+        # Quien firmaba como afectado es quien escribe, si el remitente que
+        # quedo es el buzon de la empresa.
+        es_el_buzon_de_la_empresa = bool(remitente) and bool(
+            compuerta._palabras_propias_de_entidad(str(remitente))
+            & compuerta._palabras_propias_de_entidad(razon_social))
+        if (escribe and not sin_documento_propio
+                and (not remitente or compuerta._parece_entidad(remitente)
+                     or es_el_buzon_de_la_empresa
+                     or motivo_por_el_que_no_es_un_nombre(str(remitente)))):
+            Orquestador._poner(hallazgos, res, "nombre_remitente", nombre,
+                               evidencia, 0.85, metodo)
+            if not doc_rem:
+                Orquestador._poner(hallazgos, res, "numero_documento_remitente",
+                                   doc, evidencia, 0.85, metodo)
+                if tipo_af is not None:
+                    Orquestador._poner(hallazgos, res, "tipo_documento_remitente",
+                                       tipo_af, evidencia, 0.85, metodo)
+        Orquestador._poner(hallazgos, res, "nombre_afectado", razon_social,
+                           evidencia, 0.85, metodo)
+        Orquestador._poner(hallazgos, res, "numero_documento_afectado", nit,
+                           evidencia, 0.9, metodo)
+        Orquestador._poner(hallazgos, res, "tipo_documento_afectado",
+                           int(TipoDocumento.NI), evidencia, 0.9, metodo)
+        Orquestador._poner(hallazgos, res, "tipo_remitente", 2,
+                           evidencia, 0.85, metodo)
+        # El sexo era el de la persona: una empresa no tiene.
+        if hallazgos.pop("sexo_afectado", None) is not None:
+            res.atribucion.pop("sexo_afectado", None)
+
+    @staticmethod
+    def _entidad_que_escribe(hallazgos, res, fuentes: str, correo: str) -> None:
+        """
+        Sin un remitente que sea un nombre, la entidad cuyo nombre es el
+        dominio del buzon y que el texto identifica con su NIT.
+        """
+        h_nom = hallazgos.get("nombre_remitente")
+        if h_nom is not None and h_nom.valor and not motivo_por_el_que_no_es_un_nombre(
+                str(h_nom.valor)):
+            return
+        hallada = compuerta.entidad_del_dominio(correo, fuentes)
+        if hallada is None:
+            return
+        nombre, nit = hallada
+        evidencia = (f"escribe desde el dominio de '{nombre[:60]}', que el "
+                     f"texto identifica con NIT {nit}")
+        metodo = "entidad_del_dominio_del_remitente"
+        Orquestador._poner(hallazgos, res, "nombre_remitente", nombre,
+                           evidencia, 0.85, metodo)
+        h_doc = hallazgos.get("numero_documento_remitente")
+        if h_doc is None or not h_doc.valor:
+            Orquestador._poner(hallazgos, res, "numero_documento_remitente", nit,
+                               evidencia, 0.85, metodo)
+            Orquestador._poner(hallazgos, res, "tipo_documento_remitente",
+                               int(TipoDocumento.NI), evidencia, 0.85, metodo)
+        if "tipo_remitente" not in hallazgos:
+            Orquestador._poner(hallazgos, res, "tipo_remitente", 2,
+                               evidencia, 0.85, metodo)
 
     def _revisor(self, ws: Any):
         """
@@ -685,9 +1121,306 @@ class Orquestador:
 
         return revisar
 
+    async def _validar_y_corregir(self, ctx, determinista, hallazgos, resolucion,
+                                  bitacora, res, email, cuerpo, texto_adjuntos,
+                                  ws, consultas_del_agente):
+        """
+        Compuerta, ronda de correccion y revision obligatoria de la identidad.
+        Devuelve (hallazgos, dictamen), sin aplicar las correcciones de la
+        compuerta.
+
+        1. La compuerta valida. Lo que rechaza suele tener arreglo —el agente
+           puso el area en vez de la entidad, o el NIT donde iba la cedula—: se
+           le devuelve al agente UNA vez, con cada reparo dicho, y lo corregido
+           vuelve a pasar por la misma compuerta.
+        2. Si la compuerta lo dejaria pasar, el revisor comprueba la identidad.
+
+        Antes de todo, la regla fija del tramite de la empresa: va aqui y no con
+        las demas reglas de identidad porque necesita el asunto y el cuerpo por
+        separado de los adjuntos.
+        """
+        self._tramite_de_la_empresa(
+            hallazgos, res, email, cuerpo,
+            self._fuentes_del_correo(email, cuerpo, texto_adjuntos, ws,
+                                     consultas_del_agente))
+        with res.cronometrar("compuerta"):
+            dictamen = self._validar_de_nuevo(
+                hallazgos, ctx, resolucion, email, cuerpo, texto_adjuntos, ws,
+                consultas_del_agente)
+        res.revision["veredicto_antes_de_corregir"] = dictamen.veredicto.value
+        if (dictamen.veredicto is Veredicto.RECHAZADO
+                and not self._sin_tiempo()):
+            a_corregir = campos_a_corregir(dictamen, determinista)
+            if a_corregir:
+                res.revision["corregidos"] = dict(a_corregir)
+                res.revision["rechazos_antes_de_corregir"] = [
+                    f"{r.codigo}: {r.campo}: {r.detalle}"
+                    for r in dictamen.bloqueantes]
+                with res.cronometrar("correccion"):
+                    hallazgos, dictamen = await self._corregir(
+                        ctx, determinista, hallazgos, a_corregir,
+                        bitacora, res, email, cuerpo, texto_adjuntos,
+                        ws, consultas_del_agente, resolucion)
+        if dictamen.veredicto is not Veredicto.RECHAZADO and not self._sin_tiempo():
+            with res.cronometrar("revisor"):
+                hallazgos, dictamen = await self._revision_obligatoria(
+                    ctx, determinista, hallazgos, dictamen, resolucion,
+                    bitacora, res, email, cuerpo, texto_adjuntos, ws,
+                    consultas_del_agente)
+        return hallazgos, dictamen
+
+    def _valores_de_identidad(self, hallazgos, dictamen) -> Dict[str, Any]:
+        """Lo que se enviaria de cada campo de identidad, ya corregido."""
+        enviados = compuerta.aplicar(hallazgos, dictamen)
+        return {c: enviados[c].valor for c in CAMPOS_REVISADOS
+                if c in enviados and enviados[c].valor not in (None, "", [])}
+
+    def _llamar_al_revisor(self, ws, valores, hallazgos, fuentes, email, res):
+        """
+        Una llamada al revisor sobre los valores de identidad, o None si fallo.
+
+        Si falla no bloquea: deja aviso y la compuerta decide sola, como antes
+        de que existiera.
+        """
+        from pipeline import revisor as revisor_mod
+
+        texto = compuerta._texto_para_roles(fuentes)
+        notas = {}
+        for campo, v in valores.items():
+            partes = []
+            h = hallazgos.get(campo)
+            if h is not None and h.evidencia:
+                partes.append(str(h.evidencia)[:160])
+            if campo.startswith(("numero_documento", "nombre")):
+                partes += extractos_del_valor(v, texto)
+            catalogo = CATALOGOS.get(
+                campo if campo in ("tipo_remitente", "tipo_solicitud")
+                else "tipo_documento" if campo.startswith("tipo_documento")
+                else "", {})
+            try:
+                descripcion = catalogo.get(int(v)) if catalogo else None
+            except (TypeError, ValueError):
+                descripcion = None
+            if descripcion:
+                partes.insert(0, f"el codigo {v} es '{descripcion}'")
+            if partes:
+                notas[campo] = " || ".join(partes)
+        contexto = "\n".join(filter(None, (
+            f"ASUNTO: {email.subject or ''}",
+            (f"REMITENTE: {email.from_address.name or ''} "
+             f"<{email.from_address.address or ''}>"
+             if email.from_address else ""))))
+        try:
+            esquemas = [e for e in ESQUEMAS_HERRAMIENTAS
+                        if e["name"] in revisor_mod.HERRAMIENTAS_DEL_REVISOR]
+            revision = revisor_mod.revisar(
+                self.modelo, Contexto(workspace=ws), valores, esquemas,
+                notas=notas, contexto=contexto)
+        except Exception as e:
+            res.avisos.append(
+                f"el revisor no se pudo ejecutar y se sigue con la compuerta: "
+                f"{type(e).__name__}: {str(e)[:120]}")
+            return None
+        res.tokens_entrada += revision.tokens_entrada
+        res.tokens_salida += revision.tokens_salida
+        res.revision["llamadas"] = res.revision.get("llamadas", 0) + 1
+        res.revision["vueltas"] = res.revision.get("vueltas", 0) + revision.vueltas
+        if revision.ilegibles:
+            res.avisos.append(
+                "el revisor respondio lineas que no se entienden: "
+                + " / ".join(revision.ilegibles[:3]))
+        return revision
+
+    async def _revision_obligatoria(self, ctx, determinista, hallazgos, dictamen,
+                                    resolucion, bitacora, res, email, cuerpo,
+                                    texto_adjuntos, ws, consultas_del_agente):
+        """
+        Antes de radicar, el revisor comprueba la identidad que se va a enviar,
+        venga del algoritmo, del agente o del registro.
+
+        Lo que rechaza vuelve al agente por la misma ronda de correccion, con
+        el motivo. Lo corregido pasa otra vez por la compuerta y, si cambio un
+        campo de identidad, por el revisor una vez mas. Lo que no se corrige no
+        se envia: si era obligatorio, el correo va a manual.
+        """
+        fuentes = self._fuentes_del_correo(
+            email, cuerpo, texto_adjuntos, ws, consultas_del_agente)
+        valores = self._valores_de_identidad(hallazgos, dictamen)
+        if not valores:
+            return hallazgos, dictamen
+        revision = await asyncio.to_thread(
+            self._llamar_al_revisor, ws, valores, hallazgos, fuentes, email, res)
+        if revision is None:
+            return hallazgos, dictamen
+        reparos = _reparos_de_identidad(
+            revision, valores, compuerta._texto_para_roles(fuentes), res.avisos)
+        res.revision["reparos"] = dict(reparos)
+        if not reparos:
+            res.avisos.append("el revisor dio por buena la identidad")
+            return hallazgos, dictamen
+        res.avisos.append(
+            "el revisor rechazo " + ", ".join(
+                f"{c} ({m})" for c, m in sorted(reparos.items())))
+
+        enviados = compuerta.aplicar(hallazgos, dictamen)
+        if self._sin_tiempo():
+            nuevos = {c: h for c, h in enviados.items() if c not in reparos}
+            return nuevos, self._validar_de_nuevo(
+                nuevos, ctx, resolucion, email, cuerpo, texto_adjuntos, ws,
+                consultas_del_agente)
+        with res.cronometrar("correccion"):
+            nuevos, dictamen = await self._corregir(
+                ctx, determinista, enviados, reparos, bitacora, res, email,
+                cuerpo, texto_adjuntos, ws, consultas_del_agente, resolucion)
+
+        # El tipo de solicitud es obligatorio y siempre hay uno que poner: si
+        # el agente no propone otro, se queda el que habia. Quitarlo manda a
+        # manual un correo que solo estaba en duda entre dos tipos.
+        for campo in CAMPOS_QUE_EL_REVISOR_NO_QUITA & set(reparos):
+            if campo not in nuevos and campo in enviados:
+                nuevos[campo] = enviados[campo]
+                res.atribucion[campo] = Origen.IA
+                res.avisos.append(
+                    f"el agente no propuso otro {campo}: se mantiene el que habia")
+        # El agente repitio el valor rechazado: no lo corrigio.
+        repetidos = [c for c in reparos if c in nuevos
+                     and c not in CAMPOS_QUE_EL_REVISOR_NO_QUITA
+                     and str(nuevos[c].valor) == str(valores.get(c))]
+        if any(c in CAMPOS_QUE_EL_REVISOR_NO_QUITA for c in reparos) and not repetidos:
+            dictamen = self._validar_de_nuevo(
+                nuevos, ctx, resolucion, email, cuerpo, texto_adjuntos, ws,
+                consultas_del_agente)
+        for campo in repetidos:
+            nuevos.pop(campo, None)
+            res.avisos.append(
+                f"el agente repitio el valor que el revisor rechazo en {campo}: "
+                f"no se envia")
+        if repetidos:
+            dictamen = self._validar_de_nuevo(
+                nuevos, ctx, resolucion, email, cuerpo, texto_adjuntos, ws,
+                consultas_del_agente)
+        if dictamen.veredicto is Veredicto.RECHAZADO:
+            return nuevos, dictamen
+
+        # Lo que el agente cambio al valor que el propio revisor propuso ya esta
+        # revisado: preguntarle otra vez solo le da ocasion de desdecirse.
+        propuestos = {c: compuerta._normaliza(r.valor)
+                      for c, r in revision.reparos.items()
+                      if r.veredicto == "CAMBIAR" and r.valor}
+        cambiados = {c: v for c, v in self._valores_de_identidad(
+            nuevos, dictamen).items()
+            if str(valores.get(c)) != str(v)
+            and propuestos.get(c) != compuerta._normaliza(v)}
+        if not cambiados or self._sin_tiempo():
+            return nuevos, dictamen
+        segunda = await asyncio.to_thread(
+            self._llamar_al_revisor, ws, cambiados, nuevos,
+            self._fuentes_del_correo(email, cuerpo, texto_adjuntos, ws,
+                                     consultas_del_agente), email, res)
+        if segunda is None:
+            return nuevos, dictamen
+        otra_vez = _reparos_de_identidad(
+            segunda, {**valores, **cambiados}, compuerta._texto_para_roles(fuentes),
+            res.avisos)
+        otra_vez = {c: m for c, m in otra_vez.items()
+                    if c in cambiados and c not in CAMPOS_QUE_EL_REVISOR_NO_QUITA}
+        res.revision["reparos_tras_corregir"] = dict(otra_vez)
+        if not otra_vez:
+            res.avisos.append("el revisor dio por buena la correccion")
+            return nuevos, dictamen
+        res.avisos.append(
+            "el revisor rechazo tambien la correccion de "
+            + ", ".join(sorted(otra_vez)) + ": no se envia")
+        enviados = compuerta.aplicar(nuevos, dictamen)
+        for campo in otra_vez:
+            enviados.pop(campo, None)
+            res.atribucion[campo] = Origen.NO_RESUELTO
+        return enviados, self._validar_de_nuevo(
+            enviados, ctx, resolucion, email, cuerpo, texto_adjuntos, ws,
+            consultas_del_agente)
+
     def _sin_tiempo(self) -> bool:
         """Si a la corrida ya no le queda presupuesto para seguir con este correo."""
         return self.presupuesto is not None and self.presupuesto.agotado()
+
+    async def _corregir(self, ctx, determinista, hallazgos, a_corregir,
+                        bitacora, res, email, cuerpo, texto_adjuntos, ws,
+                        consultas_del_agente, resolucion_previa):
+        """
+        Devuelve al agente los campos rechazados, con el motivo de cada uno, y
+        vuelve a validar. Devuelve (hallazgos, dictamen).
+
+        Lo que el agente no corrija queda sin valor y la compuerta decide igual
+        que antes: si era obligatorio, va a manual con el motivo de siempre.
+        Si se corrige el documento del afectado, lo que el registro relleno con
+        el documento anterior se descarta y se vuelve a consultar.
+        """
+        correccion = extraccion_para_corregir(determinista, hallazgos, a_corregir)
+        res.avisos.append(
+            "la validacion rechazo "
+            + ", ".join(f"{c} ({m})" for c, m in sorted(a_corregir.items()))
+            + ": se le devuelve al agente para corregir")
+        try:
+            resolucion = await self._resolver_con_reintento(
+                ctx, correccion, bitacora, res)
+        except Exception as e:
+            res.avisos.append(f"la correccion no se pudo hacer: {e}")
+            return hallazgos, self._validar_de_nuevo(
+                hallazgos, ctx, resolucion_previa, email, cuerpo,
+                texto_adjuntos, ws, consultas_del_agente)
+        res.tokens_entrada += resolucion.tokens_entrada
+        res.tokens_salida += resolucion.tokens_salida
+        res.turnos_del_agente += resolucion.iteraciones
+        res.avisos.extend(resolucion.descartados)
+
+        nuevos = combinar(correccion, resolucion)
+        for campo in a_corregir:
+            if campo in resolucion.hallazgos:
+                res.atribucion[campo] = Origen.IA
+                res.avisos.append(
+                    f"corregido {campo}: "
+                    f"'{str(hallazgos.get(campo).valor if hallazgos.get(campo) else '')[:60]}'"
+                    f" -> '{str(resolucion.hallazgos[campo].valor)[:60]}'")
+            else:
+                res.atribucion[campo] = Origen.NO_RESUELTO
+        if "numero_documento_afectado" in a_corregir:
+            for campo, origen in list(res.atribucion.items()):
+                if origen is Origen.REGISTRO and campo not in resolucion.hallazgos:
+                    nuevos.pop(campo, None)
+            contradicciones: List[str] = []
+            for campo, hallazgo in rellenar_desde_el_registro(
+                nuevos, self._consultar_persona_del_afectado,
+                res.avisos, contradicciones,
+                texto=f"{cuerpo}\n{texto_adjuntos}",
+                principal=f"{email.subject or ''}\n{cuerpo}",
+            ).items():
+                nuevos[campo] = hallazgo
+                res.atribucion[campo] = Origen.REGISTRO
+            res.avisos.extend(contradicciones)
+        dictamen = self._validar_de_nuevo(
+            nuevos, ctx, resolucion, email, cuerpo, texto_adjuntos, ws,
+            consultas_del_agente)
+        res.avisos.append(
+            f"tras la correccion la validacion dice: {dictamen.veredicto.value}")
+        return nuevos, dictamen
+
+    def _validar_de_nuevo(self, hallazgos, ctx, resolucion, email, cuerpo,
+                          texto_adjuntos, ws, consultas_del_agente):
+        try:
+            nombres_adjuntos = [e.nombre_original for e in ws.manifiesto.entradas]
+        except AttributeError:
+            nombres_adjuntos = []
+        return compuerta.validar(
+            hallazgos, ctx.catalogos,
+            motivos_no_resueltos={
+                campo: nr.motivo
+                for campo, nr in resolucion.sin_resolver.items()
+            },
+            fuentes=self._fuentes_del_correo(
+                email, cuerpo, texto_adjuntos, ws, consultas_del_agente),
+            principal=f"{email.subject or ''}\n{cuerpo or ''}",
+            nombres_adjuntos=nombres_adjuntos,
+        )
 
     async def _resolver_con_reintento(self, ctx, determinista, bitacora, res):
         """

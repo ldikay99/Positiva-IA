@@ -363,6 +363,15 @@ def organizacion_tras_el_area(nombre: str) -> str:
     return " ".join(resto)
 
 
+# "yopal-casanare.gov.co", "mail.uniatlantico.edu.co": el display name de un
+# buzon institucional suele llevar el dominio. Se exige un sufijo conocido para
+# no confundirlo con una abreviatura con punto ("Ma. Fernanda").
+_DOMINIO = re.compile(
+    r"[\w-]\.(?:com|co|org|net|edu|gov|mil|info)\b",
+    re.IGNORECASE,
+)
+
+
 def motivo_por_el_que_no_identifica_a_nadie(nombre: str) -> str:
     """
     Por que ese texto no nombra a ninguna parte del caso, o cadena vacia.
@@ -379,6 +388,13 @@ def motivo_por_el_que_no_identifica_a_nadie(nombre: str) -> str:
         return "es la entidad que recibe la PQRD, no una parte del caso"
     if "@" in t:
         return "es una direccion de correo, no el nombre de nadie"
+    if _DOMINIO.search(t):
+        return "lleva un dominio de correo, que nombra un buzon y no a nadie"
+    repetidas = _normaliza(t).split()
+    if len(repetidas) > 1 and len(set(repetidas)) == 1:
+        # "urgencias urgencias", "notificaciones notificaciones": Outlook arma
+        # asi el nombre de un buzon con nombre y apellido iguales.
+        return "repite la misma palabra: es el nombre de un buzon, no de nadie"
     if _es_solo_un_rol(t):
         return "es un cargo o un area, y no identifica a ninguna persona"
     if _area_antes_de_la_organizacion(t):
@@ -431,6 +447,7 @@ _ROL_PALABRAS = (
     "medicina laboral", "atencion integral", "servicio al ciudadano",
     "medica", "medico", "vicepresidencia", "operaciones", "gerencia medica",
     "personal", "cobranza", "cobranzas", "radicacion",
+    "urgencias", "dpto", "depto",
     # Etiquetas de datos de contacto que quedan solas al recortar la firma
     "tel", "tels", "telefono", "telefonos", "cel", "celular", "movil",
     "fijo", "ext", "extension", "pbx", "fax", "email", "correo",
@@ -534,9 +551,10 @@ def _es_solo_un_rol(nombre: str) -> bool:
         return True
     if n in _ROL_PALABRAS:
         return True
+    # Sin la puntuacion de las abreviaturas: "Dpto." es "dpto".
     tokens = [
-        t for t in n.split()
-        if t not in _CONECTORES and t not in _CONTENEDORES
+        t for t in (p.strip(".,;:") for p in n.split())
+        if t and t not in _CONECTORES and t not in _CONTENEDORES
     ]
     # Solo quedaron nexos o marcos de área: "area de", "el grupo"
     if not tokens:

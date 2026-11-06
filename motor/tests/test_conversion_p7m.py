@@ -122,7 +122,7 @@ def test_el_ocr_tiene_presupuesto_de_tiempo(monkeypatch):
     monkeypatch.setattr(conversion, "PRESUPUESTO_OCR_SEGUNDOS", 0.0)
     monkeypatch.setattr(
         conversion, "_ocr_de_pagina",
-        lambda pagina: (llamadas.append(1), ("texto", ""))[1])
+        lambda pagina, *_: (llamadas.append(1), ("texto", ""))[1])
 
     c = conversion.convertir(_pdf_escaneado(), "escaneo.pdf")
     assert not llamadas, "se aplico OCR con el presupuesto agotado"
@@ -149,7 +149,7 @@ def test_un_pdf_sin_texto_intenta_ocr():
 
     llamadas = []
 
-    def espia(pagina):
+    def espia(pagina, *_):
         llamadas.append(1)
         return "", "sin motor en el entorno de pruebas"
 
