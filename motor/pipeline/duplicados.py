@@ -37,7 +37,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
-from typing import Any, List, Set
+from typing import Any, Dict, List, Set, Tuple
 
 from models.email import EmailMessage
 from utils.generic_filter import es_buzon_de_positiva, remitentes_externos_citados
@@ -113,6 +113,19 @@ def _dedup_por_red_apagada() -> bool:
         return False
 
 
+def _remitente(email: EmailMessage) -> str:
+    return ((email.from_address.address if email.from_address else "") or "").strip().lower()
+
+
+def _firma_de_documentos(adjuntos) -> List[Tuple[str, int]]:
+    """Los documentos del correo por nombre normalizado y tamaño, en orden."""
+    from pipeline.anexos import es_documento, nombre_normalizado
+
+    return sorted(
+        (nombre_normalizado(a.get("name") or ""), int(a.get("size") or 0))
+        for a in adjuntos or [] if es_documento(a))
+
+
 @dataclass
 class Veredicto:
     """Resultado de la comprobacion. `motivo` explica cual capa lo detecto."""
@@ -159,6 +172,14 @@ class Detector:
     cache: Any = None          # `email_hash_exists` / `save_email_hash`
     auditoria: Any = None      # `email_exists`
     vistos: Set[str] = field(default_factory=set)
+    # Lo radicado en esta corrida, por remitente: (correo, radicado).
+    del_lote: Dict[str, List[Tuple[EmailMessage, str]]] = field(default_factory=dict)
+
+    def recordar_del_lote(self, email: EmailMessage, radicado: str) -> None:
+        """Anota un radicado de esta corrida para compararlo con lo que siga."""
+        remitente = _remitente(email)
+        if remitente and radicado:
+            self.del_lote.setdefault(remitente, []).append((email, radicado))
 
     async def comprobar(self, email: EmailMessage) -> Veredicto:
         etiqueta = etiqueta_de_radicado(getattr(email, "categories", None))
@@ -176,6 +197,11 @@ class Detector:
             self.vistos.add(conversacion)
 
         degradaciones = []
+        repetido, fallo = await self._radicado_en_esta_corrida(email)
+        if fallo:
+            degradaciones.append(fallo)
+        elif repetido:
+            return repetido
         if conversacion and self.outlook is not None:
             encontrado, fallo = await self._preguntar(
                 self.outlook, "hilo_ya_radicado",
@@ -209,6 +235,49 @@ class Detector:
                 "MODO_TEST: la deteccion por hilo y por asunto esta "
                 "desactivada; para ejercitarla, DEDUP_EN_PRUEBAS=true")
         return Veredicto(False, "", " | ".join(degradaciones))
+
+    async def _radicado_en_esta_corrida(self, email: EmailMessage):
+        """
+        Si el mismo remitente ya radico este caso en esta misma corrida.
+
+        Las capas que consultan Graph lo encuentran por la etiqueta del
+        radicado, que acaba de escribirse; esta lo compara directo, sin
+        depender de cuanto tarde Graph en mostrarla.
+
+        Con el mismo asunto se usa el criterio de la capa del asunto
+        (`_es_el_mismo_caso`). Con otro asunto se exige mas, porque el asunto ya
+        no dice que sea el mismo caso: el mismo texto propio, que distinga, y
+        exactamente los mismos documentos, al menos uno.
+        """
+        previos = self.del_lote.get(_remitente(email)) or []
+        if not previos or self.outlook is None:
+            return None, ""
+        from utils.hash import asunto_comparable
+
+        mismo_caso = getattr(self.outlook, "_es_el_mismo_caso", None)
+        adjuntos = getattr(self.outlook, "get_attachments", None)
+        asunto = asunto_comparable(email.subject or "")
+        motivo = "el mismo remitente radico este caso en esta misma corrida"
+        try:
+            for previo, radicado in previos:
+                if asunto_comparable(previo.subject or "") == asunto:
+                    if mismo_caso is not None and await mismo_caso(email, {
+                            "id": previo.id,
+                            "from": {"emailAddress": {"address": _remitente(previo)}}}):
+                        return await self._salvo_documentos_nuevos(
+                            email, radicado, motivo), ""
+                    continue
+                if adjuntos is None or not (
+                        texto_que_distingue(email.body.content or "")
+                        and textos_iguales(email.body.content or "",
+                                           previo.body.content or "")):
+                    continue
+                propios = _firma_de_documentos(await adjuntos(email.id))
+                if propios and propios == _firma_de_documentos(await adjuntos(previo.id)):
+                    return Veredicto(True, radicado, motivo), ""
+        except Exception as e:
+            return None, f"la comparacion con esta corrida fallo: {type(e).__name__}: {e}"
+        return None, ""
 
     async def _salvo_documentos_nuevos(
         self, email: EmailMessage, radicado: str, motivo: str,

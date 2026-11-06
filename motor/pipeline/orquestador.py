@@ -346,6 +346,26 @@ class Orquestador:
     # ── Entrada ──
 
     async def procesar(self, email: EmailMessage) -> Resultado:
+        """
+        Procesa un correo. Los del mismo remitente pasan de a uno.
+
+        El lote se atiende de a varios correos a la vez, y dos envios del mismo
+        caso que caen en la misma corrida se comprobaban al mismo tiempo:
+        ninguno tenia aun la etiqueta del radicado del otro, y los dos se
+        radicaban. En produccion, del 5 al 6 de noviembre, los 6 pares de
+        radicados identicos de la misma persona salieron asi, todos de la misma
+        corrida. En fila, el segundo ya ve al primero radicado y lo compara.
+        """
+        remitente = ((email.from_address.address if email.from_address else "")
+                     or "").strip().lower()
+        if not remitente:
+            return await self._procesar(email)
+        candados = self.__dict__.setdefault("_por_remitente", {})
+        candado = candados.setdefault(remitente, asyncio.Lock())
+        async with candado:
+            return await self._procesar(email)
+
+    async def _procesar(self, email: EmailMessage) -> Resultado:
         inicio = time.time()
         res = Resultado(email_id=email.id, asunto=email.subject or "",
                         traza=self.traza)
@@ -706,6 +726,9 @@ class Orquestador:
                     # Guardar el hash alimenta la capa de dedup por contenido.
                     with res.cronometrar("cierre_outlook"):
                         fallo = await self.duplicados.registrar_radicado(email, nombres)
+                        recordar = getattr(self.duplicados, "recordar_del_lote", None)
+                        if recordar is not None:
+                            recordar(email, radicado)
                         if fallo:
                             res.avisos.append(f"deduplicacion degradada: {fallo}")
                         await self._mover_a_exitosa(email, radicado, res.avisos)
