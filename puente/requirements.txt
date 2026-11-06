@@ -1,0 +1,4 @@
+# Lo que el visor agrega al motor. Solo licencias permisivas.
+# Renderiza cada hoja de un PDF en baja resolución para mostrarla en la web
+# (PDFium, Apache-2.0 / BSD-3-Clause). No interviene en lo que lee el motor.
+pypdfium2==4.30.0

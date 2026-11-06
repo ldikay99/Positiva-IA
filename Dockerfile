@@ -19,14 +19,35 @@ RUN npm run build && npm prune --omit=dev
 FROM node:24-slim AS node
 
 FROM python:3.12-slim
+# Tesseract 5 (Apache-2.0). El motor lee con el modelo estándar de español
+# (tessdata 4.1.0, LSTM), no con el rápido que trae el paquete de Debian: es con
+# el que se midieron sus umbrales. Va con el de orientación (osd), que usa para
+# decidir si una hoja está de lado. Se descargan con su huella fija.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        gcc tesseract-ocr tesseract-ocr-spa poppler-utils libstdc++6 \
+        gcc tesseract-ocr libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
+ENV TESSDATA_PREFIX=/opt/tessdata
+RUN mkdir -p "$TESSDATA_PREFIX" && python - <<'PY'
+import hashlib, os, urllib.request
+destino = os.environ["TESSDATA_PREFIX"]
+modelos = {
+    "spa": "0b0fcbb4665189e01ab8019e591f014dd7260460de072543edd4b2cb4ede7c96",
+    "osd": "e19f2ae860792fdf372cf48d8ce70ae5da3c4052962fe22e9de1f680c374bb0e",
+}
+for nombre, huella in modelos.items():
+    url = f"https://github.com/tesseract-ocr/tessdata/raw/4.1.0/{nombre}.traineddata"
+    datos = urllib.request.urlopen(url, timeout=120).read()
+    if hashlib.sha256(datos).hexdigest() != huella:
+        raise SystemExit(f"{nombre}.traineddata no coincide con su huella")
+    open(os.path.join(destino, f"{nombre}.traineddata"), "wb").write(datos)
+PY
+RUN tesseract --list-langs 2>&1 | grep -qx spa && tesseract --list-langs 2>&1 | grep -qx osd
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 
 WORKDIR /app
 COPY motor/requirements.txt motor/requirements.txt
-RUN pip install --no-cache-dir -r motor/requirements.txt
+COPY puente/requirements.txt puente/requirements.txt
+RUN pip install --no-cache-dir -r motor/requirements.txt -r puente/requirements.txt
 
 COPY motor/ motor/
 COPY puente/ puente/
