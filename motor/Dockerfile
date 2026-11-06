@@ -11,6 +11,22 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     poppler-utils \
     && rm -rf /var/lib/apt/lists/*
 
+# Los modelos de OCR con los que se midio el pipeline. El paquete de Debian
+# trae los modelos "fast", que leen peor los escaneos de cedulas e historias
+# clinicas; estos son los de tesseract-ocr/tessdata (Apache-2.0), fijados por
+# version y verificados por su sha256 para que la imagen lea igual que las
+# mediciones.
+ENV TESSDATA_PREFIX=/opt/tessdata
+RUN mkdir -p /opt/tessdata && python -c "\
+import hashlib, urllib.request; \
+base = 'https://github.com/tesseract-ocr/tessdata/raw/'; \
+modelos = {'spa': ('4.1.0', '0b0fcbb4665189e01ab8019e591f014dd7260460de072543edd4b2cb4ede7c96'), \
+           'eng': ('4.1.0', 'daa0c97d651c19fba3b25e81317cd697e9908c8208090c94c3905381c23fc047'), \
+           'osd': ('3.04.00', '9cf5d576fcc47564f11265841e5ca839001e7e6f38ff7f7aacf46d15a96b00ff')}; \
+[open(f'/opt/tessdata/{n}.traineddata', 'wb').write(d) for n, (v, h) in modelos.items() \
+ for d in [urllib.request.urlopen(f'{base}{v}/{n}.traineddata', timeout=120).read()] \
+ if hashlib.sha256(d).hexdigest() == h or (_ for _ in ()).throw(SystemExit(f'sha256 de {n} no coincide'))]"
+
 # Create non-root user
 RUN useradd -m -u 1001 appuser
 

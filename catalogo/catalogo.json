@@ -1,6 +1,6 @@
 {
  "meta": {
-  "fuente": "motor/ (mcp-fix, 802993e)",
+  "fuente": "motor/ (mcp-fix, 6c04b20)",
   "generado": "2026-11-06",
   "punto_de_entrada": "correr.py -> pipeline/orquestador.py Orquestador.procesar",
   "total_nodos": 31,
