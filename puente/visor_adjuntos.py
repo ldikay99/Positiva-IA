@@ -164,25 +164,49 @@ def _nueva_pagina(numero: int, origen: str) -> Dict[str, Any]:
             "en_giro": False, "tras_giro": None, "captura": None}
 
 
+def _imagen_de_hoja(doc: Dict[str, Any], numero: int):
+    if doc["tipo"] == "pdf":
+        try:
+            return _render_pdf(doc, numero)
+        except Exception:
+            return None
+    return doc.get("imagen")
+
+
+def _preparar_hoja(doc: Dict[str, Any], numero: int, captura=None) -> Dict[str, Any]:
+    """La imagen de la hoja, guardada una sola vez; sirve antes y después de leerla."""
+    cache = doc.setdefault("archivos", {})
+    if cache.get(numero):
+        return cache[numero]
+    imagen = _imagen_de_hoja(doc, numero) or captura
+    cache[numero] = _guardar_imagen(imagen, f"{doc['clave']}-p{numero}") if imagen is not None else {}
+    return cache[numero]
+
+
+@_seguro("hoja")
+def _empieza_hoja(p: Dict[str, Any]) -> None:
+    """Antes de leer una hoja: su imagen ya se puede ver mientras el OCR trabaja."""
+    doc = _estado.get("doc")
+    if not doc:
+        return
+    archivos = _preparar_hoja(doc, p["numero"])
+    _evento("hoja_inicio", adjunto=doc["clave"], pagina=p["numero"], total=doc.get("paginas") or 0,
+            origen=p["origen"], **archivos)
+
+
 def _anunciar_hoja(p: Dict[str, Any], metodo: str, **extra: Any) -> None:
     doc = _estado.get("doc")
     if not doc:
         return
     numero = p["numero"]
-    imagen = None
-    if doc["tipo"] == "pdf":
-        try:
-            imagen = _render_pdf(doc, numero)
-        except Exception:
-            imagen = None
-    elif doc.get("imagen") is not None:
-        imagen = doc["imagen"]
-    if imagen is None:
-        imagen = p.get("captura")
-    elif p["girada"] and doc["tipo"] == "pdf":
+    if p["girada"]:
         # La hoja se leyó girada: se muestra como la leyó el OCR.
-        imagen = imagen.rotate(-p["girada"], expand=True, fillcolor="white")
-    archivos = _guardar_imagen(imagen, f"{doc['clave']}-p{numero}") if imagen is not None else {}
+        imagen = _imagen_de_hoja(doc, numero) or p.get("captura")
+        archivos = _guardar_imagen(imagen.rotate(-p["girada"], expand=True, fillcolor="white"),
+                                   f"{doc['clave']}-p{numero}") if imagen is not None else {}
+        doc.setdefault("archivos", {})[numero] = archivos
+    else:
+        archivos = _preparar_hoja(doc, numero, p.get("captura"))
     ms = int((time.monotonic() - p["inicio"]) * 1000)
     doc["hojas"][numero] = metodo
     _evento("hoja", adjunto=doc["clave"], nombre=doc["nombre"], pagina=numero,
@@ -235,6 +259,8 @@ def _instalar_conversion(conversion) -> None:
     def ocr_de_pagina(pagina, *a, **k):
         p = _nueva_pagina(int(getattr(pagina, "number", 0)) + 1, "ocr")
         _estado["pagina"] = p
+        _empieza_hoja(p)
+        p["inicio"] = time.monotonic()
         try:
             r = ocr(pagina, *a, **k)
         finally:
@@ -266,6 +292,8 @@ def _instalar_conversion(conversion) -> None:
     def imagen_a_markdown(datos, nombre, *a, **k):
         p = _nueva_pagina(1, "foto")
         _estado["pagina"] = p
+        _empieza_hoja(p)
+        p["inicio"] = time.monotonic()
         try:
             c = imagen_md(datos, nombre, *a, **k)
         finally:
