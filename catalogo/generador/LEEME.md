@@ -7,7 +7,10 @@ agente, proveedores y variables de entorno.
 ```bash
 python extraer.py constantes.json   # valores de las constantes del motor
 python build.py                     # escribe ../catalogo.json
+python enlazar.py                   # enlaza cada regla con los parámetros que usa
 ```
+
+`../sincronizar_motor.sh` corre los tres después de copiar el motor.
 
 Las descripciones de nodos, reglas y proveedores están escritas en `build.py`; hay que revisarlas
 cuando cambie el orden de `Orquestador.procesar` o se agreguen etapas.
