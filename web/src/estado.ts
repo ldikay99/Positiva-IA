@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { reglaNueva } from "./flujo.ts";
-import type { Catalogo, Configuracion, Corrida, Correo, EstadoMotor, Evento, Regla } from "./tipos.ts";
+import type { Buzon, Catalogo, Configuracion, Corrida, Correo, EstadoMotor, Evento, Regla } from "./tipos.ts";
 
 export interface Nota {
   id: string;
@@ -97,7 +97,13 @@ interface Estado {
   setSeguirEnVivo: (v: boolean) => void;
   alternarSeleccion: (caso: string) => void;
   fijarSeleccion: (casos: string[]) => void;
-  procesar: (casos: string[]) => Promise<void>;
+  procesar: (casos: string[], comoElJob?: boolean) => Promise<void>;
+  /** La carpeta que lee el job, en el orden en que la tomaría ahora (solo lectura). */
+  buzon: Buzon | null;
+  cargandoBuzon: boolean;
+  cargarBuzon: (n: number, fresco?: boolean) => Promise<void>;
+  /** Trae del buzón real los próximos `n` correos del job y los corre juntos, como él. */
+  correrComoElJob: (n: number, ids?: string[]) => Promise<void>;
   cancelarCola: () => Promise<void>;
   guardarConfiguracion: (c: Configuracion, nota?: string) => Promise<number>;
   cargarPerfiles: () => Promise<void>;
@@ -192,11 +198,38 @@ export const usar = create<Estado>((set, get) => ({
   alternarSeleccion: (caso) => set((s) => ({ seleccion: s.seleccion.includes(caso) ? s.seleccion.filter((c) => c !== caso) : [...s.seleccion, caso] })),
   fijarSeleccion: (seleccion) => set({ seleccion }),
 
-  procesar: async (casos) => {
-    const creadas = await pedir<{ id: string; caso: string }[]>("/api/corridas", { method: "POST", body: JSON.stringify({ casos }) });
+  buzon: null,
+  cargandoBuzon: false,
+
+  cargarBuzon: async (n, fresco = false) => {
+    set({ cargandoBuzon: true });
+    try {
+      const buzon = await pedir<Buzon>(`/api/buzon?n=${n}${fresco ? "&fresco=1" : ""}`);
+      set({ buzon });
+    } catch (e) {
+      set({ buzon: { carpeta: "", total: null, correos: [], error: (e as Error).message } });
+    } finally {
+      set({ cargandoBuzon: false });
+    }
+  },
+
+  correrComoElJob: async (n, ids) => {
+    const r = await pedir<{ lote: string | null; corridas: { id: string; caso: string }[] }>("/api/buzon/correr", { method: "POST", body: JSON.stringify(ids?.length ? { ids } : { n }) });
+    const bandeja = await pedir<Correo[]>("/api/bandeja");
     set((s) => {
       const corridas = { ...s.corridas };
-      for (const c of creadas) corridas[c.id] ??= { id: c.id, caso: c.caso, estado: "en_cola", creada: Date.now(), eventos: [] };
+      for (const c of r.corridas) corridas[c.id] ??= { id: c.id, caso: c.caso, estado: "en_cola", creada: Date.now(), eventos: [], ...(r.lote ? { lote: r.lote } : {}) };
+      const nuevas = r.corridas.map((c) => c.id).filter((id) => !s.orden.includes(id));
+      return { bandeja, corridas, orden: [...nuevas.reverse(), ...s.orden], corridaVisible: r.corridas[0]?.id ?? s.corridaVisible };
+    });
+    void get().cargarBuzon(n);
+  },
+
+  procesar: async (casos, comoElJob = false) => {
+    const creadas = await pedir<{ id: string; caso: string; lote?: string }[]>("/api/corridas", { method: "POST", body: JSON.stringify({ casos, comoElJob }) });
+    set((s) => {
+      const corridas = { ...s.corridas };
+      for (const c of creadas) corridas[c.id] ??= { id: c.id, caso: c.caso, estado: "en_cola", creada: Date.now(), eventos: [], ...(c.lote ? { lote: c.lote } : {}) };
       const nuevas = creadas.map((c) => c.id).filter((id) => !s.orden.includes(id));
       return { corridas, orden: [...nuevas.reverse(), ...s.orden], corridaVisible: creadas[0]?.id ?? s.corridaVisible, seleccion: [] };
     });

@@ -42,7 +42,7 @@ const FilaCorreo = memo(function FilaCorreo({ c, u, marcado, abierto, top }: { c
         <div className="correo-asunto">{c.asunto || "(sin asunto)"}</div>
         <div className="correo-previa">{c.vistaPrevia}</div>
         <div className="fila correo-fichas">
-          <span className="ficha mono">{c.caso}</span>
+          {c.origen === "buzon" ? <span className="ficha tono-azul" title="Traído del buzón real (solo lectura), con sus etiquetas de hoy">Buzón real</span> : <span className="ficha mono">{c.caso}</span>}
           {adjuntos > 0 && <span className="ficha"><Icono n="adjunto" tam={11} />{adjuntos}</span>}
           {c.desenlaceProduccion && <span className={`ficha tono-${TONO_DESENLACE[c.desenlaceProduccion] ?? ""}`} title={`En producción: ${NOMBRES_DESENLACE[c.desenlaceProduccion] ?? c.desenlaceProduccion}${c.motivoProduccion ? ` · ${c.motivoProduccion}` : ""}`}>Prod · {NOMBRES_CORTOS_DESENLACE[c.desenlaceProduccion] ?? c.desenlaceProduccion}</span>}
           {accion && (
@@ -67,7 +67,99 @@ const FilaCorreo = memo(function FilaCorreo({ c, u, marcado, abierto, top }: { c
   );
 });
 
+/**
+ * La carpeta que lee el job (AUTOMATIZACION), en el orden en que la tomaría
+ * ahora: un correo por hilo, del más viejo al más nuevo. Correrlos aquí es
+ * correr el job: un solo orquestador, de a cinco y de a uno por remitente, con
+ * las consultas al buzón de verdad. Nada se escribe: lo que el job marcaría,
+ * movería o reenviaría aparece en el flujo como bloqueado.
+ */
+function PanelBuzon() {
+  const buzon = usar((s) => s.buzon);
+  const cargando = usar((s) => s.cargandoBuzon);
+  const cargar = usar((s) => s.cargarBuzon);
+  const correr = usar((s) => s.correrComoElJob);
+  const avisar = usar((s) => s.avisar);
+  const enfocar = usar((s) => s.enfocar);
+  const [n, setN] = useState(10);
+  const [marcados, setMarcados] = useState<string[]>([]);
+  const [corriendo, setCorriendo] = useState(false);
+
+  useEffect(() => {
+    void cargar(n);
+  }, [n, cargar]);
+
+  const correos = buzon?.correos ?? [];
+  const cuantos = marcados.length || correos.length;
+  const lanzar = async () => {
+    setCorriendo(true);
+    try {
+      await correr(n, marcados);
+      avisar(`${cuantos} correo${cuantos === 1 ? "" : "s"} del buzón real corriendo como el job`);
+      setMarcados([]);
+    } catch (e) {
+      avisar((e as Error).message, "error");
+    } finally {
+      setCorriendo(false);
+    }
+  };
+
+  return (
+    <>
+      <div className="buzon-aviso">
+        <Icono n="candado" tam={13} />
+        <span>
+          <b>Solo lectura.</b> Lee {buzon?.carpeta || "la carpeta del job"} y consulta el buzón como el job (hilo, asunto, radicados, documentos), pero no marca, no mueve, no reenvía y no radica: lo que el job haría aparece en el flujo como bloqueado.
+        </span>
+      </div>
+      <div className="fila buzon-controles">
+        <label className="fila chico texto-2 crece">
+          Los próximos
+          <select className="chip chip-select" value={n} onChange={(e) => setN(Number(e.target.value))} aria-label="Cuántos correos">
+            {[5, 10, 20, 50].map((x) => <option key={x} value={x}>{x}</option>)}
+          </select>
+          que tomaría el job{typeof buzon?.total === "number" ? ` · ${buzon.total} en la carpeta` : ""}
+        </label>
+        <button className="boton chico" disabled={cargando} onClick={() => void cargar(n, true)}>{cargando ? <span className="girando" /> : <Icono n="reordenar" tam={13} />}Actualizar</button>
+      </div>
+      <div className="bandeja-lista buzon-lista">
+        {buzon?.error && <div className="vacio">No se pudo leer el buzón: {buzon.error}</div>}
+        {!buzon && cargando && <div className="vacio"><span className="girando" /> Leyendo el buzón…</div>}
+        {correos.map((c, i) => (
+          <div key={c.id} className={`correo estatico ${marcados.includes(c.id) ? "marcado" : ""}`} onClick={() => c.traido && enfocar({ tipo: "correo", caso: c.caso })} title={c.traido ? "Ver el correo" : "Se trae al correrlo"}>
+            <label className="correo-check" onClick={(e) => e.stopPropagation()}>
+              <input type="checkbox" className="check" checked={marcados.includes(c.id)} onChange={() => setMarcados((m) => (m.includes(c.id) ? m.filter((x) => x !== c.id) : [...m, c.id]))} aria-label={`Elegir ${c.asunto}`} />
+            </label>
+            <div className="correo-cuerpo-lista">
+              <div className="fila">
+                <span className="texto-3 diminuto mono">{i + 1}</span>
+                <span className="correo-de crece">{c.remitente || c.remitenteCorreo}</span>
+                <span className="texto-3 diminuto">{fecha(c.recibido)}</span>
+              </div>
+              <div className="correo-asunto">{c.asunto || "(sin asunto)"}</div>
+              <div className="fila correo-fichas">
+                {c.conAdjuntos && <span className="ficha"><Icono n="adjunto" tam={11} /></span>}
+                {c.categorias.map((k) => <span key={k} className="ficha" title="Etiqueta que tiene hoy en el buzón">{k}</span>)}
+                {c.traido && <span className="ficha tono-azul">Traído</span>}
+              </div>
+            </div>
+          </div>
+        ))}
+        {buzon && !buzon.error && !correos.length && <div className="vacio">La carpeta del job está vacía.</div>}
+      </div>
+      <footer className="bandeja-pie">
+        <span className="crece chico texto-2">{marcados.length ? <><b>{marcados.length}</b> elegidos</> : "Todos los de la lista, en este orden"}</span>
+        <button className="boton primario" disabled={corriendo || !correos.length} onClick={() => void lanzar()}>
+          {corriendo ? <span className="girando" /> : <Icono n="play" tam={14} />}Correr {cuantos || ""} como el job
+        </button>
+      </footer>
+    </>
+  );
+}
+
 export function Bandeja() {
+  const [fuente, setFuente] = useState<"buzon" | "local">("buzon");
+  const [comoElJob, setComoElJob] = useState(true);
   const bandeja = usar((s) => s.bandeja);
   const corridas = usar((s) => s.corridas);
   const orden = usar((s) => s.orden);
@@ -94,8 +186,9 @@ export function Bandeja() {
     return bandeja.filter((c) => {
       if (filtro === "sin_procesar" && porCaso[c.caso]) return false;
       if (filtro === "procesados" && !porCaso[c.caso]) return false;
+      if (filtro === "del_buzon") return c.origen === "buzon" && (!q || `${c.asunto} ${c.remitente} ${c.remitenteCorreo} ${c.vistaPrevia}`.toLowerCase().includes(q));
       if ((filtro === "radicado" || filtro === "manual") && c.desenlaceProduccion !== filtro) return false;
-      if (!["todos", "sin_procesar", "procesados", "radicado", "manual"].includes(filtro) && c.motivoProduccion !== filtro) return false;
+      if (!["todos", "sin_procesar", "procesados", "radicado", "manual", "del_buzon"].includes(filtro) && c.motivoProduccion !== filtro) return false;
       return !q || `${c.caso} ${c.asunto} ${c.remitente} ${c.remitenteCorreo} ${c.vistaPrevia}`.toLowerCase().includes(q);
     });
   }, [bandeja, busqueda, filtro, porCaso]);
@@ -125,7 +218,7 @@ export function Bandeja() {
     setEnviando(true);
     try {
       const n = seleccion.length;
-      await procesar(seleccion);
+      await procesar(seleccion, comoElJob);
       avisar(`${n} correo${n > 1 ? "s" : ""} en cola de proceso`);
     } catch (e) {
       avisar((e as Error).message, "error");
@@ -138,6 +231,7 @@ export function Bandeja() {
     { id: "todos", nombre: "Todos", n: bandeja.length },
     { id: "sin_procesar", nombre: "Sin procesar", n: bandeja.length - procesados },
     { id: "procesados", nombre: "Procesados", n: procesados },
+    ...(bandeja.some((c) => c.origen === "buzon") ? [{ id: "del_buzon", nombre: "Del buzón real", n: bandeja.filter((c) => c.origen === "buzon").length }] : []),
   ];
 
   return (
@@ -146,8 +240,15 @@ export function Bandeja() {
         <div className="fila">
           <span className="mini-icono t-pizarra"><Icono n="bandeja" tam={13} /></span>
           <h2 className="crece">Bandeja de entrada</h2>
-          <span className="texto-3 diminuto">{visibles.length} de {bandeja.length}</span>
+          {fuente === "local" && <span className="texto-3 diminuto">{visibles.length} de {bandeja.length}</span>}
         </div>
+        <div className="segmentos" role="tablist" aria-label="De dónde salen los correos">
+          <button role="tab" aria-selected={fuente === "buzon"} className={`segmento ${fuente === "buzon" ? "activo" : ""}`} onClick={() => setFuente("buzon")}><Icono n="correo" tam={12} />Buzón real</button>
+          <button role="tab" aria-selected={fuente === "local"} className={`segmento ${fuente === "local" ? "activo" : ""}`} onClick={() => setFuente("local")}><Icono n="bandeja" tam={12} />Descargados</button>
+        </div>
+      </header>
+      {fuente === "buzon" ? <PanelBuzon /> : <>
+      <header className="bandeja-cabeza bandeja-cabeza-local">
         <div className="campo-icono"><Icono n="buscar" tam={14} /><input className="campo" placeholder="Buscar asunto, remitente o texto" value={busqueda} onChange={(e) => setBusqueda(e.target.value)} /></div>
         <div className="chips-filtro">
           {chips.map((c) => (
@@ -182,6 +283,11 @@ export function Bandeja() {
         {(seleccion.length > 0 || enCola > 0) && (
           <motion.footer className="bandeja-pie" initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 40, opacity: 0 }} transition={{ type: "spring", stiffness: 420, damping: 34 }}>
             <span className="crece"><b>{seleccion.length}</b> seleccionado{seleccion.length === 1 ? "" : "s"}</span>
+            {seleccion.length > 1 && (
+              <label className="fila chico texto-2" title="Un solo orquestador para todos, de a cinco y de a uno por remitente: así detecta lo que se repite dentro de la corrida">
+                <input type="checkbox" className="check" checked={comoElJob} onChange={(e) => setComoElJob(e.target.checked)} />Juntos, como el job
+              </label>
+            )}
             {enCola > 0 && <button className="boton chico peligro" onClick={() => void cancelarCola()}>Cancelar {enCola} en cola</button>}
             <button className="boton primario" disabled={!seleccion.length || enviando} onClick={() => void lanzar()}>
               <Icono n="play" tam={14} />Procesar {seleccion.length || ""}
@@ -189,6 +295,7 @@ export function Bandeja() {
           </motion.footer>
         )}
       </AnimatePresence>
+      </>}
     </section>
   );
 }

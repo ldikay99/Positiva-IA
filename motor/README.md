@@ -174,6 +174,9 @@ llamar al modelo.
 Los secretos van en `.env`, que no se versiona, o en Secret Manager. Faltando alguno, el arranque
 falla nombrando cuál.
 
+El merge a `prod` no despliega por sí solo: el job se actualiza lanzando el pipeline
+`release-ms-radicacion-ia-pqrd`, que pide aprobación en el entorno `sgdea-prd`.
+
 ## Medición
 
 Ningún cambio a las reglas, al prompt o a la compuerta se acepta sin medirlo contra el corpus de

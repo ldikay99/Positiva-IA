@@ -90,6 +90,11 @@ export function progreso(catalogo: Catalogo | null, corrida: Corrida | undefined
       p.herramientas[h] = (p.herramientas[h] ?? 0) + 1;
     } else if (e.tipo === "proveedor") {
       p.consultas += 1;
+    } else if (e.tipo === "paso" && typeof e.nodo === "string") {
+      // Las etapas que corren dentro de otra (anexos y seguimiento van dentro
+      // de la deduplicación) no tienen cronómetro propio: las enciende su paso.
+      const n = catalogo.nodos.find((x) => x.id === e.nodo);
+      if (n && !n.etapa_cronometro && !n.terminal) marcar(n.id, { estado: "hecho", veces: (p.nodos[n.id]?.veces ?? 0) + 1 });
     } else if (e.tipo === "escritura") {
       p.escrituras += 1;
     } else if (e.tipo === "resultado") {

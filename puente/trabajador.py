@@ -17,7 +17,7 @@ evento `consola`.
 from __future__ import annotations
 
 import asyncio
-import base64
+import contextvars
 import copy
 import importlib
 import json
@@ -51,10 +51,50 @@ os.chdir(MOTOR)  # el motor no carga ningún .env: no hay uno en su carpeta
 sys.path.insert(0, str(MOTOR))
 
 import visor_adjuntos as adjuntos  # noqa: E402  (junto a este archivo, no en el motor)
+import buzon_vivo  # noqa: E402
 
+VIVO = Path(os.environ.get("RUTA_VIVO", RAIZ / "datos" / "vivo"))
 _salida = sys.stdout
-_actual: Dict[str, Any] = {"corrida": None}
 _cerrojo = threading.Lock()  # el modelo corre en un hilo aparte
+
+
+class _PorCorreo:
+    """
+    El estado del correo que se está procesando, uno por tarea.
+
+    En un lote varios correos corren a la vez en este mismo proceso, como en el
+    job: lo que se anuncia de uno no puede llevar la corrida de otro. Vive en
+    un `ContextVar`: cada tarea de asyncio tiene el suyo y los hilos que abre
+    `asyncio.to_thread` (el modelo, la conversión) lo heredan.
+    """
+
+    _var: contextvars.ContextVar = contextvars.ContextVar("correo_del_visor")
+
+    def _d(self) -> Dict[str, Any]:
+        d = self._var.get(None)
+        if d is None:
+            d = {"corrida": None}
+            self._var.set(d)
+        return d
+
+    def nuevo(self, **valores: Any) -> None:
+        self._var.set({"corrida": None, **valores})
+
+    def __getitem__(self, clave: str) -> Any:
+        return self._d()[clave]
+
+    def __setitem__(self, clave: str, valor: Any) -> None:
+        self._d()[clave] = valor
+
+    def get(self, clave: str, defecto: Any = None) -> Any:
+        return self._d().get(clave, defecto)
+
+    def pop(self, clave: str, *defecto: Any) -> Any:
+        return self._d().pop(clave, *defecto)
+
+
+_actual = _PorCorreo()
+_buzon_de_la_tarea: contextvars.ContextVar = contextvars.ContextVar("buzon_del_visor")
 
 
 def evento(tipo: str, **datos: Any) -> None:
@@ -85,35 +125,15 @@ class _Consola:
 
 # ---------------------------------------------------------------- buzón local
 
-class BuzonLocal:
-    """Sirve el correo y sus adjuntos desde disco. Toda escritura queda solo anotada."""
-
-    def __init__(self, carpeta: Path, mensaje: dict) -> None:
-        self.carpeta = carpeta
-        self.mensaje = mensaje
-        self.escrituras: list = []
-
-    async def get_attachments(self, _id):
-        return [{"id": a["archivo"], "name": a["name"], "size": a.get("size", 0),
-                 "isInline": a.get("isInline", False), "contentType": a.get("contentType")}
-                for a in self.mensaje.get("_adjuntos", []) if a.get("archivo")]
-
-    async def download_attachment(self, _id, adjunto):
-        return base64.b64encode((self.carpeta / "adj" / adjunto).read_bytes()).decode()
-
-    async def get_email_by_id(self, _id):
-        return None
+class BuzonDelLote:
+    """
+    El `outlook` del orquestador. Cada correo trae su propio buzón (el de disco o
+    el real de solo lectura), y en un lote un mismo orquestador atiende varios a
+    la vez: cada llamada va al buzón del correo de la tarea que la hace.
+    """
 
     def __getattr__(self, nombre):
-        if nombre.startswith("ultimo"):
-            return ""
-
-        async def _anotar(*a, **k):
-            self.escrituras.append(nombre)
-            evento("escritura", sistema="buzon", operacion=nombre,
-                   detalle=[str(x)[:300] for x in a][:4])
-            return None
-        return _anotar
+        return getattr(_buzon_de_la_tarea.get(), nombre)
 
 
 class RegistroObservado:
@@ -145,7 +165,11 @@ class ModeloObservado:
     def __init__(self, real) -> None:
         self.real = real
         self.nombre = real.nombre
-        self.vuelta = 0
+
+    @property
+    def vuelta(self) -> int:
+        """Las vueltas son del correo, no del modelo: en un lote lo comparten varios."""
+        return _actual.get("vuelta", 0)
 
     def transcribir_imagen(self, jpeg: bytes) -> str:
         """Lo que el OCR no leyó lo transcribe el modelo con visión: se anuncia con su hoja."""
@@ -165,16 +189,17 @@ class ModeloObservado:
         return texto
 
     def generar(self, sistema, mensajes, herramientas):
-        from pipeline import revisor
+        from pipeline import revisor, seguimiento
 
-        self.vuelta += 1
-        quien = "revisor" if sistema == revisor.SISTEMA else "agente"
+        _actual["vuelta"] = self.vuelta + 1
+        quien = ("revisor" if sistema == revisor.SISTEMA
+                 else "seguimiento" if sistema == seguimiento.SISTEMA else "agente")
         adjuntos.quien(quien)
         ultimo = mensajes[-1] if mensajes else {}
         evento("modelo_inicio", vuelta=self.vuelta, quien=quien, modelo=self.nombre,
                mensajes=len(mensajes),
                ultimo=str(ultimo.get("contenido", ultimo.get("content", "")))[:1500],
-               sistema=sistema[:6000] if self.vuelta == 1 or quien == "revisor" else "")
+               sistema=sistema[:6000] if self.vuelta == 1 or quien != "agente" else "")
         t = time.time()
         try:
             turno = self.real.generar(sistema, mensajes, herramientas)
@@ -403,6 +428,82 @@ def instalar_observadores() -> None:
         return despues
     _envolver(duplicados.Detector, "comprobar", dedup("deduplicacion", "capas 1-4"), asincrona=True)
     _envolver(duplicados.Detector, "comprobar_contenido", dedup("deduplicacion_contenido", "capas 5-6"), asincrona=True)
+
+    def en_la_corrida(r, a, k):
+        v, fallo = r
+        if v:
+            _paso("deduplicacion", f"Este remitente ya radicó este caso en esta misma corrida ({v.radicado})",
+                  "aviso", v.motivo, radicado=v.radicado, capa="corrida")
+        elif fallo:
+            _paso("deduplicacion", "No se pudo comparar con lo radicado en esta corrida", "aviso", fallo)
+    _envolver(duplicados.Detector, "_radicado_en_esta_corrida", en_la_corrida, asincrona=True)
+
+    # --- anexos: lo que llega en el caso de un radicado con documentos nuevos
+    def anexos(v, a, k):
+        email, radicado = a[1], a[2]
+        if v.anexo_de:
+            _paso("anexos", f"Trae {len(v.documentos_nuevos)} documento(s) que el radicado {radicado} no tiene: va a revisión manual",
+                  "aviso", "\n".join(v.documentos_nuevos[:20]), radicado=radicado, documentos=v.documentos_nuevos[:20])
+        elif "sin comparar" in (v.motivo or ""):
+            _paso("anexos", f"No se pudieron comparar los documentos con {radicado}: queda como duplicado", "aviso", v.motivo,
+                  radicado=radicado)
+        elif getattr(email, "has_attachments", False):
+            _paso("anexos", f"Sus documentos ya están en el radicado {radicado}", "ok", v.motivo, radicado=radicado)
+        else:
+            _paso("anexos", f"Sin adjuntos que comparar con el radicado {radicado}", "info", v.motivo, radicado=radicado)
+    _envolver(duplicados.Detector, "_salvo_documentos_nuevos", anexos, asincrona=True)
+
+    # --- seguimiento: ¿insiste en lo radicado o pide otra cosa?
+    from pipeline import orquestador, seguimiento
+
+    def clasificado(c, a, k):
+        _actual["seguimiento_consultado"] = True
+        if c.es_solicitud_nueva:
+            _paso("seguimiento", "La IA ve una solicitud distinta de lo radicado", "aviso", f"«{c.cita}»",
+                  veredicto=c.veredicto, cita=c.cita, tokens_entrada=c.tokens_entrada)
+        else:
+            _paso("seguimiento", "La IA lo ve como seguimiento de lo radicado" if not c.descartada
+                  else f"Queda como seguimiento: {c.descartada}", "ok" if not c.descartada else "aviso",
+                  c.descartada or "insiste, reitera o pregunta por lo mismo", veredicto=c.veredicto,
+                  tokens_entrada=c.tokens_entrada)
+    _envolver(seguimiento, "clasificar", clasificado)
+
+    def pide_algo_nuevo(cita, a, k):
+        repetido = a[2]
+        if not (repetido.radicado and (repetido.motivo or "").startswith(orquestador.Orquestador._CAPAS_DEL_MISMO_CASO)):
+            return
+        if cita:
+            _paso("seguimiento", f"Pide algo distinto del radicado {repetido.radicado}: va a revisión manual", "aviso",
+                  f"«{cita}»", radicado=repetido.radicado, cita=cita)
+        elif not _actual.get("seguimiento_consultado"):
+            _paso("seguimiento", f"Seguimiento del radicado {repetido.radicado}, sin consultar a la IA", "info",
+                  "no hace falta: reenvío exacto, otro remitente, un buzón de Positiva, sin texto propio "
+                  "o el radicado no tiene texto con qué comparar", radicado=repetido.radicado)
+        _actual.pop("seguimiento_consultado", None)
+    _envolver(orquestador.Orquestador, "_pide_algo_nuevo", pide_algo_nuevo, asincrona=True)
+
+    # --- el resto del hilo que sale con el correo
+    import functools
+
+    def cerrando(nombre: str, nodo: str) -> None:
+        original = getattr(orquestador.Orquestador, nombre)
+
+        @functools.wraps(original)
+        async def envoltorio(*a, **k):
+            # Antes de llamar: el resto del hilo se archiva dentro de esta llamada.
+            _actual["cerrando"] = nodo
+            return await original(*a, **k)
+        setattr(orquestador.Orquestador, nombre, envoltorio)
+    cerrando("_mover_a_exitosa", "cierre_outlook")
+    cerrando("_archivar_duplicado", "duplicado")
+
+    def resto_del_hilo(_r, a, k):
+        avisos = a[2] if len(a) > 2 else k.get("avisos")
+        lineas = [x for x in (avisos or []) if "correo(s)" in x and "del mismo hilo" in x]
+        nodo = _actual.get("cerrando") or "duplicado"
+        if lineas:
+            _paso(nodo, "Qué pasa con el resto del hilo", "info", "\n".join(lineas[-3:]))
+    _envolver(orquestador.Orquestador, "_archivar_el_resto_del_hilo", resto_del_hilo, asincrona=True)
 
     # --- enrutamiento, facturas, remitente
     def ruta(r, a, k):
@@ -869,45 +970,88 @@ def modelo_vertex(nombre: str, ubicacion: str):
     return _modelos[clave]
 
 
-async def procesar(orden: Dict[str, Any]) -> None:
-    global _registro
+_vivo: Dict[str, Any] = {"servicio": None}
+
+
+def _carpeta_del_caso(caso: str) -> Path:
+    """Un caso es un correo traído del buzón real (VIVO) o de la carpeta local."""
+    for base in (VIVO, BANDEJA):
+        carpeta = base / caso
+        if (carpeta / "mensaje.json").exists():
+            return carpeta
+    raise FileNotFoundError(f"no existe el caso {caso}")
+
+
+def _correo(caso: str):
     from models.email import EmailMessage
-    from pipeline.atribucion import Origen
+
+    carpeta = _carpeta_del_caso(caso)
+    crudo = json.loads((carpeta / "mensaje.json").read_text(encoding="utf-8"))
+    vivo = bool(crudo.get("_vivo"))
+    limpio = {k: v for k, v in crudo.items() if not k.startswith("_")}
+    if not vivo:
+        # La carpeta local guardó el correo con las etiquetas que el job le
+        # puso después de procesarlo: con ellas sería siempre un duplicado.
+        limpio["categories"] = []
+    return carpeta, crudo, EmailMessage.from_graph_api(limpio), vivo
+
+
+def _buzon_para(carpeta: Path, crudo: dict, vivo: bool):
+    if not vivo:
+        return buzon_vivo.BuzonLocal(carpeta, crudo, evento)
+    if _vivo["servicio"] is None:
+        _vivo["servicio"] = buzon_vivo.servicio()
+    return buzon_vivo.BuzonVivo(_vivo["servicio"], carpeta, crudo, evento)
+
+
+def _orquestador(orden: Dict[str, Any], base: str):
+    """Un orquestador como el del job. En un lote es uno solo para todos los correos."""
+    global _registro
+    from config import settings
     from pipeline.orquestador import Orquestador
     from pipeline.personas import ConsultaDePersonas
     from pipeline.radicador import Radicador
     from services.radicacion import RadicacionService
-    from config import settings
-
-    caso = orden["caso"]
-    carpeta = BANDEJA / caso
-    crudo = json.loads((carpeta / "mensaje.json").read_text(encoding="utf-8"))
-    limpio = {k: v for k, v in crudo.items() if not k.startswith("_")}
-    limpio["categories"] = []
-    email = EmailMessage.from_graph_api(limpio)
 
     ia = orden.get("ia") or {}
     _ia["temperatura"] = ia.get("temperatura")
-    modelo =ModeloObservado(modelo_vertex(ia.get("modelo", "gemini-2.5-flash"),
-                                           ia.get("ubicacion", "global")))
+    modelo = ModeloObservado(modelo_vertex(ia.get("modelo", "gemini-2.5-flash"), ia.get("ubicacion", "global")))
     if _registro is None:
         _registro = ConsultaDePersonas(url_base=settings.MS_SGDEA_BETA_URL)
-    buzon = BuzonLocal(carpeta, crudo)
+    servicio = RadicacionService(timeout=45)
+    orq = Orquestador(modelo=modelo, outlook=BuzonDelLote(), radicador=Radicador(servicio=servicio),
+                      base_workspace=str(TRABAJO / "ws" / base), sgdea=RegistroObservado(_registro))
+    return orq, servicio, modelo
+
+
+async def _atender(orq, modelo, corrida: str, caso: str, tope_s: float, lote: str = "") -> None:
+    """Un correo, con su propio estado y su propio buzón, dentro de su tarea."""
+    from config import settings
+    from pipeline.atribucion import Origen
+
+    _actual.nuevo(corrida=corrida, lote=lote)
+    t = time.time()
+    try:
+        carpeta, crudo, email, vivo = _correo(caso)
+        buzon = _buzon_para(carpeta, crudo, vivo)
+    except Exception as e:
+        evento("resultado", caso=caso, accion="error", motivo=f"{type(e).__name__}: {e}"[:500],
+               traza=traceback.format_exc()[-3000:], segundos=0)
+        return
+    _buzon_de_la_tarea.set(buzon)
+    # Con el buzón real las capas que consultan Graph se encienden: son
+    # lecturas. Con la carpeta local no hay nada que consultar.
+    settings.DEDUP_EN_PRUEBAS = vivo
     de = (crudo.get("from") or {}).get("emailAddress") or {}
     _actual["correo"] = {"remitente": f"{de.get('name', '')} <{de.get('address', '')}>",
                          "adjuntos": [a.get("name", "") for a in crudo.get("_adjuntos", [])]}
-    servicio = RadicacionService(timeout=45)
-    orq = Orquestador(modelo=modelo, outlook=buzon, radicador=Radicador(servicio=servicio),
-                      base_workspace=str(TRABAJO / "ws" / _actual["corrida"]),
-                      sgdea=RegistroObservado(_registro))
-
-    for clave in ("rondas", "revisiones", "fase_validacion"):
-        _actual.pop(clave, None)
-    adjuntos.iniciar(_actual["corrida"], TRABAJO)
-    evento("inicio", caso=caso, asunto=crudo.get("subject", ""), modelo=modelo.nombre)
-    t = time.time()
+    _actual["umbral"] = _umbral_vigente()
+    adjuntos.iniciar(corrida, TRABAJO)
+    evento("inicio", caso=caso, asunto=crudo.get("subject", ""), modelo=modelo.nombre,
+           buzon="real" if vivo else "local", lote=lote,
+           categorias=list(crudo.get("categories") or []) if vivo else [])
     try:
-        r = await asyncio.wait_for(orq.procesar(email), orden.get("tope_s", 600))
+        r = await asyncio.wait_for(orq.procesar(email), tope_s)
         evento("resultado", caso=caso, accion=r.accion, motivo=r.motivo_manual,
                ubicaciones={c: adjuntos.ubicar(h.valor, h.evidencia) for c, h in r.hallazgos.items()},
                revision=r.revision,
@@ -915,16 +1059,46 @@ async def procesar(orden: Dict[str, Any]) -> None:
                vueltas=r.turnos_del_agente, tokens_entrada=r.tokens_entrada,
                tokens_salida=r.tokens_salida, etapas_ms=r.etapas_ms, duracion_ms=r.duracion_ms,
                area_destino=r.area_destino, razon_del_reenvio=r.razon_del_reenvio,
-               razon_del_duplicado=r.razon_del_duplicado,
+               razon_del_duplicado=r.razon_del_duplicado, anexo_de=getattr(r, "anexo_de", ""),
                hallazgos={c: {"valor": h.valor, "metodo": h.metodo, "confianza": h.confianza,
                               "evidencia": str(h.evidencia)[:400]}
                           for c, h in r.hallazgos.items()},
                sin_resolver=sorted(c for c, o in r.atribucion.items() if o is Origen.NO_RESUELTO),
                atribucion={c: getattr(o, "value", str(o)) for c, o in r.atribucion.items()},
+               buzon="real" if vivo else "local", lote=lote,
                escrituras_buzon=buzon.escrituras, segundos=round(time.time() - t, 1))
     except Exception as e:
         evento("resultado", caso=caso, accion="error", motivo=f"{type(e).__name__}: {e}"[:500],
                traza=traceback.format_exc()[-3000:], segundos=round(time.time() - t, 1))
+
+
+async def procesar(orden: Dict[str, Any]) -> None:
+    """Un correo solo: su propio orquestador."""
+    orq, servicio, modelo = _orquestador(orden, orden["corrida"])
+    try:
+        await _atender(orq, modelo, orden["corrida"], orden["caso"], orden.get("tope_s", 600))
+    finally:
+        await servicio.close()
+
+
+async def procesar_lote(orden: Dict[str, Any]) -> None:
+    """
+    Varios correos como una corrida del job: un solo orquestador (el mismo
+    detector de duplicados para todos), de a CONCURRENCIA a la vez y en el orden
+    en que llegan.
+    """
+    from correr import CONCURRENCIA
+
+    lote = orden["lote"]
+    orq, servicio, modelo = _orquestador(orden, lote)
+    turno = asyncio.Semaphore(max(1, int(orden.get("concurrencia") or CONCURRENCIA)))
+
+    async def uno(item: Dict[str, str]) -> None:
+        async with turno:
+            await _atender(orq, modelo, item["corrida"], item["caso"], orden.get("tope_s", 600), lote)
+
+    try:
+        await asyncio.gather(*(uno(item) for item in orden["corridas"]))
     finally:
         await servicio.close()
 
@@ -945,21 +1119,23 @@ async def principal() -> None:
             orden = json.loads(linea)
         except json.JSONDecodeError:
             continue
-        if orden.get("cmd") == "procesar":
-            _actual["corrida"] = orden["corrida"]
+        if orden.get("cmd") in ("procesar", "procesar_lote"):
+            primera = orden["corrida"] if orden["cmd"] == "procesar" else orden["corridas"][0]["corrida"]
+            _actual.nuevo(corrida=primera)
             fallidas = aplicar_configuracion(orden.get("parametros", {}), orden.get("entorno", {}))
             _reglas[:] = [r for r in orden.get("reglas", []) if isinstance(r, dict) and r.get("activa", True)]
-            _actual["umbral"] = _umbral_vigente()
             if fallidas:
                 evento("configuracion", fallidas=fallidas)
             try:
-                await procesar(orden)
+                if orden["cmd"] == "procesar":
+                    await procesar(orden)
+                else:
+                    await procesar_lote(orden)
             finally:
                 restaurar_configuracion()
                 _reglas.clear()
-                _actual["correo"] = None
-                evento("libre")
-                _actual["corrida"] = None
+                _actual.nuevo(corrida=None)
+                evento("libre", lote=orden.get("lote", ""))
         elif orden.get("cmd") == "ping":
             evento("pong")
 

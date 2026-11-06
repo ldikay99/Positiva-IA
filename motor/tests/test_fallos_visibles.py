@@ -666,7 +666,11 @@ async def test_un_duplicado_se_saca_de_la_bandeja(tmp_path):
 # ── El resto del hilo sale con el correo radicado ──
 
 class OutlookConHilo:
-    """Bandeja con tres correos mas en el hilo del que se procesa."""
+    """
+    Bandeja con cuatro correos mas en el hilo del que se procesa: el mismo
+    correo reenviado (c2), uno de un area de Positiva (c3), otro de la misma
+    persona con otro texto (c4) y el mismo texto con otro documento (c5).
+    """
 
     def __init__(self, falla_listar=False):
         self.movidos = []
@@ -681,11 +685,24 @@ class OutlookConHilo:
         self.movidos.append((id_correo, carpeta))
         return f"{id_correo}-movido"
 
-    async def get_conversation_message_ids(self, carpeta, conversacion):
+    async def mensajes_del_hilo(self, carpeta, conversacion):
         if self.falla_listar:
             raise RuntimeError("Graph no responde")
         assert conversacion == "hilo-1"
-        return ["c2", "c3", "c4"]
+        texto = ("Incapacidad del trabajador PEDRO RUIZ MEJIA con C.C. 41234567. "
+                 "Cordialmente, Ana Lopez")
+
+        def m(i, de, cuerpo, adjuntos=False):
+            return {"id": i, "from": {"emailAddress": {"address": de}},
+                    "body": {"content": cuerpo}, "hasAttachments": adjuntos}
+        # El correo procesado ya se movio: Graph no lo lista en la bandeja.
+        return [m("c2", "ana@empresa.com", texto),
+                m("c3", "medicina@positiva.gov.co", "Remito para su gestion."),
+                m("c4", "ana@empresa.com", "Solicito la segunda entrega del medicamento."),
+                m("c5", "ana@empresa.com", texto, adjuntos=True)]
+
+    async def get_attachments(self, id_correo):
+        return [{"name": "orden.pdf", "size": 120_000}] if id_correo == "c5" else []
 
     async def forward_email(self, id_correo, destino, cuerpo):
         return None
@@ -723,9 +740,12 @@ async def test_al_radicar_el_resto_del_hilo_sale_como_duplicado(tmp_path, monkey
 
     assert r.accion == "radicado", (r.accion, r.motivo_manual, r.avisos)
     assert outlook.movidos[0] == ("c1", settings.OUTLOOK_FOLDER_RADICACION_EXITOSA)
+    # Salen el reenvio exacto y el de Positiva; se quedan el que pide otra
+    # cosa y el que trae otro documento, para su propia comprobacion.
     assert outlook.movidos[1:] == [
-        (i, settings.OUTLOOK_FOLDER_DUPLICADOS) for i in ("c2", "c3", "c4")]
-    assert any("3 correo(s) mas del mismo hilo" in a for a in r.avisos), r.avisos
+        (i, settings.OUTLOOK_FOLDER_DUPLICADOS) for i in ("c2", "c3")]
+    assert any("2 correo(s) mas del mismo hilo" in a for a in r.avisos), r.avisos
+    assert any("2 correo(s) del mismo hilo se quedan" in a for a in r.avisos), r.avisos
 
 
 async def _nada():

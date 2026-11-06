@@ -21,8 +21,9 @@ FROM node:24-slim AS node
 FROM python:3.12-slim
 # Tesseract 5 (Apache-2.0). El motor lee con el modelo estándar de español
 # (tessdata 4.1.0, LSTM), no con el rápido que trae el paquete de Debian: es con
-# el que se midieron sus umbrales. Va con el de orientación (osd), que usa para
-# decidir si una hoja está de lado. Se descargan con su huella fija.
+# el que se midieron sus umbrales y el que lleva la imagen del job. Van también
+# el de inglés y el de orientación (osd), que usa para decidir si una hoja está
+# de lado. Se descargan con su huella fija.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         gcc tesseract-ocr libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
@@ -30,12 +31,14 @@ ENV TESSDATA_PREFIX=/opt/tessdata
 RUN mkdir -p "$TESSDATA_PREFIX" && python - <<'PY'
 import hashlib, os, urllib.request
 destino = os.environ["TESSDATA_PREFIX"]
+# Los mismos que la imagen del job (motor/Dockerfile), con su misma versión.
 modelos = {
-    "spa": "0b0fcbb4665189e01ab8019e591f014dd7260460de072543edd4b2cb4ede7c96",
-    "osd": "e19f2ae860792fdf372cf48d8ce70ae5da3c4052962fe22e9de1f680c374bb0e",
+    "spa": ("4.1.0", "0b0fcbb4665189e01ab8019e591f014dd7260460de072543edd4b2cb4ede7c96"),
+    "eng": ("4.1.0", "daa0c97d651c19fba3b25e81317cd697e9908c8208090c94c3905381c23fc047"),
+    "osd": ("3.04.00", "9cf5d576fcc47564f11265841e5ca839001e7e6f38ff7f7aacf46d15a96b00ff"),
 }
-for nombre, huella in modelos.items():
-    url = f"https://github.com/tesseract-ocr/tessdata/raw/4.1.0/{nombre}.traineddata"
+for nombre, (version, huella) in modelos.items():
+    url = f"https://github.com/tesseract-ocr/tessdata/raw/{version}/{nombre}.traineddata"
     datos = urllib.request.urlopen(url, timeout=120).read()
     if hashlib.sha256(datos).hexdigest() != huella:
         raise SystemExit(f"{nombre}.traineddata no coincide con su huella")

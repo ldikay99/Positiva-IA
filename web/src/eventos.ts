@@ -78,6 +78,43 @@ function herramienta(e: Evento): Omit<Paso, "id" | "t"> {
   }
 }
 
+/** Lo que el motor le pide al buzón, dicho como pregunta. */
+const OPERACION_DEL_BUZON: Record<string, string> = {
+  hilo_ya_radicado: "¿algún correo del hilo ya tiene radicado?",
+  buscar_etiqueta_ent_por_asunto: "¿hay un radicado del mismo caso con este asunto?",
+  _es_el_mismo_caso: "¿es el mismo caso que el radicado encontrado?",
+  documentos_nuevos_frente_al_radicado: "¿trae documentos que el radicado no tiene?",
+  correo_con_etiqueta: "lee el correo radicado para compararlo",
+  mensajes_del_hilo: "el resto del hilo que sigue en la bandeja",
+  get_conversation_message_ids: "el resto del hilo que sigue en la bandeja",
+  _nombres_de_adjuntos: "los adjuntos del radicado",
+  get_attachments: "los adjuntos de otro correo",
+  download_attachment: "descarga un adjunto",
+  get_email_by_id: "lee un correo",
+  _leer_categorias: "lee las etiquetas del correo",
+};
+
+/** Una escritura bloqueada dicha como lo que el job habría hecho. */
+function loQueHaria(e: Evento): string {
+  const quien = e.propio === false ? "otro correo del hilo" : "el correo";
+  switch (String(e.operacion)) {
+    case "marcar":
+      return e.marca ? `marcaría ${quien} «${String(e.marca)}»${e.quitar_de_proceso ? " y le quitaría las marcas de proceso" : ""}` : `le quitaría a ${quien} las marcas de proceso`;
+    case "move_email":
+      return `movería ${quien} a «${String(e.destino || "otra carpeta")}»`;
+    case "forward_email":
+      return `reenviaría ${quien} a ${String(e.destino || "otra área")}`;
+    case "responder_correo":
+      return `respondería ${quien}`;
+    case "etiquetar_correo":
+      return `etiquetaría ${quien}`;
+    case "mover_hilo_completo":
+      return "movería el hilo completo";
+    default:
+      return String(e.operacion).replace(/_/g, " ");
+  }
+}
+
 export function describir(e: Evento, _catalogo?: Catalogo | null): Omit<Paso, "id" | "t"> | null {
   switch (e.tipo) {
     case "paso": {
@@ -115,7 +152,12 @@ export function describir(e: Evento, _catalogo?: Catalogo | null): Omit<Paso, "i
       return { tono: e.ok === false ? "error" : "info", icono: "persona", titulo: e.ok === false ? "El registro de personas falló" : e.encontrado ? `Registro de personas: ${String(e.nombre || "persona encontrada")}` : "Registro de personas: sin resultado", extra: segundos(Number(e.ms)), detalle: e.error ? String(e.error) : e.documento ? `documento ${String(e.documento)}` : undefined };
     case "escritura":
       if (e.sistema === "sgdea" && e.operacion === "radicar") return { tono: "escritura", icono: "enviar", titulo: "Envía la radicación a SGDEA (simulado, no se escribe)", extra: `${String(e.n_adjuntos ?? 0)} adjuntos`, detalle: json(e.payload) };
-      return { tono: "tenue", icono: e.sistema === "buzon" ? "correo" : "enviar", titulo: `${e.sistema === "buzon" ? "Buzón" : "SGDEA"} · ${String(e.operacion).replace(/_/g, " ")} (simulado)`, detalle: e.payload || e.detalle ? json(e.payload ?? e.detalle) : undefined };
+      if (e.sistema === "buzon") return { tono: "escritura", icono: "correo", titulo: `El job ${loQueHaria(e)}`, extra: "bloqueado: el visor no escribe en el buzón", detalle: e.detalle ? json(e.detalle) : undefined };
+      return { tono: "tenue", icono: "enviar", titulo: `SGDEA · ${String(e.operacion).replace(/_/g, " ")} (simulado)`, detalle: e.payload || e.detalle ? json(e.payload ?? e.detalle) : undefined };
+    case "buzon":
+      if (e.real === false) return { tono: "tenue", icono: "correo", titulo: `Buzón · ${OPERACION_DEL_BUZON[String(e.operacion)] ?? String(e.operacion)}`, extra: "sin buzón real: correo de la carpeta local" };
+      if (e.ok === false) return { tono: "error", icono: "alerta", titulo: `El buzón no respondió: ${OPERACION_DEL_BUZON[String(e.operacion)] ?? String(e.operacion)}`, detalle: String(e.error ?? "") };
+      return { tono: "info", icono: "correo", titulo: `Buzón real · ${OPERACION_DEL_BUZON[String(e.operacion)] ?? String(e.operacion)}`, extra: `${String(e.resultado ?? "")} · ${segundos(Number(e.ms ?? 0))}`, detalle: e.error ? `aviso del servicio: ${String(e.error)}` : undefined };
     case "log":
       return { tono: e.severidad === "ERROR" ? "error" : e.severidad === "WARNING" ? "aviso" : "info", icono: "logs", titulo: String(e.mensaje), extra: String(e.severidad ?? ""), detalle: json(e.campos) };
     case "configuracion":

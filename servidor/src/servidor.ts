@@ -8,6 +8,7 @@ import { z } from "zod";
 import { config } from "./config.ts";
 import { catalogo } from "./catalogo.ts";
 import * as bandeja from "./bandeja.ts";
+import * as buzon from "./buzon.ts";
 import * as configuracion from "./configuracion.ts";
 import { Motor, type Evento } from "./motor.ts";
 
@@ -99,7 +100,12 @@ app.post("/api/reglas/probar", async (req, res) => {
 
 // ------------------------------------------------------------------- corridas
 
-const pedido = z.object({ casos: z.array(z.string()).min(1).max(500) });
+const pedido = z.object({
+  casos: z.array(z.string()).min(1).max(500),
+  /** Juntos como una corrida del job: un orquestador, de a `concurrencia`, de a uno por remitente. */
+  comoElJob: z.boolean().optional(),
+  concurrencia: z.number().int().min(1).max(10).optional(),
+});
 
 app.post("/api/corridas", async (req, res) => {
   const r = pedido.safeParse(req.body);
@@ -107,10 +113,55 @@ app.post("/api/corridas", async (req, res) => {
   const invalidos = r.data.casos.filter((c) => !bandeja.casoValido(c));
   if (invalidos.length) return res.code(400).send({ error: `casos inválidos: ${invalidos.join(", ")}` });
   const conf = configuracion.obtener();
+  if (r.data.comoElJob && r.data.casos.length > 1) {
+    const { lote, corridas } = motor.encolarLote(r.data.casos, conf, r.data.concurrencia ?? 0);
+    return corridas.map((c) => ({ id: c.id, caso: c.caso, lote }));
+  }
   return r.data.casos.map((caso) => {
     const c = motor.encolar(caso, conf);
     return { id: c.id, caso: c.caso };
   });
+});
+
+// ----------------------------------------------------------- buzón real
+
+app.get<{ Querystring: { n?: string; fresco?: string } }>("/api/buzon", async (req, res) => {
+  const n = Math.max(1, Math.min(150, Number(req.query.n ?? 50) || 50));
+  try {
+    return await buzon.listar(n, req.query.fresco === "1");
+  } catch (e) {
+    return res.code(502).send({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+const pedidoDelBuzon = z.object({
+  n: z.number().int().min(1).max(150).optional(),
+  ids: z.array(z.string().min(10).max(400)).max(150).optional(),
+  concurrencia: z.number().int().min(1).max(10).optional(),
+});
+
+/**
+ * Corre ahora lo que tomaría el job: trae del buzón real (solo lectura) los
+ * correos de AUTOMATIZACION en su orden y los corre juntos con un orquestador.
+ */
+app.post("/api/buzon/correr", async (req, res) => {
+  const r = pedidoDelBuzon.safeParse(req.body ?? {});
+  if (!r.success) return res.code(400).send({ error: "pedido inválido" });
+  try {
+    const ids = r.data.ids?.length ? r.data.ids : (await buzon.listar(r.data.n ?? 10, true)).correos.map((c) => c.id);
+    if (!ids.length) return res.code(404).send({ error: "la carpeta del job está vacía" });
+    const casos = await buzon.traer(ids);
+    bandeja.olvidar();
+    const conf = configuracion.obtener();
+    if (casos.length === 1) {
+      const c = motor.encolar(casos[0]!, conf);
+      return { lote: null, corridas: [{ id: c.id, caso: c.caso }] };
+    }
+    const { lote, corridas } = motor.encolarLote(casos, conf, r.data.concurrencia ?? 0);
+    return { lote, corridas: corridas.map((c) => ({ id: c.id, caso: c.caso })) };
+  } catch (e) {
+    return res.code(502).send({ error: e instanceof Error ? e.message : String(e) });
+  }
 });
 
 app.delete("/api/corridas/cola", async () => ({ canceladas: motor.cancelarCola() }));

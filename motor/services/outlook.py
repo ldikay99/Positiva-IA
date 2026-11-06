@@ -274,11 +274,11 @@ class OutlookService:
         return valores[0] if valores else None
 
     async def mensajes_del_hilo(self, folder_id: str, conversation_id: str) -> List[Dict[str, Any]]:
-        """Los correos de un hilo en una carpeta, con remitente y si traen adjuntos."""
+        """Los correos de un hilo en una carpeta, con remitente, cuerpo y si traen adjuntos."""
         url = f"{self.base_url}/users/{self.user_email}/mailFolders/{folder_id}/messages"
         params = {
             "$filter": f"conversationId eq '{conversation_id}'",
-            "$select": "id,from,hasAttachments",
+            "$select": "id,from,hasAttachments,body",
             "$top": 50,
         }
         response = await self._consultar(url, params)

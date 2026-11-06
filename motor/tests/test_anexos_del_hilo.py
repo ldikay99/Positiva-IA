@@ -204,7 +204,7 @@ def test_las_cartas_de_la_entidad_y_los_correos_adjuntos_no_son_documentos_nuevo
 
 
 @pytest.mark.asyncio
-async def test_el_resto_del_hilo_deja_en_la_bandeja_lo_que_trae_adjuntos_de_afuera():
+async def test_del_resto_del_hilo_solo_salen_los_reenvios_exactos_y_lo_de_positiva():
     from config import settings
     from pipeline.orquestador import Orquestador
 
@@ -212,10 +212,15 @@ async def test_el_resto_del_hilo_deja_en_la_bandeja_lo_que_trae_adjuntos_de_afue
         movidos = []
 
         async def mensajes_del_hilo(self, carpeta, conversacion):
-            def m(i, de, adj):
-                return {"id": i, "hasAttachments": adj, "from": {"emailAddress": {"address": de}}}
+            def m(i, de, adj, cuerpo="Adjunto la historia clinica."):
+                return {"id": i, "hasAttachments": adj, "from": {"emailAddress": {"address": de}},
+                        "body": {"content": cuerpo}}
             return [m("a", "ana@gmail.com", False), m("b", "ana@gmail.com", True),
-                    m("c", "area@positiva.gov.co", True)]
+                    m("c", "area@positiva.gov.co", True),
+                    m("d", "ana@gmail.com", False, "Ahora pido la tercera entrega.")]
+
+        async def get_attachments(self, i):
+            return [{"name": "otra.pdf", "size": 90_000}] if i == "b" else []
 
         async def move_email(self, i, carpeta):
             self.movidos.append(i)

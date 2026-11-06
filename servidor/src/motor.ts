@@ -20,6 +20,8 @@ export type EstadoCorrida = "en_cola" | "procesando" | "terminada" | "fallida";
 export interface Corrida {
   id: string;
   caso: string;
+  /** Si corrió con otros como una corrida del job: un solo orquestador para todos. */
+  lote?: string;
   estado: EstadoCorrida;
   creada: number;
   inicio?: number;
@@ -33,13 +35,17 @@ interface Trabajador {
   id: number;
   proceso: ChildProcessWithoutNullStreams;
   listo: boolean;
-  corrida: Corrida | null;
+  /** Lo que está atendiendo: un correo, o todos los de un lote a la vez. */
+  activas: Map<string, Corrida>;
 }
+
+/** Lo que espera trabajador: un correo suelto o un lote entero, que va a un solo trabajador. */
+type Pedido = { tipo: "uno"; corrida: Corrida } | { tipo: "lote"; id: string; corridas: Corrida[]; concurrencia: number };
 
 /** Pool de trabajadores de Python: cada uno atiende un correo a la vez. */
 export class Motor extends EventEmitter {
   private trabajadores: Trabajador[] = [];
-  private cola: Corrida[] = [];
+  private cola: Pedido[] = [];
   readonly corridas = new Map<string, Corrida>();
   private siguienteId = 1;
   private deseados = 0;
@@ -61,43 +67,64 @@ export class Motor extends EventEmitter {
 
   estado() {
     return {
-      trabajadores: this.trabajadores.map((t) => ({ id: t.id, listo: t.listo, corrida: t.corrida?.id ?? null, caso: t.corrida?.caso ?? null })),
-      enCola: this.cola.map((c) => c.id),
+      trabajadores: this.trabajadores.map((t) => {
+        const activas = [...t.activas.values()];
+        return { id: t.id, listo: t.listo, corrida: activas[0]?.id ?? null, caso: activas[0]?.caso ?? null, corridas: activas.map((c) => c.id), lote: activas[0]?.lote ?? null };
+      }),
+      enCola: this.cola.flatMap((p) => (p.tipo === "uno" ? [p.corrida.id] : p.corridas.map((c) => c.id))),
       errorInicio: this.errorInicio,
     };
   }
 
-  encolar(caso: string, configuracion: Configuracion): Corrida {
+  private nueva(caso: string, configuracion: Configuracion, lote?: string): Corrida {
     const corrida: Corrida = {
       id: `${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "")}-${randomUUID().slice(0, 6)}`,
       caso,
+      ...(lote ? { lote } : {}),
       estado: "en_cola",
       creada: Date.now(),
       configuracion,
       eventos: [],
     };
     this.corridas.set(corrida.id, corrida);
-    this.cola.push(corrida);
-    this.publicar({ tipo: "en_cola", corrida: corrida.id, t: Date.now() / 1000, caso });
+    this.publicar({ tipo: "en_cola", corrida: corrida.id, t: Date.now() / 1000, caso, ...(lote ? { lote } : {}) });
+    return corrida;
+  }
+
+  encolar(caso: string, configuracion: Configuracion): Corrida {
+    const corrida = this.nueva(caso, configuracion);
+    this.cola.push({ tipo: "uno", corrida });
     this.repartir();
     return corrida;
   }
 
+  /**
+   * Varios correos como una corrida del job: van juntos a un mismo trabajador,
+   * que los atiende con un solo orquestador y de a `concurrencia` a la vez.
+   */
+  encolarLote(casos: string[], configuracion: Configuracion, concurrencia = 0): { lote: string; corridas: Corrida[] } {
+    const lote = `lote-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "")}-${randomUUID().slice(0, 4)}`;
+    const corridas = casos.map((caso) => this.nueva(caso, configuracion, lote));
+    this.cola.push({ tipo: "lote", id: lote, corridas, concurrencia });
+    this.repartir();
+    return { lote, corridas };
+  }
+
   cancelarCola(): number {
-    const n = this.cola.length;
-    for (const c of this.cola.splice(0)) {
+    const pendientes = this.cola.splice(0).flatMap((p) => (p.tipo === "uno" ? [p.corrida] : p.corridas));
+    for (const c of pendientes) {
       c.estado = "fallida";
       this.publicar({ tipo: "resultado", corrida: c.id, t: Date.now() / 1000, caso: c.caso, accion: "cancelada", motivo: "cancelada antes de empezar" });
     }
-    return n;
+    return pendientes.length;
   }
 
   private lanzar(): void {
     const proceso = spawn(config.python, [config.trabajador], {
-      env: { ...process.env, PYTHONUNBUFFERED: "1", PYTHONIOENCODING: "utf-8", RUTA_BANDEJA: config.bandeja, RUTA_TRABAJO: join(config.datos, "trabajo") },
+      env: { ...process.env, PYTHONUNBUFFERED: "1", PYTHONIOENCODING: "utf-8", RUTA_BANDEJA: config.bandeja, RUTA_VIVO: config.vivo, RUTA_TRABAJO: join(config.datos, "trabajo") },
       stdio: ["pipe", "pipe", "pipe"],
     });
-    const t: Trabajador = { id: this.siguienteId++, proceso, listo: false, corrida: null };
+    const t: Trabajador = { id: this.siguienteId++, proceso, listo: false, activas: new Map() };
     this.trabajadores.push(t);
     let pendiente = "";
     proceso.stdout.setEncoding("utf8");
@@ -113,13 +140,15 @@ export class Motor extends EventEmitter {
     proceso.stderr.setEncoding("utf8");
     proceso.stderr.on("data", (trozo: string) => {
       for (const linea of trozo.split("\n")) {
-        if (linea.trim()) this.recibir(t, { tipo: "consola", corrida: t.corrida?.id ?? null, t: Date.now() / 1000, linea, error: true });
+        if (linea.trim()) this.recibir(t, { tipo: "consola", corrida: this.unica(t)?.id ?? null, t: Date.now() / 1000, linea, error: true });
       }
     });
     proceso.on("exit", (codigo) => {
       this.trabajadores = this.trabajadores.filter((x) => x !== t);
-      if (t.corrida && t.corrida.estado === "procesando") {
-        this.recibir(t, { tipo: "resultado", corrida: t.corrida.id, t: Date.now() / 1000, caso: t.corrida.caso, accion: "error", motivo: `el trabajador terminó (código ${codigo})` });
+      for (const c of t.activas.values()) {
+        if (c.estado === "procesando") {
+          this.recibir(t, { tipo: "resultado", corrida: c.id, t: Date.now() / 1000, caso: c.caso, accion: "error", motivo: `el trabajador terminó (código ${codigo})` });
+        }
       }
       if (this.trabajadores.length < this.deseados && !this.errorInicio) setTimeout(() => this.ajustar(this.deseados), 1000);
       this.publicarEstado();
@@ -128,7 +157,7 @@ export class Motor extends EventEmitter {
 
   private linea(t: Trabajador, linea: string): void {
     if (!linea.startsWith(MARCA)) {
-      if (linea.trim()) this.recibir(t, { tipo: "consola", corrida: t.corrida?.id ?? null, t: Date.now() / 1000, linea });
+      if (linea.trim()) this.recibir(t, { tipo: "consola", corrida: this.unica(t)?.id ?? null, t: Date.now() / 1000, linea });
       return;
     }
     try {
@@ -151,7 +180,9 @@ export class Motor extends EventEmitter {
       this.publicarEstado();
       return;
     }
-    const corrida = t.corrida;
+    // El trabajador dice de qué corrida es cada evento; en un correo suelto, si
+    // no lo dice (una línea de consola), es de la única que tiene.
+    const corrida = (typeof e.corrida === "string" ? t.activas.get(e.corrida) : undefined) ?? this.unica(t);
     if (corrida) {
       e.corrida = corrida.id;
       corrida.eventos.push(e);
@@ -164,7 +195,7 @@ export class Motor extends EventEmitter {
     }
     this.publicar(e);
     if (e.tipo === "libre") {
-      t.corrida = null;
+      t.activas.clear();
       this.publicarEstado();
       this.repartir();
     }
@@ -172,24 +203,37 @@ export class Motor extends EventEmitter {
 
   private repartir(): void {
     for (const t of [...this.trabajadores]) {
-      if (!t.listo || t.corrida) continue;
+      if (!t.listo || t.activas.size) continue;
       if (this.trabajadores.length > this.deseados) {
         t.listo = false;
         t.proceso.stdin.end();
         continue;
       }
-      const corrida = this.cola.shift();
-      if (!corrida) return;
-      t.corrida = corrida;
-      corrida.estado = "procesando";
-      corrida.inicio = Date.now();
-      const c = corrida.configuracion;
-      t.proceso.stdin.write(
-        JSON.stringify({ cmd: "procesar", corrida: corrida.id, caso: corrida.caso, parametros: c.parametros, entorno: c.entorno, ia: c.ia, tope_s: c.topeSegundos, reglas: c.reglas.filter((r) => r.activa) }) + "\n",
-      );
-      this.publicar({ tipo: "asignada", corrida: corrida.id, t: Date.now() / 1000, caso: corrida.caso, trabajador: t.id });
+      const pedido = this.cola.shift();
+      if (!pedido) return;
+      const corridas = pedido.tipo === "uno" ? [pedido.corrida] : pedido.corridas;
+      for (const corrida of corridas) {
+        t.activas.set(corrida.id, corrida);
+        corrida.estado = "procesando";
+        corrida.inicio = Date.now();
+      }
+      const c = corridas[0]!.configuracion;
+      const comun = { parametros: c.parametros, entorno: c.entorno, ia: c.ia, tope_s: c.topeSegundos, reglas: c.reglas.filter((r) => r.activa) };
+      const orden =
+        pedido.tipo === "uno"
+          ? { cmd: "procesar", corrida: pedido.corrida.id, caso: pedido.corrida.caso, ...comun }
+          : { cmd: "procesar_lote", lote: pedido.id, concurrencia: pedido.concurrencia, corridas: corridas.map((x) => ({ corrida: x.id, caso: x.caso })), ...comun };
+      t.proceso.stdin.write(JSON.stringify(orden) + "\n");
+      for (const corrida of corridas) {
+        this.publicar({ tipo: "asignada", corrida: corrida.id, t: Date.now() / 1000, caso: corrida.caso, trabajador: t.id, ...(corrida.lote ? { lote: corrida.lote } : {}) });
+      }
       this.publicarEstado();
     }
+  }
+
+  /** La corrida de un trabajador que atiende un solo correo. */
+  private unica(t: Trabajador): Corrida | undefined {
+    return t.activas.size === 1 ? t.activas.values().next().value : undefined;
   }
 
   private publicar(e: Evento): void {

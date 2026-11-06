@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { join, resolve, sep } from "node:path";
 import { config } from "./config.ts";
@@ -20,6 +21,9 @@ export interface Correo {
   adjuntos: Adjunto[];
   desenlaceProduccion: string;
   motivoProduccion: string;
+  /** "buzon": traído del buzón real, con sus etiquetas de hoy; "local": de la carpeta descargada. */
+  origen: "buzon" | "local";
+  categorias: string[];
 }
 
 interface MensajeGraph {
@@ -29,6 +33,8 @@ interface MensajeGraph {
   from?: { emailAddress?: { name?: string; address?: string } };
   _grupo?: string;
   _motivo_prod?: string;
+  _vivo?: boolean;
+  categories?: string[];
   _adjuntos?: { name: string; archivo?: string; contentType?: string; size?: number; isInline?: boolean }[];
 }
 
@@ -51,8 +57,13 @@ export function textoPlano(html: string): string {
     .trim();
 }
 
+/** La carpeta de un caso: los traídos del buzón real mandan sobre los de la carpeta local. */
+function baseDe(caso: string): string {
+  return existsSync(join(config.vivo, caso, "mensaje.json")) ? config.vivo : config.bandeja;
+}
+
 async function leerMensaje(caso: string): Promise<MensajeGraph> {
-  return JSON.parse(await readFile(join(config.bandeja, caso, "mensaje.json"), "utf8")) as MensajeGraph;
+  return JSON.parse(await readFile(join(baseDe(caso), caso, "mensaje.json"), "utf8")) as MensajeGraph;
 }
 
 function aCorreo(caso: string, m: MensajeGraph): Correo {
@@ -73,16 +84,29 @@ function aCorreo(caso: string, m: MensajeGraph): Correo {
     })),
     desenlaceProduccion: m._grupo ?? "",
     motivoProduccion: m._motivo_prod ?? "",
+    origen: m._vivo ? "buzon" : "local",
+    categorias: m._vivo ? (m.categories ?? []) : [],
   };
 }
 
-export async function listar(): Promise<Correo[]> {
-  const marca = (await stat(config.bandeja).catch(() => null))?.mtimeMs ?? 0;
-  if (cache && cache.leido >= marca) return cache.correos;
-  const nombres = (await readdir(config.bandeja, { withFileTypes: true }).catch(() => []))
+async function casosEn(carpeta: string): Promise<string[]> {
+  return (await readdir(carpeta, { withFileTypes: true }).catch(() => []))
     .filter((d) => d.isDirectory() && CASO.test(d.name))
-    .map((d) => d.name)
-    .sort();
+    .map((d) => d.name);
+}
+
+/** Que la bandeja vuelva a leerse: se acaban de traer correos del buzón real. */
+export function olvidar(): void {
+  cache = null;
+}
+
+export async function listar(): Promise<Correo[]> {
+  const marca = Math.max(
+    (await stat(config.bandeja).catch(() => null))?.mtimeMs ?? 0,
+    (await stat(config.vivo).catch(() => null))?.mtimeMs ?? 0,
+  );
+  if (cache && cache.leido >= marca) return cache.correos;
+  const nombres = [...new Set([...(await casosEn(config.vivo)), ...(await casosEn(config.bandeja))])].sort();
   const correos = (
     await Promise.all(
       nombres.map(async (caso) => {
@@ -117,7 +141,7 @@ export async function detalle(caso: string) {
 /** Ruta de un adjunto, solo si queda dentro de la carpeta del caso. */
 export function rutaAdjunto(caso: string, archivo: string): string | null {
   if (!casoValido(caso)) return null;
-  const base = resolve(config.bandeja, caso, "adj");
+  const base = resolve(baseDe(caso), caso, "adj");
   const ruta = resolve(base, archivo);
   return ruta.startsWith(base + sep) ? ruta : null;
 }

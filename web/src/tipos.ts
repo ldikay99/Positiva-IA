@@ -100,7 +100,31 @@ export interface Correo {
   adjuntos: Adjunto[];
   desenlaceProduccion: string;
   motivoProduccion: string;
+  /** "buzon": traído del buzón real con sus etiquetas de hoy; "local": de la carpeta descargada. */
+  origen?: "buzon" | "local";
+  categorias?: string[];
   cuerpo?: string;
+}
+
+/** Un correo de la carpeta que lee el job, tal como lo tomaría ahora. */
+export interface CorreoDelBuzon {
+  id: string;
+  caso: string;
+  asunto: string;
+  remitente: string;
+  remitenteCorreo: string;
+  recibido: string;
+  categorias: string[];
+  conAdjuntos: boolean;
+  hilo: string;
+  traido?: boolean;
+}
+
+export interface Buzon {
+  carpeta: string;
+  total: number | null;
+  correos: CorreoDelBuzon[];
+  error?: string;
 }
 
 export interface Configuracion {
@@ -126,6 +150,8 @@ export interface Corrida {
   creada: number;
   eventos: Evento[];
   resultado?: Evento;
+  /** Corrió junto con otros como una corrida del job (un solo orquestador). */
+  lote?: string;
 }
 
 export interface EstadoMotor {

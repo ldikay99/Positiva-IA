@@ -1815,57 +1815,82 @@ class Orquestador:
         self, email: EmailMessage, avisos: Optional[List[str]] = None,
     ) -> None:
         """
-        Saca de la bandeja los demas correos del hilo de uno ya radicado.
+        Saca de la bandeja los demas correos del hilo que con seguridad son duplicados.
 
         La bandeja entrega un solo correo por hilo en cada corrida. Si los
         demas se quedan, cada corrida toma uno, lo detecta como duplicado del
-        hilo y lo archiva: un hilo de 50 correos tardaba 47 corridas en salir
-        y ocupaba un cupo del lote en cada una. El desenlace de cada uno no
-        cambia, porque la capa del hilo los iba a dar por duplicados igual;
-        solo deja de tardar un dia.
+        hilo y lo archiva: un hilo de 50 correos tardaba 47 corridas en salir y
+        ocupaba un cupo del lote en cada una.
+
+        Pero no todo el resto del hilo es duplicado: un correo de la misma
+        persona puede traer documentos nuevos (va a revision manual como
+        anexo) o pedir algo distinto (lo decide la revision de seguimiento). Se
+        mueven solo los que habrian salido duplicados sin pasar por ninguna de
+        esas dos: los de un buzon de Positiva, y los reenvios exactos de este
+        mismo correo (mismo remitente, mismo texto y los mismos documentos). Lo
+        demas se queda para su propia comprobacion en la corrida siguiente.
 
         Solo se llama despues de radicar o de detectar un duplicado. Un correo
         que fue a revision manual o se reenvio a otra area no deja radicado en
         el hilo, y los demas correos tienen que procesarse por su cuenta.
         """
+        from difflib import SequenceMatcher
+
+        from pipeline.duplicados import _firma_de_documentos, texto_propio
+
         conversacion = getattr(email, "conversation_id", None)
         detallados = getattr(self.outlook, "mensajes_del_hilo", None)
-        listar = getattr(self.outlook, "get_conversation_message_ids", None)
         mover = getattr(self.outlook, "move_email", None)
-        if not conversacion or (listar is None and detallados is None) or mover is None:
+        adjuntos = getattr(self.outlook, "get_attachments", None)
+        # Sin el remitente, el texto y los adjuntos de cada correo no se puede
+        # saber cual es un reenvio exacto: no se mueve ninguno.
+        if not conversacion or detallados is None or mover is None:
             return
         try:
-            if detallados is not None:
-                # Un correo de afuera con adjuntos se queda: puede traer
-                # documentos que el radicado no tiene, y eso lo decide su
-                # propia comprobacion en la corrida siguiente.
-                otros = [
-                    m["id"] for m in await detallados(settings.OUTLOOK_FOLDER_ID, conversacion)
-                    if not (m.get("hasAttachments") and not es_buzon_de_positiva(
-                        ((m.get("from") or {}).get("emailAddress") or {}).get("address") or ""))
-                ]
-            else:
-                otros = await listar(settings.OUTLOOK_FOLDER_ID, conversacion)
+            hilo = await detallados(settings.OUTLOOK_FOLDER_ID, conversacion) or []
         except Exception as e:
             if avisos is not None:
                 avisos.append(
                     f"no se pudo listar el resto del hilo ({type(e).__name__}: "
-                    f"{e}): sus correos saldran como duplicados de a uno por "
-                    f"corrida")
+                    f"{e}): sus correos saldran de a uno por corrida")
             return
-        movidos, fallidos = 0, 0
-        for otro in otros or []:
-            if otro == email.id:
+        remitente = ((email.from_address.address if email.from_address else "") or "").strip().lower()
+        texto = texto_propio(clean_html_content(email.body.content or ""))
+        documentos = None
+        movidos, quedan, fallidos = 0, 0, 0
+        for m in hilo:
+            if m.get("id") == email.id:
+                continue
+            de = ((((m.get("from") or {}).get("emailAddress") or {}).get("address")) or "").strip().lower()
+            mover_este = es_buzon_de_positiva(de)
+            if not mover_este and remitente and de == remitente:
+                otro = texto_propio(clean_html_content(((m.get("body") or {}).get("content")) or ""))
+                if SequenceMatcher(None, otro, texto).ratio() >= 0.995:
+                    try:
+                        if documentos is None:
+                            documentos = (_firma_de_documentos(await adjuntos(email.id))
+                                          if adjuntos is not None and email.has_attachments else [])
+                        suyos = (_firma_de_documentos(await adjuntos(m["id"]))
+                                 if adjuntos is not None and m.get("hasAttachments") else [])
+                        mover_este = suyos == documentos
+                    except Exception:
+                        mover_este = False
+            if not mover_este:
+                quedan += 1
                 continue
             try:
-                await mover(otro, settings.OUTLOOK_FOLDER_DUPLICADOS)
+                await mover(m["id"], settings.OUTLOOK_FOLDER_DUPLICADOS)
                 movidos += 1
             except Exception:
                 fallidos += 1
         if avisos is not None and movidos:
             avisos.append(
                 f"{movidos} correo(s) mas del mismo hilo se archivaron como "
-                f"duplicados")
+                f"duplicados (reenvios exactos o de un buzon de Positiva)")
+        if avisos is not None and quedan:
+            avisos.append(
+                f"{quedan} correo(s) del mismo hilo se quedan en la bandeja: no "
+                f"son un reenvio exacto y pasan por su propia comprobacion")
         if avisos is not None and fallidos:
             avisos.append(
                 f"{fallidos} correo(s) del mismo hilo no se pudieron mover y "

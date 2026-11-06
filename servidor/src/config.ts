@@ -9,6 +9,9 @@ export const config = {
   python: process.env.PYTHON ?? (process.platform === "win32" ? "py" : "python3"),
   trabajador: process.env.RUTA_TRABAJADOR ?? resolve(raiz, "puente", "trabajador.py"),
   bandeja: process.env.RUTA_BANDEJA ?? resolve(raiz, "datos", "bandeja"),
+  /** Los correos traídos del buzón real (solo lectura) para correrlos como el job. */
+  vivo: process.env.RUTA_VIVO ?? resolve(process.env.RUTA_DATOS ?? resolve(raiz, "datos"), "vivo"),
+  buzonVivo: process.env.RUTA_BUZON_VIVO ?? resolve(raiz, "puente", "buzon_vivo.py"),
   datos: process.env.RUTA_DATOS ?? resolve(raiz, "datos"),
   catalogo: process.env.RUTA_CATALOGO ?? resolve(raiz, "catalogo", "catalogo.json"),
   web: process.env.RUTA_WEB ?? resolve(raiz, "web", "dist"),

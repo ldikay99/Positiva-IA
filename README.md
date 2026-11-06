@@ -44,8 +44,17 @@ es exactamente lo que hace el servicio real.
   corresponde: prompts (con resaltado), descripciones de las herramientas, umbrales, reglas de
   búsqueda con las frases que reconocen y probador contra el correo abierto, listas, tablas e
   interruptores. Se aplican juntos y rigen desde el próximo correo.
-- **Bandeja:** buscar y filtrar los correos, seleccionarlos con su casilla y procesarlos con un
-  botón explícito. Un clic en la fila abre el correo y sus adjuntos.
+- **Bandeja · Buzón real:** la carpeta que lee el job (AUTOMATIZACION) en el orden en que la
+  tomaría ahora —un correo por hilo, del más viejo al más nuevo— con las etiquetas que tiene
+  hoy. «Correr como el job» trae esos correos y los corre juntos con un solo orquestador, de a
+  cinco y de a uno por remitente, igual que una corrida del job: las capas de duplicados
+  (hilo, asunto, la misma corrida), los documentos nuevos frente al radicado y la revisión de
+  seguimiento consultan el buzón de verdad. Todo lo que el job escribiría —marcar, mover a
+  Duplicados o a Radicación exitosa, reenviar— aparece en el flujo como «el job lo movería a…»
+  y queda bloqueado.
+- **Bandeja · Descargados:** los correos guardados en disco y los traídos del buzón real; buscar,
+  filtrar, seleccionar y procesar, uno por uno o «juntos, como el job». Un clic en la fila abre
+  el correo y sus adjuntos.
 - **Proceso en vivo:** la corrida contada por etapas: cada campo que el algoritmo buscó (si lo
   encontró, con qué confianza y dónde), cada vuelta de la IA y la herramienta que decidió usar,
   las consultas al registro, el dictamen de la compuerta y lo que se enviaría a SGDEA. Al lado,
@@ -63,12 +72,20 @@ es exactamente lo que hace el servicio real.
 ## Seguridad
 
 Nada se escribe en un sistema real. El motor corre con `MODO_TEST`: el envío a SGDEA se corta y
-se muestra como simulado, el buzón es una carpeta de disco de solo lectura y las credenciales de
-Graph, SGDEA, Redis y Supabase son falsas. Sí se consultan Vertex AI y el registro de personas,
-que son lecturas.
+se muestra como simulado, y las credenciales de SGDEA, Redis y Supabase son falsas. Sí se
+consultan Vertex AI, el registro de personas y el buzón, que son lecturas.
+
+El buzón real (`puente/buzon_vivo.py`) lee los secretos de Graph de Secret Manager con el ADC
+montado; viven solo en memoria y nunca se imprimen ni se guardan. Dos candados impiden escribir:
+el motor recibe un buzón que solo deja pasar los métodos de lectura (marcar, mover, reenviar y
+responder se anotan como evento y devuelven lo que habría devuelto Graph sin llamarlo), y el
+cliente HTTP del servicio solo hace GET a `graph.microsoft.com` y POST al endpoint de token de
+Microsoft: cualquier otra petición lanza `PermissionError`, aunque un método de lectura cambiara
+mañana y quisiera escribir.
 
 Los correos de la bandeja traen datos personales y de salud: la carpeta se monta en solo lectura,
-no se versiona y no sale de la máquina donde corre el visor.
+no se versiona y no sale de la máquina donde corre el visor. Los traídos del buzón real se
+guardan en el volumen del contenedor (`/datos/estado/vivo`), que tampoco sale de la máquina.
 
 ## Arquitectura
 

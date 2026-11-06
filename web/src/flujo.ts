@@ -26,6 +26,8 @@ export const CATEGORIAS: Record<Categoria, { nombre: string; icono: NombreIcono;
 const CATEGORIA_DEL_NODO: Record<string, Categoria> = {
   lote: "entrada",
   deduplicacion: "filtro",
+  anexos: "documentos",
+  seguimiento: "ia",
   reclamo: "filtro",
   enrutamiento: "ruta",
   facturas: "filtro",
@@ -59,7 +61,7 @@ export function categoria(n: Nodo): Categoria {
 
 /** Las fases en que se agrupa el flujo en el lienzo, de izquierda a derecha. */
 export const FASES: { id: string; nombre: string; nodos: string[] }[] = [
-  { id: "recepcion", nombre: "Recepción", nodos: ["__inicio", "lote", "deduplicacion", "reclamo"] },
+  { id: "recepcion", nombre: "Recepción", nodos: ["__inicio", "lote", "deduplicacion", "anexos", "seguimiento", "reclamo"] },
   { id: "clasificacion", nombre: "Clasificación", nodos: ["enrutamiento", "facturas", "destino_del_correo", "remitente_identificable"] },
   { id: "documentos", nombre: "Documentos y OCR", nodos: ["descarga_adjuntos", "volumen", "deduplicacion_contenido", "conversion_a_markdown", "transcripcion_vision", "saneamiento"] },
   { id: "extraccion", nombre: "Extracción e IA", nodos: ["extraccion_determinista", "indice_por_hoja", "agente", "combinacion"] },

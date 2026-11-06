@@ -20,6 +20,7 @@ reporta como consola y el motor sigue.
 """
 from __future__ import annotations
 
+import contextvars
 import functools
 import io
 import json
@@ -36,8 +37,45 @@ CORRIDAS_CONSERVADAS = 80
 MAX_RESULTADOS = 12
 
 _evento: Callable[..., None] = lambda *a, **k: None  # noqa: E731
-_estado: Dict[str, Any] = {}
 _cerrojo = threading.RLock()
+
+
+class _EstadoPorCorreo:
+    """
+    El estado de las hojas del correo en curso, uno por tarea.
+
+    En un lote varios correos se convierten a la vez en el mismo proceso: la
+    hoja que se lee de uno no puede quedar anotada en otro. Vive en un
+    `ContextVar`, que las tareas de asyncio separan y `asyncio.to_thread`
+    hereda en el hilo de la conversión.
+    """
+
+    _var: contextvars.ContextVar = contextvars.ContextVar("adjuntos_del_visor")
+
+    def _d(self) -> Dict[str, Any]:
+        d = self._var.get(None)
+        if d is None:
+            d = {}
+            self._var.set(d)
+        return d
+
+    def clear(self) -> None:
+        self._var.set({})
+
+    def update(self, valores: Dict[str, Any]) -> None:
+        self._d().update(valores)
+
+    def __getitem__(self, clave: str) -> Any:
+        return self._d()[clave]
+
+    def __setitem__(self, clave: str, valor: Any) -> None:
+        self._d()[clave] = valor
+
+    def get(self, clave: str, defecto: Any = None) -> Any:
+        return self._d().get(clave, defecto)
+
+
+_estado = _EstadoPorCorreo()
 
 
 def _reiniciar() -> None:
