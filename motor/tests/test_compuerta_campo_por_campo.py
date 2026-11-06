@@ -339,3 +339,49 @@ def test_fuentes_del_correo_incluyen_hilo_adjuntos_y_registro():
     for nombre in ("PEDRO RUIZ MEJIA", "MARTA GIL PARDO", "Ana Lopez"):
         assert f.contiene_palabras(nombre)
     assert f.contiene_cifras("41234567")
+
+
+# ── Una empresa que escribe por medio de quien firma ──
+
+def _firmante_de(empresa, persona):
+    return Hallazgo("nombre_remitente", persona,
+                    f"resuelto por display name del 'De:' | '{empresa}' es la organizacion; firma '{persona}'",
+                    0.78, "cascada_nombre_remitente")
+
+
+def test_si_el_remitente_es_un_tercero_remite_la_empresa_con_su_nit():
+    """
+    Caso real del 6 de noviembre: la empresa escribe y firma su auxiliar. Antes
+    se vaciaba el NIT y se radicaba a nombre de la auxiliar sin documento.
+    """
+    d = validar(_base(
+        nombre_remitente=_firmante_de("Ingenieria y Servicios Marin Rodriguez S.A.S.", "Alejandra Porras"),
+        numero_documento_remitente=_h("numero_documento_remitente", NIT_ENTIDAD),
+        tipo_documento_remitente=_h("tipo_documento_remitente", TipoDocumento.NI),
+        tipo_remitente=_h("tipo_remitente", 2),
+    ))
+    assert d.correcciones.get("nombre_remitente") == "Ingenieria y Servicios Marin Rodriguez S.A.S."
+    assert "numero_documento_remitente" not in d.correcciones
+    assert d.veredicto is not Veredicto.RECHAZADO
+
+
+def test_sin_empresa_reconocida_se_sigue_vaciando_el_nit_de_la_persona():
+    d = validar(_base(
+        nombre_remitente=_h("nombre_remitente", "Alejandra Porras"),
+        numero_documento_remitente=_h("numero_documento_remitente", NIT_ENTIDAD),
+        tipo_documento_remitente=_h("tipo_documento_remitente", TipoDocumento.NI),
+        tipo_remitente=_h("tipo_remitente", 2),
+    ))
+    assert d.correcciones.get("numero_documento_remitente") == ""
+    assert "nombre_remitente" not in d.correcciones
+
+
+def test_si_quien_remite_es_un_familiar_no_se_cambia_por_la_empresa():
+    d = validar(_base(
+        nombre_remitente=_firmante_de("Ingenieria y Servicios Marin Rodriguez S.A.S.", "Alejandra Porras"),
+        numero_documento_remitente=_h("numero_documento_remitente", NIT_ENTIDAD),
+        tipo_documento_remitente=_h("tipo_documento_remitente", TipoDocumento.NI),
+        tipo_remitente=_h("tipo_remitente", 1),
+    ))
+    assert "nombre_remitente" not in d.correcciones
+    assert d.correcciones.get("numero_documento_remitente") == ""

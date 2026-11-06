@@ -2927,10 +2927,30 @@
   "auto_alcance": "total",
   "auto_nota": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada."
  },
+ "pipeline.compuerta.TIPO_REMITENTE_TERCERO": {
+  "modulo": "pipeline.compuerta",
+  "archivo": "pipeline/compuerta.py",
+  "linea": 632,
+  "comentario": "Codigo de SGDEA para un remitente que es un tercero: una empresa u otra entidad.",
+  "fuente": "2",
+  "valor": 2,
+  "tipo": "int",
+  "evaluado": true,
+  "usos": {
+   "local": [
+    "func"
+   ],
+   "copias": [],
+   "atributo_en": []
+  },
+  "auto_sobrescribible": true,
+  "auto_alcance": "total",
+  "auto_nota": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada."
+ },
  "pipeline.compuerta._ANTEPUESTO_A_UNA_ENTIDAD": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 719,
+  "linea": 729,
   "comentario": "Lo que un texto antepone a una razon social (\"la empresa SUPERMERCADOS OLIVAN\"). No es parte del nombre registrado. \"Sociedad\" no va: abre razones sociales reales (\"Sociedad Medica X SAS\").",
   "fuente": "frozenset(\"empresa entidad compania firma\".split())",
   "valor": [
@@ -2955,7 +2975,7 @@
  "pipeline.compuerta._MARCAS_DE_DIRECCION": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 786,
+  "linea": 796,
   "comentario": "",
   "fuente": "frozenset(\"\"\"\ncalle cl cll carrera cra kr kra cr crr avenida av ave avda diagonal dg diag\ntransversal tv tr transv trans circular cq autopista via km kilometro vereda\nvda corregimiento barrio br manzana mz mza lote lt casa apartamento apto\nbloque torre edificio edif piso oficina local conjunto urbanizacion urb finca\nhacienda parcela sector carretera predio etapa interior int no nro\n\"\"\".split())",
   "valor": [
@@ -3037,7 +3057,7 @@
  "pipeline.compuerta._NUMERACION_DE_DIRECCION": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 793,
+  "linea": 803,
   "comentario": "",
   "fuente": "re.compile(r\"#|\\bn[°ºo]\\.?\\s*\\d|\\d+\\s*[a-z]?\\s*-\\s*\\d+\",\n                                      re.IGNORECASE)",
   "valor": {
@@ -3060,7 +3080,7 @@
  "pipeline.compuerta.MAX_PALABRAS_DIRECCION": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 796,
+  "linea": 806,
   "comentario": "Mas palabras que estas ya es una frase, no una direccion.",
   "fuente": "16",
   "valor": 16,
@@ -3080,7 +3100,7 @@
  "pipeline.compuerta.METODOS_DEL_AGENTE": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 834,
+  "linea": 844,
   "comentario": "Metodos con que llega un valor propuesto por el modelo. Lo del registro de personas y lo de las reglas deterministas ya citan su procedencia.",
   "fuente": "frozenset({\"agente_ia\"})",
   "valor": [
@@ -3102,7 +3122,7 @@
  "pipeline.compuerta._SUSTENTO_POR_CAMPO": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 838,
+  "linea": 848,
   "comentario": "Campo -> forma de buscarlo en las fuentes. Los codigos de catalogo no se buscan: \"1\" o \"16\" no se escriben en el correo.",
   "fuente": "{\n    \"nombre_afectado\": \"palabras\",\n    \"nombre_remitente\": \"palabras\",\n    \"numero_documento_afectado\": \"cifras\",\n    \"numero_documento_remitente\": \"cifras\",\n    \"telefono_afectado\": \"telefono\",\n    \"direccion_afectado\": \"direccion\",\n}",
   "valor": {
@@ -3129,7 +3149,7 @@
  "pipeline.compuerta._SEPARADOR_DE_CIFRAS": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 847,
+  "linea": 857,
   "comentario": "",
   "fuente": "re.compile(r\"(?<=\\d)[.\\s,\\-'’`´_]+(?=\\d)\")",
   "valor": {
@@ -3152,7 +3172,7 @@
  "pipeline.compuerta._MINUSCULA_MAYUSCULA": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 848,
+  "linea": 858,
   "comentario": "",
   "fuente": "re.compile(r\"(?<=[a-zà-ÿ])(?=[A-ZÀ-Þ])\")",
   "valor": {
@@ -3175,7 +3195,7 @@
  "pipeline.compuerta._MARCA_DE_DOCUMENTO": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 849,
+  "linea": 859,
   "comentario": "",
   "fuente": "re.compile(\n    r\"\\b(?:c\\s?\\.?\\s?c|cedula|nit|documento|identificacion|radicado|rad\"\n    r\"|expediente|siniestro)\\b[^a-z0-9]{0,6}(?:(?:no|nro|numero|de)\\b\"\n    r\"[^a-z0-9]{0,4}){0,2}(\\d{6,})\")",
   "valor": {
@@ -3198,7 +3218,7 @@
  "pipeline.compuerta._MARCA_DE_NIT": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 853,
+  "linea": 863,
   "comentario": "",
   "fuente": "re.compile(\n    r\"\\bnit\\b[^a-z0-9]{0,6}(?:(?:no|nro|numero)\\b[^a-z0-9]{0,4})?(\\d{9,10})(?!\\d)\")",
   "valor": {
@@ -3221,7 +3241,7 @@
  "pipeline.compuerta._MARCA_DE_TELEFONO": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 855,
+  "linea": 865,
   "comentario": "",
   "fuente": "re.compile(\n    r\"\\b(?:tel|telefono|cel|celular|movil|whatsapp|contacto|fijo)\\b\"\n    r\"[^a-z0-9]{0,6}(?:(?:no|nro|numero|de)\\b[^a-z0-9]{0,4}){0,2}\"\n    r\"\\+?(\\d{7,})\")",
   "valor": {
@@ -3244,7 +3264,7 @@
  "pipeline.compuerta._ROTULO_PROFESIONAL": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 981,
+  "linea": 991,
   "comentario": "Rotulos de registro profesional. Un paciente no tiene registro medico: el numero que lo lleva es de quien firma, aunque coincida con su cedula.",
   "fuente": "r\"\\bregistro\\s+medico\\b|\\breg\\.?\\s*medico\\b|\\br\\.?\\s?m\\b\\.?\"\n    r\"|\\btarjeta\\s+profesional\\b|\\bt\\.?\\s?p\\b\\.?\"",
   "valor": "\\bregistro\\s+medico\\b|\\breg\\.?\\s*medico\\b|\\br\\.?\\s?m\\b\\.?|\\btarjeta\\s+profesional\\b|\\bt\\.?\\s?p\\b\\.?",
@@ -3264,7 +3284,7 @@
  "pipeline.compuerta._ROTULO_AJENO": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 985,
+  "linea": 995,
   "comentario": "Rotulos de numeros que no identifican a nadie.",
   "fuente": "r\"\\bsiniestros?\\b|\\bradicad[oa]s?\\b|\\bradicacion\\b|\\brad\\b\\.?|\\bfolios?\\b\"\n    r\"|\\bexpedientes?\\b|\\bfacturas?\\b|\\bcodigo\\s+de\\s+barras\\b|\\bconsecutivo\\b\"\n    r\"|\\bpolizas?\\b\"",
   "valor": "\\bsiniestros?\\b|\\bradicad[oa]s?\\b|\\bradicacion\\b|\\brad\\b\\.?|\\bfolios?\\b|\\bexpedientes?\\b|\\bfacturas?\\b|\\bcodigo\\s+de\\s+barras\\b|\\bconsecutivo\\b|\\bpolizas?\\b",
@@ -3284,7 +3304,7 @@
  "pipeline.compuerta._ROTULO_IDENTIDAD": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 990,
+  "linea": 1000,
   "comentario": "Rotulos de identidad.",
   "fuente": "r\"\\bc\\.?\\s?c\\b\\.?|\\bcedula\\b|\\bidentificad[oa]s?\\b|\\bidentificacion\\b\"\n    r\"|\\bdocumento\\b|\\bnit\\b|\\bn\\.\\s?i\\.\\s?t\\b\\.?|\\bt\\.?\\s?i\\b\\.?|\\bc\\.\\s?e\\b\\.?\"\n    r\"|\\bpasaporte\\b|\\bnuip\\b\"",
   "valor": "\\bc\\.?\\s?c\\b\\.?|\\bcedula\\b|\\bidentificad[oa]s?\\b|\\bidentificacion\\b|\\bdocumento\\b|\\bnit\\b|\\bn\\.\\s?i\\.\\s?t\\b\\.?|\\bt\\.?\\s?i\\b\\.?|\\bc\\.\\s?e\\b\\.?|\\bpasaporte\\b|\\bnuip\\b",
@@ -3304,7 +3324,7 @@
  "pipeline.compuerta._ROTULOS": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 994,
+  "linea": 1004,
   "comentario": "Rotulos de identidad.",
   "fuente": "re.compile(\n    rf\"(?P<prof>{_ROTULO_PROFESIONAL})|(?P<ajeno>{_ROTULO_AJENO})\"\n    rf\"|(?P<ident>{_ROTULO_IDENTIDAD})\")",
   "valor": {
@@ -3327,7 +3347,7 @@
  "pipeline.compuerta._ROL_DE_OTRO": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 998,
+  "linea": 1008,
   "comentario": "Roles de OTRA persona que se nombra con su documento junto al del caso.",
   "fuente": "re.compile(\n    r\"\\b(?:demandante|apoderad[oa]|medic[oa]|doctor[a]?|dra?\\b\\.?|profesional\"\n    r\"|especialista|abogad[oa]|psiquiatra|psicolog[oa]|convocante\"\n    # Los firmantes de un contrato o de un acta: quien supervisa, quien ordena\n    # el gasto, quien contrata o da fe. Su cedula va en el mismo formulario\n    # que la del contratista y no es la suya.\n    r\"|supervisor[a]?|ordenador[a]?|interventor[a]?|contratante|testigo)\\b\")",
   "valor": {
@@ -3350,7 +3370,7 @@
  "pipeline.compuerta.ALCANCE_DEL_ROTULO": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1006,
+  "linea": 1016,
   "comentario": "Hasta donde un rotulo nombra al numero que lo sigue.",
   "fuente": "40",
   "valor": 40,
@@ -3370,7 +3390,7 @@
  "pipeline.compuerta.VENTANA_DEL_TITULAR": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1008,
+  "linea": 1018,
   "comentario": "Ventana en la que se busca el nombre de la persona antes del numero.",
   "fuente": "120",
   "valor": 120,
@@ -3390,7 +3410,7 @@
  "pipeline.compuerta._CONECTORES_TRAS_EL_NUMERO": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1009,
+  "linea": 1019,
   "comentario": "Ventana en la que se busca el nombre de la persona antes del numero.",
   "fuente": "frozenset(\"de del a nombre y\".split())",
   "valor": [
@@ -3416,7 +3436,7 @@
  "pipeline.compuerta.ENTRE_NOMBRE_Y_ROTULO": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1047,
+  "linea": 1057,
   "comentario": "Cuanto puede haber entre el final del nombre y el rotulo del documento: \", mayor de edad, \" o \", vecino de Neiva, \".",
   "fuente": "45",
   "valor": 45,
@@ -3436,7 +3456,7 @@
  "pipeline.compuerta._ENTRE_NOMBRE_Y_NUMERO": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1189,
+  "linea": 1199,
   "comentario": "Lo que puede ir entre un nombre y su numero sin separarlos: \"c.c.\", \"No.\".",
   "fuente": "frozenset(\"\"\"\nc cc c.c ce t ti nit no nro num numero n cedula ciudadania documento de del\nidentificado identificada con la el\n\"\"\".split())",
   "valor": [
@@ -3479,7 +3499,7 @@
  "pipeline.compuerta._ROTULO_DE_CEDULA": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1225,
+  "linea": 1235,
   "comentario": "",
   "fuente": "frozenset(\n    \"c cc cedula ce ti documento identificado identificada ciudadania\".split())",
   "valor": [
@@ -3509,7 +3529,7 @@
  "pipeline.compuerta._ANTES_DEL_NOMBRE": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1227,
+  "linea": 1237,
   "comentario": "",
   "fuente": "frozenset(\n    \"yo mi su el la los las sr sra senor senora don dona\".split())",
   "valor": [
@@ -3543,7 +3563,7 @@
  "pipeline.compuerta._ROL_DE_REPRESENTANTE": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1328,
+  "linea": 1338,
   "comentario": "Quien actua por una organizacion. \"Representante\" a secas tambien: el certificado de camara de comercio escribe \"Representante RUTH ... C.C. ...\".",
   "fuente": "re.compile(\n    r\"\\brepresentante\\b|\\bgerente\\b|\\ben\\s+representacion\\s+de\\b\"\n    r\"|\\bactuando\\s+(?:como|en\\s+calidad\\s+de)\\s+(?:representante|gerente\"\n    r\"|apoderad[oa])\")",
   "valor": {
@@ -3566,7 +3586,7 @@
  "pipeline.compuerta._HASTA_LA_CEDULA": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1334,
+  "linea": 1344,
   "comentario": "Lo que puede separar el nombre de su cedula sin que la frase cambie de sujeto: \", identificado con cedula de ciudadania No. 1.038.545.143,\".",
   "fuente": "re.compile(\n    r\"^[\\s,;:()\\-]*(?:(?:identificad[oa]|con|la|el|de|ciudadania|cedula|c\\.?\\s?c\"\n    r\"|no|n|numero|documento|nit)[\\s.,;:()\\-]*){0,8}[\\d][\\d.\\s\\-]{4,14}\\d\")",
   "valor": {
@@ -3589,7 +3609,7 @@
  "pipeline.compuerta._FIRMA_PROFESIONAL_DETRAS": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1368,
+  "linea": 1378,
   "comentario": "El nombre seguido de su cedula y de un registro profesional: es la firma de quien atendio (\"Daniel ... CC No. 1032502331 / RM 1032502331\").",
   "fuente": "re.compile(\n    r\"^[\\s,;:|/()\\-]*(?:(?:c\\.?\\s?c|cedula|identificacion|documento|no|n)\"\n    r\"[\\s.:,;|/()\\-]*){0,4}\\d[\\d.\\s]{4,14}\\d[\\s,;:|/()\\-]*\"\n    r\"(?:r\\.?\\s?m\\b|registro\\s+(?:medico|profesional)|reg\\.?\\s+(?:medico|profesional)\"\n    r\"|tarjeta\\s+profesional|t\\.?\\s?p\\b)\")",
   "valor": {
@@ -3612,7 +3632,7 @@
  "pipeline.compuerta._ROTULO_DE_OTRO_DELANTE": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1376,
+  "linea": 1386,
   "comentario": "Rotulos que ponen delante del nombre a quien firma o imprime un documento clinico, o a quien contrata. Lo que sigue a cualquiera de ellos es otra persona que la del caso.",
   "fuente": "re.compile(\n    r\"(?:impresion\\s+realizada\\s+por|firmado\\s+(?:electronicamente\\s+)?por\"\n    r\"|elaborado\\s+por|medico\\s+tratante|nombre\\s+del\\s+profesional\"\n    r\"|informacion\\s+del\\s+(?:contratante|empleador)|datos\\s+del\\s+(?:contratante\"\n    r\"|empleador|jefe)|contratante|empleador|supervisor[a]?|ordenador[a]?\\s+del\\s+gasto\"\n    r\"|jefe\\s+inmediato)\\b[^a-z0-9]{0,40}(?:(?:nombres?|y|o|razon|social|apellidos?)\"\n    r\"[^a-z0-9]{0,40}){0,5}$\")",
   "valor": {
@@ -3635,7 +3655,7 @@
  "pipeline.compuerta._SUJETO_POR_PAPEL": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1420,
+  "linea": 1430,
   "comentario": "Una persona presentada por su papel en el tramite: \"el funcionario IJ. RODRIGUEZ VALBUENA JOHAN JAVIER\", \"la trabajadora ANA LOPEZ PEREZ\". Se lee sobre el texto con mayusculas, que es lo que distingue el nombre de la frase.",
   "fuente": "re.compile(\n    r\"(?i:\\b(?:el|la|al|del|nuestr[oa]|su)\\s+(?:funcionari[oa]|trabajador[a]?\"\n    r\"|colaborador[a]?|emplead[oa]|afiliad[oa]|asegurad[oa]|paciente\"\n    r\"|servidor[a]?\\s+public[oa]))[\\s,:]+(?:[A-ZÁÉÍÓÚÑ]{1,3}\\.\\s*)?\"\n    r\"((?:[A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑáéíóúñü'’-]+\\s+(?:(?:de|del|la|las|los|DE|DEL\"\n    r\"|LA|LOS)\\s+)?){1,5}[A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑáéíóúñü'’-]+)\")",
   "valor": {
@@ -3658,7 +3678,7 @@
  "pipeline.compuerta._NUMERO_DE_PERSONA": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1461,
+  "linea": 1471,
   "comentario": "Numero con forma de documento en el cuerpo: seis a diez cifras, con puntos.",
   "fuente": "re.compile(r\"(?<![A-Za-z0-9])\\d[\\d.]{4,12}\\d(?![\\d])\")",
   "valor": {
@@ -3681,7 +3701,7 @@
  "pipeline.compuerta._ROTULO_ENTRE_NOMBRE_Y_NUMERO": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1463,
+  "linea": 1473,
   "comentario": "Lo que va entre el nombre y su numero en una lista: \"c.c.\", \"CC No.\", \":\".",
   "fuente": "re.compile(\n    r\"(?i)(?:[\\s,;:\\-–]|\\b(?:identificad[oa]|con|c\\.?\\s?c\\.?|cc|c[eé]dula\"\n    r\"|ciudadan[ií]a|de|no\\.?|n[°º]\\.?|n[uú]mero|documento|t\\.?\\s?i\\.?)(?=[\\s.,;:\\-]|$)\\.?)*$\")",
   "valor": {
@@ -3704,7 +3724,7 @@
  "pipeline.compuerta._NOMBRE_AL_FINAL": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1466,
+  "linea": 1476,
   "comentario": "Lo que va entre el nombre y su numero en una lista: \"c.c.\", \"CC No.\", \":\".",
   "fuente": "re.compile(\n    r\"((?:[A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑáéíóúñü'’-]+\\s+(?:(?:de|del|la|las|los|DE|DEL\"\n    r\"|LA|LOS)\\s+)?){1,6}[A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑáéíóúñü'’-]+)$\")",
   "valor": {
@@ -3727,7 +3747,7 @@
  "pipeline.compuerta._DOCUMENTO_EN_ADJUNTO": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1470,
+  "linea": 1480,
   "comentario": "El documento en el nombre de un adjunto: \"CC_45459599_...pdf\".",
   "fuente": "re.compile(\n    r\"(?i)(?<![a-z])(?:cc|c\\.c\\.?|ti|ce|cedula)[\\s_.\\-]*(\\d{6,10})(?!\\d)\")",
   "valor": {
@@ -3750,7 +3770,7 @@
  "pipeline.compuerta._TRAMITE_DE_LA_EMPRESA": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1570,
+  "linea": 1580,
   "comentario": "Lo que una empresa pide para si misma, no para un trabajador.",
   "fuente": "re.compile(\n    r\"estado\\s+de\\s+(?:cuenta|cartera)|\\bcartera\\b|paz\\s+y\\s+salvo\"\n    r\"|habilitaci[oó]n\\s+(?:de(?:l)?\\s+)?usuario|usuario\\s+(?:y\\s+contrase|transaccional\"\n    r\"|de\\s+la\\s+plataforma)|asesor[ií]a|capacitaci[oó]n|concepto\\s+t[eé]cnico\"\n    r\"|profesiograma|copias?\\s+de\\s+(?:las\\s+|los\\s+)?(?:afiliaciones|formularios)\"\n    r\"|relaci[oó]n\\s+de\\s+pagos|devoluci[oó]n\\s+de\\s+(?:los\\s+)?aportes\",\n    re.IGNORECASE)",
   "valor": {
@@ -3773,7 +3793,7 @@
  "pipeline.compuerta._TRAMITE_PERSONAL": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1578,
+  "linea": 1588,
   "comentario": "Lo que dice que el tramite es de una persona aunque escriba una empresa.",
   "fuente": "re.compile(\n    r\"\\bmis?\\s+(?:incapacidad|incapacidades|pensi[oó]n|afiliaci[oó]n|calificaci[oó]n\"\n    r\"|accidente|dictamen|historia|reembolso|tratamiento|terapias?|citas?)\\b\",\n    re.IGNORECASE)",
   "valor": {
@@ -3796,7 +3816,7 @@
  "pipeline.compuerta._NIT_ROTULADO": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1582,
+  "linea": 1592,
   "comentario": "Lo que dice que el tramite es de una persona aunque escriba una empresa.",
   "fuente": "re.compile(\n    r\"(?i)\\bn\\.?\\s?i\\.?\\s?t\\.?\\b[\\s.:#°º\\-]*(?:no\\.?\\s*)?[a-z]?\\s*\"\n    r\"(\\d[\\d.\\s]{6,12}\\d(?:\\s*-\\s*\\d)?)(?!\\d)\")",
   "valor": {
@@ -3819,7 +3839,7 @@
  "pipeline.compuerta._FIN_DE_LA_RAZON_SOCIAL": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1585,
+  "linea": 1595,
   "comentario": "Lo que dice que el tramite es de una persona aunque escriba una empresa.",
   "fuente": "re.compile(\n    r\"(?i)(?:[\\s,;:(\\[\\-–]|\\b(?:identificad[oa]|con|el|la|y)\\b)*$\")",
   "valor": {
@@ -3842,7 +3862,7 @@
  "pipeline.compuerta._RAZON_SOCIAL_AL_FINAL": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1587,
+  "linea": 1597,
   "comentario": "Lo que dice que el tramite es de una persona aunque escriba una empresa.",
   "fuente": "re.compile(\n    r\"((?:[A-ZÁÉÍÓÚÑ&][A-Za-zÁÉÍÓÚÑáéíóúñü0-9&.'’-]*\\s+(?:(?:de|del|la|las|los|y|e)\"\n    r\"\\s+)?){0,8}[A-ZÁÉÍÓÚÑ&][A-Za-zÁÉÍÓÚÑáéíóúñü0-9&.'’-]*)$\")",
   "valor": {
@@ -3865,7 +3885,7 @@
  "pipeline.compuerta._NIT_DE_POSITIVA": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1590,
+  "linea": 1600,
   "comentario": "Lo que dice que el tramite es de una persona aunque escriba una empresa.",
   "fuente": "\"860011153\"",
   "valor": "860011153",
@@ -3885,7 +3905,7 @@
  "pipeline.compuerta._PALABRAS_GENERICAS_DE_ENTIDAD": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1608,
+  "linea": 1618,
   "comentario": "",
   "fuente": "frozenset(\"\"\"\nsas s.a.s sa s.a ltda limitada eu e.u esp e.s.p ese e.s.e de del la las los y e\nempresa sociedad grupo\n\"\"\".split())",
   "valor": [
@@ -3928,7 +3948,7 @@
  "pipeline.compuerta._HOJA_DE_VIDA": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1684,
+  "linea": 1694,
   "comentario": "Una hoja de vida no es una PQRD: no se le pide nada a la ARL. Se reconoce por el asunto, y solo si el correo no pide ademas un tramite.",
   "fuente": "re.compile(r\"(?i)\\bhoja\\s+de\\s+vida\\b|\\bcurr[ií]cul(?:um|o)\\b\")",
   "valor": {
@@ -3951,7 +3971,7 @@
  "pipeline.compuerta._TRAMITE_PEDIDO": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1685,
+  "linea": 1695,
   "comentario": "Una hoja de vida no es una PQRD: no se le pide nada a la ARL. Se reconoce por el asunto, y solo si el correo no pide ademas un tramite.",
   "fuente": "re.compile(\n    r\"incapacidad|accidente|afiliaci|\\bpago|calificaci|autoriza|reembolso|pension\"\n    r\"|dictamen|aportes|siniestro|reclam|derecho\\s+de\\s+peticion\")",
   "valor": {
@@ -3974,7 +3994,7 @@
  "pipeline.compuerta._MARCAS_DE_ENTIDAD_DELANTE": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1692,
+  "linea": 1702,
   "comentario": "Lo que delata que un nombre es el final del nombre de una entidad: \"ESE CENTRO DE SALUD CAMILO RUEDA\" no es la persona Camilo Rueda.",
   "fuente": "frozenset(\"\"\"\nese e.s.e ips eps hospital clinica centro alcaldia municipio gobernacion\nfundacion corporacion asociacion cooperativa empresa contraloria personeria\n\"\"\".split())",
   "valor": [
@@ -4012,7 +4032,7 @@
  "pipeline.compuerta._NIT_TRAS_EL_NOMBRE": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1696,
+  "linea": 1706,
   "comentario": "Lo que delata que un nombre es el final del nombre de una entidad: \"ESE CENTRO DE SALUD CAMILO RUEDA\" no es la persona Camilo Rueda.",
   "fuente": "re.compile(\n    r\"^[^0-9]{0,25}?\\b(?:nit|n\\.\\s?i\\.\\s?t\\.?)\\b[^0-9]{0,12}(\\d[\\d.\\s\\-]{7,14}\\d)\")",
   "valor": {
@@ -4035,7 +4055,7 @@
  "pipeline.compuerta._DOMINIOS_PUBLICOS": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1744,
+  "linea": 1754,
   "comentario": "Dominios de correo que no son de nadie en particular.",
   "fuente": "frozenset(\"\"\"\ngmail hotmail outlook yahoo live msn icloud aol protonmail positiva correo\n\"\"\".split())",
   "valor": [
@@ -4067,7 +4087,7 @@
  "pipeline.compuerta._OTRO_TIPO_EN_EL_TEXTO": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 1876,
+  "linea": 1886,
   "comentario": "",
   "fuente": "re.compile(\n    r\"\\bp\\.?\\s?p\\.?\\s?t\\b|\\bp\\.?\\s?e\\.?\\s?p\\b|permiso\\s+(?:por|de)\\s+proteccion\"\n    r\"|permiso\\s+especial|extranjer|venezolan|pasaporte|tarjeta\\s+de\\s+identidad\"\n    r\"|menor\\s+de\\s+edad|registro\\s+civil\")",
   "valor": {
@@ -4090,7 +4110,7 @@
  "pipeline.compuerta._MOTIVO_POR_CAUSA": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 2392,
+  "linea": 2421,
   "comentario": "Motivo del extractor -> motivo de revision manual. Las tres causas de \"falta el documento\" se traducen a motivos distintos: el operador tiene que saber si el dato no esta, si esta en un escaneo ilegible o si hay varios candidatos.",
   "fuente": "{\n    \"DOCUMENTO_EN_ADJUNTO_ILEGIBLE\": \"ADJUNTO_ILEGIBLE\",\n    \"SIN_CANDIDATOS_DE_DOCUMENTO\": \"SIN_DOCUMENTO\",\n    \"SIN_NINGUN_NUMERO_EN_EL_TEXTO\": \"SIN_DOCUMENTO\",\n    \"VARIOS_CANDIDATOS_AMBIGUOS\": \"DOCUMENTO_AMBIGUO\",\n    \"SOLO_IDENTIFICA_UNA_EMPRESA\": \"SOLO_EMPRESA_SIN_AFECTADO\",\n}",
   "valor": {
@@ -4116,7 +4136,7 @@
  "pipeline.compuerta._MOTIVO_POR_CAMPO": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 2404,
+  "linea": 2433,
   "comentario": "Campo que falta -> motivo de revision manual. Cada uno tiene el suyo: el motivo generico describe datos incoherentes y manda a buscar un conflicto que no existe cuando lo que pasa es que falta un campo.",
   "fuente": "{\n    \"nombre_remitente\": \"SIN_NOMBRE_REMITENTE\",\n    \"nombre_afectado\": \"SIN_NOMBRE_AFECTADO\",\n    \"numero_documento_afectado\": \"SIN_DOCUMENTO\",\n    \"tipo_solicitud\": \"SIN_TIPO_SOLICITUD\",\n}",
   "valor": {
@@ -4141,7 +4161,7 @@
  "pipeline.compuerta._MOTIVO_POR_CODIGO": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
-  "linea": 2413,
+  "linea": 2442,
   "comentario": "Reparos que nombran su propia causa. Quien atiende el correo necesita saber que fue, y `VALIDACION_RECHAZO` no distingue un caso de otro.",
   "fuente": "{\n    \"EMPRESA_CON_DOCUMENTO_DE_PERSONA\": \"EMPRESA_CON_DOCUMENTO_DE_PERSONA\",\n    \"VARIOS_AFECTADOS\": \"DOCUMENTO_AMBIGUO\",\n    \"TIPO_DE_DOCUMENTO_EN_DUDA\": \"DOCUMENTO_AMBIGUO\",\n}",
   "valor": {
@@ -4662,10 +4682,30 @@
   "auto_alcance": "total",
   "auto_nota": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada."
  },
+ "pipeline.conversion.CONFIANZA_PARA_VISION": {
+  "modulo": "pipeline.conversion",
+  "archivo": "pipeline/conversion.py",
+  "linea": 149,
+  "comentario": "Por debajo de esta confianza la hoja que tesseract leyo se le pasa al modelo con vision, que la transcribe (dentro del tope de imagenes por correo). Es un umbral aparte del de la relectura: medido el 2026-11-06 sobre once hojas reales entre 0,62 y 0,79 —ordenes medicas a mano, historias clinicas, formularios—, el modelo leyo el paciente, la cedula, el diagnostico y el sexo donde tesseract dejaba ruido (\"1isnel Fegec Mura\" por \"Manuel Feged Murcia\"). Subir el de la relectura a 0,80 hacia buscar el giro en hojas derechas y llevo un PDF de 14 s a 193 s sin mejorar nada.",
+  "fuente": "0.80",
+  "valor": 0.8,
+  "tipo": "float",
+  "evaluado": true,
+  "usos": {
+   "local": [
+    "func"
+   ],
+   "copias": [],
+   "atributo_en": []
+  },
+  "auto_sobrescribible": true,
+  "auto_alcance": "total",
+  "auto_nota": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada."
+ },
  "pipeline.conversion.CONFIANZA_DUDOSA": {
   "modulo": "pipeline.conversion",
   "archivo": "pipeline/conversion.py",
-  "linea": 143,
+  "linea": 152,
   "comentario": "Por debajo de esta confianza la pagina se marca como lectura dudosa en el markdown, para que quien lea los datos de ahi los verifique.",
   "fuente": "0.55",
   "valor": 0.55,
@@ -4685,7 +4725,7 @@
  "pipeline.conversion.IDIOMAS_OCR": {
   "modulo": "pipeline.conversion",
   "archivo": "pipeline/conversion.py",
-  "linea": 148,
+  "linea": 157,
   "comentario": "Solo español. Medido sobre treinta adjuntos escaneados del buzon, ya preparados: \"spa+eng\" y \"spa\" sacan los mismos caracteres utiles, los mismos numeros de documento y la misma proporcion de ruido, y \"spa\" tarda un 23 % menos. Con paginas perdidas por presupuesto, ese tiempo vale mas que el ingles.",
   "fuente": "\"spa\"",
   "valor": "spa",
@@ -4705,7 +4745,7 @@
  "pipeline.conversion._FIRMAS": {
   "modulo": "pipeline.conversion",
   "archivo": "pipeline/conversion.py",
-  "linea": 151,
+  "linea": 160,
   "comentario": "Firmas de tipo por bytes iniciales.",
   "fuente": "(\n    (b\"%PDF\", \"pdf\"),\n    (b\"\\x89PNG\\r\\n\\x1a\\n\", \"imagen\"),\n    (b\"\\xff\\xd8\\xff\", \"imagen\"),\n    (b\"GIF87a\", \"imagen\"),\n    (b\"GIF89a\", \"imagen\"),\n    (b\"BM\", \"imagen\"),\n    (b\"II*\\x00\", \"imagen\"),\n    (b\"MM\\x00*\", \"imagen\"),\n    (b\"%!PS\", \"postscript\"),\n    (b\"{\\\\rtf\", \"rtf\"),\n    (b\"\\xd0\\xcf\\x11\\xe0\", \"ofimatica_antigua\"),  # doc/xls de Office 97-2003\n)",
   "valor": [
@@ -4770,7 +4810,7 @@
  "pipeline.conversion._CONTROL": {
   "modulo": "pipeline.conversion",
   "archivo": "pipeline/conversion.py",
-  "linea": 273,
+  "linea": 282,
   "comentario": "",
   "fuente": "re.compile(r\"[\\x00-\\x08\\x0b\\x0c\\x0e-\\x1f\\x7f]\")",
   "valor": {
@@ -4793,7 +4833,7 @@
  "pipeline.conversion._ESPACIOS_RAROS": {
   "modulo": "pipeline.conversion",
   "archivo": "pipeline/conversion.py",
-  "linea": 278,
+  "linea": 287,
   "comentario": "Espacios que no son el espacio normal: no-break, en/em quad, ideografico. Se unifican para que el conteo de tokens y las comparaciones no dependan de cual variante uso quien escribio el documento.",
   "fuente": "re.compile(\"[\\u00a0\\u1680\\u2000-\\u200a\\u202f\\u205f\\u3000]\")",
   "valor": {
@@ -4816,7 +4856,7 @@
  "pipeline.conversion._INVISIBLES": {
   "modulo": "pipeline.conversion",
   "archivo": "pipeline/conversion.py",
-  "linea": 288,
+  "linea": 297,
   "comentario": "Invisibles y controles bidireccionales. Se eliminan porque son el vehiculo habitual del texto oculto en documentos: 200b-200f  espacios de ancho cero y marcas LTR/RTL 202a-202e  overrides bidi: RLO invierte el texto EN PANTALLA, de modo que el documento MUESTRA una cosa y CONTIENE otra 2060-2064  invisibles de union y separadores matematicos 2066-2069  aislantes bidi, misma familia de ataque que los overrides feff       BOM incrustado a media linea",
   "fuente": "re.compile(\n    \"[\\u200b-\\u200f\\u202a-\\u202e\\u2060-\\u2064\\u2066-\\u2069\\ufeff]\"\n)",
   "valor": {
@@ -4839,7 +4879,7 @@
  "pipeline.conversion.MARCA_TRANSCRITO_POR_IA": {
   "modulo": "pipeline.conversion",
   "archivo": "pipeline/conversion.py",
-  "linea": 781,
+  "linea": 796,
   "comentario": "Lo que el modelo transcribe de una imagen va precedido de esta linea, para que quien lea los datos de ahi sepa que no salen del OCR del documento.",
   "fuente": "\"_(transcrito por IA desde la imagen, que el OCR no pudo leer: \"\n    \"verificar las cifras)_\"",
   "valor": "_(transcrito por IA desde la imagen, que el OCR no pudo leer: verificar las cifras)_",
@@ -4859,7 +4899,7 @@
  "pipeline.conversion.TRANSCRIPTOR_IA": {
   "modulo": "pipeline.conversion",
   "archivo": "pipeline/conversion.py",
-  "linea": 788,
+  "linea": 803,
   "comentario": "Funcion que transcribe una imagen (bytes JPEG) con el modelo, o None. La pone el orquestador cuando trabaja con Vertex; en pruebas y sin modelo queda en None y el OCR es solo tesseract.",
   "fuente": "None",
   "valor": null,
@@ -4881,7 +4921,7 @@
  "pipeline.conversion._CARGAS_EN_SOBRE": {
   "modulo": "pipeline.conversion",
   "archivo": "pipeline/conversion.py",
-  "linea": 1307,
+  "linea": 1322,
   "comentario": "Firmas de los formatos que pueden venir dentro de un sobre firmado. Se busca la carga util por su firma, no por su posicion: el sobre trae antes los certificados y el tamaño de esa cabecera cambia con cada emisor.",
   "fuente": "(\n    (b\"%PDF\", b\"%%EOF\"),\n    (b\"PK\\x03\\x04\", b\"\"),          # docx, xlsx, zip\n    (b\"\\x89PNG\\r\\n\\x1a\\n\", b\"\"),\n    (b\"\\xff\\xd8\\xff\", b\"\\xff\\xd9\"),\n)",
   "valor": [
@@ -4918,7 +4958,7 @@
  "pipeline.conversion.MAX_PROFUNDIDAD_SOBRE": {
   "modulo": "pipeline.conversion",
   "archivo": "pipeline/conversion.py",
-  "linea": 1314,
+  "linea": 1329,
   "comentario": "",
   "fuente": "3",
   "valor": 3,
@@ -4938,7 +4978,7 @@
  "pipeline.conversion._CONVERSORES": {
   "modulo": "pipeline.conversion",
   "archivo": "pipeline/conversion.py",
-  "linea": 1396,
+  "linea": 1411,
   "comentario": "Despachador por tipo real",
   "fuente": "{\n    \"pdf\": _pdf_a_markdown,\n    \"imagen\": _imagen_a_markdown,\n    \"docx\": _docx_a_markdown,\n    \"xlsx\": _xlsx_a_markdown,\n    \"texto\": _texto_a_markdown,\n}",
   "valor": "{\n    \"pdf\": _pdf_a_markdown,\n    \"imagen\": _imagen_a_markdown,\n    \"docx\": _docx_a_markdown,\n    \"xlsx\": _xlsx_a_markdown,\n    \"texto\": _texto_a_markdown,\n}",
@@ -6654,10 +6694,33 @@
   "auto_alcance": "total",
   "auto_nota": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada."
  },
+ "pipeline.extraccion._ORGANIZACION_QUE_ESCRIBE": {
+  "modulo": "pipeline.extraccion",
+  "archivo": "pipeline/extraccion.py",
+  "linea": 1003,
+  "comentario": "",
+  "fuente": "re.compile(r\"'([^']+)' es la organizacion; firma '\")",
+  "valor": {
+   "regex": "'([^']+)' es la organizacion; firma '",
+   "flags": ""
+  },
+  "tipo": "regex",
+  "evaluado": true,
+  "usos": {
+   "local": [
+    "func"
+   ],
+   "copias": [],
+   "atributo_en": []
+  },
+  "auto_sobrescribible": true,
+  "auto_alcance": "total",
+  "auto_nota": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada."
+ },
  "pipeline.extraccion._LINEA_DE_ENCABEZADO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1026,
+  "linea": 1038,
   "comentario": "",
   "fuente": "re.compile(\n    r\"(?i)^[ \\t>]*(?:de|from|para|to|cc|enviado|sent|asunto|subject|fecha|date)\"\n    r\"[ \\t]*:\")",
   "valor": {
@@ -6680,7 +6743,7 @@
  "pipeline.extraccion.LINEAS_DE_LA_FIRMA": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1031,
+  "linea": 1043,
   "comentario": "Cuantas lineas no vacias alrededor de la razon social se miran para hallar a quien firma por ella. Una firma ocupa nombre, cargo y empresa.",
   "fuente": "3",
   "valor": 3,
@@ -6700,7 +6763,7 @@
  "pipeline.extraccion.TOPE_DEL_MENSAJE": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1033,
+  "linea": 1045,
   "comentario": "Hasta donde se lee el mensaje que encabeza la razon social: su firma.",
   "fuente": "3000",
   "valor": 3000,
@@ -6720,7 +6783,7 @@
  "pipeline.extraccion._INICIAL": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1114,
+  "linea": 1126,
   "comentario": "Una inicial: una letra sola, con o sin punto.",
   "fuente": "re.compile(r\"^([A-Za-zÁÉÍÓÚÑáéíóúñ])\\.?$\")",
   "valor": {
@@ -6743,7 +6806,7 @@
  "pipeline.extraccion._ETIQUETAS_AFECTADO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1152,
+  "linea": 1164,
   "comentario": "",
   "fuente": "(\n    r\"trabajador(?:a)?\", r\"afiliad[oa]\", r\"paciente\", r\"titular\",\n    r\"emplead[oa]\", r\"señor(?:a)?\", r\"sr\\.?\", r\"sra\\.?\",\n    r\"asegurad[oa]\", r\"siniestrad[oa]\", r\"accidentad[oa]\", r\"usuari[oa]\",\n    r\"lesionad[oa]\", r\"causante\", r\"colaborador(?:a)?\", r\"funcionari[oa]\",\n    r\"nombre\\s+completo\", r\"nombres?\\s+y\\s+apellidos?\",\n    r\"mi\\s+nombre\\s+es\", r\"yo\",\n)",
   "valor": [
@@ -6784,7 +6847,7 @@
  "pipeline.extraccion._ETIQUETAS_SOLO_EN_EL_ASUNTO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1165,
+  "linea": 1177,
   "comentario": "Etiquetas que solo valen en el ASUNTO, donde son una convencion de titulo: \"Solicitud de traslado CASO JUAN PEREZ CC 41234567\" nombra detras a la persona del caso. En prosa la misma palabra aparece en cualquier parte —\"en este caso solicitamos\"— y lo que venga detras no es nadie.",
   "fuente": "(r\"caso\",)",
   "valor": [
@@ -6806,7 +6869,7 @@
  "pipeline.extraccion._CONECTOR_DOCUMENTO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1170,
+  "linea": 1182,
   "comentario": "Conector entre el nombre y su documento: \"JUAN PEREZ identificado(a) con C.C. 123\". Cada pieza es opcional porque el correo real las combina de todas las formas posibles.",
   "fuente": "r\"(?:identificad[oa]\\s*(?:\\(a\\))?\\s*)?\"\n    # \"al\" es lo que escribe el correo real donde caberia \"el\": \"identificado\n    # con al numero de cedula\". Sin admitirlo, el nombre completo no se ve.\n    r\"(?:con\\s+)?(?:el\\s+|la\\s+|al\\s+)?(?:n[uú]mero\\s+de\\s+)?\"",
   "valor": "(?:identificad[oa]\\s*(?:\\(a\\))?\\s*)?(?:con\\s+)?(?:el\\s+|la\\s+|al\\s+)?(?:n[uú]mero\\s+de\\s+)?",
@@ -6826,7 +6889,7 @@
  "pipeline.extraccion._MARCA_DOCUMENTO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1178,
+  "linea": 1190,
   "comentario": "Solo documentos de PERSONA. El NIT no entra: lo que va pegado a un NIT es la razon social de una empresa, y el afectado es siempre una persona.",
   "fuente": "r\"(?:c\\.?\\s?c\\.?|c[eé]dula(?:\\s+de\\s+(?:ciudadan[ií]a|extranjer[ií]a))?\"\n    r\"|documento(?:\\s+de\\s+identidad)?|t\\.?\\s?i\\.?|c\\.?\\s?e\\.?)\"",
   "valor": "(?:c\\.?\\s?c\\.?|c[eé]dula(?:\\s+de\\s+(?:ciudadan[ií]a|extranjer[ií]a))?|documento(?:\\s+de\\s+identidad)?|t\\.?\\s?i\\.?|c\\.?\\s?e\\.?)",
@@ -6846,7 +6909,7 @@
  "pipeline.extraccion._MAY": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1186,
+  "linea": 1198,
   "comentario": "Fragmento que reconoce un nombre propio de 2 a 5 palabras, admitiendo particulas (\"de la\", \"del\") y tanto Titulo como MAYUSCULAS.",
   "fuente": "\"A-ZÁÉÍÓÚÜÑ\"",
   "valor": "A-ZÁÉÍÓÚÜÑ",
@@ -6867,7 +6930,7 @@
  "pipeline.extraccion._MIN": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1187,
+  "linea": 1199,
   "comentario": "Fragmento que reconoce un nombre propio de 2 a 5 palabras, admitiendo particulas (\"de la\", \"del\") y tanto Titulo como MAYUSCULAS.",
   "fuente": "\"a-záéíóúüñ\"",
   "valor": "a-záéíóúüñ",
@@ -6888,7 +6951,7 @@
  "pipeline.extraccion._PALABRA": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1188,
+  "linea": 1200,
   "comentario": "Fragmento que reconoce un nombre propio de 2 a 5 palabras, admitiendo particulas (\"de la\", \"del\") y tanto Titulo como MAYUSCULAS.",
   "fuente": "rf\"(?:[{_MAY}][{_MIN}']+|[{_MAY}]{{2,}})\"",
   "valor": "(?:[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñ']+|[A-ZÁÉÍÓÚÜÑ]{2,})",
@@ -6908,7 +6971,7 @@
  "pipeline.extraccion._PALABRA_INTERIOR": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1200,
+  "linea": 1212,
   "comentario": "El `\\b` inicial evita engancharse al final de una palabra mas larga: sin el, \"PRESTACIONES SOCIALES\" produce el falso nombre \"ES SOCIALES\". Se admiten hasta cinco palabras aunque un nombre tenga cuatro: el conector que sigue suele estar capitalizado (\"BONILLA CORONADO Identificado con CC\") y si no cabe en el patron, el nombre se corta por delante. El limite real lo pone `_recortar_vocabulario`, ya sin el conector. Las palabras que no son la primera pueden venir en minuscula: el correo real a veces escribe en minuscula un apellido o un segundo nombre en medio de un nombre por lo demas capitalizado. Lo que impide que una frase en prosa pase por nombre no es el patron sino la comprobacion de `_candidato_afectado`, que exige dos palabras capitalizadas.",
   "fuente": "rf\"(?:{_PALABRA}|[{_MIN}]{{3,}})\"",
   "valor": "(?:(?:[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñ']+|[A-ZÁÉÍÓÚÜÑ]{2,})|[a-záéíóúüñ]{3,})",
@@ -6928,7 +6991,7 @@
  "pipeline.extraccion._NO_DETERMINANTE": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1204,
+  "linea": 1216,
   "comentario": "El nombre no puede empezar en un determinante: \"El\" va en mayuscula solo por encabezar la frase, y ocupando la primera posicion consume el cupo de palabras del patron.",
   "fuente": "r\"(?!(?:[Ee]l|[Ll]a|[Ll]os|[Ll]as|[Dd]e|[Dd]el|[Uu]n|[Uu]na|[Yy])\\b)\"",
   "valor": "(?!(?:[Ee]l|[Ll]a|[Ll]os|[Ll]as|[Dd]e|[Dd]el|[Uu]n|[Uu]na|[Yy])\\b)",
@@ -6948,7 +7011,7 @@
  "pipeline.extraccion._NOMBRE": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1207,
+  "linea": 1219,
   "comentario": "El nombre no puede empezar en un determinante: \"El\" va en mayuscula solo por encabezar la frase, y ocupando la primera posicion consume el cupo de palabras del patron.",
   "fuente": "rf\"\\b{_NO_DETERMINANTE}{_PALABRA}\"\n    r\"(?:\\s+(?:de|del|la|los|las|di|da)\\b)?\"\n    rf\"(?:\\s+{_PALABRA_INTERIOR}){{1,4}}\"",
   "valor": "\\b(?!(?:[Ee]l|[Ll]a|[Ll]os|[Ll]as|[Dd]e|[Dd]el|[Uu]n|[Uu]na|[Yy])\\b)(?:[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñ']+|[A-ZÁÉÍÓÚÜÑ]{2,})(?:\\s+(?:de|del|la|los|las|di|da)\\b)?(?:\\s+(?:(?:[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñ']+|[A-ZÁÉÍÓÚÜÑ]{2,})|[a-záéíóúüñ]{3,})){1,4}",
@@ -6968,7 +7031,7 @@
  "pipeline.extraccion.MAX_PALABRAS_NOMBRE": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1215,
+  "linea": 1227,
   "comentario": "Dos nombres y dos apellidos. Las particulas no cuentan: \"Maria del Carmen Gomez Perez\" son cuatro.",
   "fuente": "4",
   "valor": 4,
@@ -6988,7 +7051,7 @@
  "pipeline.extraccion._NO_ES_AFECTADO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1221,
+  "linea": 1233,
   "comentario": "Entidades, no personas. Se comparan como PALABRA COMPLETA: buscarlas como subcadena descarta nombres reales (\"arl\" esta dentro de \"Carlos\"). Se comparan ya normalizados (sin acentos ni ñ), asi que basta la forma simple: \"compañia\" llega como \"compania\".",
   "fuente": "(\n    \"positiva\", \"arl\", \"eps\", \"ips\", \"sas\", \"ltda\", \"sa\", \"eu\",\n    \"notificacion\", \"notificaciones\", \"seguros\", \"compania\",\n)",
   "valor": [
@@ -7021,7 +7084,7 @@
  "pipeline.extraccion._FRASES_NO_AFECTADO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1225,
+  "linea": 1237,
   "comentario": "Entidades, no personas. Se comparan como PALABRA COMPLETA: buscarlas como subcadena descarta nombres reales (\"arl\" esta dentro de \"Carlos\"). Se comparan ya normalizados (sin acentos ni ñ), asi que basta la forma simple: \"compañia\" llega como \"compania\".",
   "fuente": "(\n    \"compania de seguros\", \"servicio al cliente\", \"atencion al ciudadano\",\n)",
   "valor": [
@@ -7045,7 +7108,7 @@
  "pipeline.extraccion._VOCABULARIO_NO_NOMBRE": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1234,
+  "linea": 1246,
   "comentario": "Vocabulario administrativo: palabras que aparecen pegadas a un nombre pero nunca forman parte de el. El candidato se recorta en vez de rechazarse, porque \"ROSA DIAZ identificado\" si trae el nombre, solo que con cola. No incluye palabras que tambien son apellido colombiano (\"Mora\", \"Cruz\", \"Rey\", \"Prado\"): recortarlas perderia el nombre.",
   "fuente": "frozenset(\"\"\"\ncc ce ti nit cedula ciudadania extranjeria documento identidad identificado\nidentificada identificados pasaporte registro civil radicado siniestro furat\nplanilla periodo folio folios expediente oficio resolucion acta recibo factura\npoliza contrato formato formulario anexo adjunto adjuntos soporte soportes\ncertificado constancia incapacidad historia clinica diagnostico diagnosticos\nepicrisis\narp afp ccf sena dian ungrd siarp empresa sociedad agencia entidad\ngerencia oficina coordinacion subdireccion recaudo nomina tesoreria juridica\nalcaldia gobernacion concejal alcalde ministerio superintendencia hospital\nlaboratorio empleador aportante afiliado afiliada dependiente independiente\npensionado beneficiario contratista funcionario encargada encargado tramite\ntramites asesor asesora analista auxiliar\ntrabajador trabajadora paciente titular usuario usuaria victima denunciante\nquerellante causante causahabiente senor senora senorita\nprofesional profesionales revisor revisora fiscal subgerente subgerencia\nejecutivo ejecutiva intramural extramural vacante cargo persona personas\nsiniestrado siniestrada accidentado accidentada asegurado asegurada\nsolidaridad pensional\nque se un una unos unas al lo les nos me te mi tu su sus este esta estos estas\nese esa aquel donde cuando como cual quien porque pues sino pero\nsalud pension pensiones riesgos parafiscales aporte aportes voluntario novedad\nnovedades reporte retiro ingreso traslado correccion devolucion reintegro pago\npagos valor saldo deuda sexo masculino femenino genero edad telefono celular\ncorreo ciudad municipio departamento pais barrio\nsolicita solicitan manifiesta manifiestan reporta reportan presenta presentan\ninforma informan requiere requieren adjunta adjuntan envia envian remite\nremiten expone exponen indica indican aclara aclaran responde responden\nacepta aceptan objeta objetan certifica certifican declara declaran autoriza\nautorizan interpone interponen radica radican reclama reclaman denuncia\ndenuncian agradece agradecen comunica comunican notifica notifican\nrefiere refieren niega niegan consulta consultan ingresa ingresan aceptar\nentender entiende entienden comprende comprenden firmar firma tolera asiste\ncordial saludo saludos atentamente atenta atento quedo agradezco gracias\nbuenos buenas dias tardes noches reciba respuesta solicitud peticion queja\nreclamo derecho tutela asunto referencia confirmacion reserva favor cuando\nsin con caso tipo clase nivel centro codigo direccion aviso cobro citacion\nrequerimiento recurso apelacion reposicion sancion multa acuerdo convenio\ninforme cuenta extracto liquidacion comprobante autorizacion orden ordenes\nremision remisiones medicamento medicamentos examen examenes recomendacion\nrecomendaciones obtener outlook subject opiniones contenidas jefatura\nnotificacion notificaciones objecion autoreporte accidentalidad\ncita control seguimiento calificacion invalidez accidente enfermedad riesgo\nlaboral comision fondo representaciones erratas cel actividad economica\ncotizante afiliacion reiteracion secuelas cordialmente tarjeta derivado\nconsulta externa lugar rehabilitacion integral en apoderado representante\nlegal identificacion gerente talento humano nombre nombres apellido apellidos\nprincipal suplente\ncalle carrera avenida diagonal transversal apto apartamento piso kilometro\nmanzana torre bloque edificio local conjunto urbanizacion\nfecha area rodilla derecha izquierda izquierdo ortopedia electronica\ncontroversia junta juntas nequi daviplata ibc caja pcl pclo\n\"\"\".split()) | palabras_de_cargo()",
   "valor": "frozenset(\"\"\"\ncc ce ti nit cedula ciudadania extranjeria documento identidad identificado\nidentificada identificados pasaporte registro civil radicado siniestro furat\nplanilla periodo folio folios expediente oficio resolucion acta recibo factura\npoliza contrato formato formulario anexo adjunto adjuntos soporte soportes\ncertificado constancia incapacidad historia clinica diagnostico diagnosticos\nepicrisis\narp afp ccf sena dian ungrd siarp empresa sociedad agencia entidad\ngerencia oficina coordinacion subdireccion recaudo nomina tesoreria juridica\nalcaldia gobernacion concejal alcalde ministerio superintendencia hospital\nlaboratorio empleador aportante afiliado afiliada dependiente independiente\npensionado beneficiario contratista funcionario encargada encargado tramite\ntramites asesor asesora analista auxiliar\ntrabajador trabajadora paciente titular usuario usuaria victima denunciante\nquerellante causante causahabiente senor senora senorita\nprofesional profesionales revisor revisora fiscal subgerente subgerencia\nejecutivo ejecutiva intramural extramural vacante cargo persona personas\nsiniestrado siniestrada accidentado accidentada asegurado asegurada\nsolidaridad pensional\nque se un una unos unas al lo les nos me te mi tu su sus este esta estos estas\nese esa aquel donde cuando como cual quien porque pues sino pero\nsalud pension pensiones riesgos parafiscales aporte aportes voluntario novedad\nnovedades reporte retiro ingreso traslado correccion devolucion reintegro pago\npagos valor saldo deuda sexo masculino femenino genero edad telefono celular\ncorreo ciudad municipio departamento pais barrio\nsolicita solicitan manifiesta manifiestan reporta reportan presenta presentan\ninforma informan requiere requieren adjunta adjuntan envia envian remite\nremiten expone exponen indica indican aclara aclaran responde responden\nacepta aceptan objeta objetan certifica certifican declara declaran autoriza\nautorizan interpone interponen radica radican reclama reclaman denuncia\ndenuncian agradece agradecen comunica comunican notifica notifican\nrefiere refieren niega niegan consulta consultan ingresa ingresan aceptar\nentender entiende entienden comprende comprenden firmar firma tolera asiste\ncordial saludo saludos atentamente atenta atento quedo agradezco gracias\nbuenos buenas dias tardes noches reciba respuesta solicitud peticion queja\nreclamo derecho tutela asunto referencia confirmacion reserva favor cuando\nsin con caso tipo clase nivel centro codigo direccion aviso cobro citacion\nrequerimiento recurso apelacion reposicion sancion multa acuerdo convenio\ninforme cuenta extracto liquidacion comprobante autorizacion orden ordenes\nremision remisiones medicamento medicamentos examen examenes recomendacion\nrecomendaciones obtener outlook subject opiniones contenidas jefatura\nnotificacion notificaciones objecion autoreporte accidentalidad\ncita control seguimiento calificacion invalidez accidente enfermedad riesgo\nlaboral comision fondo representaciones erratas cel actividad economica\ncotizante afiliacion reiteracion secuelas cordialmente tarjeta derivado\nconsulta externa lugar rehabilitacion integral en apoderado representante\nlegal identificacion gerente talento humano nombre nombres apellido apellidos\nprincipal suplente\ncalle carrera avenida diagonal transversal apto apartamento piso kilometro\nmanzana torre bloque edificio local conjunto urbanizacion\nfecha area rodilla derecha izquierda izquierdo ortopedia electronica\ncontroversia junta juntas nequi daviplata ibc caja pcl pclo\n\"\"\".split()) | palabras_de_cargo()",
@@ -7065,7 +7128,7 @@
  "pipeline.extraccion._PARTICULAS": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1297,
+  "linea": 1309,
   "comentario": "Particulas que pueden ir DENTRO de un nombre (\"Muñoz de la Rosa\") pero nunca al principio: \"DE BOGOTA\" no es una persona.",
   "fuente": "frozenset((\"de\", \"del\", \"la\", \"las\", \"los\", \"y\", \"e\", \"el\"))",
   "valor": [
@@ -7094,7 +7157,7 @@
  "pipeline.extraccion.PENALIZACION_POR_RECORTE": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1353,
+  "linea": 1365,
   "comentario": "Cuanto baja la confianza cuando el nombre empezo mas adelante de donde lo puso el regex. El recorte acierta casi siempre, pero se apoya en una lista mantenida a mano: si alguna vez coincidiera con un nombre de pila, el campo debe acercarse al umbral en vez de radicarse a ciegas.",
   "fuente": "0.06",
   "valor": 0.06,
@@ -7114,7 +7177,7 @@
  "pipeline.extraccion.CONFIANZA_DE_LA_GEOGRAFIA": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1359,
+  "linea": 1371,
   "comentario": "Confianza de la geografia leida del texto. Va por debajo de la del registro de personas: el registro es la fuente de la entidad y esto es lo que el ciudadano escribio, que puede ser justo la actualizacion que esta pidiendo.",
   "fuente": "0.85",
   "valor": 0.85,
@@ -7134,7 +7197,7 @@
  "pipeline.extraccion._ANTES_DEL_PAGADOR": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1400,
+  "linea": 1412,
   "comentario": "En un certificado de aportes, \"se certifica que X, identificado con CC NNN, realizo los siguientes aportes\" nombra en X a quien PAGO. El afiliado va en el listado que viene detras, no ahi. Se exigen las dos partes de la frase: \"se certifica que X sufrio un accidente\" si nombra al afectado.",
   "fuente": "re.compile(r\"certifica(?:mos)?\\s+que$\", re.IGNORECASE)",
   "valor": {
@@ -7157,7 +7220,7 @@
  "pipeline.extraccion._CLAUSULA_DE_APORTES": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1401,
+  "linea": 1413,
   "comentario": "En un certificado de aportes, \"se certifica que X, identificado con CC NNN, realizo los siguientes aportes\" nombra en X a quien PAGO. El afiliado va en el listado que viene detras, no ahi. Se exigen las dos partes de la frase: \"se certifica que X sufrio un accidente\" si nombra al afectado.",
   "fuente": "re.compile(\n    r\"realiz[oó]\\s+los\\s+siguientes\\s+aportes\", re.IGNORECASE)",
   "valor": {
@@ -7180,7 +7243,7 @@
  "pipeline.extraccion.ANTES_DEL_PAGADOR": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1404,
+  "linea": 1416,
   "comentario": "Cuanto se mira delante y detras del candidato para reconocer la clausula.",
   "fuente": "30",
   "valor": 30,
@@ -7200,7 +7263,7 @@
  "pipeline.extraccion.ALCANCE_DE_LA_CLAUSULA_DE_APORTES": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1405,
+  "linea": 1417,
   "comentario": "Cuanto se mira delante y detras del candidato para reconocer la clausula.",
   "fuente": "220",
   "valor": 220,
@@ -7220,7 +7283,7 @@
  "pipeline.extraccion.MAX_PALABRAS_DE_UN_NOMBRE": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1472,
+  "linea": 1484,
   "comentario": "Mas palabras que estas no es un nombre: dos nombres, dos apellidos y dos particulas ya son seis.",
   "fuente": "6",
   "valor": 6,
@@ -7240,7 +7303,7 @@
  "pipeline.extraccion._PALABRAS_DE_FRASE": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1477,
+  "linea": 1489,
   "comentario": "Palabras gramaticales que un nombre no lleva en ninguna posicion. Las particulas de apellido (\"de\", \"del\", \"la\", \"y\") no estan: \"Maria del Mar de la Hoz y Perez\" es un nombre.",
   "fuente": "frozenset(\"\"\"\nel los un una unos unas al en por para con sin que se lo le les su sus\nantes despues durante segun desde hasta sobre entre hacia mediante tras contra\nno si ni ya muy mas aun tambien cuando donde como porque pero aplica\n\"\"\".split())",
   "valor": [
@@ -7307,7 +7370,7 @@
  "pipeline.extraccion._ARRANQUE_DE_FRASE": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1484,
+  "linea": 1496,
   "comentario": "Al principio tampoco: \"LA ROSA\" puede ser apellido en medio, pero un nombre que EMPIEZA por articulo es el arranque de una frase.",
   "fuente": "_PALABRAS_DE_FRASE | frozenset(\"las\".split())",
   "valor": [
@@ -7374,7 +7437,7 @@
  "pipeline.extraccion._VERBO_CONJUGADO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1488,
+  "linea": 1500,
   "comentario": "Gerundios e imperfectos. Hay nombres de pila con esa terminacion, y van aparte.",
   "fuente": "re.compile(\n    r\"^[a-z]{3,}(?:iendo|yendo|ando|aban|aba|ieron|aron|ndose)$\")",
   "valor": {
@@ -7397,7 +7460,7 @@
  "pipeline.extraccion._NOMBRES_CON_FORMA_DE_VERBO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1490,
+  "linea": 1502,
   "comentario": "Gerundios e imperfectos. Hay nombres de pila con esa terminacion, y van aparte.",
   "fuente": "frozenset(\"\"\"\nfernando hernando armando orlando rolando ernando arnando fernanda hernanda\narmanda orlanda rolanda ferrando durando\n\"\"\".split())",
   "valor": [
@@ -7432,7 +7495,7 @@
  "pipeline.extraccion._SUSTANTIVO_ABSTRACTO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1495,
+  "linea": 1507,
   "comentario": "Sustantivos abstractos en -cion/-sion. Algunos son nombres de pila.",
   "fuente": "re.compile(r\"^[a-z]{3,}(?:cion|sion|ciones|siones)$\")",
   "valor": {
@@ -7455,7 +7518,7 @@
  "pipeline.extraccion._NOMBRES_EN_CION": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1496,
+  "linea": 1508,
   "comentario": "Sustantivos abstractos en -cion/-sion. Algunos son nombres de pila.",
   "fuente": "frozenset(\"\"\"\nconcepcion asuncion encarnacion ascension purificacion anunciacion\n\"\"\".split())",
   "valor": [
@@ -7482,7 +7545,7 @@
  "pipeline.extraccion._VALORES_DE_RELLENO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1500,
+  "linea": 1512,
   "comentario": "",
   "fuente": "frozenset({\n    \"no aplica\", \"n a\", \"na\", \"ninguno\", \"ninguna\", \"sin informacion\",\n    \"no registra\", \"no reporta\", \"desconocido\", \"sin dato\", \"sin datos\",\n    \"no informa\", \"pendiente\", \"por definir\",\n})",
   "valor": [
@@ -7517,7 +7580,7 @@
  "pipeline.extraccion.PALABRAS_PARA_DAR_EL_NOMBRE_POR_COMPLETO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1649,
+  "linea": 1661,
   "comentario": "A partir de tres palabras el nombre se da por completo. Con dos suele estar abreviado y el correo lo trae entero en otro sitio: el nombre de pila arriba y el nombre completo, con apellidos, en la firma. No se completa un nombre que ya tiene tres: la forma mas larga que aparece en el texto suele llevar pegada una palabra que no es del nombre —un mes, o una ciudad que el OCR partio.",
   "fuente": "3",
   "valor": 3,
@@ -7537,7 +7600,7 @@
  "pipeline.extraccion.CONFIANZA_DE_UN_NOMBRE_FIRME": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1749,
+  "linea": 1761,
   "comentario": "Por debajo de esta confianza el nombre salio de una regla debil: hubo que recortar la frase, se leyo detras del documento o es lo unico con forma de nombre en el asunto. Ahi es donde el algoritmo radicaba trozos de frase (\"No Retenido Nuevo\", \"IBC Caja\"); se le da al agente a confirmar.",
   "fuente": "0.86",
   "valor": 0.86,
@@ -7557,7 +7620,7 @@
  "pipeline.extraccion.SEXO_MASCULINO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1880,
+  "linea": 1892,
   "comentario": "Codigos de SGDEA. Se leen del texto, no se deducen.",
   "fuente": "1",
   "valor": 1,
@@ -7578,7 +7641,7 @@
  "pipeline.extraccion.SEXO_FEMENINO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1881,
+  "linea": 1893,
   "comentario": "Codigos de SGDEA. Se leen del texto, no se deducen.",
   "fuente": "2",
   "valor": 2,
@@ -7599,7 +7662,7 @@
  "pipeline.extraccion._SEXO_DECLARADO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1883,
+  "linea": 1895,
   "comentario": "",
   "fuente": "re.compile(\n    r\"\\b(?:sexo|g[eé]nero)\\b\\s*[:\\-]?\\s*\"\n    r\"(masculino|femenino|hombre|mujer|[mf])\\b\",\n    re.IGNORECASE,\n)",
   "valor": {
@@ -7622,7 +7685,7 @@
  "pipeline.extraccion._VALOR_SEXO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1888,
+  "linea": 1900,
   "comentario": "",
   "fuente": "{\n    \"masculino\": SEXO_MASCULINO, \"hombre\": SEXO_MASCULINO, \"m\": SEXO_MASCULINO,\n    \"femenino\": SEXO_FEMENINO, \"mujer\": SEXO_FEMENINO, \"f\": SEXO_FEMENINO,\n}",
   "valor": {
@@ -7649,7 +7712,7 @@
  "pipeline.extraccion.VENTANA_DE_CONCORDANCIA": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1901,
+  "linea": 1913,
   "comentario": "Concordancia gramatical: el texto no rotula el sexo pero lo declara al escribir \"mi trabajadora ANA LOPEZ\" o \"ANA LOPEZ, identificada con\". Es una afirmacion de quien escribe sobre la persona, no una deduccion a partir del nombre de pila: esa exigiria una lista de nombres, que es imposible de completar y produce datos falsos sobre personas reales. Solo cuenta lo que esta JUNTO al nombre del afectado. Un correo menciona a varias personas, y una marca suelta pertenece a cualquiera de ellas.",
   "fuente": "60",
   "valor": 60,
@@ -7669,7 +7732,7 @@
  "pipeline.extraccion._GENERO_FEMENINO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1903,
+  "linea": 1915,
   "comentario": "",
   "fuente": "re.compile(\n    r\"\\bidentificada\\b|\\bse[nñ]ora\\b|\\bsra\\.?\\b|\\bdo[nñ]a\\b|\\bnacida\\b\"\n    r\"|\\btrabajadora\\b|\\bafiliada\\b|\\bempleada\\b|\\basegurada\\b\"\n    r\"|\\baccidentada\\b|\\bpensionada\\b|\\bbeneficiaria\\b|\\busuaria\\b\"\n    r\"|\\bla\\s+(?:paciente|titular|solicitante|cotizante)\\b\"\n    # Una historia clinica declara el sexo con el adjetivo suelto, sin usar la\n    # palabra \"sexo\": \"PACIENTE FEMENINA DE 43 AÑOS\".\n    r\"|\\bfemenin[ao]\\b\",\n    re.IGNORECASE,\n)",
   "valor": {
@@ -7692,7 +7755,7 @@
  "pipeline.extraccion._GENERO_MASCULINO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1913,
+  "linea": 1925,
   "comentario": "",
   "fuente": "re.compile(\n    r\"\\bidentificado\\b|\\bse[nñ]or\\b|\\bsr\\.?\\b|\\bdon\\b|\\bnacido\\b\"\n    r\"|\\btrabajador\\b|\\bafiliado\\b|\\bempleado\\b|\\basegurado\\b\"\n    r\"|\\baccidentado\\b|\\bpensionado\\b|\\bbeneficiario\\b|\\busuario\\b\"\n    r\"|\\bel\\s+(?:paciente|titular|solicitante|cotizante)\\b\"\n    r\"|\\bmasculin[ao]\\b\",\n    re.IGNORECASE,\n)",
   "valor": {
@@ -7715,7 +7778,7 @@
  "pipeline.extraccion._FORMA_DOBLE": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1926,
+  "linea": 1938,
   "comentario": "Un formulario impreso no sabe a quien va a atender, asi que escribe las dos formas: \"identificado(a)\", \"Señor(a)\", \"afiliado/a\". Esa terminacion es de la plantilla y no dice nada del titular. Anula solo la aparicion que la lleva: \"Respetado Señor:\" en el mismo documento sigue contando.",
   "fuente": "re.compile(r\"\\s*[(/]\\s*[ao]\\s*\\)?\")",
   "valor": {
@@ -7738,7 +7801,7 @@
  "pipeline.extraccion.DISTANCIA_DE_LA_MARCA_CONTRARIA": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1933,
+  "linea": 1945,
   "comentario": "Con la marca contraria a esta distancia Y una frontera de celda o de linea en medio, el tramo enumera las opciones del formulario (\"| M | Masculino | | F | Femenino |\") y ninguna de las dos habla de una persona. La frontera es lo que lo distingue de una frase que menciona a dos personas (\"el señor y la señora ANA LOPEZ\"), donde la marca pegada al nombre si decide.",
   "fuente": "30",
   "valor": 30,
@@ -7758,7 +7821,7 @@
  "pipeline.extraccion._FRONTERA_DE_CELDA": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1934,
+  "linea": 1946,
   "comentario": "Con la marca contraria a esta distancia Y una frontera de celda o de linea en medio, el tramo enumera las opciones del formulario (\"| M | Masculino | | F | Femenino |\") y ninguna de las dos habla de una persona. La frontera es lo que lo distingue de una frase que menciona a dos personas (\"el señor y la señora ANA LOPEZ\"), donde la marca pegada al nombre si decide.",
   "fuente": "re.compile(r\"[|\\n]\")",
   "valor": {
@@ -7781,7 +7844,7 @@
  "pipeline.extraccion._TITULO_DE_ADJUNTO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1937,
+  "linea": 1949,
   "comentario": "Encabezado Markdown: el conversor escribe ahi el nombre del archivo adjunto.",
   "fuente": "re.compile(r\"(?m)^#{1,6}[^\\n]*$\")",
   "valor": {
@@ -7804,7 +7867,7 @@
  "pipeline.extraccion._PIDE_CORREGIR": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1943,
+  "linea": 1955,
   "comentario": "Frases con las que el correo declara que un dato es el EQUIVOCADO y pide anularlo o corregirlo. La clausula llega hasta el fin de la frase o de la linea.",
   "fuente": "re.compile(\n    r\"(?i)\\b(?:anulaci[oó]n|anular|no\\s+corresponde|err[oó]ne[ao]\"\n    r\"|incorrect[ao]|registrado\\s+en)\\b\")",
   "valor": {
@@ -7827,7 +7890,7 @@
  "pipeline.extraccion._FIN_DE_CLAUSULA": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1946,
+  "linea": 1958,
   "comentario": "Frases con las que el correo declara que un dato es el EQUIVOCADO y pide anularlo o corregirlo. La clausula llega hasta el fin de la frase o de la linea.",
   "fuente": "re.compile(r\"[.\\n]\")",
   "valor": {
@@ -7850,7 +7913,7 @@
  "pipeline.extraccion._PRIMERA_PERSONA_FEMENINO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1981,
+  "linea": 1993,
   "comentario": "Concordancia en PRIMERA persona: quien escribe se concuerda a si mismo. Solo vale cuando el pipeline ya concluyo que el remitente es el afectado; si no, describe el sexo de otra persona.",
   "fuente": "re.compile(\n    r\"\\bqued(?:o|amos)\\s+atentas?\\b|\\bestoy\\s+atenta\\b\"\n    r\"|\\bme\\s+encuentro\\s+(?:afiliada|incapacitada|pensionada|calificada)\\b\"\n    r\"|\\bsoy\\s+(?:afiliada|trabajadora|pensionada|beneficiaria|independiente\\s+afiliada)\\b\"\n    r\"|\\bestoy\\s+(?:dispuesta|incapacitada|afiliada|interesada)\\b\"\n    r\"|\\bagradecida\\b|\\bla\\s+suscrita\\b\",\n    re.IGNORECASE,\n)",
   "valor": {
@@ -7873,7 +7936,7 @@
  "pipeline.extraccion._PRIMERA_PERSONA_MASCULINO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 1989,
+  "linea": 2001,
   "comentario": "Concordancia en PRIMERA persona: quien escribe se concuerda a si mismo. Solo vale cuando el pipeline ya concluyo que el remitente es el afectado; si no, describe el sexo de otra persona.",
   "fuente": "re.compile(\n    r\"\\bqued(?:o|amos)\\s+atentos?\\b|\\bestoy\\s+atento\\b\"\n    r\"|\\bme\\s+encuentro\\s+(?:afiliado|incapacitado|pensionado|calificado)\\b\"\n    r\"|\\bsoy\\s+(?:afiliado|trabajador|pensionado|beneficiario|independiente\\s+afiliado)\\b\"\n    r\"|\\bestoy\\s+(?:dispuesto|incapacitado|afiliado|interesado)\\b\"\n    r\"|\\bagradecido\\b|\\bel\\s+suscrito\\b\",\n    re.IGNORECASE,\n)",
   "valor": {
@@ -7896,7 +7959,7 @@
  "pipeline.extraccion.TIPO_REMITENTE_AFECTADO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 2160,
+  "linea": 2172,
   "comentario": "",
   "fuente": "3",
   "valor": 3,
@@ -7916,7 +7979,7 @@
  "pipeline.extraccion._TIPOS_DE_ORGANIZACION": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 2166,
+  "linea": 2178,
   "comentario": "Tipos que no identifican a una persona natural. Un documento de estos compartido entre remitente y afectado no dice que sean la misma persona: es la empresa escribiendo sobre si misma, que en esta taxonomia es un tercero.",
   "fuente": "TIPOS_DE_ORGANIZACION",
   "valor": [
@@ -7940,7 +8003,7 @@
  "pipeline.extraccion._TRAMITE_PROPIO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 2172,
+  "linea": 2184,
   "comentario": "Quien escribe habla de SU propio tramite. Es concordancia, no interpretacion de la relacion: \"mi afiliacion\", \"me consignen\", \"mis aportes\" son afirmaciones de quien escribe sobre si mismo.",
   "fuente": "re.compile(\n    r\"\\bmi\\s+(?:afiliacion|incapacidad|pension|calificacion|caso|solicitud|\"\n    r\"tramite|documento|cedula|cuenta|reembolso|accidente|enfermedad|\"\n    r\"diagnostico|historia|dinero|pago|declaracion|clave|contrasena|\"\n    r\"correo|siniestro|proceso|expediente|salud|empresa)\\b\"\n    r\"|\\bme\\s+(?:consignen|adeudan|reembolsen|autoricen|paguen|corrijan|\"\n    r\"actualicen|expidan|certifiquen|informen|respondan)\\b\"\n    r\"|\\bmis\\s+(?:aportes|ingresos|datos|incapacidades|documentos)\\b\"\n    r\"|\\bsoy\\s+(?:el|la)\\s+(?:afiliad|trabajador|paciente|titular|pensionad)\",\n    re.IGNORECASE,\n)",
   "valor": {
@@ -7963,7 +8026,7 @@
  "pipeline.extraccion._TRAMITE_DE_OTRO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 2185,
+  "linea": 2197,
   "comentario": "Quien escribe habla del tramite de OTRO. Basta una de estas para abstenerse: el correo mezcla las dos voces y decidir seria interpretar.",
   "fuente": "re.compile(\n    r\"\\b(?:mi|nuestr[oa])\\s+(?:trabajador(?:a)?|emplead[oa]|colaborador(?:a)?)\\b\"\n    r\"|\\b(?:a|en)\\s+nombre\\s+(?:de|del)\\b\"\n    # Nombrar al afectado en tercera persona es la misma evidencia con \"del\n    # trabajador\" que con \"el trabajador\": el articulo tambien cuenta. Salvo\n    # detras de \"soy\", que es justo lo contrario: \"soy el afiliado\".\n    r\"|(?<!\\bsoy\\s)\\b(?:de|del|el|la|los|las)\\s+\"\n    r\"(?:trabajador(?:a)?|afiliad[oa]|paciente|lesionad[oa]|emplead[oa])\\b\"\n    r\"|\\byo\\s+le\\s+ayudo\\b|\\bapoderad[oa]\\b|\\brepresento\\s+a\\b\",\n    re.IGNORECASE,\n)",
   "valor": {
@@ -7986,7 +8049,7 @@
  "pipeline.extraccion._FIRMA_DE_EMPLEADOR": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 2204,
+  "linea": 2216,
   "comentario": "Quien firma como empleador no es el trabajador afectado. Se usa solo para ABSTENERSE, no para concluir \"tercero\": un independiente puede ser su propio empleador, y ahi la relacion es genuinamente ambigua. \"representante legal\" NO sirve para esto: alguien puede firmar como representante legal de su propia empresa y ser la persona afectada.",
   "fuente": "re.compile(\n    r\"\\bempleador(?:a)?\\b|en\\s+calidad\\s+de\\s+empleador\", re.IGNORECASE)",
   "valor": {
@@ -8009,7 +8072,7 @@
  "pipeline.extraccion._DESPEDIDA_EN_LINEA": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 2236,
+  "linea": 2248,
   "comentario": "Despedida seguida del nombre en la misma linea, aunque el texto venga corrido y sin salto: \"...rehabilitacion.Atentamente,CARLOS PEREZ\".",
   "fuente": "re.compile(\n    r\"(?i)(?:atentamente|cordialmente|respetuosamente|atte)\\s*[,.:;]?\\s*\"\n    r\"([^\\n,.:;]{5,70})\")",
   "valor": {
@@ -8032,7 +8095,7 @@
  "pipeline.extraccion._ARRANQUE_DEL_HILO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 2362,
+  "linea": 2374,
   "comentario": "Donde empieza el hilo citado. Lo que va detras lo escribio otro, y en un reenvio suele ser Positiva.",
   "fuente": "re.compile(\n    r\"(?im)^\\s*(?:-{2,}\\s*forwarded|de\\s*:|from\\s*:|remitente\\s*:|\"\n    r\"enviado\\s+el?\\s*:|el\\s+\\w+,?\\s+\\d{1,2}\\s+de\\s+\\w+)\")",
   "valor": {
@@ -8055,7 +8118,7 @@
  "pipeline.extraccion.METODO_TIPO_PQRD_FIJO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 2381,
+  "linea": 2393,
   "comentario": "",
   "fuente": "\"solicitud_unico_tipo_que_se_radica\"",
   "valor": "solicitud_unico_tipo_que_se_radica",
@@ -8076,7 +8139,7 @@
  "pipeline.extraccion.METODOS_POR_DEFECTO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 2407,
+  "linea": 2419,
   "comentario": "Metodos que aplican un valor por ausencia de otro, no por haberlo leido. El hallazgo es legitimo y su evidencia lo dice, pero cuenta como cobertura y no distinguirlo hace pasar por dato lo que es una suposicion. Las herramientas de medida los separan.",
   "fuente": "frozenset({METODO_TIPO_PQRD_FIJO})",
   "valor": [
@@ -8096,7 +8159,7 @@
  "pipeline.extraccion._TIPO_SOLICITUD_DECLARADO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 2413,
+  "linea": 2425,
   "comentario": "La primera que case decide: las especificas van antes que las genericas.",
   "fuente": "(\n    # Las facturas de un prestador son cuentas medicas, no aportes: van antes\n    # del estado de cartera, que una clinica tambien escribe.\n    (28, r\"\\bglosas?\\b|cuentas\\s+m[eé]dicas\"),\n    (8,  r\"estado\\s+de\\s+(?:cuenta|cartera)\"),\n    # La preposicion es opcional: \"Devolucion aportes\", \"PAGO INCAPACIDAD\".\n    (26, r\"devoluci[oó]n\\s+(?:de\\s+)?(?:los\\s+)?aportes\"),\n    (26, r\"\\bmora\\b[^.]{0,60}\\baportes\\b|\\baportes\\b[^.]{0,60}\\bmora\\b\"),\n    # La constitucion en mora es el cobro de aportes adeudados: quien responde\n    # a ella discute un pago de aportes, no pide su estado de cuenta.\n    (26, r\"constituci[oó]n\\s+en\\s+mora\"),\n    (16, r\"pago\\s+(?:de\\s+)?(?:la\\s+)?incapacidad\"\n         r\"|reconocimiento\\s+de\\s+(?:la\\s+)?incapacidad\"\n         r\"|incapacidad(?:es)?\\s+(?:no\\s+)?(?:pagad|reconocid)\"\n         # La indemnizacion por incapacidad permanente parcial se paga tras un\n         # dictamen, y el dictamen no la vuelve una controversia.\n         r\"|indemnizaci[oó]n\\s+(?:por\\s+)?(?:la\\s+)?(?:incapacidad|ipp\\b)\"\n         r\"|incapacidad\\s+permanente\\s+parcial\"),\n    # Preguntar si se esta activo es el estado de la afiliacion, aunque el\n    # mismo correo nombre la junta que califico.\n    (12, r\"\\bactiv[oa]\\s+o\\s+inactiv[oa]|\\bsi\\s+(?:estoy|esta|sigo)\\s+\"\n         r\"(?:activ[oa]|afiliad[oa])\"),\n    # Llevar al paciente a otra IPS o cambiarle el prestador. Va antes de la\n    # controversia: la PCL se nombra como riesgo de la demora, no como tramite.\n    (23, r\"traslado\\s+(?:y\\s+remisi[oó]n\\s+)?(?:a|de)\\s+(?:una\\s+|otra\\s+|la\\s+)?\"\n         r\"(?:ips|instituci[oó]n|cl[ií]nica|hospital)\"\n         r\"|remisi[oó]n\\s+y\\s+traslado|cambio\\s+de\\s+(?:proveedor|ips|prestador)\"),\n    (7,  r\"\\bdictamen\\b|\\bcontroversia\\b|\\bp[ec]l\\b\"\n         r\"|junta\\s+(?:regional|nacional)\\s+de\\s+calificaci[oó]n\"\n         r\"|p[eé]rdida\\s+de\\s+capacidad\\s+laboral\"),\n    (15, r\"reembolso\"),\n    (1,  r\"actualizaci[oó]n\\s+de\\s+(?:datos|direcci[oó]n|nombre|actividad)\"\n         r\"|corregir\\s+(?:el\\s+|la\\s+)?(?:raz[oó]n\\s+social|actividad|riesgo)\"\n         r\"|correcci[oó]n\\s+de(?:\\s+la)?\\s+informaci[oó]n\"),\n    (5,  r\"autoriza(?:ci[oó]n|r)\\s+(?:de\\s+|del\\s+|la\\s+|el\\s+)?\"\n         r\"(?:procedimiento|cita|m[eé]dic|terapia|examen|resonancia|cirug[ií]a)\"\n         r\"|autorizaci[oó]n\\s+m[eé]dica\"),\n    (21, r\"medicamento\"),\n    (17, r\"pensi[oó]n\"),\n    (18, r\"p[oó]liza\\s+de\\s+vida\"),\n    (12, r\"retiro\\s+de(?:\\s+los)?\\s+trabajador|novedad\\s+de\\s+retiro\"\n         r\"|afiliaci[oó]n\\s+de(?:l)?\\s+trabajador\"),\n)",
   "valor": [
@@ -8181,7 +8244,7 @@
  "pipeline.extraccion.TOPE_PARA_LA_SOLICITUD": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 2460,
+  "linea": 2472,
   "comentario": "La peticion va al arranque del correo. Lo que sigue es firma, aviso legal y cadena de reenvio, donde el vocabulario de otro tramite produce falsos positivos.",
   "fuente": "1500",
   "valor": 1500,
@@ -8201,7 +8264,7 @@
  "pipeline.extraccion._ROTULO_DIRECCION": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 2515,
+  "linea": 2527,
   "comentario": "",
   "fuente": "re.compile(\n    r\"(?i)direcci[oó]n[ \\t]*\"\n    r\"(?:de\\s+residencia(?:\\s+habitual)?|de\\s+notificaci[oó]n)?[ \\t]*:[ \\t|]*\")",
   "valor": {
@@ -8224,7 +8287,7 @@
  "pipeline.extraccion._BLOQUE_DE_OTRO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 2522,
+  "linea": 2534,
   "comentario": "Rotulos que abren el bloque de otro sujeto: la IPS, el empleador, Positiva, la Junta o el registro societario. Una direccion bajo cualquiera de ellos no es el domicilio del trabajador.",
   "fuente": "re.compile(\n    r\"(?i)codigo\\s+de\\s+habilitacion|r\\.?\\s?m\\.?\\s*\\d{4}\"\n    r\"|datos\\s+del\\s+(?:empleador|jefe|aportante)\"\n    r\"|\\bnit\\b\\s*:?\\s*\\d|numero\\s+de\\s+identificacion\\s+tributaria\"\n    r\"|positiva\\s+compa[nñ]ia|junta\\s+(?:regional|nacional)|razon\\s+social\"\n    r\"|empresa\\s+matriz|controlante|\\bciiu\\b\")",
   "valor": {
@@ -8247,7 +8310,7 @@
  "pipeline.extraccion._NO_ES_DOMICILIO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 2530,
+  "linea": 2542,
   "comentario": "Un domicilio no lleva numero de consultorio.",
   "fuente": "re.compile(r\"(?i)\\bconsultorio\\b\")",
   "valor": {
@@ -8270,7 +8333,7 @@
  "pipeline.extraccion._ROTULOS_DE_FORMULARIO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 2541,
+  "linea": 2553,
   "comentario": "Donde termina el valor cuando los campos van seguidos en la misma linea, sin barra ni salto que los separe. El rotulo con dos puntos corta tambien cuando va PEGADO al valor: un formulario HTML con un campo por <li> se convierte en \"CALLE 21 N 14-19E-mail: ...\", sin espacio entre la direccion y el rotulo siguiente. Pegado se acepta tras una cifra o un signo, o con el salto de minuscula a mayuscula (\"Sur 4-10 apto 2Barrio:\"); dentro de una palabra no (\"CARLOS:\"). Un separador de lista (\" * \", \"•\", \";\") delante tambien lo abre.",
   "fuente": "r\"correo(?:\\s+electr[oó]nico)?|e-?mail|tel[eé]fonos?|tel|celular|cel\"\n    r\"|m[oó]vil|fax|whatsapp|ciudad|municipio|departamento|pa[ií]s|barrio\"\n    r\"|nacionalidad|ocupaci[oó]n|eps|arl|zona|estrato|documento|c[eé]dula\"\n    r\"|identificaci[oó]n|tipo\\s+de\\s+documento|nombres?|apellidos?|sexo|g[eé]nero\"\n    r\"|edad|fecha|comentarios?|observaci[oó]n(?:es)?\"",
   "valor": "correo(?:\\s+electr[oó]nico)?|e-?mail|tel[eé]fonos?|tel|celular|cel|m[oó]vil|fax|whatsapp|ciudad|municipio|departamento|pa[ií]s|barrio|nacionalidad|ocupaci[oó]n|eps|arl|zona|estrato|documento|c[eé]dula|identificaci[oó]n|tipo\\s+de\\s+documento|nombres?|apellidos?|sexo|g[eé]nero|edad|fecha|comentarios?|observaci[oó]n(?:es)?",
@@ -8290,7 +8353,7 @@
  "pipeline.extraccion._SIGUIENTE_ROTULO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 2547,
+  "linea": 2559,
   "comentario": "Donde termina el valor cuando los campos van seguidos en la misma linea, sin barra ni salto que los separe. El rotulo con dos puntos corta tambien cuando va PEGADO al valor: un formulario HTML con un campo por <li> se convierte en \"CALLE 21 N 14-19E-mail: ...\", sin espacio entre la direccion y el rotulo siguiente. Pegado se acepta tras una cifra o un signo, o con el salto de minuscula a mayuscula (\"Sur 4-10 apto 2Barrio:\"); dentro de una palabra no (\"CARLOS:\"). Un separador de lista (\" * \", \"•\", \";\") delante tambien lo abre.",
   "fuente": "re.compile(\n    r\"(?:\\s*[*•·;]\\s*|\\s+|(?<=[\\d.,#)\\-])|(?<=[a-zñáéíóú])(?=[A-ZÑÁÉÍÓÚ]))\"\n    rf\"(?i:{_ROTULOS_DE_FORMULARIO})\\b(?:[ \\t]+\\w+)?[ \\t]*:\"\n    # El rotulo del dato siguiente no siempre lleva dos puntos: en una linea\n    # corrida se escribe \"Cel 3105551234\" o \"Tel. 6013334444\". Sin este corte\n    # la direccion se traga el telefono y llega asi al registro.\n    r\"|\\s+(?i:cel(?:ular)?|tel(?:[eé]fono)?|m[oó]vil|whatsapp|contacto|fax)\"\n    r\"\\.?\\s*[:#]?\\s*(?=\\d)\"\n    # Un correo electronico tampoco es parte de la direccion.\n    r\"|\\s+(?=[\\w.+-]+@[\\w-]+\\.[\\w.]{2,})\")",
   "valor": {
@@ -8313,7 +8376,7 @@
  "pipeline.extraccion.VENTANA_DEL_TITULAR": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 2575,
+  "linea": 2587,
   "comentario": "Cuanto se mira hacia atras para encontrar al titular del bloque, y cuanto para descartar el rotulo de otro sujeto.",
   "fuente": "320",
   "valor": 320,
@@ -8333,7 +8396,7 @@
  "pipeline.extraccion.TOPE_DEL_BLOQUE_AJENO_DIRECCION": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 2576,
+  "linea": 2588,
   "comentario": "Cuanto se mira hacia atras para encontrar al titular del bloque, y cuanto para descartar el rotulo de otro sujeto.",
   "fuente": "260",
   "valor": 260,
@@ -8353,7 +8416,7 @@
  "pipeline.extraccion.LARGO_MINIMO_DIRECCION": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 2578,
+  "linea": 2590,
   "comentario": "",
   "fuente": "5",
   "valor": 5,
@@ -8373,7 +8436,7 @@
  "pipeline.extraccion.MOTIVOS_DE_AUSENCIA_CONSTATADA": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 2710,
+  "linea": 2722,
   "comentario": "Motivos que constatan una AUSENCIA, no una duda: el algoritmo barrio todo el texto buscando una forma y no habia ninguna. Preguntarselo al modelo gasta una tarea para que conteste lo mismo, porque lee el mismo texto. SIN_NINGUN_NUMERO_EN_EL_TEXTO entra porque no hay ni una racha de digitos con longitud de documento. Su hermano SIN_CANDIDATOS_DE_DOCUMENTO NO entra: ahi si hay numeros, descartados por su contexto, y el modelo puede juzgarlos de otra forma.",
   "fuente": "frozenset({\n    \"SIN_TELEFONO\", \"SIN_NINGUN_NUMERO_EN_EL_TEXTO\",\n})",
   "valor": [
@@ -8411,7 +8474,7 @@
  "pipeline.extraccion._ROTULO_DE_ASUNTO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 2954,
+  "linea": 2966,
   "comentario": "El rotulo con que un escrito declara de que trata.",
   "fuente": "re.compile(\n    r\"(?im)^[ \\t#*>|]*(?:asunto|referencia|ref\\.?)[ \\t]*:[ \\t]*(.*)$\")",
   "valor": {
@@ -8434,7 +8497,7 @@
  "pipeline.extraccion.CARACTERES_DEL_ENCABEZADO_DEL_ADJUNTO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 2958,
+  "linea": 2970,
   "comentario": "Un escrito se presenta en su primera pagina; mas abajo un \"Asunto:\" es el de otro documento citado.",
   "fuente": "4000",
   "valor": 4000,
@@ -8454,7 +8517,7 @@
  "pipeline.extraccion.LARGO_DEL_ASUNTO_DEL_ADJUNTO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 2959,
+  "linea": 2971,
   "comentario": "Un escrito se presenta en su primera pagina; mas abajo un \"Asunto:\" es el de otro documento citado.",
   "fuente": "300",
   "valor": 300,
@@ -8474,7 +8537,7 @@
  "pipeline.extraccion.MAX_ADJUNTOS_EN_EL_CONTEXTO": {
   "modulo": "pipeline.extraccion",
   "archivo": "pipeline/extraccion.py",
-  "linea": 2960,
+  "linea": 2972,
   "comentario": "Un escrito se presenta en su primera pagina; mas abajo un \"Asunto:\" es el de otro documento citado.",
   "fuente": "6",
   "valor": 6,

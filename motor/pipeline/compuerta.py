@@ -628,6 +628,16 @@ def _palabras(texto: Any) -> List[str]:
     return [p.strip(".,;:()") for p in _normaliza(texto).split() if p.strip(".,;:()")]
 
 
+# Codigo de SGDEA para un remitente que es un tercero: una empresa u otra entidad.
+TIPO_REMITENTE_TERCERO = 2
+
+
+def _empresa_que_escribe(h: Any) -> str:
+    from pipeline.extraccion import organizacion_que_escribe
+
+    return organizacion_que_escribe(h)
+
+
 def _parece_entidad(nombre: Any) -> bool:
     """Si el texto nombra una organizacion y no a una persona."""
     if not nombre:
@@ -2134,15 +2144,34 @@ def validar(
             and _es_nombre_de_persona(valor_corregido("nombre_remitente"))
             and _es_nit_de_persona_juridica(doc_rem, _digito_verificacion_nit, plegadas)
             and _declarado_nit(doc_rem, "remitente")):
-        # El documento del remitente no es obligatorio: se envia vacio.
-        reparos.append(Reparo(
-            "numero_documento_remitente", "NIT_DE_ENTIDAD_EN_PERSONA",
-            f"'{doc_rem}' tiene la forma del NIT de una persona juridica y "
-            f"'{valor_corregido('nombre_remitente')}' es el nombre de una persona",
-            bloqueante=False,
-        ))
-        correcciones["numero_documento_remitente"] = ""
-        correcciones["tipo_documento_remitente"] = ""
+        empresa = _empresa_que_escribe(hallazgos.get("nombre_remitente"))
+        try:
+            es_tercero = int(valor("tipo_remitente")) == TIPO_REMITENTE_TERCERO
+        except (TypeError, ValueError):
+            es_tercero = False
+        if es_tercero and empresa:
+            # Una empresa escribe por medio de una persona que firma, y el
+            # remitente es un tercero: quien remite es la empresa, con su NIT.
+            # Vaciar el NIT dejaba la radicacion a nombre de la auxiliar que
+            # firmo y sin documento, con el tipo de remitente diciendo empresa.
+            reparos.append(Reparo(
+                "nombre_remitente", "NIT_DE_ENTIDAD_EN_PERSONA",
+                f"el remitente es un tercero y '{doc_rem}' es el NIT de "
+                f"'{empresa}', que escribe por medio de "
+                f"'{valor_corregido('nombre_remitente')}': remite la empresa",
+                bloqueante=False,
+            ))
+            correcciones["nombre_remitente"] = empresa
+        else:
+            # El documento del remitente no es obligatorio: se envia vacio.
+            reparos.append(Reparo(
+                "numero_documento_remitente", "NIT_DE_ENTIDAD_EN_PERSONA",
+                f"'{doc_rem}' tiene la forma del NIT de una persona juridica y "
+                f"'{valor_corregido('nombre_remitente')}' es el nombre de una persona",
+                bloqueante=False,
+            ))
+            correcciones["numero_documento_remitente"] = ""
+            correcciones["tipo_documento_remitente"] = ""
 
     # ── El documento es de la persona: no un siniestro ni la firma del medico ──
     # Lo decide el rotulo con que el correo presenta el numero. Se aplica a

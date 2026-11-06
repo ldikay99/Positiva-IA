@@ -1000,6 +1000,18 @@ def extraer_nombre_remitente(
     ), None
 
 
+_ORGANIZACION_QUE_ESCRIBE = re.compile(r"'([^']+)' es la organizacion; firma '")
+
+
+def organizacion_que_escribe(h: Optional[Hallazgo]) -> str:
+    """
+    La razon social por medio de la cual escribe quien firma, si la cascada
+    del nombre del remitente la reconocio (ver `extraer_nombre_remitente`).
+    """
+    m = _ORGANIZACION_QUE_ESCRIBE.search(getattr(h, "evidencia", "") or "")
+    return m.group(1).strip() if m and parece_razon_social(m.group(1)) else ""
+
+
 def desplegar_iniciales(h: Optional[Hallazgo], texto: str) -> Optional[Hallazgo]:
     """
     El hallazgo de un nombre con sus iniciales desplegadas, si el texto lo trae

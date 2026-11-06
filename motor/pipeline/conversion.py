@@ -138,6 +138,15 @@ MEJORA_MINIMA_POR_GIRO = 0.10
 # paginas que no lo necesitaban.
 CONFIANZA_REINTENTO_OSD = 0.60
 MINIMO_CARACTERES_OCR = 40
+# Por debajo de esta confianza la hoja que tesseract leyo se le pasa al modelo
+# con vision, que la transcribe (dentro del tope de imagenes por correo). Es
+# un umbral aparte del de la relectura: medido el 2026-11-06 sobre once hojas
+# reales entre 0,62 y 0,79 —ordenes medicas a mano, historias clinicas,
+# formularios—, el modelo leyo el paciente, la cedula, el diagnostico y el sexo
+# donde tesseract dejaba ruido ("1isnel Fegec Mura" por "Manuel Feged Murcia").
+# Subir el de la relectura a 0,80 hacia buscar el giro en hojas derechas y
+# llevo un PDF de 14 s a 193 s sin mejorar nada.
+CONFIANZA_PARA_VISION = 0.80
 # Por debajo de esta confianza la pagina se marca como lectura dudosa en el
 # markdown, para que quien lea los datos de ahi los verifique.
 CONFIANZA_DUDOSA = 0.55
@@ -692,6 +701,12 @@ def _vale_mas(texto_a: str, conf_a: float, texto_b: str, conf_b: float) -> bool:
     return _caracteres_utiles(texto_a) * conf_a > _caracteres_utiles(texto_b) * conf_b
 
 
+def _floja_para_vision(texto: str, confianza: Optional[float]) -> bool:
+    """Si la lectura de tesseract es tan floja que conviene que la lea el modelo."""
+    return ((confianza or 0.0) < CONFIANZA_PARA_VISION
+            or _caracteres_utiles(texto) < MINIMO_CARACTERES_OCR)
+
+
 def _floja(texto: str, confianza: float) -> bool:
     return (confianza < CONFIANZA_REINTENTO_OSD
             or _caracteres_utiles(texto) < MINIMO_CARACTERES_OCR)
@@ -761,7 +776,7 @@ def _con_respaldo_ia(imagen, texto: str, confianza: Optional[float],
     transcribir = TRANSCRIPTOR_IA
     if (transcribir is None or presupuesto is None
             or presupuesto.imagenes_ia <= 0
-            or not _floja(texto, confianza or 0.0)):
+            or not _floja_para_vision(texto, confianza)):
         return texto, confianza, motivo
     presupuesto.imagenes_ia -= 1
     try:
