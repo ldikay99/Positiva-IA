@@ -46,7 +46,7 @@ if [ -z "$PY" ]; then
   done
 fi
 if [ -n "$PY" ]; then
-  (cd "$RAIZ/catalogo/generador" && "$PY" extraer.py constantes.json && "$PY" build.py)
+  (cd "$RAIZ/catalogo/generador" && "$PY" extraer.py constantes.json && "$PY" build.py && "$PY" enlazar.py)
 else
   echo "Sin Python: regenera el catálogo a mano (catalogo/generador/LEEME.md)" >&2
 fi
