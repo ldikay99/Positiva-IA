@@ -178,7 +178,7 @@ export function Dock({ plegado, alternar }: { plegado: boolean; alternar: () => 
           {!corrida ? (
             <div className="vacio grande">
               <Icono n="rayo" tam={26} />
-              <p>Selecciona correos en la bandeja y pulsa <b>Procesar</b>. Aquí verás, etapa por etapa, qué busca el motor, qué encuentra, qué decide la IA y cómo queda la solicitud.</p>
+              <p>Elige casos en la correspondencia y córrelos. Aquí verás, etapa por etapa, qué busca el motor, qué encuentra, qué decide la IA y cómo queda la solicitud.</p>
             </div>
           ) : vista === "vivo" ? (
             <div className="vivo">

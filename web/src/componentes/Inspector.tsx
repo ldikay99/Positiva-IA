@@ -630,8 +630,8 @@ function InspectorCorreo({ caso }: { caso: string }) {
           {c.desenlaceProduccion && <span className={`pastilla ${TONO_DESENLACE[c.desenlaceProduccion] ?? ""}`}>Producción: {NOMBRES_DESENLACE[c.desenlaceProduccion] ?? c.desenlaceProduccion}{c.motivoProduccion ? ` · ${c.motivoProduccion}` : ""}</span>}
         </div>
         <div className="fila">
-          <button className="boton primario" onClick={() => void procesar([c.caso]).then(() => avisar(`${c.caso} en proceso`)).catch((e: Error) => avisar(e.message, "error"))}><Icono n="play" tam={14} />Procesar este correo</button>
-          <button className="boton" onClick={() => alternar(c.caso)}>{seleccion.includes(c.caso) ? "Quitar de la selección" : "Agregar a la selección"}</button>
+          <button className="boton primario" onClick={() => void procesar([c.caso]).then(() => avisar("El caso está corriendo")).catch((e: Error) => avisar(e.message, "error"))}><Icono n="play" tam={14} />Correr este caso</button>
+          <button className="boton" onClick={() => alternar(c.caso)}>{seleccion.includes(c.caso) ? "Soltar de la bandeja de salida" : "Elegir para correr"}</button>
         </div>
       </Cabeza>
       <div className="inspector-cuerpo">

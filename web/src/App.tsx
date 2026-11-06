@@ -11,14 +11,14 @@ import { MenuContextual, type Opcion } from "./componentes/MenuContextual.tsx";
 import { VistaAdjuntos } from "./componentes/Adjuntos.tsx";
 import { VistaConfiguracion, VistaCorridas, VistaHerramientas, VistaLogs, VistaProveedores } from "./componentes/Vistas.tsx";
 
-const NAVEGACION: { id: Vista; nombre: string; icono: NombreIcono }[] = [
-  { id: "flujo", nombre: "Flujo", icono: "flujo" },
-  { id: "adjuntos", nombre: "Adjuntos", icono: "documento" },
-  { id: "corridas", nombre: "Corridas", icono: "corridas" },
-  { id: "logs", nombre: "Logs", icono: "logs" },
-  { id: "herramientas", nombre: "Herramientas", icono: "herramientas" },
-  { id: "proveedores", nombre: "Proveedores", icono: "proveedores" },
-  { id: "configuracion", nombre: "Ajustes", icono: "ajustes" },
+const NAVEGACION: { id: Vista; nombre: string; icono: NombreIcono; titulo: string }[] = [
+  { id: "flujo", nombre: "Flujo", icono: "flujo", titulo: "Radicación de PQRD" },
+  { id: "adjuntos", nombre: "Adjuntos", icono: "documento", titulo: "Adjuntos, hoja por hoja" },
+  { id: "corridas", nombre: "Corridas", icono: "corridas", titulo: "Corridas frente a producción" },
+  { id: "logs", nombre: "Logs", icono: "logs", titulo: "Todo lo que pasa, en vivo" },
+  { id: "herramientas", nombre: "Herramientas", icono: "herramientas", titulo: "Herramientas de la IA" },
+  { id: "proveedores", nombre: "Sistemas", icono: "proveedores", titulo: "Sistemas que consulta" },
+  { id: "configuracion", nombre: "Ajustes", icono: "ajustes", titulo: "Ajustes del motor" },
 ];
 
 const CLAVE_MEDIDAS = "positiva-ia:medidas:v1";
@@ -96,7 +96,6 @@ function Avisos() {
 function BarraSuperior({ alternarBandeja, bandejaVisible }: { alternarBandeja: () => void; bandejaVisible: boolean }) {
   const motor = usar((s) => s.motor);
   const configuracion = usar((s) => s.configuracion);
-  const conectado = usar((s) => s.conectado);
   const irA = usar((s) => s.irA);
   const vista = usar((s) => s.vista);
   const [menu, setMenu] = useState<{ x: number; y: number; opciones: Opcion[] } | null>(null);
@@ -111,14 +110,11 @@ function BarraSuperior({ alternarBandeja, bandejaVisible }: { alternarBandeja: (
           <Icono n="lado" tam={17} />
         </button>
       )}
-      <div className="marca">
-        <span className="logo"><Icono n="chispa" tam={17} /></span>
-        <div>
-          <b>Positiva IA</b>
-          <span className="texto-3 diminuto">Plataforma de agentes</span>
-        </div>
-      </div>
-      <span className="barra-separador" />
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.h1 key={vista} className="barra-titulo" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}>
+          {NAVEGACION.find((n) => n.id === vista)?.titulo}
+        </motion.h1>
+      </AnimatePresence>
       <button
         className="selector-flujo"
         onClick={(e) => {
@@ -135,11 +131,11 @@ function BarraSuperior({ alternarBandeja, bandejaVisible }: { alternarBandeja: (
           });
         }}
       >
-        <span className="texto-3 diminuto">Flujo activo</span>
-        <b>Radicación de PQRD</b>
-        <Icono n="abajo" tam={13} className="texto-3" />
+        <span>Flujo</span>
+        <b>PQRD</b>
+        <Icono n="abajo" tam={12} />
       </button>
-      <span className="pastilla verde diminuto solo-ancho" title="Nada se escribe en SGDEA ni en el buzón real">Modo prueba</span>
+      <span className="pastilla verde diminuto solo-ancho" title="Nada se escribe en SGDEA ni en el buzón real"><Icono n="candado" tam={11} />Solo lectura</span>
       <span className="espacio" />
       <div className="estado-barra">
         {motor?.errorInicio ? (
@@ -153,7 +149,6 @@ function BarraSuperior({ alternarBandeja, bandejaVisible }: { alternarBandeja: (
         {(motor?.enCola.length ?? 0) > 0 && <span className="pastilla azul">{motor?.enCola.length} en cola</span>}
         <button className="pastilla violeta boton-pastilla solo-ancho" onClick={() => irA("configuracion")} title="Modelo de Vertex AI"><Icono n="chispa" tam={12} />{configuracion?.ia.modelo}</button>
         {ajustes + reglas > 0 && <button className="pastilla ambar boton-pastilla solo-ancho" onClick={() => irA("configuracion")}>{ajustes} ajuste{ajustes === 1 ? "" : "s"} · {reglas} regla{reglas === 1 ? "" : "s"}</button>}
-        <span className={`pastilla ${conectado ? "verde" : "rojo"}`} title={conectado ? "Recibiendo eventos del motor en vivo" : "Reconectando"}><span className={`punto ${conectado ? "latiendo" : ""}`} />{conectado ? "En vivo" : "Sin conexión"}</span>
       </div>
       {menu && <MenuContextual x={menu.x} y={menu.y} opciones={menu.opciones} cerrar={() => setMenu(null)} />}
     </header>
@@ -164,16 +159,30 @@ function Riel() {
   const vista = usar((s) => s.vista);
   const irA = usar((s) => s.irA);
   const motor = usar((s) => s.motor);
+  const conectado = usar((s) => s.conectado);
+  const ocupados = motor?.trabajadores.filter((t) => t.corrida).length ?? 0;
   return (
     <nav className="riel" aria-label="Secciones">
-      {NAVEGACION.map((n) => (
-        <button key={n.id} className={vista === n.id ? "activo" : ""} onClick={() => irA(n.id)} title={n.nombre}>
-          {vista === n.id && <motion.span layoutId="riel-activo" className="riel-fondo" transition={{ type: "spring", stiffness: 500, damping: 38 }} />}
-          <Icono n={n.icono} tam={19} />
-          <span>{n.nombre}</span>
-          {n.id === "corridas" && (motor?.trabajadores.some((t) => t.corrida) ?? false) && <i className="indicador" />}
-        </button>
-      ))}
+      <div className="riel-marca" title="Positiva IA · plataforma de agentes">
+        <span className="riel-logo" aria-hidden>
+          <svg viewBox="0 0 32 32" width="22" height="22"><path d="M5 9.5 16 17l11-7.5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /><rect x="4" y="7" width="24" height="18" rx="3.5" fill="none" stroke="currentColor" strokeWidth="2.2" /><circle cx="24.5" cy="22.5" r="5" fill="var(--lacre)" stroke="var(--tinta)" strokeWidth="2" /></svg>
+        </span>
+        <b>Positiva IA</b>
+      </div>
+      <div className="riel-secciones">
+        {NAVEGACION.map((n) => (
+          <button key={n.id} className={vista === n.id ? "activo" : ""} onClick={() => irA(n.id)} title={n.nombre} aria-current={vista === n.id ? "page" : undefined}>
+            {vista === n.id && <motion.span layoutId="riel-activo" className="riel-fondo" transition={{ type: "spring", stiffness: 500, damping: 38 }} />}
+            <Icono n={n.icono} tam={19} />
+            <span>{n.nombre}</span>
+            {n.id === "corridas" && ocupados > 0 && <i className="indicador" />}
+          </button>
+        ))}
+      </div>
+      <div className={`riel-estado ${conectado ? "vivo" : "caido"}`} title={conectado ? "Recibiendo los eventos del motor en vivo" : "Reconectando con el motor"}>
+        <span className="riel-pulso" />
+        <span>{conectado ? (ocupados ? `${ocupados} corriendo` : "En vivo") : "Sin conexión"}</span>
+      </div>
     </nav>
   );
 }
@@ -283,9 +292,9 @@ export default function App() {
 
   return (
     <div className="app">
-      <BarraSuperior alternarBandeja={alternar} bandejaVisible={bandeja} />
-      <div className="cuerpo">
-        <Riel />
+      <Riel />
+      <div className="marco">
+        <BarraSuperior alternarBandeja={alternar} bandejaVisible={bandeja} />
         <main className="contenido">
           <AnimatePresence mode="wait" initial={false}>
             <motion.div key={vista} className="contenido-vista" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.16, ease: "easeOut" }}>

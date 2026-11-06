@@ -1,15 +1,34 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { AnimatePresence, motion } from "motion/react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { usar } from "../estado.ts";
 import { Icono } from "../iconos.tsx";
 import { NOMBRES_CORTOS_DESENLACE, NOMBRES_DESENLACE, TONO_DESENLACE } from "../progreso.ts";
-import type { Correo, Corrida } from "../tipos.ts";
+import type { Correo, CorreoDelBuzon, Corrida } from "../tipos.ts";
 
-const ALTO_FILA = 98;
+/** Alto de cada sobre en la lista larga (se dibujan solo los visibles). */
+const ALTO_SOBRE = 112;
 
 function fecha(iso: string): string {
   if (!iso) return "";
-  return new Date(iso).toLocaleString("es-CO", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" });
+  const d = new Date(iso);
+  const hoy = new Date();
+  const mismoDia = d.toDateString() === hoy.toDateString();
+  return mismoDia
+    ? d.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" })
+    : d.toLocaleDateString("es-CO", { day: "numeric", month: "short" });
+}
+
+function iniciales(nombre: string): string {
+  const partes = nombre.replace(/[<>"@].*$/, "").split(/[\s._-]+/).filter((p) => /[a-záéíóúñ]/i.test(p));
+  return ((partes[0]?.[0] ?? "?") + (partes[1]?.[0] ?? "")).toUpperCase();
+}
+
+/** Cada remitente con su propio tono, siempre el mismo: se reconoce a quien escribe varias veces. */
+const TONOS = ["azul", "verde", "violeta", "turquesa", "ambar", "rosa"] as const;
+function tonoDe(texto: string): string {
+  let h = 0;
+  for (const c of texto.toLowerCase()) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return TONOS[h % TONOS.length]!;
 }
 
 function ultimas(corridas: Record<string, Corrida>, orden: string[]): Record<string, Corrida> {
@@ -21,51 +40,176 @@ function ultimas(corridas: Record<string, Corrida>, orden: string[]): Record<str
   return r;
 }
 
-type Filtro = "todos" | "sin_procesar" | "procesados" | "radicado" | "manual" | string;
+// ----------------------------------------------------------------- el sello
 
-const FilaCorreo = memo(function FilaCorreo({ c, u, marcado, abierto, top }: { c: Correo; u?: Corrida; marcado: boolean; abierto: boolean; top: number }) {
-  const alternar = usar((s) => s.alternarSeleccion);
-  const enfocar = usar((s) => s.enfocar);
-  const verCorrida = usar((s) => s.verCorrida);
-  const accion = u?.resultado ? String(u.resultado.accion) : u ? (u.estado === "en_cola" ? "en_cola" : "procesando") : "";
-  const adjuntos = c.adjuntos.filter((a) => !a.enLinea).length;
+/**
+ * El sello de radicado sobre el sobre. Cae con un golpe solo cuando el caso
+ * acaba de terminar; al volver a pasar por la lista ya está puesto.
+ */
+function Sello({ corrida }: { corrida: Corrida }) {
+  const quieto = useReducedMotion();
+  const r = corrida.resultado;
+  if (!r) return null;
+  const accion = String(r.accion);
+  const radicado = String(r.radicado ?? "");
+  const reciente = Date.now() / 1000 - Number(r.t ?? 0) < 10;
+  const texto = accion === "radicado" ? "Radicado" : NOMBRES_CORTOS_DESENLACE[accion] ?? accion;
+  const numero = accion === "radicado" ? (radicado.startsWith("DRY-RUN") ? "en prueba" : radicado) : String(r.motivo ?? "").replace(/_/g, " ").toLowerCase();
   return (
-    <div className={`correo ${marcado ? "marcado" : ""} ${abierto ? "abierto" : ""}`} style={{ transform: `translateY(${top}px)` }} onClick={() => enfocar({ tipo: "correo", caso: c.caso })}>
-      <label className="correo-check" onClick={(e) => e.stopPropagation()}>
-        <input type="checkbox" className="check" checked={marcado} onChange={() => alternar(c.caso)} aria-label={`Seleccionar ${c.caso}`} />
-      </label>
-      <div className="correo-cuerpo-lista">
-        <div className="fila">
-          <span className="correo-de crece">{c.remitente || c.remitenteCorreo}</span>
-          <span className="texto-3 diminuto">{fecha(c.recibido)}</span>
+    <motion.span
+      className={`sello sello-${TONO_DESENLACE[accion] ?? "gris"}`}
+      initial={reciente && !quieto ? { scale: 2.2, rotate: -26, opacity: 0 } : false}
+      animate={{ scale: 1, rotate: -9, opacity: 1 }}
+      transition={{ type: "spring", stiffness: 520, damping: 17, mass: 0.9 }}
+      title={NOMBRES_DESENLACE[accion] ?? accion}
+    >
+      <b>{texto}</b>
+      {numero && <small>{numero}</small>}
+    </motion.span>
+  );
+}
+
+// ------------------------------------------------------------------ el sobre
+
+type Sobre = {
+  clave: string;
+  remitente: string;
+  asunto: string;
+  previa?: string;
+  recibido: string;
+  fichas?: ReactNode;
+  elegido: boolean;
+  abierto?: boolean;
+  corrida?: Corrida;
+  alElegir: () => void;
+  alAbrir?: () => void;
+  estilo?: React.CSSProperties;
+  numero?: number;
+};
+
+const SobreDeCorreo = memo(function SobreDeCorreo(p: Sobre) {
+  const enCurso = p.corrida && !p.corrida.resultado ? (p.corrida.estado === "en_cola" ? "en cola" : "procesando") : "";
+  return (
+    <div
+      className={`sobre ${p.elegido ? "elegido" : ""} ${p.abierto ? "abierto" : ""} ${enCurso ? "en-curso" : ""} ${p.corrida?.resultado ? "con-sello" : ""}`}
+      style={p.estilo}
+      role="option"
+      aria-selected={p.elegido}
+      tabIndex={0}
+      onClick={p.alElegir}
+      onKeyDown={(e) => {
+        if (e.key === " " || e.key === "Enter") {
+          e.preventDefault();
+          if (e.key === "Enter" && p.alAbrir) p.alAbrir();
+          else p.alElegir();
+        }
+      }}
+    >
+      <span className={`sobre-avatar tono-${tonoDe(p.remitente)}`} aria-hidden>
+        <span className="cara frente">{iniciales(p.remitente)}</span>
+        <span className="cara dorso"><Icono n="ok" tam={15} strokeWidth={2.6} /></span>
+      </span>
+      <div className="sobre-cuerpo">
+        <div className="sobre-linea">
+          {p.numero !== undefined && <span className="sobre-orden" title="Orden en que lo tomaría el job">{p.numero}</span>}
+          <span className="sobre-de">{p.remitente || "(sin remitente)"}</span>
+          <span className="sobre-fecha">{fecha(p.recibido)}</span>
         </div>
-        <div className="correo-asunto">{c.asunto || "(sin asunto)"}</div>
-        <div className="correo-previa">{c.vistaPrevia}</div>
-        <div className="fila correo-fichas">
-          {c.origen === "buzon" ? <span className="ficha tono-azul" title="Traído del buzón real (solo lectura), con sus etiquetas de hoy">Buzón real</span> : <span className="ficha mono">{c.caso}</span>}
-          {adjuntos > 0 && <span className="ficha"><Icono n="adjunto" tam={11} />{adjuntos}</span>}
-          {c.desenlaceProduccion && <span className={`ficha tono-${TONO_DESENLACE[c.desenlaceProduccion] ?? ""}`} title={`En producción: ${NOMBRES_DESENLACE[c.desenlaceProduccion] ?? c.desenlaceProduccion}${c.motivoProduccion ? ` · ${c.motivoProduccion}` : ""}`}>Prod · {NOMBRES_CORTOS_DESENLACE[c.desenlaceProduccion] ?? c.desenlaceProduccion}</span>}
-          {accion && (
-            <button
-              className={`ficha boton-ficha solida tono-${TONO_DESENLACE[accion] ?? "azul"}`}
-              onClick={(e) => {
-                e.stopPropagation();
-                if (u) {
-                  verCorrida(u.id);
-                  enfocar({ tipo: "corrida", id: u.id });
-                }
-              }}
-              title={`Ver esta corrida${NOMBRES_DESENLACE[accion] ? ` · ${NOMBRES_DESENLACE[accion]}` : ""}`}
-            >
-              {accion === "procesando" ? <span className="girando" /> : null}
-              Aquí · {NOMBRES_CORTOS_DESENLACE[accion] ?? (accion === "en_cola" ? "en cola" : "procesando")}
-            </button>
-          )}
+        <div className="sobre-asunto">{p.asunto || "(sin asunto)"}</div>
+        {p.previa !== undefined && <div className="sobre-previa">{p.previa}</div>}
+        <div className="sobre-fichas">
+          {enCurso && <span className="ficha tono-azul"><span className="girando" />{enCurso}</span>}
+          {p.fichas}
         </div>
       </div>
+      {p.alAbrir && (
+        <button className="sobre-abrir" aria-label="Abrir el correo" title="Abrir el correo" onClick={(e) => { e.stopPropagation(); p.alAbrir?.(); }}>
+          <Icono n="ojo" tam={15} />
+        </button>
+      )}
+      {p.corrida?.resultado && <Sello corrida={p.corrida} />}
     </div>
   );
 });
+
+// ------------------------------------------------------- la bandeja de salida
+
+type Modo = "job" | "uno";
+
+function BandejaDeSalida({ elegidos, modo, setModo, alLimpiar, alCorrer, ocupado, extra }: {
+  elegidos: { clave: string; nombre: string }[];
+  modo: Modo;
+  setModo: (m: Modo) => void;
+  alLimpiar: () => void;
+  alCorrer: () => void;
+  ocupado: boolean;
+  extra?: ReactNode;
+}) {
+  const n = elegidos.length;
+  const visibles = elegidos.slice(-5);
+  return (
+    <AnimatePresence>
+      {(n > 0 || extra) && (
+        <motion.footer
+          className="salida"
+          initial={{ y: 70, opacity: 0 }}
+          animate={{ y: 0, opacity: 1 }}
+          exit={{ y: 70, opacity: 0 }}
+          transition={{ type: "spring", stiffness: 430, damping: 34 }}
+        >
+          {n > 0 && (
+            <div className="salida-pila" aria-label={`${n} elegidos`}>
+              <AnimatePresence initial={false}>
+                {visibles.map((e, i) => (
+                  <motion.span
+                    key={e.clave}
+                    layout
+                    className={`salida-ficha tono-${tonoDe(e.nombre)}`}
+                    style={{ zIndex: i }}
+                    initial={{ scale: 0.4, y: 18, opacity: 0 }}
+                    animate={{ scale: 1, y: 0, opacity: 1 }}
+                    exit={{ scale: 0.4, opacity: 0 }}
+                    transition={{ type: "spring", stiffness: 600, damping: 30 }}
+                    title={e.nombre}
+                  >
+                    {iniciales(e.nombre)}
+                  </motion.span>
+                ))}
+              </AnimatePresence>
+              <span className="salida-cuenta">
+                <motion.b key={n} initial={{ y: -8, opacity: 0 }} animate={{ y: 0, opacity: 1 }}>{n}</motion.b>
+                <small>{n === 1 ? "caso" : "casos"}</small>
+              </span>
+            </div>
+          )}
+          {n > 1 && (
+            <div className="salida-modo" role="radiogroup" aria-label="Cómo correrlos">
+              {(["job", "uno"] as Modo[]).map((m) => (
+                <button key={m} role="radio" aria-checked={modo === m} className={modo === m ? "activo" : ""} onClick={() => setModo(m)}
+                  title={m === "job" ? "Juntos con un solo orquestador, de a cinco y de a uno por remitente: detecta lo que se repite en la corrida" : "Cada correo con su propio orquestador, por separado"}>
+                  {modo === m && <motion.span layoutId="salida-modo-fondo" className="salida-modo-fondo" transition={{ type: "spring", stiffness: 520, damping: 38 }} />}
+                  <span>{m === "job" ? "Como el job" : "Uno a uno"}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          <div className="salida-acciones">
+            {extra}
+            {n > 0 && <button className="boton fantasma chico" onClick={alLimpiar}>Soltar</button>}
+            {n > 0 && (
+              <button className="boton primario salida-correr" disabled={ocupado} onClick={alCorrer}>
+                {ocupado ? <span className="girando" /> : <Icono n="play" tam={14} />}
+                Correr {n === 1 ? "este caso" : `${n} casos`}
+              </button>
+            )}
+          </div>
+        </motion.footer>
+      )}
+    </AnimatePresence>
+  );
+}
+
+// ------------------------------------------------------------ el buzón real
 
 /**
  * La carpeta que lee el job (AUTOMATIZACION), en el orden en que la tomaría
@@ -74,7 +218,7 @@ const FilaCorreo = memo(function FilaCorreo({ c, u, marcado, abierto, top }: { c
  * las consultas al buzón de verdad. Nada se escribe: lo que el job marcaría,
  * movería o reenviaría aparece en el flujo como bloqueado.
  */
-function PanelBuzon() {
+function PanelBuzon({ porCaso }: { porCaso: Record<string, Corrida> }) {
   const buzon = usar((s) => s.buzon);
   const cargando = usar((s) => s.cargandoBuzon);
   const cargar = usar((s) => s.cargarBuzon);
@@ -82,7 +226,7 @@ function PanelBuzon() {
   const avisar = usar((s) => s.avisar);
   const enfocar = usar((s) => s.enfocar);
   const [n, setN] = useState(10);
-  const [marcados, setMarcados] = useState<string[]>([]);
+  const [elegidos, setElegidos] = useState<string[]>([]);
   const [corriendo, setCorriendo] = useState(false);
 
   useEffect(() => {
@@ -90,14 +234,18 @@ function PanelBuzon() {
   }, [n, cargar]);
 
   const correos = buzon?.correos ?? [];
-  const cuantos = marcados.length;
+  const porId = useMemo(() => new Map(correos.map((c) => [c.id, c])), [correos]);
+  const alternar = (id: string) => setElegidos((m) => (m.includes(id) ? m.filter((x) => x !== id) : [...m, id]));
+
   const lanzar = async () => {
+    if (!elegidos.length) return;
     setCorriendo(true);
     try {
-      if (!marcados.length) return;
-      await correr(n, marcados);
-      avisar(`${cuantos} correo${cuantos === 1 ? "" : "s"} del buzón real corriendo como el job`);
-      setMarcados([]);
+      // En el orden de la carpeta, que es el del job.
+      const ids = correos.map((c) => c.id).filter((id) => elegidos.includes(id));
+      await correr(n, ids);
+      avisar(`${ids.length} ${ids.length === 1 ? "caso" : "casos"} del buzón real corriendo como el job`);
+      setElegidos([]);
     } catch (e) {
       avisar((e as Error).message, "error");
     } finally {
@@ -107,89 +255,95 @@ function PanelBuzon() {
 
   return (
     <>
-      <div className="buzon-aviso">
-        <Icono n="candado" tam={13} />
-        <span>
-          <b>Solo lectura.</b> Lee {buzon?.carpeta || "la carpeta del job"} y consulta el buzón como el job (hilo, asunto, radicados, documentos), pero no marca, no mueve, no reenvía y no radica: lo que el job haría aparece en el flujo como bloqueado.
-        </span>
+      <div className="buzon-cinta">
+        <span className="buzon-candado"><Icono n="candado" tam={13} /></span>
+        <p>
+          Lees <b>{buzon?.carpeta || "la carpeta del job"}</b> como la toma el job. El visor consulta el buzón pero no marca, no mueve ni radica: lo que el job haría sale en el flujo como bloqueado.
+        </p>
       </div>
-      <div className="fila buzon-controles">
-        <label className="fila chico texto-2 crece">
-          Los próximos
-          <select className="chip chip-select" value={n} onChange={(e) => setN(Number(e.target.value))} aria-label="Cuántos correos">
+      <div className="buzon-controles">
+        <label className="buzon-cuantos">
+          <span>Próximos</span>
+          <select value={n} onChange={(e) => setN(Number(e.target.value))} aria-label="Cuántos correos mirar">
             {[5, 10, 20, 50].map((x) => <option key={x} value={x}>{x}</option>)}
           </select>
-          que tomaría el job{typeof buzon?.total === "number" ? ` · ${buzon.total} en la carpeta` : ""}
+          {typeof buzon?.total === "number" && <span className="buzon-total">de {buzon.total} en la carpeta</span>}
         </label>
-        <button className="boton chico" disabled={cargando} onClick={() => void cargar(n, true)}>{cargando ? <span className="girando" /> : <Icono n="reordenar" tam={13} />}Actualizar</button>
-      </div>
-      <div className="bandeja-lista buzon-lista">
-        {buzon?.error && <div className="vacio">No se pudo leer el buzón: {buzon.error}</div>}
-        {!buzon && cargando && <div className="vacio"><span className="girando" /> Leyendo el buzón…</div>}
-        {correos.map((c, i) => (
-          <div key={c.id} className={`correo estatico ${marcados.includes(c.id) ? "marcado" : ""}`} onClick={() => c.traido && enfocar({ tipo: "correo", caso: c.caso })} title={c.traido ? "Ver el correo" : "Se trae al correrlo"}>
-            <label className="correo-check" onClick={(e) => e.stopPropagation()}>
-              <input type="checkbox" className="check" checked={marcados.includes(c.id)} onChange={() => setMarcados((m) => (m.includes(c.id) ? m.filter((x) => x !== c.id) : [...m, c.id]))} aria-label={`Elegir ${c.asunto}`} />
-            </label>
-            <div className="correo-cuerpo-lista">
-              <div className="fila">
-                <span className="texto-3 diminuto mono">{i + 1}</span>
-                <span className="correo-de crece">{c.remitente || c.remitenteCorreo}</span>
-                <span className="texto-3 diminuto">{fecha(c.recibido)}</span>
-              </div>
-              <div className="correo-asunto">{c.asunto || "(sin asunto)"}</div>
-              <div className="fila correo-fichas">
-                {c.conAdjuntos && <span className="ficha"><Icono n="adjunto" tam={11} /></span>}
-                {c.categorias.map((k) => <span key={k} className="ficha" title="Etiqueta que tiene hoy en el buzón">{k}</span>)}
-                {c.traido && <span className="ficha tono-azul">Traído</span>}
-              </div>
-            </div>
-          </div>
-        ))}
-        {buzon && !buzon.error && !correos.length && <div className="vacio">La carpeta del job está vacía.</div>}
-      </div>
-      <footer className="bandeja-pie">
-        <span className="crece chico texto-2">
-          {marcados.length ? <><b>{marcados.length}</b> elegido{marcados.length === 1 ? "" : "s"} · <button className="enlace" onClick={() => setMarcados([])}>Limpiar</button></> : <>Elige los correos que quieras correr · <button className="enlace" onClick={() => setMarcados(correos.map((c) => c.id))}>Elegir todos</button></>}
-        </span>
-        <button className="boton primario" disabled={corriendo || !marcados.length} onClick={() => void lanzar()}>
-          {corriendo ? <span className="girando" /> : <Icono n="play" tam={14} />}{marcados.length ? `Correr ${marcados.length} como el job` : "Correr como el job"}
+        <button className="boton fantasma chico" disabled={cargando} onClick={() => void cargar(n, true)} aria-label="Volver a leer el buzón">
+          {cargando ? <span className="girando" /> : <Icono n="reordenar" tam={13} />}Leer de nuevo
         </button>
-      </footer>
+      </div>
+      <div className="lista-sobres estatica" role="listbox" aria-multiselectable>
+        {buzon?.error && <div className="vacio">No se pudo leer el buzón: {buzon.error}. Revisa la conexión y lee de nuevo.</div>}
+        {!buzon && cargando && <div className="vacio"><span className="girando" /> Leyendo el buzón</div>}
+        {correos.map((c: CorreoDelBuzon, i) => (
+          <SobreDeCorreo
+            key={c.id}
+            clave={c.id}
+            numero={i + 1}
+            remitente={c.remitente || c.remitenteCorreo}
+            asunto={c.asunto}
+            recibido={c.recibido}
+            elegido={elegidos.includes(c.id)}
+            corrida={porCaso[c.caso]}
+            alElegir={() => alternar(c.id)}
+            alAbrir={c.traido ? () => enfocar({ tipo: "correo", caso: c.caso }) : undefined}
+            fichas={
+              <>
+                {c.conAdjuntos && <span className="ficha"><Icono n="adjunto" tam={11} /></span>}
+                {c.categorias.map((k) => <span key={k} className="ficha tono-ambar" title="Etiqueta que tiene hoy en el buzón">{k}</span>)}
+              </>
+            }
+          />
+        ))}
+        {buzon && !buzon.error && !correos.length && <div className="vacio">La carpeta del job está vacía: no hay nada por radicar.</div>}
+      </div>
+      <BandejaDeSalida
+        elegidos={elegidos.map((id) => ({ clave: id, nombre: porId.get(id)?.remitente || porId.get(id)?.remitenteCorreo || "?" }))}
+        modo="job"
+        setModo={() => undefined}
+        alLimpiar={() => setElegidos([])}
+        alCorrer={() => void lanzar()}
+        ocupado={corriendo}
+        extra={!elegidos.length && correos.length ? <button className="boton fantasma chico" onClick={() => setElegidos(correos.map((c) => c.id))}>Elegir los {correos.length}</button> : undefined}
+      />
     </>
   );
 }
 
-export function Bandeja() {
-  const [fuente, setFuente] = useState<"buzon" | "local">("buzon");
-  const [comoElJob, setComoElJob] = useState(true);
+// ------------------------------------------------------- los descargados
+
+type Filtro = "todos" | "sin_procesar" | "procesados" | "del_buzon" | "radicado" | "manual" | string;
+
+function PanelDescargados({ porCaso }: { porCaso: Record<string, Corrida> }) {
   const bandeja = usar((s) => s.bandeja);
-  const corridas = usar((s) => s.corridas);
-  const orden = usar((s) => s.orden);
   const seleccion = usar((s) => s.seleccion);
   const fijar = usar((s) => s.fijarSeleccion);
+  const alternar = usar((s) => s.alternarSeleccion);
   const procesar = usar((s) => s.procesar);
   const foco = usar((s) => s.foco);
+  const enfocar = usar((s) => s.enfocar);
   const avisar = usar((s) => s.avisar);
   const motor = usar((s) => s.motor);
   const cancelarCola = usar((s) => s.cancelarCola);
   const [busqueda, setBusqueda] = useState("");
   const [filtro, setFiltro] = useState<Filtro>("todos");
+  const [modo, setModo] = useState<Modo>("job");
   const [enviando, setEnviando] = useState(false);
   const lista = useRef<HTMLDivElement>(null);
   const [scroll, setScroll] = useState(0);
   const [alto, setAlto] = useState(600);
 
-  const porCaso = useMemo(() => ultimas(corridas, orden), [corridas, orden]);
   const motivos = useMemo(() => [...new Set(bandeja.map((c) => c.motivoProduccion).filter(Boolean))].sort(), [bandeja]);
-  const marcados = useMemo(() => new Set(seleccion), [seleccion]);
+  const elegidos = useMemo(() => new Set(seleccion), [seleccion]);
+  const porClave = useMemo(() => new Map(bandeja.map((c) => [c.caso, c])), [bandeja]);
 
   const visibles = useMemo(() => {
     const q = busqueda.trim().toLowerCase();
     return bandeja.filter((c) => {
       if (filtro === "sin_procesar" && porCaso[c.caso]) return false;
       if (filtro === "procesados" && !porCaso[c.caso]) return false;
-      if (filtro === "del_buzon") return c.origen === "buzon" && (!q || `${c.asunto} ${c.remitente} ${c.remitenteCorreo} ${c.vistaPrevia}`.toLowerCase().includes(q));
+      if (filtro === "del_buzon" && c.origen !== "buzon") return false;
       if ((filtro === "radicado" || filtro === "manual") && c.desenlaceProduccion !== filtro) return false;
       if (!["todos", "sin_procesar", "procesados", "radicado", "manual", "del_buzon"].includes(filtro) && c.motivoProduccion !== filtro) return false;
       return !q || `${c.caso} ${c.asunto} ${c.remitente} ${c.remitenteCorreo} ${c.vistaPrevia}`.toLowerCase().includes(q);
@@ -210,19 +364,19 @@ export function Bandeja() {
     setScroll(0);
   }, [busqueda, filtro]);
 
-  const desde = Math.max(0, Math.floor(scroll / ALTO_FILA) - 4);
-  const hasta = Math.min(visibles.length, Math.ceil((scroll + alto) / ALTO_FILA) + 4);
-  const todosMarcados = visibles.length > 0 && visibles.every((c) => marcados.has(c.caso));
-  const enCola = motor?.enCola.length ?? 0;
+  const desde = Math.max(0, Math.floor(scroll / ALTO_SOBRE) - 4);
+  const hasta = Math.min(visibles.length, Math.ceil((scroll + alto) / ALTO_SOBRE) + 4);
   const procesados = bandeja.filter((c) => porCaso[c.caso]).length;
+  const delBuzon = bandeja.filter((c) => c.origen === "buzon").length;
+  const enCola = motor?.enCola.length ?? 0;
 
   const lanzar = async () => {
     if (!seleccion.length) return;
     setEnviando(true);
     try {
       const n = seleccion.length;
-      await procesar(seleccion, comoElJob);
-      avisar(`${n} correo${n > 1 ? "s" : ""} en cola de proceso`);
+      await procesar(seleccion, modo === "job");
+      avisar(`${n} ${n === 1 ? "caso" : "casos"} ${modo === "job" && n > 1 ? "corriendo como el job" : "en cola"}`);
     } catch (e) {
       avisar((e as Error).message, "error");
     } finally {
@@ -230,75 +384,115 @@ export function Bandeja() {
     }
   };
 
-  const chips: { id: Filtro; nombre: string; n?: number }[] = [
+  const filtros: { id: Filtro; nombre: string; n: number }[] = [
     { id: "todos", nombre: "Todos", n: bandeja.length },
-    { id: "sin_procesar", nombre: "Sin procesar", n: bandeja.length - procesados },
-    { id: "procesados", nombre: "Procesados", n: procesados },
-    ...(bandeja.some((c) => c.origen === "buzon") ? [{ id: "del_buzon", nombre: "Del buzón real", n: bandeja.filter((c) => c.origen === "buzon").length }] : []),
+    { id: "sin_procesar", nombre: "Por correr", n: bandeja.length - procesados },
+    { id: "procesados", nombre: "Corridos", n: procesados },
+    ...(delBuzon ? [{ id: "del_buzon", nombre: "Del buzón real", n: delBuzon }] : []),
   ];
 
   return (
-    <section className="bandeja">
-      <header className="bandeja-cabeza">
-        <div className="fila">
-          <span className="mini-icono t-pizarra"><Icono n="bandeja" tam={13} /></span>
-          <h2 className="crece">Bandeja de entrada</h2>
-          {fuente === "local" && <span className="texto-3 diminuto">{visibles.length} de {bandeja.length}</span>}
-        </div>
-        <div className="segmentos" role="tablist" aria-label="De dónde salen los correos">
-          <button role="tab" aria-selected={fuente === "buzon"} className={`segmento ${fuente === "buzon" ? "activo" : ""}`} onClick={() => setFuente("buzon")}><Icono n="correo" tam={12} />Buzón real</button>
-          <button role="tab" aria-selected={fuente === "local"} className={`segmento ${fuente === "local" ? "activo" : ""}`} onClick={() => setFuente("local")}><Icono n="bandeja" tam={12} />Descargados</button>
-        </div>
-      </header>
-      {fuente === "buzon" ? <PanelBuzon /> : <>
-      <header className="bandeja-cabeza bandeja-cabeza-local">
-        <div className="campo-icono"><Icono n="buscar" tam={14} /><input className="campo" placeholder="Buscar asunto, remitente o texto" value={busqueda} onChange={(e) => setBusqueda(e.target.value)} /></div>
-        <div className="chips-filtro">
-          {chips.map((c) => (
-            <button key={c.id} className={`chip ${filtro === c.id ? "activo" : ""}`} onClick={() => setFiltro(c.id)}>{c.nombre}<span>{c.n}</span></button>
+    <>
+      <div className="bandeja-herramientas">
+        <label className="buscador-sobres">
+          <Icono n="buscar" tam={15} />
+          <input placeholder="Buscar remitente, asunto o texto" value={busqueda} onChange={(e) => setBusqueda(e.target.value)} />
+          {busqueda && <button aria-label="Borrar la búsqueda" onClick={() => setBusqueda("")}><Icono n="cerrar" tam={12} /></button>}
+        </label>
+        <div className="filtros" role="tablist" aria-label="Filtrar">
+          {filtros.map((f) => (
+            <button key={f.id} role="tab" aria-selected={filtro === f.id} className={filtro === f.id ? "activo" : ""} onClick={() => setFiltro(f.id)}>
+              {f.nombre}<span>{f.n}</span>
+            </button>
           ))}
-          <select className={`chip chip-select ${["radicado", "manual"].includes(filtro) || motivos.includes(filtro) ? "activo" : ""}`} value={["radicado", "manual"].includes(filtro) || motivos.includes(filtro) ? filtro : ""} onChange={(e) => setFiltro(e.target.value || "todos")} aria-label="Filtrar por producción">
-            <option value="">Producción…</option>
-            <option value="radicado">Radicados en producción</option>
-            <option value="manual">A manual en producción</option>
-            <optgroup label="Manual en producción por">
-              {motivos.map((m) => <option key={m} value={m}>{m}</option>)}
+          <select className={`filtro-produccion ${["radicado", "manual"].includes(filtro) || motivos.includes(filtro) ? "activo" : ""}`} value={["radicado", "manual"].includes(filtro) || motivos.includes(filtro) ? filtro : ""} onChange={(e) => setFiltro(e.target.value || "todos")} aria-label="Filtrar por lo que pasó en producción">
+            <option value="">En producción…</option>
+            <option value="radicado">Radicados allá</option>
+            <option value="manual">A manual allá</option>
+            <optgroup label="A manual por">
+              {motivos.map((m) => <option key={m} value={m}>{m.replace(/_/g, " ").toLowerCase()}</option>)}
             </optgroup>
           </select>
         </div>
-        <label className="fila chico texto-2 seleccionar-todos">
-          <input type="checkbox" className="check" checked={todosMarcados} onChange={() => fijar(todosMarcados ? seleccion.filter((c) => !visibles.some((v) => v.caso === c)) : [...new Set([...seleccion, ...visibles.map((v) => v.caso)])])} />
-          <span className="crece">Seleccionar los {visibles.length} visibles</span>
-          {seleccion.length > 0 && <button className="enlace" onClick={(e) => { e.preventDefault(); fijar([]); }}>Limpiar</button>}
-        </label>
-      </header>
-
-      <div className="bandeja-lista" ref={lista} onScroll={(e) => setScroll(e.currentTarget.scrollTop)}>
-        <div className="bandeja-alto" style={{ height: visibles.length * ALTO_FILA }}>
-          {visibles.slice(desde, hasta).map((c, i) => (
-            <FilaCorreo key={c.caso} c={c} u={porCaso[c.caso]} marcado={marcados.has(c.caso)} abierto={foco?.tipo === "correo" && foco.caso === c.caso} top={(desde + i) * ALTO_FILA} />
-          ))}
+        <div className="bandeja-seleccion">
+          <span>{visibles.length} de {bandeja.length}</span>
+          <button className="enlace" onClick={() => fijar([...new Set([...seleccion, ...visibles.map((v) => v.caso)])])}>Elegir los visibles</button>
         </div>
-        {!visibles.length && <div className="vacio">No hay correos con ese filtro.</div>}
       </div>
 
-      <AnimatePresence>
-        {(seleccion.length > 0 || enCola > 0) && (
-          <motion.footer className="bandeja-pie" initial={{ y: 40, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 40, opacity: 0 }} transition={{ type: "spring", stiffness: 420, damping: 34 }}>
-            <span className="crece"><b>{seleccion.length}</b> seleccionado{seleccion.length === 1 ? "" : "s"}</span>
-            {seleccion.length > 1 && (
-              <label className="fila chico texto-2" title="Un solo orquestador para todos, de a cinco y de a uno por remitente: así detecta lo que se repite dentro de la corrida">
-                <input type="checkbox" className="check" checked={comoElJob} onChange={(e) => setComoElJob(e.target.checked)} />Juntos, como el job
-              </label>
-            )}
-            {enCola > 0 && <button className="boton chico peligro" onClick={() => void cancelarCola()}>Cancelar {enCola} en cola</button>}
-            <button className="boton primario" disabled={!seleccion.length || enviando} onClick={() => void lanzar()}>
-              <Icono n="play" tam={14} />Procesar {seleccion.length || ""}
+      <div className="lista-sobres" ref={lista} onScroll={(e) => setScroll(e.currentTarget.scrollTop)} role="listbox" aria-multiselectable>
+        <div className="lista-alto" style={{ height: visibles.length * ALTO_SOBRE }}>
+          {visibles.slice(desde, hasta).map((c: Correo, i) => {
+            const u = porCaso[c.caso];
+            const adjuntos = c.adjuntos.filter((a) => !a.enLinea).length;
+            return (
+              <SobreDeCorreo
+                key={c.caso}
+                clave={c.caso}
+                remitente={c.remitente || c.remitenteCorreo}
+                asunto={c.asunto}
+                previa={c.vistaPrevia}
+                recibido={c.recibido}
+                elegido={elegidos.has(c.caso)}
+                abierto={foco?.tipo === "correo" && foco.caso === c.caso}
+                corrida={u}
+                alElegir={() => alternar(c.caso)}
+                alAbrir={() => enfocar({ tipo: "correo", caso: c.caso })}
+                estilo={{ transform: `translateY(${(desde + i) * ALTO_SOBRE}px)` }}
+                fichas={
+                  <>
+                    {c.origen === "buzon" && <span className="ficha tono-azul" title="Traído del buzón real, con sus etiquetas de hoy">Buzón real</span>}
+                    {adjuntos > 0 && <span className="ficha"><Icono n="adjunto" tam={11} />{adjuntos}</span>}
+                    {c.desenlaceProduccion && (
+                      <span className={`ficha tono-${TONO_DESENLACE[c.desenlaceProduccion] ?? "gris"}`} title={`En producción: ${NOMBRES_DESENLACE[c.desenlaceProduccion] ?? c.desenlaceProduccion}${c.motivoProduccion ? ` · ${c.motivoProduccion}` : ""}`}>
+                        Allá: {NOMBRES_CORTOS_DESENLACE[c.desenlaceProduccion] ?? c.desenlaceProduccion}
+                      </span>
+                    )}
+                  </>
+                }
+              />
+            );
+          })}
+        </div>
+        {!visibles.length && <div className="vacio">Nada con ese filtro. Prueba con «Todos» o borra la búsqueda.</div>}
+      </div>
+
+      <BandejaDeSalida
+        elegidos={seleccion.map((caso) => ({ clave: caso, nombre: porClave.get(caso)?.remitente || porClave.get(caso)?.remitenteCorreo || caso }))}
+        modo={modo}
+        setModo={setModo}
+        alLimpiar={() => fijar([])}
+        alCorrer={() => void lanzar()}
+        ocupado={enviando}
+        extra={enCola > 0 ? <button className="boton peligro chico" onClick={() => void cancelarCola()}>Cancelar {enCola} en cola</button> : undefined}
+      />
+    </>
+  );
+}
+
+// -------------------------------------------------------------- la bandeja
+
+export function Bandeja() {
+  const corridas = usar((s) => s.corridas);
+  const orden = usar((s) => s.orden);
+  const [fuente, setFuente] = useState<"buzon" | "local">("buzon");
+  const porCaso = useMemo(() => ultimas(corridas, orden), [corridas, orden]);
+
+  return (
+    <section className="bandeja" aria-label="Correos por radicar">
+      <header className="bandeja-titulo">
+        <h2>Correspondencia</h2>
+        <div className="fuentes" role="tablist" aria-label="De dónde salen los correos">
+          {([["buzon", "Buzón real", "correo"], ["local", "Descargados", "bandeja"]] as const).map(([id, nombre, icono]) => (
+            <button key={id} role="tab" aria-selected={fuente === id} className={fuente === id ? "activo" : ""} onClick={() => setFuente(id)}>
+              {fuente === id && <motion.span layoutId="fuente-activa" className="fuente-fondo" transition={{ type: "spring", stiffness: 520, damping: 38 }} />}
+              <Icono n={icono} tam={13} />
+              <span>{nombre}</span>
             </button>
-          </motion.footer>
-        )}
-      </AnimatePresence>
-      </>}
+          ))}
+        </div>
+      </header>
+      {fuente === "buzon" ? <PanelBuzon porCaso={porCaso} /> : <PanelDescargados porCaso={porCaso} />}
     </section>
   );
 }

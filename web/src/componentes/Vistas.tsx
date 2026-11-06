@@ -87,7 +87,7 @@ export function VistaCorridas() {
             })}
           </tbody>
         </table>
-        {!lista.length && <div className="vacio">Aún no hay corridas. Selecciona correos en la bandeja y pulsa Procesar.</div>}
+        {!lista.length && <div className="vacio">Aún no hay corridas. Elige casos en la correspondencia y córrelos.</div>}
       </div>
     </div>
   );
