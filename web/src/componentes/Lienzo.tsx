@@ -47,10 +47,55 @@ interface DatosEtapa extends Record<string, unknown> {
   extra: string[];
   ajustes: number;
   modelo: string;
-  /** Miniaturas de las hojas que se van leyendo: «url|método» o «leyendo|url». */
-  hojas?: string[];
-  hojasMas?: number;
+  /** Lo que el motor va leyendo, sobre el nodo de conversión. */
+  lectura?: VistaLectura;
 }
+interface VistaLectura {
+  /** La hoja en curso o la última leída, en grande. */
+  foco: { img: string; documento: string; detalle: string; leyendo: boolean } | null;
+  /** Miniaturas de las últimas hojas: url y método. */
+  hojas: { src: string; metodo: string }[];
+  mas: number;
+  total: number;
+}
+
+const NOMBRE_METODO: Record<string, string> = { texto: "texto propio del PDF", ocr: "OCR", vision: "visión IA", ilegible: "sin texto legible" };
+
+const LecturaEnNodo = memo(function LecturaEnNodo({ v }: { v: VistaLectura }) {
+  const irA = usar((s) => s.irA);
+  return (
+    <button
+      type="button"
+      className="nodo-lectura nodrag"
+      onClick={(e) => {
+        e.stopPropagation();
+        irA("adjuntos");
+      }}
+      title="Ver cada hoja en la vista de adjuntos"
+    >
+      {v.foco && (
+        <span className={`nodo-lectura-foco ${v.foco.leyendo ? "leyendo" : ""}`}>
+          {v.foco.img ? <img src={v.foco.img} alt="" draggable={false} /> : null}
+          {v.foco.leyendo && <span className="escaneo" />}
+          <span className="nodo-lectura-pie">
+            <span className="nodo-lectura-doc">{v.foco.documento}</span>
+            <span>{v.foco.detalle}{v.total > 1 ? ` · ${v.total} hojas en total` : ""}</span>
+          </span>
+        </span>
+      )}
+      {v.hojas.length > 0 && (
+        <span className="nodo-hojas">
+          {v.hojas.map((h) => (
+            <motion.span key={h.src} className={`nodo-hoja m-${h.metodo}`} initial={{ opacity: 0, y: 6, scale: 0.8 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ type: "spring", stiffness: 500, damping: 30 }}>
+              <img src={h.src} alt="" draggable={false} />
+            </motion.span>
+          ))}
+          {v.mas ? <span className="nodo-hojas-mas">+{v.mas}</span> : null}
+        </span>
+      )}
+    </button>
+  );
+});
 interface DatosRegla extends Record<string, unknown> {
   regla: Regla;
   borrador: boolean;
@@ -119,23 +164,7 @@ const NodoEtapa = memo(function NodoEtapa({ data, selected }: NodeProps<Node<Dat
       </div>
       <div className="nodo-titulo">{n.nombre}</div>
       <div className="nodo-desc">{n.descripcion}</div>
-      {data.hojas && data.hojas.length > 0 && (
-        <div className="nodo-hojas" title="Hojas leídas en esta corrida">
-          {data.hojas.map((h, i) => {
-            if (h.startsWith("leyendo|")) {
-              const src = h.slice(8);
-              return <span key={`l${i}`} className="nodo-hoja leyendo">{src && <img src={src} alt="" draggable={false} />}<span className="escaneo" /></span>;
-            }
-            const [src, metodo] = h.split("|");
-            return (
-              <motion.span key={src} className={`nodo-hoja m-${metodo}`} initial={{ opacity: 0, y: 6, scale: 0.8 }} animate={{ opacity: 1, y: 0, scale: 1 }} transition={{ type: "spring", stiffness: 500, damping: 30 }}>
-                <img src={src} alt="" draggable={false} />
-              </motion.span>
-            );
-          })}
-          {data.hojasMas ? <span className="nodo-hojas-mas">+{data.hojasMas}</span> : null}
-        </div>
-      )}
+      {data.lectura && (data.lectura.foco || data.lectura.hojas.length > 0) && <LecturaEnNodo v={data.lectura} />}
       <div className="nodo-pie">
         {(data.cat === "ia" || data.cat === "vision" || data.cat === "correccion") && data.modelo && <span className="dato ia"><Icono n="chispa" tam={10} />{data.modelo}</span>}
         {data.ms > 0 && <span className="dato"><Icono n="reloj" tam={10} />{segundos(data.ms)}</span>}
@@ -218,7 +247,7 @@ const NodoFase = memo(function NodoFase({ data }: NodeProps<Node<DatosFase>>) {
     <div className="fase" style={{ width: data.ancho, height: data.alto }}>
       <div className="fase-cabeza">
         {data.numero && <span className="fase-numero">{data.numero}</span>}
-        <span>{data.nombre}</span>
+        <span className="fase-nombre">{data.nombre}</span>
         {data.pista && <span className="fase-pista">{data.pista}</span>}
       </div>
     </div>
@@ -347,6 +376,39 @@ interface Disposicion {
   ySalidas: number;
   yBajoReglas: number;
   salidas: Set<string>;
+  /** Los nodos de cada fase, de arriba abajo: se apilan con su alto real. */
+  columnas: string[][];
+}
+
+/** Espacio libre entre dos nodos de la misma fase. */
+const SEPARACION = 36;
+
+/**
+ * Apila cada fase con el alto que cada nodo tiene en pantalla, que crece con
+ * lo que muestra (hojas leídas, datos de la corrida), y baja la banda de
+ * salidas lo que haga falta. Lo que la persona movió a mano no se toca.
+ */
+function apilar(nodos: Node[], d: Disposicion, movidos: Record<string, Posicion>): { y: Record<string, number>; altoFase: number; ySalidas: number } | null {
+  const porId = new Map(nodos.map((n) => [n.id, n]));
+  const y: Record<string, number> = {};
+  let fondo = 0;
+  for (const ids of d.columnas) {
+    let cursor = CABEZA_FASE;
+    for (const id of ids) {
+      const n = porId.get(id);
+      if (!n) continue;
+      const alto = n.measured?.height;
+      if (!alto) return null;
+      if (!movidos[id]) y[id] = cursor;
+      cursor += alto + SEPARACION;
+    }
+    fondo = Math.max(fondo, cursor);
+  }
+  const altoFase = fondo + 2;
+  const ySalidas = altoFase + 72;
+  const corrimiento = ySalidas - d.ySalidas;
+  for (const id of d.salidas) if (!movidos[id] && d.posiciones[id]) y[id] = d.posiciones[id]!.y + corrimiento;
+  return { y, altoFase, ySalidas };
 }
 
 /** Columnas por fase, de izquierda a derecha; abajo, los desvíos y salidas; arriba, las reglas propias. */
@@ -395,7 +457,7 @@ function disponer(catalogo: Catalogo, reglas: Regla[]): Disposicion {
     posiciones[r.id] = { x: base.x + k * (ANCHO + 16), y: yReglas + CABEZA_FASE };
   }
   const salidas = new Set(catalogo.nodos.filter((n) => !ubicadas.has(n.id)).map((n) => n.id));
-  return { posiciones, fases, ySalidas: y0, yBajoReglas: yReglas + 214, salidas };
+  return { posiciones, fases, ySalidas: y0, yBajoReglas: yReglas + 214, salidas, columnas };
 }
 
 function lados(o: Posicion, d: Posicion): [string, string] {
@@ -505,9 +567,26 @@ function Buscador({ catalogo, reglas, ir }: { catalogo: Catalogo; reglas: Regla[
 
 function Leyenda() {
   const [abierta, setAbierta] = useState(false);
+  const caja = useRef<HTMLDivElement>(null);
+  // Se cierra con Esc o al tocar cualquier otra cosa, para no quedar encima de otros menús.
+  useEffect(() => {
+    if (!abierta) return;
+    const fuera = (e: PointerEvent) => {
+      if (!caja.current?.contains(e.target as globalThis.Node)) setAbierta(false);
+    };
+    const tecla = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setAbierta(false);
+    };
+    window.addEventListener("pointerdown", fuera, true);
+    window.addEventListener("keydown", tecla);
+    return () => {
+      window.removeEventListener("pointerdown", fuera, true);
+      window.removeEventListener("keydown", tecla);
+    };
+  }, [abierta]);
   const usadas: Categoria[] = ["entrada", "filtro", "ruta", "documentos", "ocr", "busqueda", "ia", "datos", "validacion", "integracion", "salida", "regla"];
   return (
-    <div className="leyenda">
+    <div className="leyenda" ref={caja}>
       <button className={`boton flotante chico ${abierta ? "activo" : ""}`} onClick={() => setAbierta(!abierta)}><Icono n="info" tam={14} />Leyenda</button>
       <AnimatePresence>
         {abierta && (
@@ -600,14 +679,26 @@ export function Lienzo() {
 
   const p = useMemo(() => progreso(catalogo, corrida), [catalogo, corrida]);
   // Las hojas que el motor ya leyó (y la que está leyendo) se ven sobre el nodo de conversión.
-  const hojasVivas = useMemo(() => {
-    if (!corrida) return { hojas: [] as string[], mas: 0 };
+  const hojasVivas = useMemo((): VistaLectura | undefined => {
+    if (!corrida) return undefined;
     const l = lectura(corrida);
-    const todas: string[] = [];
-    for (const d of l.documentos) for (const h of d.hojas) if (h.mini) todas.push(`${urlArchivo(corrida.id, h.mini)}|${h.metodo}`);
-    if (l.enCurso) todas.push(`leyendo|${l.enCurso.mini ? urlArchivo(corrida.id, l.enCurso.mini) : ""}`);
-    const max = 7;
-    return { hojas: todas.slice(-max), mas: Math.max(0, todas.length - max) };
+    const todas: { src: string; metodo: string }[] = [];
+    let foco: VistaLectura["foco"] = null;
+    for (const d of l.documentos) {
+      if (d.esCuerpo) continue;
+      for (const h of d.hojas) {
+        if (h.mini) todas.push({ src: urlArchivo(corrida.id, h.mini), metodo: h.metodo });
+        const img = h.img ?? h.mini;
+        if (img) foco = { img: urlArchivo(corrida.id, img), documento: d.nombre, detalle: `Hoja ${h.numero} de ${d.paginas || d.hojas.length} · ${NOMBRE_METODO[h.metodo] ?? h.metodo}`, leyendo: false };
+      }
+    }
+    if (l.enCurso) {
+      const d = l.documentos.find((x) => x.clave === l.enCurso!.clave);
+      const img = l.enCurso.img ?? l.enCurso.mini;
+      foco = { img: img ? urlArchivo(corrida.id, img) : "", documento: d?.nombre ?? "", detalle: `Leyendo hoja ${l.enCurso.pagina}${d?.paginas ? ` de ${d.paginas}` : ""}…`, leyendo: true };
+    }
+    const max = 5;
+    return { foco, hojas: todas.slice(-max), mas: Math.max(0, todas.length - max), total: todas.length };
   }, [corrida]);
   const disposicion = useMemo(() => (catalogo ? disponer(catalogo, reglas) : null), [catalogo, reglas]);
   const asunto = useMemo(() => (corrida ? (bandeja.find((c) => c.caso === corrida.caso)?.asunto ?? String(corrida.eventos.find((e) => e.tipo === "inicio")?.asunto ?? "")) : ""), [corrida, bandeja]);
@@ -659,7 +750,7 @@ export function Lienzo() {
         if (x.type === "etapa" || x.type === "final") {
           const n = (x.data as DatosEtapa).nodo;
           const est = p.nodos[n.id];
-          datos = { nodo: n, cat: categoria(n), estado: est?.estado ?? "inactivo", ms: est?.ms ?? 0, veces: est?.veces ?? 0, extra: extras(n, p), ajustes: n.parametros.filter((q) => ajustado(q, configuracion)).length, modelo: configuracion?.ia.modelo ?? "", ...(n.id === "conversion_a_markdown" ? { hojas: hojasVivas.hojas, hojasMas: hojasVivas.mas } : {}) };
+          datos = { nodo: n, cat: categoria(n), estado: est?.estado ?? "inactivo", ms: est?.ms ?? 0, veces: est?.veces ?? 0, extra: extras(n, p), ajustes: n.parametros.filter((q) => ajustado(q, configuracion)).length, modelo: configuracion?.ia.modelo ?? "", ...(n.id === "conversion_a_markdown" && hojasVivas ? { lectura: hojasVivas } : {}) };
         } else if (x.type === "extremo") {
           datos = { tipo: (x.data as DatosExtremo).tipo, corrida, asunto };
         } else if (x.type === "regla") {
@@ -675,6 +766,39 @@ export function Lienzo() {
       }),
     );
   }, [p, configuracion, foco, corrida, asunto, reglas, idsBorrador, evaluadas, notas, hojasVivas]);
+
+  // Cuando un nodo crece o se encoge, su fase se reacomoda para que nada quede encima de nada.
+  const [ySalidas, setYSalidas] = useState<number | null>(null);
+  const alturas = nodos.map((n) => (n.type === "fase" ? "" : `${n.id}:${Math.round(n.measured?.height ?? 0)}`)).join("|");
+  useEffect(() => {
+    if (!disposicion) return;
+    const a = apilar(nodos, disposicion, leerLocal<Record<string, Posicion>>(CLAVE_POSICIONES, {}));
+    if (!a) return;
+    setYSalidas(a.ySalidas);
+    setNodos((ns) => {
+      let cambio = false;
+      const nuevos = ns.map((n) => {
+        if (n.type === "fase") {
+          const f = n.data as DatosFase;
+          if (n.id === "__fase-salidas") {
+            if (Math.abs(n.position.y - a.ySalidas) < 1) return n;
+            cambio = true;
+            return { ...n, position: { ...n.position, y: a.ySalidas } };
+          }
+          if (n.id === "__fase-reglas" || Math.abs(f.alto - a.altoFase) < 1) return n;
+          cambio = true;
+          return { ...n, data: { ...f, alto: a.altoFase } };
+        }
+        const y = a.y[n.id];
+        if (y === undefined || Math.abs(n.position.y - y) < 1) return n;
+        cambio = true;
+        return { ...n, position: { ...n.position, y } };
+      });
+      return cambio ? nuevos : ns;
+    });
+    // Solo cuando cambia algún alto, no en cada movimiento.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alturas, disposicion]);
 
   const principal = useMemo(() => {
     if (!catalogo) return new Set<string>();
@@ -723,10 +847,10 @@ export function Lienzo() {
         let carril: number | undefined;
         if (disposicion && salidas.has(a.hacia) && !salidas.has(a.desde)) {
           // Hacia la banda de salidas: por el pasillo justo encima de ella.
-          [sh, th, carril] = ["s-r", "e-t", disposicion.ySalidas - 36];
+          [sh, th, carril] = ["s-r", "e-t", (ySalidas ?? disposicion.ySalidas) - 36];
         } else if (disposicion && salidas.has(a.desde) && !salidas.has(a.hacia)) {
           // De la banda de salidas al cierre: por el borde superior de la banda.
-          [sh, th, carril] = ["s-t", "e-l", disposicion.ySalidas - 14];
+          [sh, th, carril] = ["s-t", "e-l", (ySalidas ?? disposicion.ySalidas) - 14];
         } else if (disposicion && esRegla.has(a.hacia)) {
           [sh, th, carril] = ["s-r", "e-b", disposicion.yBajoReglas + 26];
         }
@@ -747,7 +871,7 @@ export function Lienzo() {
       })
       // Lo recorrido y lo resaltado se dibuja encima de los demás cables, pero debajo de los nodos.
       .sort((x, y) => Number(x.data.estado !== "inactivo" || x.data.resaltado) - Number(y.data.estado !== "inactivo" || y.data.resaltado));
-  }, [catalogo, nodos, p, corrida, reglas, evaluadas, principal, encima, foco, disposicion]);
+  }, [catalogo, nodos, p, corrida, reglas, evaluadas, principal, encima, foco, disposicion, ySalidas]);
 
   const alCambiar = useCallback((cambios: NodeChange[]) => setNodos((ns) => applyNodeChanges(cambios, ns)), []);
 
@@ -825,7 +949,12 @@ export function Lienzo() {
     const notasPos: Record<string, Posicion> = {};
     for (const n of notas) if (g[n.id]) notasPos[n.id] = g[n.id]!;
     guardarLocal(CLAVE_POSICIONES, notasPos);
-    setNodos((ns) => ns.map((n) => ({ ...n, position: disposicion.posiciones[n.id] ?? notasPos[n.id] ?? n.position })));
+    setNodos((ns) => {
+      const base = ns.map((n) => ({ ...n, position: disposicion.posiciones[n.id] ?? notasPos[n.id] ?? n.position }));
+      // Con el alto real de cada nodo, igual que al crecer.
+      const a = apilar(base, disposicion, notasPos);
+      return a ? base.map((n) => (a.y[n.id] === undefined ? n : { ...n, position: { ...n.position, y: a.y[n.id]! } })) : base;
+    });
     setTimeout(encuadrar, 40);
   };
 

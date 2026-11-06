@@ -273,8 +273,9 @@ body.arrastrando * { transition: none !important; }
 .correo-de { font-weight: 620; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .correo-asunto { font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .correo-previa { color: var(--texto-3); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.correo-fichas { gap: 5px; margin-top: 4px; overflow: hidden; flex-wrap: nowrap; }
-.correo-fichas .ficha { flex: none; max-width: 52%; }
+.correo-fichas { gap: 4px; margin-top: 4px; overflow: hidden; flex-wrap: nowrap; }
+.correo-fichas .ficha { flex: none; max-width: 52%; padding-left: 6px; padding-right: 6px; font-size: 11px; }
+.correo-fichas .ficha:last-child { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bandeja-pie { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; align-items: center; gap: 8px; padding: 10px 10px 10px 14px; border-radius: 13px; background: var(--superficie); box-shadow: var(--sombra-3); z-index: 3; }
 
 /* -------------------------------------------------------------------- lienzo */
@@ -331,7 +332,9 @@ body.arrastrando * { transition: none !important; }
 
 /* fases */
 .fase { border-radius: 22px; background: rgba(255, 255, 255, 0.55); box-shadow: inset 0 0 0 1px rgba(16, 22, 36, 0.035); }
-.fase-cabeza { display: flex; align-items: center; gap: 9px; padding: 16px 18px 0; font-size: 12px; font-weight: 650; color: var(--texto-2); letter-spacing: 0.01em; }
+.fase-cabeza { display: flex; align-items: center; gap: 9px; padding: 16px 18px 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; font-weight: 650; color: var(--texto-2); letter-spacing: 0.01em; }
+.fase-nombre { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.fase-numero { flex: none; }
 .fase-numero { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; background: var(--superficie); box-shadow: var(--sombra-1); font-size: 11px; color: var(--texto-3); }
 .fase-pista { font-weight: 450; color: var(--texto-3); }
 
@@ -689,7 +692,7 @@ body.arrastrando * { transition: none !important; }
 .react-flow.lejos .nodo-icono { width: 34px; height: 34px; }
 .react-flow.lejos .nodo-icono svg { width: 20px; height: 20px; }
 .react-flow.lejos .insignia { width: 26px; height: 26px; }
-.react-flow.lejos .fase-cabeza { font-size: 22px; padding-top: 14px; }
+.react-flow.lejos .fase-cabeza { font-size: 19px; padding-top: 14px; }
 .react-flow.lejos .fase-numero { width: 32px; height: 32px; font-size: 15px; }
 .react-flow.lejos .fase-pista, .react-flow.lejos .cable-etiqueta { display: none; }
 .react-flow.lejos .nodo-final { font-size: 17px; padding: 12px 16px; }
