@@ -2232,6 +2232,118 @@
   "auto_alcance": "total",
   "auto_nota": "Si: pipeline.almacen lo lee como global dentro de sus funciones en cada llamada."
  },
+ "pipeline.anexos.TAMANO_MINIMO_DE_IMAGEN": {
+  "modulo": "pipeline.anexos",
+  "archivo": "pipeline/anexos.py",
+  "linea": 30,
+  "comentario": "Por debajo de este tamaño, una imagen es una firma, un logo o un icono que el cliente de correo adjunto sin marcarla como inline.",
+  "fuente": "30_000",
+  "valor": 30000,
+  "tipo": "int",
+  "evaluado": true,
+  "usos": {
+   "local": [
+    "func"
+   ],
+   "copias": [],
+   "atributo_en": []
+  },
+  "auto_sobrescribible": true,
+  "auto_alcance": "total",
+  "auto_nota": "Si: pipeline.anexos lo lee como global dentro de sus funciones en cada llamada."
+ },
+ "pipeline.anexos._IMAGEN": {
+  "modulo": "pipeline.anexos",
+  "archivo": "pipeline/anexos.py",
+  "linea": 32,
+  "comentario": "",
+  "fuente": "re.compile(r\"\\.(png|jpe?g|gif|bmp)$\", re.IGNORECASE)",
+  "valor": {
+   "regex": "\\.(png|jpe?g|gif|bmp)$",
+   "flags": "IGNORECASE"
+  },
+  "tipo": "regex",
+  "evaluado": true,
+  "usos": {
+   "local": [
+    "func"
+   ],
+   "copias": [],
+   "atributo_en": []
+  },
+  "auto_sobrescribible": true,
+  "auto_alcance": "total",
+  "auto_nota": "Si: pipeline.anexos lo lee como global dentro de sus funciones en cada llamada."
+ },
+ "pipeline.anexos._COPIA": {
+  "modulo": "pipeline.anexos",
+  "archivo": "pipeline/anexos.py",
+  "linea": 33,
+  "comentario": "",
+  "fuente": "re.compile(r\"\\s*(\\(\\d+\\)|\\[\\d+\\])\")",
+  "valor": {
+   "regex": "\\s*(\\(\\d+\\)|\\[\\d+\\])",
+   "flags": ""
+  },
+  "tipo": "regex",
+  "evaluado": true,
+  "usos": {
+   "local": [
+    "func"
+   ],
+   "copias": [],
+   "atributo_en": []
+  },
+  "auto_sobrescribible": true,
+  "auto_alcance": "total",
+  "auto_nota": "Si: pipeline.anexos lo lee como global dentro de sus funciones en cada llamada."
+ },
+ "pipeline.anexos._DOCUMENTO_DE_LA_ENTIDAD": {
+  "modulo": "pipeline.anexos",
+  "archivo": "pipeline/anexos.py",
+  "linea": 36,
+  "comentario": "Las cartas que la entidad le envio a la persona vuelven adjuntas cuando ella responde: llevan el numero de radicado o de salida como nombre.",
+  "fuente": "re.compile(r\"^\\d*-?\\s*(ENT|SAL)\\d{10,}\", re.IGNORECASE)",
+  "valor": {
+   "regex": "^\\d*-?\\s*(ENT|SAL)\\d{10,}",
+   "flags": "IGNORECASE"
+  },
+  "tipo": "regex",
+  "evaluado": true,
+  "usos": {
+   "local": [
+    "func"
+   ],
+   "copias": [],
+   "atributo_en": []
+  },
+  "auto_sobrescribible": true,
+  "auto_alcance": "total",
+  "auto_nota": "Si: pipeline.anexos lo lee como global dentro de sus funciones en cada llamada."
+ },
+ "pipeline.anexos._IMAGEN_DE_FIRMA": {
+  "modulo": "pipeline.anexos",
+  "archivo": "pipeline/anexos.py",
+  "linea": 37,
+  "comentario": "Las cartas que la entidad le envio a la persona vuelven adjuntas cuando ella responde: llevan el numero de radicado o de salida como nombre.",
+  "fuente": "re.compile(\n    r\"^(image\\d*|outlook-\\w+|logo\\w*|firma\\w*)\\.(png|jpe?g|gif)$\", re.IGNORECASE)",
+  "valor": {
+   "regex": "^(image\\d*|outlook-\\w+|logo\\w*|firma\\w*)\\.(png|jpe?g|gif)$",
+   "flags": "IGNORECASE"
+  },
+  "tipo": "regex",
+  "evaluado": true,
+  "usos": {
+   "local": [
+    "func"
+   ],
+   "copias": [],
+   "atributo_en": []
+  },
+  "auto_sobrescribible": true,
+  "auto_alcance": "total",
+  "auto_nota": "Si: pipeline.anexos lo lee como global dentro de sus funciones en cada llamada."
+ },
  "pipeline.compuerta.CONFIANZA_PARA_RADICAR": {
   "modulo": "pipeline.compuerta",
   "archivo": "pipeline/compuerta.py",
@@ -10998,7 +11110,7 @@
   "archivo": "pipeline/notificacion.py",
   "linea": 49,
   "comentario": "Redaccion externa de cada motivo. Describe QUE falto, no que componente fallo: quien lee el correo no opera el sistema.",
-  "fuente": "{\n    \"SIN_NOMBRE_REMITENTE\":\n        \"No fue posible identificar a la persona que remite la comunicacion.\",\n    \"SIN_NOMBRE_AFECTADO\":\n        \"No fue posible identificar a la persona afectada.\",\n    \"SIN_DOCUMENTO\":\n        \"No fue posible identificar el documento de identidad.\",\n    \"DOCUMENTO_AMBIGUO\":\n        \"La comunicacion contiene varios numeros de identificacion y no fue \"\n        \"posible establecer cual corresponde a la persona afectada.\",\n    \"DOCUMENTO_DE_OTRA_PERSONA\":\n        \"El numero de identificacion y el nombre de la persona afectada no \"\n        \"corresponden entre si.\",\n    \"EMPRESA_CON_DOCUMENTO_DE_PERSONA\":\n        \"El nombre corresponde a una empresa y el documento a una persona \"\n        \"natural.\",\n    \"SIN_TIPO_SOLICITUD\":\n        \"No fue posible clasificar el tipo de solicitud.\",\n    \"SOLO_EMPRESA_SIN_AFECTADO\":\n        \"La comunicacion identifica una empresa pero no una persona afectada.\",\n    \"ADJUNTO_PROTEGIDO\":\n        \"Uno de los documentos adjuntos esta protegido con contraseña.\",\n    \"ADJUNTO_ILEGIBLE\":\n        \"No fue posible leer uno de los documentos adjuntos.\",\n    \"ADJUNTO_NO_LEIDO\":\n        \"Uno de los documentos adjuntos esta en un formato que no se pudo leer.\",\n    \"SIN_OCR\":\n        \"No fue posible extraer el texto de un documento adjunto.\",\n    \"VALIDACION_RECHAZO\":\n        \"Los datos obtenidos no superaron las validaciones de consistencia.\",\n    \"PETICION_MAL_FORMADA\":\n        \"La comunicacion no pudo registrarse en el sistema de radicacion.\",\n    \"RADICACION_SIN_CONFIRMAR\":\n        \"El sistema de radicacion acepto la comunicacion sin confirmar su \"\n        \"numero. Verificar si ya quedo registrada antes de radicarla de nuevo.\",\n    \"INYECCION_DETECTADA\":\n        \"El contenido de la comunicacion requiere revision de un funcionario.\",\n    \"VOLUMEN_EXCESIVO\":\n        \"La comunicacion trae mas documentos o paginas de los que se tramitan \"\n        \"de forma automatica y requiere revision de un funcionario.\",\n    \"FACTURA_ELECTRONICA\":\n        \"La comunicacion corresponde a una factura electronica y no a una PQRD.\",\n    \"REMITENTE_EXCLUIDO\":\n        \"La comunicacion la escribe un buzon que no radica por este canal.\",\n    \"REMITENTE_NO_IDENTIFICABLE\":\n        \"No fue posible identificar un remitente externo en la conversacion.\",\n    \"CLOUDFLARE_403\":\n        \"El sistema de radicacion no estuvo disponible durante el \"\n        \"procesamiento.\",\n    \"SGDEA_CAIDO\":\n        \"El sistema de radicacion no estuvo disponible durante el \"\n        \"procesamiento.\",\n    \"MODELO_NO_RESPONDIO\":\n        \"El servicio de procesamiento automatico no estuvo disponible.\",\n    \"MODELO_SIN_PERMISO\":\n        \"El servicio de procesamiento automatico no estuvo disponible.\",\n    \"RECLAMO_AGOTADO\":\n        \"El procesamiento automatico no pudo completarse.\",\n    \"TIEMPO_DE_CORRIDA_AGOTADO\":\n        \"El procesamiento automatico no alcanzo a completarse.\",\n    \"ERROR_INESPERADO\":\n        \"El procesamiento automatico no pudo completarse.\",\n}",
+  "fuente": "{\n    \"SIN_NOMBRE_REMITENTE\":\n        \"No fue posible identificar a la persona que remite la comunicacion.\",\n    \"SIN_NOMBRE_AFECTADO\":\n        \"No fue posible identificar a la persona afectada.\",\n    \"SIN_DOCUMENTO\":\n        \"No fue posible identificar el documento de identidad.\",\n    \"DOCUMENTO_AMBIGUO\":\n        \"La comunicacion contiene varios numeros de identificacion y no fue \"\n        \"posible establecer cual corresponde a la persona afectada.\",\n    \"DOCUMENTO_DE_OTRA_PERSONA\":\n        \"El numero de identificacion y el nombre de la persona afectada no \"\n        \"corresponden entre si.\",\n    \"EMPRESA_CON_DOCUMENTO_DE_PERSONA\":\n        \"El nombre corresponde a una empresa y el documento a una persona \"\n        \"natural.\",\n    \"SIN_TIPO_SOLICITUD\":\n        \"No fue posible clasificar el tipo de solicitud.\",\n    \"SOLO_EMPRESA_SIN_AFECTADO\":\n        \"La comunicacion identifica una empresa pero no una persona afectada.\",\n    \"ADJUNTO_PROTEGIDO\":\n        \"Uno de los documentos adjuntos esta protegido con contraseña.\",\n    \"ANEXO_DE_RADICADO\":\n        \"La comunicacion corresponde a un caso ya radicado y trae documentos \"\n        \"que ese radicado no tiene. Se debe anexar al radicado o, si es una \"\n        \"solicitud nueva, radicar.\",\n    \"ADJUNTO_ILEGIBLE\":\n        \"No fue posible leer uno de los documentos adjuntos.\",\n    \"ADJUNTO_NO_LEIDO\":\n        \"Uno de los documentos adjuntos esta en un formato que no se pudo leer.\",\n    \"SIN_OCR\":\n        \"No fue posible extraer el texto de un documento adjunto.\",\n    \"VALIDACION_RECHAZO\":\n        \"Los datos obtenidos no superaron las validaciones de consistencia.\",\n    \"PETICION_MAL_FORMADA\":\n        \"La comunicacion no pudo registrarse en el sistema de radicacion.\",\n    \"RADICACION_SIN_CONFIRMAR\":\n        \"El sistema de radicacion acepto la comunicacion sin confirmar su \"\n        \"numero. Verificar si ya quedo registrada antes de radicarla de nuevo.\",\n    \"INYECCION_DETECTADA\":\n        \"El contenido de la comunicacion requiere revision de un funcionario.\",\n    \"VOLUMEN_EXCESIVO\":\n        \"La comunicacion trae mas documentos o paginas de los que se tramitan \"\n        \"de forma automatica y requiere revision de un funcionario.\",\n    \"FACTURA_ELECTRONICA\":\n        \"La comunicacion corresponde a una factura electronica y no a una PQRD.\",\n    \"REMITENTE_EXCLUIDO\":\n        \"La comunicacion la escribe un buzon que no radica por este canal.\",\n    \"REMITENTE_NO_IDENTIFICABLE\":\n        \"No fue posible identificar un remitente externo en la conversacion.\",\n    \"CLOUDFLARE_403\":\n        \"El sistema de radicacion no estuvo disponible durante el \"\n        \"procesamiento.\",\n    \"SGDEA_CAIDO\":\n        \"El sistema de radicacion no estuvo disponible durante el \"\n        \"procesamiento.\",\n    \"MODELO_NO_RESPONDIO\":\n        \"El servicio de procesamiento automatico no estuvo disponible.\",\n    \"MODELO_SIN_PERMISO\":\n        \"El servicio de procesamiento automatico no estuvo disponible.\",\n    \"RECLAMO_AGOTADO\":\n        \"El procesamiento automatico no pudo completarse.\",\n    \"TIEMPO_DE_CORRIDA_AGOTADO\":\n        \"El procesamiento automatico no alcanzo a completarse.\",\n    \"ERROR_INESPERADO\":\n        \"El procesamiento automatico no pudo completarse.\",\n}",
   "valor": {
    "SIN_NOMBRE_REMITENTE": "No fue posible identificar a la persona que remite la comunicacion.",
    "SIN_NOMBRE_AFECTADO": "No fue posible identificar a la persona afectada.",
@@ -11009,6 +11121,7 @@
    "SIN_TIPO_SOLICITUD": "No fue posible clasificar el tipo de solicitud.",
    "SOLO_EMPRESA_SIN_AFECTADO": "La comunicacion identifica una empresa pero no una persona afectada.",
    "ADJUNTO_PROTEGIDO": "Uno de los documentos adjuntos esta protegido con contraseña.",
+   "ANEXO_DE_RADICADO": "La comunicacion corresponde a un caso ya radicado y trae documentos que ese radicado no tiene. Se debe anexar al radicado o, si es una solicitud nueva, radicar.",
    "ADJUNTO_ILEGIBLE": "No fue posible leer uno de los documentos adjuntos.",
    "ADJUNTO_NO_LEIDO": "Uno de los documentos adjuntos esta en un formato que no se pudo leer.",
    "SIN_OCR": "No fue posible extraer el texto de un documento adjunto.",
@@ -11044,7 +11157,7 @@
  "pipeline.notificacion._SIN_REDACCION": {
   "modulo": "pipeline.notificacion",
   "archivo": "pipeline/notificacion.py",
-  "linea": 115,
+  "linea": 119,
   "comentario": "Redaccion de respaldo. Un codigo nuevo sin redaccion externa saldria como codigo, y ahi es preferible una frase generica.",
   "fuente": "\"El procesamiento automatico no pudo completarse.\"",
   "valor": "El procesamiento automatico no pudo completarse.",
@@ -11227,7 +11340,7 @@
  "pipeline.orquestador._BITACORA": {
   "modulo": "pipeline.orquestador",
   "archivo": "pipeline/orquestador.py",
-  "linea": 278,
+  "linea": 281,
   "comentario": "Bitacora del correo que se esta procesando en ESTA tarea. Va en un `ContextVar` y no en el orquestador porque el mismo orquestador atiende varios correos a la vez: como atributo, los fallos de uno acabarian en el informe de otro. El agente la alcanza desde una herramienta, fuera de la pila de `procesar`, y por eso no se puede pasar por parametro.",
   "fuente": "contextvars.ContextVar(\"bitacora_del_correo\", default=None)",
   "valor": "contextvars.ContextVar(\"bitacora_del_correo\", default=None)",
@@ -12806,7 +12919,7 @@
   "archivo": "pipeline/telemetria.py",
   "linea": 88,
   "comentario": "Motivos de revision manual. Mas finos que las tres etiquetas de Outlook, que no permiten distinguir la causa.",
-  "fuente": "{\n    \"SIN_NOMBRE_REMITENTE\": \"no se pudo determinar el nombre de quien escribe\",\n    \"SIN_NOMBRE_AFECTADO\": \"no se pudo determinar el nombre del afectado\",\n    \"SIN_DOCUMENTO\": \"no se pudo determinar el documento de identidad\",\n    \"DOCUMENTO_AMBIGUO\": \"varios documentos candidatos sin forma de desambiguar\",\n    \"DOCUMENTO_DE_OTRA_PERSONA\": \"el registro tiene ese documento a nombre de \"\n                                 \"otra persona que la del correo\",\n    \"EMPRESA_CON_DOCUMENTO_DE_PERSONA\": \"el nombre es una razon social y el \"\n                                        \"documento es de una persona natural\",\n    \"SIN_TIPO_SOLICITUD\": \"no se pudo clasificar en ninguna de las 27 categorias\",\n    \"SOLO_EMPRESA_SIN_AFECTADO\": \"el correo identifica una empresa por su NIT y \"\n                                 \"ninguna persona natural\",\n    \"ADJUNTO_PROTEGIDO\": \"el adjunto con el soporte tiene contraseña\",\n    \"ADJUNTO_ILEGIBLE\": \"el adjunto no se pudo convertir\",\n    \"ADJUNTO_NO_LEIDO\": \"un adjunto en un formato que no se convierte\",\n    \"SIN_OCR\": \"imagen sin motor de OCR disponible\",\n    \"VALIDACION_RECHAZO\": \"la compuerta final rechazo los datos por incoherentes\",\n    \"INYECCION_DETECTADA\": \"se detecto un intento de manipular al modelo\",\n    \"CLOUDFLARE_403\": \"Cloudflare devolvio un captcha al radicar\",\n    \"SGDEA_CAIDO\": \"el backend de radicacion no respondio\",\n    \"PETICION_MAL_FORMADA\": \"el backend rechazo la forma de la peticion de \"\n                            \"radicacion\",\n    \"RADICACION_SIN_CONFIRMAR\": \"la radicacion se acepto sin devolver numero: \"\n                                \"buscar el caso en SGDEA antes de radicarlo \"\n                                \"de nuevo\",\n    \"MODELO_NO_RESPONDIO\": \"el modelo no respondio a tiempo o no estaba disponible\",\n    \"MODELO_SIN_PERMISO\": \"el modelo rechazo la peticion por autorizacion\",\n    \"FACTURA_ELECTRONICA\": \"el correo es una factura, no una PQRD\",\n    \"REMITENTE_NO_IDENTIFICABLE\": \"buzon interno sin remitente externo en el hilo\",\n    \"REMITENTE_EXCLUIDO\": \"lo escribe un buzon que no radica por este canal\",\n    \"RECLAMO_AGOTADO\": \"el pipeline se cayo varias veces con este mismo correo\",\n    \"TIEMPO_DE_CORRIDA_AGOTADO\": \"la corrida se quedo sin tiempo con este correo \"\n                                 \"a medias\",\n    \"ERROR_INESPERADO\": \"fallo no clasificado, revisar la traza\",\n    \"VOLUMEN_EXCESIVO\": \"el correo trae mas adjuntos, paginas o tamaño de lo \"\n                        \"que se procesa automaticamente\",\n}",
+  "fuente": "{\n    \"SIN_NOMBRE_REMITENTE\": \"no se pudo determinar el nombre de quien escribe\",\n    \"SIN_NOMBRE_AFECTADO\": \"no se pudo determinar el nombre del afectado\",\n    \"SIN_DOCUMENTO\": \"no se pudo determinar el documento de identidad\",\n    \"DOCUMENTO_AMBIGUO\": \"varios documentos candidatos sin forma de desambiguar\",\n    \"DOCUMENTO_DE_OTRA_PERSONA\": \"el registro tiene ese documento a nombre de \"\n                                 \"otra persona que la del correo\",\n    \"EMPRESA_CON_DOCUMENTO_DE_PERSONA\": \"el nombre es una razon social y el \"\n                                        \"documento es de una persona natural\",\n    \"SIN_TIPO_SOLICITUD\": \"no se pudo clasificar en ninguna de las 27 categorias\",\n    \"SOLO_EMPRESA_SIN_AFECTADO\": \"el correo identifica una empresa por su NIT y \"\n                                 \"ninguna persona natural\",\n    \"ADJUNTO_PROTEGIDO\": \"el adjunto con el soporte tiene contraseña\",\n    \"ANEXO_DE_RADICADO\": \"es del hilo de un radicado y trae documentos que ese \"\n                         \"radicado no tiene\",\n    \"ADJUNTO_ILEGIBLE\": \"el adjunto no se pudo convertir\",\n    \"ADJUNTO_NO_LEIDO\": \"un adjunto en un formato que no se convierte\",\n    \"SIN_OCR\": \"imagen sin motor de OCR disponible\",\n    \"VALIDACION_RECHAZO\": \"la compuerta final rechazo los datos por incoherentes\",\n    \"INYECCION_DETECTADA\": \"se detecto un intento de manipular al modelo\",\n    \"CLOUDFLARE_403\": \"Cloudflare devolvio un captcha al radicar\",\n    \"SGDEA_CAIDO\": \"el backend de radicacion no respondio\",\n    \"PETICION_MAL_FORMADA\": \"el backend rechazo la forma de la peticion de \"\n                            \"radicacion\",\n    \"RADICACION_SIN_CONFIRMAR\": \"la radicacion se acepto sin devolver numero: \"\n                                \"buscar el caso en SGDEA antes de radicarlo \"\n                                \"de nuevo\",\n    \"MODELO_NO_RESPONDIO\": \"el modelo no respondio a tiempo o no estaba disponible\",\n    \"MODELO_SIN_PERMISO\": \"el modelo rechazo la peticion por autorizacion\",\n    \"FACTURA_ELECTRONICA\": \"el correo es una factura, no una PQRD\",\n    \"REMITENTE_NO_IDENTIFICABLE\": \"buzon interno sin remitente externo en el hilo\",\n    \"REMITENTE_EXCLUIDO\": \"lo escribe un buzon que no radica por este canal\",\n    \"RECLAMO_AGOTADO\": \"el pipeline se cayo varias veces con este mismo correo\",\n    \"TIEMPO_DE_CORRIDA_AGOTADO\": \"la corrida se quedo sin tiempo con este correo \"\n                                 \"a medias\",\n    \"ERROR_INESPERADO\": \"fallo no clasificado, revisar la traza\",\n    \"VOLUMEN_EXCESIVO\": \"el correo trae mas adjuntos, paginas o tamaño de lo \"\n                        \"que se procesa automaticamente\",\n}",
   "valor": {
    "SIN_NOMBRE_REMITENTE": "no se pudo determinar el nombre de quien escribe",
    "SIN_NOMBRE_AFECTADO": "no se pudo determinar el nombre del afectado",
@@ -12817,6 +12930,7 @@
    "SIN_TIPO_SOLICITUD": "no se pudo clasificar en ninguna de las 27 categorias",
    "SOLO_EMPRESA_SIN_AFECTADO": "el correo identifica una empresa por su NIT y ninguna persona natural",
    "ADJUNTO_PROTEGIDO": "el adjunto con el soporte tiene contraseña",
+   "ANEXO_DE_RADICADO": "es del hilo de un radicado y trae documentos que ese radicado no tiene",
    "ADJUNTO_ILEGIBLE": "el adjunto no se pudo convertir",
    "ADJUNTO_NO_LEIDO": "un adjunto en un formato que no se convierte",
    "SIN_OCR": "imagen sin motor de OCR disponible",
@@ -12852,7 +12966,7 @@
  "pipeline.telemetria.MOTIVOS_AJENOS_AL_CONTENIDO": {
   "modulo": "pipeline.telemetria",
   "archivo": "pipeline/telemetria.py",
-  "linea": 138,
+  "linea": 140,
   "comentario": "Motivos cuyo desenlace NO lo decidio el contenido del correo. La frase del agente dice que dato falto y por que no estaba en la comunicacion. Con estos motivos ese dato NO es la causa: el correo no se radico porque el backend no respondio, porque la peticion salio mal formada o porque la corrida se quedo sin tiempo. Presentar esa frase como el motivo afirma algo que no es —se vio un correo aplazado por el backend cuyo \"por que\" hablaba de una direccion que faltaba—, y va tanto al informe como al correo de aviso interno. ADJUNTO_ILEGIBLE, SIN_OCR y ADJUNTO_PROTEGIDO quedan FUERA a proposito: ahi el dato que falto si es la causa y la frase del agente lo explica.",
   "fuente": "frozenset({\n    \"SGDEA_CAIDO\",\n    \"CLOUDFLARE_403\",\n    \"PETICION_MAL_FORMADA\",\n    \"RADICACION_SIN_CONFIRMAR\",\n    \"MODELO_NO_RESPONDIO\",\n    \"MODELO_SIN_PERMISO\",\n    \"RECLAMO_AGOTADO\",\n    \"TIEMPO_DE_CORRIDA_AGOTADO\",\n    \"ERROR_INESPERADO\",\n})",
   "valor": [
@@ -12882,7 +12996,7 @@
  "pipeline.telemetria.DESENLACE_QUE_EXPLICA_LA_FRASE": {
   "modulo": "pipeline.telemetria",
   "archivo": "pipeline/telemetria.py",
-  "linea": 159,
+  "linea": 161,
   "comentario": "El unico desenlace que una frase sobre un dato que falto puede explicar. La escribe el agente al cerrar y dice que NO encontro, asi que solo tiene sentido donde eso fue la causa.",
   "fuente": "\"manual\"",
   "valor": "manual",

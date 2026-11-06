@@ -213,6 +213,68 @@ class OutlookService:
                 return etiqueta
         return None
 
+    async def documentos_nuevos_frente_al_radicado(
+        self, email: EmailMessage, etiqueta: str
+    ) -> List[str]:
+        """
+        Los documentos del correo que no tiene ningun correo radicado de su caso.
+
+        Se compara contra todos los correos del hilo que llevan etiqueta de
+        radicado, en cualquier carpeta, y contra los que llevan `etiqueta`, que
+        es como se llega al radicado cuando se encontro por el asunto y esta en
+        otro hilo. Sin ningun radicado con que comparar devuelve vacio: no se
+        puede decir que algo sea nuevo.
+        """
+        from pipeline.anexos import documentos_nuevos
+
+        self.ultimo_error = ""
+        if dedup_desactivada():
+            return []
+        try:
+            propios = await self.get_attachments(email.id)
+            if not propios:
+                return []
+            url = f"{self.base_url}/users/{self.user_email}/messages"
+            radicados = {}
+            consultas = []
+            if email.conversation_id:
+                consultas.append({
+                    "$filter": f"conversationId eq '{email.conversation_id}'",
+                    "$select": "id,categories,hasAttachments", "$top": 50})
+            if etiqueta:
+                consultas.append({
+                    "$filter": f"categories/any(c:c eq '{etiqueta}')",
+                    "$select": "id,categories,hasAttachments", "$top": 10})
+            for consulta in consultas:
+                response = await self._consultar(url, consulta)
+                response.raise_for_status()
+                for msg in response.json().get("value", []):
+                    if msg.get("id") != email.id and etiqueta_de_radicado(
+                            msg.get("categories", [])):
+                        radicados[msg["id"]] = msg
+            if not radicados:
+                return []
+            conocidos = []
+            for msg in radicados.values():
+                if msg.get("hasAttachments"):
+                    conocidos.extend(await self.get_attachments(msg["id"]))
+            return documentos_nuevos(propios, conocidos)
+        except Exception as e:
+            self.ultimo_error = f"{type(e).__name__}: {e}"
+            return []
+
+    async def mensajes_del_hilo(self, folder_id: str, conversation_id: str) -> List[Dict[str, Any]]:
+        """Los correos de un hilo en una carpeta, con remitente y si traen adjuntos."""
+        url = f"{self.base_url}/users/{self.user_email}/mailFolders/{folder_id}/messages"
+        params = {
+            "$filter": f"conversationId eq '{conversation_id}'",
+            "$select": "id,from,hasAttachments",
+            "$top": 50,
+        }
+        response = await self._consultar(url, params)
+        response.raise_for_status()
+        return response.json().get("value", [])
+
     async def buscar_etiqueta_ent_por_asunto(
         self, asunto_limpio: str, email: EmailMessage
     ) -> Optional[str]:

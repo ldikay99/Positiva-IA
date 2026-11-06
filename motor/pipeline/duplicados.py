@@ -37,7 +37,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
-from typing import Any, Set
+from typing import Any, List, Set
 
 from models.email import EmailMessage
 from utils.generic_filter import es_buzon_de_positiva, remitentes_externos_citados
@@ -120,6 +120,10 @@ class Veredicto:
     es_duplicado: bool = False
     radicado: str = ""
     motivo: str = ""
+    # El radicado del caso cuando el correo es de su hilo pero trae documentos
+    # que el radicado no tiene. No es un duplicado: se radica como anexo.
+    anexo_de: str = ""
+    documentos_nuevos: List[str] = field(default_factory=list)
 
     def __bool__(self) -> bool:
         return self.es_duplicado
@@ -182,8 +186,8 @@ class Detector:
                 # de radicar todo el lote, pero tiene que constar.
                 degradaciones.append(fallo)
             elif encontrado:
-                return Veredicto(
-                    True, str(encontrado),
+                return await self._salvo_documentos_nuevos(
+                    email, str(encontrado),
                     "otro correo del mismo hilo ya fue radicado")
 
         # Cuando un area interna reenvia, Outlook abre un conversationId nuevo
@@ -196,8 +200,8 @@ class Detector:
             if fallo:
                 degradaciones.append(fallo)
             elif encontrado:
-                return Veredicto(
-                    True, str(encontrado),
+                return await self._salvo_documentos_nuevos(
+                    email, str(encontrado),
                     "ya hay un correo radicado con este mismo asunto")
 
         if self.outlook is not None and _dedup_por_red_apagada():
@@ -205,6 +209,35 @@ class Detector:
                 "MODO_TEST: la deteccion por hilo y por asunto esta "
                 "desactivada; para ejercitarla, DEDUP_EN_PRUEBAS=true")
         return Veredicto(False, "", " | ".join(degradaciones))
+
+    async def _salvo_documentos_nuevos(
+        self, email: EmailMessage, radicado: str, motivo: str,
+    ) -> Veredicto:
+        """
+        Duplicado del radicado, salvo que traiga documentos que el radicado no tiene.
+
+        Solo se mira si escribe alguien de afuera: lo que llega de un buzon de
+        la entidad en el hilo de un caso es un reenvio o la respuesta que se le
+        dio, con la carta de respuesta adjunta, y radicarlo abriria otro caso
+        con la respuesta de la entidad como si fuera una peticion.
+
+        Si la comparacion no se puede hacer, se queda como duplicado: radicar
+        sin saber si el documento es nuevo es como se radica dos veces.
+        """
+        remitente = email.from_address.address if email.from_address else ""
+        comparar = getattr(self.outlook, "documentos_nuevos_frente_al_radicado", None)
+        if (comparar is None or not getattr(email, "has_attachments", False)
+                or not remitente or es_buzon_de_positiva(remitente)):
+            return Veredicto(True, radicado, motivo)
+        nuevos, fallo = await self._preguntar(
+            self.outlook, "documentos_nuevos_frente_al_radicado",
+            "la comparacion de documentos", email, radicado)
+        if fallo:
+            return Veredicto(True, radicado, f"{motivo} (sin comparar documentos: {fallo})")
+        if not nuevos:
+            return Veredicto(True, radicado, motivo)
+        return Veredicto(False, "", "", anexo_de=radicado,
+                         documentos_nuevos=list(nuevos))
 
     async def comprobar_contenido(
         self, email: EmailMessage, nombres_adjuntos=None

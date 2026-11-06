@@ -1,6 +1,6 @@
 {
  "meta": {
-  "fuente": "motor/ (mcp-fix, f65ddc4)",
+  "fuente": "motor/ (mcp-fix, 0bdd93e)",
   "generado": "2026-11-06",
   "punto_de_entrada": "correr.py -> pipeline/orquestador.py Orquestador.procesar",
   "total_nodos": 31,
@@ -11,6 +11,7 @@
    "ADJUNTO_ILEGIBLE",
    "ADJUNTO_NO_LEIDO",
    "ADJUNTO_PROTEGIDO",
+   "ANEXO_DE_RADICADO",
    "CLOUDFLARE_403",
    "DOCUMENTO_AMBIGUO",
    "DOCUMENTO_DE_OTRA_PERSONA",
@@ -13787,6 +13788,7 @@
       "SIN_TIPO_SOLICITUD": "No fue posible clasificar el tipo de solicitud.",
       "SOLO_EMPRESA_SIN_AFECTADO": "La comunicacion identifica una empresa pero no una persona afectada.",
       "ADJUNTO_PROTEGIDO": "Uno de los documentos adjuntos esta protegido con contraseña.",
+      "ANEXO_DE_RADICADO": "La comunicacion corresponde a un caso ya radicado y trae documentos que ese radicado no tiene. Se debe anexar al radicado o, si es una solicitud nueva, radicar.",
       "ADJUNTO_ILEGIBLE": "No fue posible leer uno de los documentos adjuntos.",
       "ADJUNTO_NO_LEIDO": "Uno de los documentos adjuntos esta en un formato que no se pudo leer.",
       "SIN_OCR": "No fue posible extraer el texto de un documento adjunto.",
@@ -13861,7 +13863,7 @@
      "nota_sobrescritura": "Si: pipeline.notificacion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/notificacion.py",
-     "linea": 115
+     "linea": 119
     },
     {
      "clave": "pipeline.notificacion._TITULOS",
@@ -13941,7 +13943,7 @@
      "nota_sobrescritura": "Si: pipeline.telemetria lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/telemetria.py",
-     "linea": 159
+     "linea": 161
     },
     {
      "clave": "pipeline.telemetria.MOTIVOS_AJENOS_AL_CONTENIDO",
@@ -13965,7 +13967,7 @@
      "nota_sobrescritura": "Si: pipeline.telemetria lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/telemetria.py",
-     "linea": 138
+     "linea": 140
     },
     {
      "clave": "pipeline.telemetria.MOTIVOS_MANUAL",
@@ -13982,6 +13984,7 @@
       "SIN_TIPO_SOLICITUD": "no se pudo clasificar en ninguna de las 27 categorias",
       "SOLO_EMPRESA_SIN_AFECTADO": "el correo identifica una empresa por su NIT y ninguna persona natural",
       "ADJUNTO_PROTEGIDO": "el adjunto con el soporte tiene contraseña",
+      "ANEXO_DE_RADICADO": "es del hilo de un radicado y trae documentos que ese radicado no tiene",
       "ADJUNTO_ILEGIBLE": "el adjunto no se pudo convertir",
       "ADJUNTO_NO_LEIDO": "un adjunto en un formato que no se convierte",
       "SIN_OCR": "imagen sin motor de OCR disponible",
@@ -15427,7 +15430,7 @@
    "nombre": "MOTIVOS_MANUAL",
    "modulo": "pipeline/telemetria.py",
    "descripcion": "Motivos de revision manual -> descripcion para el informe.",
-   "tamano": 27,
+   "tamano": 28,
    "valor": {
     "SIN_NOMBRE_REMITENTE": "no se pudo determinar el nombre de quien escribe",
     "SIN_NOMBRE_AFECTADO": "no se pudo determinar el nombre del afectado",
@@ -15438,6 +15441,7 @@
     "SIN_TIPO_SOLICITUD": "no se pudo clasificar en ninguna de las 27 categorias",
     "SOLO_EMPRESA_SIN_AFECTADO": "el correo identifica una empresa por su NIT y ninguna persona natural",
     "ADJUNTO_PROTEGIDO": "el adjunto con el soporte tiene contraseña",
+    "ANEXO_DE_RADICADO": "es del hilo de un radicado y trae documentos que ese radicado no tiene",
     "ADJUNTO_ILEGIBLE": "el adjunto no se pudo convertir",
     "ADJUNTO_NO_LEIDO": "un adjunto en un formato que no se convierte",
     "SIN_OCR": "imagen sin motor de OCR disponible",
@@ -15462,7 +15466,7 @@
    "nombre": "MOTIVO_PARA_EL_CORREO",
    "modulo": "pipeline/notificacion.py",
    "descripcion": "Motivo -> frase del aviso interno.",
-   "tamano": 27
+   "tamano": 28
   },
   {
    "nombre": "CLASES (errores)",

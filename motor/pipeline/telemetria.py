@@ -98,6 +98,8 @@ MOTIVOS_MANUAL = {
     "SOLO_EMPRESA_SIN_AFECTADO": "el correo identifica una empresa por su NIT y "
                                  "ninguna persona natural",
     "ADJUNTO_PROTEGIDO": "el adjunto con el soporte tiene contraseña",
+    "ANEXO_DE_RADICADO": "es del hilo de un radicado y trae documentos que ese "
+                         "radicado no tiene",
     "ADJUNTO_ILEGIBLE": "el adjunto no se pudo convertir",
     "ADJUNTO_NO_LEIDO": "un adjunto en un formato que no se convierte",
     "SIN_OCR": "imagen sin motor de OCR disponible",

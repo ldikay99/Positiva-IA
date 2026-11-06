@@ -360,11 +360,14 @@ async def main() -> int:
                 # La primera linea ya los lleva escritos; en el registro siguen
                 # para poder filtrar por ellos.
                 solo_json=("correo", "n", "de", "accion", "radicado",
-                           "motivo_manual", "area_destino"),
+                           "motivo_manual", "area_destino", "anexo_de"),
                 en_su_linea=("asunto", "sin_resolver", "por_que"),
                 correo=ref, n=i, de=len(correos), accion=r.accion,
                 radicado=r.radicado, motivo_manual=r.motivo_manual,
                 area_destino=r.area_destino,
+                # El radicado del caso cuando el correo fue a revision manual
+                # por traer documentos que ese radicado no tiene.
+                anexo_de=getattr(r, "anexo_de", ""),
                 # La frase del agente habla de un dato que falto, y solo
                 # explica el desenlace del correo que se cerro por eso. En un
                 # reenvio no hay frase —no se le llama— y lo que explica el

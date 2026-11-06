@@ -68,6 +68,10 @@ MOTIVO_PARA_EL_CORREO = {
         "La comunicacion identifica una empresa pero no una persona afectada.",
     "ADJUNTO_PROTEGIDO":
         "Uno de los documentos adjuntos esta protegido con contraseña.",
+    "ANEXO_DE_RADICADO":
+        "La comunicacion corresponde a un caso ya radicado y trae documentos "
+        "que ese radicado no tiene. Se debe anexar al radicado o, si es una "
+        "solicitud nueva, radicar.",
     "ADJUNTO_ILEGIBLE":
         "No fue posible leer uno de los documentos adjuntos.",
     "ADJUNTO_NO_LEIDO":

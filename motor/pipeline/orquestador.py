@@ -231,6 +231,9 @@ class Resultado:
     razon_del_reenvio: str = ""
     # Que capa de deduplicacion lo detecto. Solo con `accion == "duplicado"`.
     razon_del_duplicado: str = ""
+    # El radicado del que este correo es anexo: es de su hilo o de su asunto
+    # pero trae documentos que ese radicado no tiene.
+    anexo_de: str = ""
     # Lo que paso en la compuerta, la ronda de correccion y el revisor
     # obligatorio: veredicto inicial, campos devueltos, reparos del revisor y
     # cuantas llamadas costo. Lo lee el harness de punta a punta.
@@ -363,6 +366,24 @@ class Orquestador:
                 res.razon_del_duplicado = repetido.motivo
                 res.avisos.append(repetido.motivo)
                 await self._archivar_duplicado(email, res.avisos)
+                return await self._cerrar(res, inicio, bitacora, email)
+            if repetido.anexo_de:
+                # No se radica: SGDEA no deja anexar a un radicado desde aqui,
+                # y un radicado nuevo abre un segundo numero para el mismo
+                # caso. Tampoco se archiva: los documentos se perderian. Si es
+                # un anexo o una solicitud nueva de la misma persona en el
+                # mismo hilo no se puede saber desde el correo; lo decide una
+                # persona, que recibe el numero y la lista de documentos.
+                res.accion = "manual"
+                res.motivo_manual = "ANEXO_DE_RADICADO"
+                res.anexo_de = repetido.anexo_de
+                res.avisos.append(
+                    f"Es del caso {repetido.anexo_de} y trae "
+                    f"{len(repetido.documentos_nuevos)} documento(s) que ese "
+                    f"radicado no tiene: "
+                    f"{', '.join(repetido.documentos_nuevos)[:400]}")
+                await self._a_revision_manual(
+                    email, res.motivo_manual, res.avisos, res)
                 return await self._cerrar(res, inicio, bitacora, email)
 
             # Reclamar antes de trabajar. Las capas de arriba son de lectura y
@@ -1702,12 +1723,23 @@ class Orquestador:
         el hilo, y los demas correos tienen que procesarse por su cuenta.
         """
         conversacion = getattr(email, "conversation_id", None)
+        detallados = getattr(self.outlook, "mensajes_del_hilo", None)
         listar = getattr(self.outlook, "get_conversation_message_ids", None)
         mover = getattr(self.outlook, "move_email", None)
-        if not conversacion or listar is None or mover is None:
+        if not conversacion or (listar is None and detallados is None) or mover is None:
             return
         try:
-            otros = await listar(settings.OUTLOOK_FOLDER_ID, conversacion)
+            if detallados is not None:
+                # Un correo de afuera con adjuntos se queda: puede traer
+                # documentos que el radicado no tiene, y eso lo decide su
+                # propia comprobacion en la corrida siguiente.
+                otros = [
+                    m["id"] for m in await detallados(settings.OUTLOOK_FOLDER_ID, conversacion)
+                    if not (m.get("hasAttachments") and not es_buzon_de_positiva(
+                        ((m.get("from") or {}).get("emailAddress") or {}).get("address") or ""))
+                ]
+            else:
+                otros = await listar(settings.OUTLOOK_FOLDER_ID, conversacion)
         except Exception as e:
             if avisos is not None:
                 avisos.append(
@@ -1796,6 +1828,11 @@ class Orquestador:
                 if aviso.startswith("reenviado a "):
                     return aviso[0].upper() + aviso[1:]
             return ""
+        if res.anexo_de:
+            for aviso in res.avisos:
+                if aviso.startswith(f"Es del caso {res.anexo_de}"):
+                    return aviso
+            return f"Es del caso {res.anexo_de}."
         if not explica_el_desenlace(res.accion, res.motivo_manual):
             # La frase del agente habla de un dato que falto, y solo explica el
             # correo que se cerro por eso. Con un desenlace de infraestructura
