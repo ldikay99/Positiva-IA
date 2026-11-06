@@ -331,8 +331,9 @@ export function recorridos(corrida: Corrida | undefined): RecorridoCampo[] {
     } else if (e.tipo === "correccion" && e.fase === "inicio") {
       for (const [c, x] of Object.entries((e.campos as Record<string, { motivo: string; antes: unknown }>) ?? {})) de(c).pasos.push({ tipo: "devuelto", t: e.t, tono: "aviso", valor: x.antes, titulo: e.origen === "revisor" ? "Se devuelve a la IA por lo que objetó el revisor" : "Se devuelve a la IA para corregirlo", detalle: x.motivo });
     } else if (e.tipo === "correccion" && e.fase === "fin") {
+      // La corrección termina antes de que la compuerta vuelva a validar, aunque el evento llegue después.
       for (const [c, x] of Object.entries((e.campos as Record<string, { antes: unknown; despues: unknown; corregido: boolean }>) ?? {}))
-        de(c).pasos.push({ tipo: "corregido", t: e.t, tono: x.corregido ? "ia" : x.despues == null || x.despues === "" ? "error" : "aviso", valor: x.despues, titulo: x.corregido ? `La IA lo corrigió: «${corto(x.antes)}» pasa a «${corto(x.despues)}»` : x.despues == null || x.despues === "" ? "La IA no lo pudo corregir: queda sin valor" : "La IA mantuvo el mismo valor" });
+        de(c).pasos.splice(de(c).pasos.map((p) => p.tipo).lastIndexOf("devuelto") + 1 || de(c).pasos.length, 0, { tipo: "corregido", t: e.t, tono: x.corregido ? "ia" : x.despues == null || x.despues === "" ? "error" : "aviso", valor: x.despues, titulo: x.corregido ? `La IA lo corrigió: «${corto(x.antes)}» pasa a «${corto(x.despues)}»` : x.despues == null || x.despues === "" ? "La IA no lo pudo corregir: queda sin valor" : "La IA mantuvo el mismo valor" });
     } else if (e.tipo === "revision" && e.fase === "fin" && e.ok) {
       for (const [c, x] of Object.entries((e.veredictos as Record<string, { veredicto: string; valor: string; detalle: string }>) ?? {})) {
         const v = x.veredicto;
