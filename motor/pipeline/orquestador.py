@@ -78,6 +78,9 @@ CAMPOS_REVISADOS = CAMPOS_DE_IDENTIDAD + ("tipo_solicitud",)
 
 # Cuanto texto se le muestra al revisor alrededor de cada aparicion.
 ANCHO_DEL_EXTRACTO = 90
+# Rondas en que lo rechazado vuelve al agente. La segunda arregla lo que la
+# primera corrigio mal ("Extrafersa" -> "Consuelo"), con los dos ya descartados.
+RONDAS_DE_CORRECCION = 2
 EXTRACTOS_POR_CAMPO = 2
 
 
@@ -1131,7 +1134,8 @@ class Orquestador:
 
         1. La compuerta valida. Lo que rechaza suele tener arreglo —el agente
            puso el area en vez de la entidad, o el NIT donde iba la cedula—: se
-           le devuelve al agente UNA vez, con cada reparo dicho, y lo corregido
+           le devuelve al agente hasta RONDAS_DE_CORRECCION veces, con cada reparo
+           dicho y los valores ya rechazados, y lo corregido
            vuelve a pasar por la misma compuerta.
         2. Si la compuerta lo dejaria pasar, el revisor comprueba la identidad.
 
@@ -1148,19 +1152,39 @@ class Orquestador:
                 hallazgos, ctx, resolucion, email, cuerpo, texto_adjuntos, ws,
                 consultas_del_agente)
         res.revision["veredicto_antes_de_corregir"] = dictamen.veredicto.value
-        if (dictamen.veredicto is Veredicto.RECHAZADO
-                and not self._sin_tiempo()):
+        # Valores ya rechazados por campo: la segunda ronda los conoce todos,
+        # para que el agente no vuelva de un rechazo al anterior.
+        rechazados: Dict[str, List[str]] = {}
+        for ronda in range(RONDAS_DE_CORRECCION):
+            if (dictamen.veredicto is not Veredicto.RECHAZADO
+                    or self._sin_tiempo()):
+                break
             a_corregir = campos_a_corregir(dictamen, determinista)
-            if a_corregir:
+            if not a_corregir:
+                break
+            for campo in a_corregir:
+                h = hallazgos.get(campo)
+                if h is not None and h.valor not in (None, "", []):
+                    previos = rechazados.setdefault(campo, [])
+                    if str(h.valor) not in previos:
+                        previos.append(str(h.valor))
+            if ronda == 0:
                 res.revision["corregidos"] = dict(a_corregir)
                 res.revision["rechazos_antes_de_corregir"] = [
                     f"{r.codigo}: {r.campo}: {r.detalle}"
                     for r in dictamen.bloqueantes]
-                with res.cronometrar("correccion"):
-                    hallazgos, dictamen = await self._corregir(
-                        ctx, determinista, hallazgos, a_corregir,
-                        bitacora, res, email, cuerpo, texto_adjuntos,
-                        ws, consultas_del_agente, resolucion)
+            else:
+                res.revision.setdefault("corregidos_en_otra_ronda", {}).update(a_corregir)
+                a_corregir = {
+                    c: m + (f". Tambien se rechazaron antes: "
+                            + ", ".join(f"'{v}'" for v in rechazados[c][:-1])
+                            if len(rechazados.get(c, [])) > 1 else "")
+                    for c, m in a_corregir.items()}
+            with res.cronometrar("correccion"):
+                hallazgos, dictamen = await self._corregir(
+                    ctx, determinista, hallazgos, a_corregir,
+                    bitacora, res, email, cuerpo, texto_adjuntos,
+                    ws, consultas_del_agente, resolucion)
         if dictamen.veredicto is not Veredicto.RECHAZADO and not self._sin_tiempo():
             with res.cronometrar("revisor"):
                 hallazgos, dictamen = await self._revision_obligatoria(

@@ -351,3 +351,9 @@ def test_todos_los_campos_reportables_se_aceptan(ctx):
             "confianza": 0.5,
         })
         assert r.ok is True, f"el campo '{campo}' deberia ser reportable"
+
+
+def test_digito_verificacion_con_resto_uno_es_uno():
+    # Con resto 1 la DIAN usa el propio resto: Ecopetrol es 899.999.068-1.
+    assert _digito_verificacion_nit("899999068") == 1
+    assert _digito_verificacion_nit("901521009") == 1

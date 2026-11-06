@@ -1249,21 +1249,29 @@ def titular_rotulado_de_otro(numero: Any, nombre: Any, texto: str) -> str:
             tokens.pop()
         if not rotulado:
             continue
-        # El nombre mas largo, de 2 a 5 palabras, que acaba justo antes del rotulo.
-        for largo in range(min(5, len(tokens)), 1, -1):
+        # Nombres de 2 a 5 palabras (sin contar "de", "la") que acaban justo
+        # antes del rotulo. Si alguno es la persona dada, el numero es suyo: un
+        # corte mas corto ("elvira torres de la hoz") pierde el primer nombre.
+        candidatos: List[str] = []
+        for largo in range(min(8, len(tokens)), 1, -1):
             cola = tokens[-largo:]
             while cola and cola[0] in _ANTES_DEL_NOMBRE:
                 cola = cola[1:]
-            if len(cola) < 2 or cola[0] in _CONECTORES_DE_NOMBRE:
+            utiles = [t for t in cola if t not in _CONECTORES_DE_NOMBRE]
+            if (len(utiles) < 2 or len(utiles) > 5
+                    or cola[0] in _CONECTORES_DE_NOMBRE):
                 continue
             candidato = " ".join(cola)
-            if (motivo_por_el_que_no_es_un_nombre(candidato)
+            if candidato in candidatos or (
+                    motivo_por_el_que_no_es_un_nombre(candidato)
                     or set(cola) & _PALABRAS_DEL_TRAMITE or _parece_entidad(candidato)):
                 continue
             if (es_el_mismo_titular(candidato, str(nombre))
                     or es_la_misma_persona(_normaliza(candidato), _normaliza(str(nombre)))):
                 return ""
-            return candidato
+            candidatos.append(candidato)
+        if candidatos:
+            return candidatos[0]
     return ""
 
 

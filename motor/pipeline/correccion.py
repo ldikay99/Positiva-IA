@@ -7,7 +7,7 @@ entidad, el documento es el NIT de quien escribe y no la cedula del afectado,
 el nombre trae el cargo delante. Mandar eso a manual sin intentarlo es trabajo
 de una persona que el agente puede hacer, con el motivo ya dicho.
 
-Se intenta una sola vez. Lo que vuelva pasa por la misma compuerta, asi que la
+Se intenta hasta dos veces (RONDAS_DE_CORRECCION en el orquestador). Lo que vuelva pasa por la misma compuerta, asi que la
 correccion no puede colar nada que la validacion no acepte.
 """
 from __future__ import annotations

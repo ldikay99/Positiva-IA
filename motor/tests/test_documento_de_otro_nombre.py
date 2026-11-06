@@ -41,3 +41,14 @@ def test_el_nit_no_gana_solo_frente_a_una_identificacion_de_persona():
     assert hallazgo is None
     assert no_resuelto.motivo == "VARIOS_CANDIDATOS_AMBIGUOS"
 
+
+
+def test_el_nombre_completo_no_se_corta_al_compararlo():
+    # Cortado a cinco palabras, "DEICY ELVIRA TORRES DE LA HOZ" pierde el primer
+    # nombre y parece otra persona que "Deicy Torres De La Oz".
+    texto = T("Yo, DEICY ELVIRA TORRES DE LA HOZ, identificada con cedula de "
+              "ciudadania No. 36.556.493 expedida en Santa Marta")
+    assert compuerta.titular_rotulado_de_otro(
+        "36556493", "Deicy Torres De La Oz", texto) == ""
+    assert compuerta.titular_rotulado_de_otro(
+        "36556493", "Horacio Antonio Rivera Donado", texto) == "deicy elvira torres de la hoz"

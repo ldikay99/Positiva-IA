@@ -1262,6 +1262,8 @@ remiten expone exponen indica indican aclara aclaran responde responden
 acepta aceptan objeta objetan certifica certifican declara declaran autoriza
 autorizan interpone interponen radica radican reclama reclaman denuncia
 denuncian agradece agradecen comunica comunican notifica notifican
+refiere refieren niega niegan consulta consultan ingresa ingresan aceptar
+entender entiende entienden comprende comprenden firmar firma tolera asiste
 cordial saludo saludos atentamente atenta atento quedo agradezco gracias
 buenos buenas dias tardes noches reciba respuesta solicitud peticion queja
 reclamo derecho tutela asunto referencia confirmacion reserva favor cuando
@@ -2430,6 +2432,11 @@ _TIPO_SOLICITUD_DECLARADO = (
     # mismo correo nombre la junta que califico.
     (12, r"\bactiv[oa]\s+o\s+inactiv[oa]|\bsi\s+(?:estoy|esta|sigo)\s+"
          r"(?:activ[oa]|afiliad[oa])"),
+    # Llevar al paciente a otra IPS o cambiarle el prestador. Va antes de la
+    # controversia: la PCL se nombra como riesgo de la demora, no como tramite.
+    (23, r"traslado\s+(?:y\s+remisi[oó]n\s+)?(?:a|de)\s+(?:una\s+|otra\s+|la\s+)?"
+         r"(?:ips|instituci[oó]n|cl[ií]nica|hospital)"
+         r"|remisi[oó]n\s+y\s+traslado|cambio\s+de\s+(?:proveedor|ips|prestador)"),
     (7,  r"\bdictamen\b|\bcontroversia\b|\bp[ec]l\b"
          r"|junta\s+(?:regional|nacional)\s+de\s+calificaci[oó]n"
          r"|p[eé]rdida\s+de\s+capacidad\s+laboral"),

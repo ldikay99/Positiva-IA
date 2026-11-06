@@ -461,3 +461,34 @@ def test_empresa_que_abre_el_nombre_se_respeta():
     _revisar_entidad_con_antepuesto(
         "nombre_afectado", "Empresa de Energia del Pacifico SA ESP", reparos, correcciones)
     assert correcciones == {} and reparos == []
+
+
+@pytest.mark.asyncio
+async def test_lo_que_la_primera_correccion_deja_mal_tiene_otra_ronda(tmp_path):
+    cuerpo = CUERPO.replace("Ana Lopez", "EXTRACTORA SAN FERNANDO S.A.S")
+    email = _email(cuerpo)
+    email.from_address = EmailAddress(name="Contabilidad Extrafersa",
+                                      address="conta.extrafersa@gmail.com")
+    modelo = ModeloFalso(turnos=[
+        Turno(llamadas=[_reporta("tipo_solicitud", 16), _reporta("tipo_remitente", 2),
+                        _reporta("nombre_remitente", "Extrafersa")]),
+        Turno(texto="LISTO"),
+        Turno(llamadas=[_reporta("nombre_remitente", "Consuelo")]),
+        Turno(llamadas=[_reporta("nombre_remitente", "EXTRACTORA SAN FERNANDO S.A.S")]),
+        Turno(texto="nombre_afectado: OK\nnumero_documento_afectado: OK\nREVISADO"),
+    ])
+    orq = Orquestador(modelo=modelo, radicador=_Radicador(),
+                      base_workspace=str(tmp_path))
+    r = await orq.procesar(email)
+    assert r.accion == "radicado", (r.motivo_manual, r.avisos)
+    assert r.hallazgos["nombre_remitente"].valor == "EXTRACTORA SAN FERNANDO S.A.S"
+    pedido = " ".join(m["contenido"] for m in modelo.recibidos[-2]["mensajes"]
+                      if isinstance(m.get("contenido"), str))
+    assert "'Extrafersa'" in pedido
+
+
+def test_lo_que_refiere_el_paciente_no_es_su_nombre():
+    hallazgo, _ = extraer_nombre_afectado(
+        "SE EXPLICA RIESGOS Y POSIBLES COMPLICACIONES\n"
+        "PACIENTE REFIERE ACEPTAR Y ENTENDER\nORDENES DE LABORATORIO")
+    assert hallazgo is None or "REFIERE" not in str(hallazgo.valor)

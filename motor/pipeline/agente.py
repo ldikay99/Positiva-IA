@@ -229,8 +229,22 @@ tipo_solicitud — clasificar la intencion del correo entre las categorias del
     17 Pensiones: mesadas, certificados de pension, nomina y novedades de
        pensionados.
     24 Aporte de Pruebas (AT): enviar o corregir el reporte de un accidente
-       (FURAT) o pruebas para la investigacion de un accidente.
-    14 Otra: solo si ninguna categoria describe lo que se pide.
+       (FURAT) o pruebas para la investigacion de un accidente, tambien
+       cuando se reenvian los documentos que Positiva pidio para ese caso.
+    23 Traslado para prestacion de servicio: llevar al paciente a otra IPS,
+       clinica o ciudad, remitirlo a mayor complejidad, cambiarle el
+       prestador, o la logistica de ese traslado (transporte, hospedaje).
+    21 Solicitud de medicamentos: entregar o autorizar medicamentos.
+    3  Asesoria en SGSST: que la ARL acompañe o asesore a una empresa en su
+       sistema de seguridad y salud en el trabajo —capacitaciones,
+       programas de prevencion, esquemas de vacunacion, visitas tecnicas—.
+    10 Internet: problemas con el portal o la pagina web —usuario, clave,
+       acceso—, salvo que el fin declarado sea un tramite de afiliacion o de
+       datos: entonces clasifica por ese tramite (12 o 1).
+    27 ACCAI: solo el componente de ahorro individual ACCAI.
+    14 Otra: solo si ninguna categoria describe lo que se pide. Un aviso
+       informativo que no pide nada a Positiva (una comision de servicio, un
+       cambio de horario) es 14.
 
   Desempates: 8 pide INFORMACION sobre la deuda; 26 discute o hace un PAGO.
   7 es sobre una CALIFICACION; una queja por atencion medica es 5. 1 corrige

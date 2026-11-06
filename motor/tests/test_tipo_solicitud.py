@@ -140,3 +140,21 @@ def test_todo_codigo_marcado_existe_y_tiene_oficina():
 def test_reconoce_el_tramite_sin_la_preposicion(texto, codigo):
     """En un asunto se omite el 'de': 'Devolucion aportes', 'PAGO INCAPACIDAD'."""
     assert _valor(asunto=texto) == codigo
+
+
+def test_el_traslado_a_otra_ips_es_23_aunque_nombre_la_pcl_como_riesgo():
+    h, _ = extraer_tipo_solicitud(
+        "SOLICITUD DE AGILIZACION DE REMISION Y TRASLADO DE HOSPITAL DE MAYOR COMPLEJIDAD",
+        "La demora incrementa el riesgo de perdida de capacidad laboral.")
+    assert h.valor == 23
+
+
+def test_el_cambio_de_prestador_es_23():
+    h, _ = extraer_tipo_solicitud("", "solicito el cambio de proveedor para Bogota")
+    assert h.valor == 23
+
+
+def test_el_traslado_de_aportes_no_es_un_traslado_de_paciente():
+    h, _ = extraer_tipo_solicitud("Devolucion aportes",
+                                  "solicito que sean trasladados los aportes a Colmena")
+    assert h.valor == 26

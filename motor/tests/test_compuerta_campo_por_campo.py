@@ -11,7 +11,7 @@ from pipeline.compuerta import Fuentes, Veredicto, aplicar, informe, validar
 from pipeline.extraccion import Hallazgo
 
 # NIT ficticio de una entidad publica, con su digito de verificacion (DIAN).
-NIT_ENTIDAD = "8901020180"
+NIT_ENTIDAD = "8901020181"
 NIT_ENTIDAD_SIN_DV = "890102018"
 
 
@@ -212,7 +212,7 @@ def test_nit_rotulado_en_el_correo_aunque_el_tipo_diga_cedula():
     d = validar(_base(
         numero_documento_afectado=_h("numero_documento_afectado", NIT_ENTIDAD_SIN_DV),
         nombre_afectado=_h("nombre_afectado", "LUZ MARINA DIAZ ROJAS"),
-    ), fuentes="ALCALDIA DE VILLAFICTICIA NIT 890.102.018-0 ... LUZ MARINA DIAZ ROJAS")
+    ), fuentes="ALCALDIA DE VILLAFICTICIA NIT 890.102.018-1 ... LUZ MARINA DIAZ ROJAS")
     assert ("NIT_DE_ENTIDAD_EN_PERSONA", "numero_documento_afectado", True) in _codigos(d)
 
 

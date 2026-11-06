@@ -438,7 +438,8 @@ def _digito_verificacion_nit(numero: str) -> int:
             break
         total += int(c) * pesos[i]
     resto = total % 11
-    return 0 if resto in (0, 1) else 11 - resto
+    # Con resto 0 o 1 el digito es el propio resto (Ecopetrol: 899999068-1).
+    return resto if resto in (0, 1) else 11 - resto
 
 
 def _codigo_de_tipo(tipo: str) -> Optional[int]:
