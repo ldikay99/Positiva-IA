@@ -16472,13 +16472,20 @@
      "usos_en_el_importador": [
       "func"
      ]
+    },
+    {
+     "en": "pipeline.orquestador",
+     "import_a_nivel_de_modulo": false,
+     "usos_en_el_importador": [
+      "func"
+     ]
     }
    ],
    "atributo_en": []
   },
   "auto_sobrescribible": false,
   "auto_alcance": "parcial",
-  "auto_nota": "Parcial, se marca como no sobrescribible: pipeline.orquestador lo re-importa dentro de una funcion en cada llamada; pipeline.orquestador lo re-importa dentro de una funcion en cada llamada; pipeline.orquestador lo re-importa dentro de una funcion en cada llamada. PERO pipeline.compuerta lo copia con `from utils.tipos_documento import TIPOS_DE_ORGANIZACION` al importar (para cambiarlo ahi: setattr(pipeline.compuerta, 'TIPOS_DE_ORGANIZACION', v)); pipeline.extraccion lo copia con `from utils.tipos_documento import TIPOS_DE_ORGANIZACION` al importar (para cambiarlo ahi: setattr(pipeline.extraccion, 'TIPOS_DE_ORGANIZACION', v))."
+  "auto_nota": "Parcial, se marca como no sobrescribible: pipeline.orquestador lo re-importa dentro de una funcion en cada llamada; pipeline.orquestador lo re-importa dentro de una funcion en cada llamada; pipeline.orquestador lo re-importa dentro de una funcion en cada llamada; pipeline.orquestador lo re-importa dentro de una funcion en cada llamada. PERO pipeline.compuerta lo copia con `from utils.tipos_documento import TIPOS_DE_ORGANIZACION` al importar (para cambiarlo ahi: setattr(pipeline.compuerta, 'TIPOS_DE_ORGANIZACION', v)); pipeline.extraccion lo copia con `from utils.tipos_documento import TIPOS_DE_ORGANIZACION` al importar (para cambiarlo ahi: setattr(pipeline.extraccion, 'TIPOS_DE_ORGANIZACION', v))."
  },
  "utils.tipos_documento.TIPOS_ALFANUMERICOS": {
   "modulo": "utils.tipos_documento",

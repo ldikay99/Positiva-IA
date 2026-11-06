@@ -1,6 +1,6 @@
 {
  "meta": {
-  "fuente": "motor/ (mcp-fix, c47f282)",
+  "fuente": "motor/ (mcp-fix, 14b08df)",
   "generado": "2026-11-06",
   "punto_de_entrada": "correr.py -> pipeline/orquestador.py Orquestador.procesar",
   "total_nodos": 31,
@@ -2348,7 +2348,6 @@
      "usa": [
       "pipeline.conversion.ANCHO_MINIMO_OCR_PX",
       "pipeline.conversion.CONFIANZA_DUDOSA",
-      "pipeline.conversion.CONFIANZA_REINTENTO_OSD",
       "pipeline.conversion.DPI_DE_RESPALDO_OCR",
       "pipeline.conversion.DPI_MAXIMO_OCR",
       "pipeline.conversion.DPI_MINIMO_OCR",
@@ -2361,7 +2360,6 @@
       "pipeline.conversion.LIMITE_PAGINAS_PDF",
       "pipeline.conversion.MARCA_TRANSCRITO_POR_IA",
       "pipeline.conversion.MAX_IMAGENES_POR_PAGINA",
-      "pipeline.conversion.MINIMO_CARACTERES_OCR",
       "pipeline.conversion.PRESUPUESTO_OCR_POR_CORREO_S",
       "pipeline.conversion.PRESUPUESTO_OCR_SEGUNDOS",
       "pipeline.conversion.TIMEOUT_OCR_PAGINA_S",
@@ -7434,7 +7432,7 @@
      "descripcion": "Tipos que identifican a una ORGANIZACION y no a una persona natural. Un documento de estos con un nombre de persona al lado es un par imposible.",
      "env": null,
      "sobrescribible_en_caliente": false,
-     "nota_sobrescritura": "Parcial, se marca como no sobrescribible: pipeline.orquestador lo re-importa dentro de una funcion en cada llamada; pipeline.orquestador lo re-importa dentro de una funcion en cada llamada; pipeline.orquestador lo re-importa dentro de una funcion en cada llamada. PERO pipeline.compuerta lo copia con `from utils.tipos_documento import TIPOS_DE_ORGANIZACION` al importar (para cambiarlo ahi: setattr(pipeline.compuerta, 'TIPOS_DE_ORGANIZACION', v)); pipeline.extraccion lo copia con `from utils.tipos_documento import TIPOS_DE_ORGANIZACION` al importar (para cambiarlo ahi: setattr(pipeline.extraccion, 'TIPOS_DE_ORGANIZACION', v)).",
+     "nota_sobrescritura": "Parcial, se marca como no sobrescribible: pipeline.orquestador lo re-importa dentro de una funcion en cada llamada; pipeline.orquestador lo re-importa dentro de una funcion en cada llamada; pipeline.orquestador lo re-importa dentro de una funcion en cada llamada; pipeline.orquestador lo re-importa dentro de una funcion en cada llamada. PERO pipeline.compuerta lo copia con `from utils.tipos_documento import TIPOS_DE_ORGANIZACION` al importar (para cambiarlo ahi: setattr(pipeline.compuerta, 'TIPOS_DE_ORGANIZACION', v)); pipeline.extraccion lo copia con `from utils.tipos_documento import TIPOS_DE_ORGANIZACION` al importar (para cambiarlo ahi: setattr(pipeline.extraccion, 'TIPOS_DE_ORGANIZACION', v)).",
      "alcance_sobrescritura": "parcial",
      "archivo": "utils/tipos_documento.py",
      "linea": 82

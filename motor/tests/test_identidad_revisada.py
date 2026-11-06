@@ -211,6 +211,20 @@ def test_el_firmante_hereda_su_cedula_al_afectado_sin_documento():
     assert hallazgos["tipo_documento_afectado"].valor == 1
 
 
+def test_una_empresa_afectada_no_lleva_el_sexo_de_quien_firma():
+    hallazgos = _base(nombre_afectado="INKJETCOL CIA LTDA",
+                      numero_documento_afectado="8305132547",
+                      tipo_documento_afectado=10, sexo_afectado=2)
+    _heredar(hallazgos, "")
+    assert "sexo_afectado" not in hallazgos
+
+
+def test_una_persona_afectada_conserva_su_sexo():
+    hallazgos = _base(sexo_afectado=2)
+    _heredar(hallazgos, "")
+    assert hallazgos["sexo_afectado"].valor == 2
+
+
 def test_no_se_hereda_si_el_afectado_ya_tiene_su_cedula_junto_al_nombre():
     hallazgos = _base(numero_documento_remitente="91481220",
                       tipo_documento_remitente=1)

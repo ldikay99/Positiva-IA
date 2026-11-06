@@ -867,6 +867,7 @@ class Orquestador:
             Orquestador._firmante_que_es_el_afectado(hallazgos, res, texto)
             Orquestador._entidad_que_escribe(
                 hallazgos, res, fuentes, correo_remitente)
+        Orquestador._empresa_sin_sexo(hallazgos, res)
 
         tipo = hallazgos.get("tipo_remitente")
         if tipo is None or tipo.valor != TIPO_REMITENTE_ES_EL_AFECTADO:
@@ -1073,6 +1074,23 @@ class Orquestador:
                            evidencia, 0.85, metodo)
         # El sexo era el de la persona: una empresa no tiene.
         if hallazgos.pop("sexo_afectado", None) is not None:
+            res.atribucion.pop("sexo_afectado", None)
+
+    @staticmethod
+    def _empresa_sin_sexo(hallazgos, res) -> None:
+        """
+        Un afectado con NIT es una organizacion y no tiene sexo. El que se haya
+        leido es el de una persona del correo (quien firma, a quien se le
+        respondio), y se envia "no determinado".
+        """
+        from utils.tipos_documento import TIPOS_DE_ORGANIZACION
+
+        h_tipo = hallazgos.get("tipo_documento_afectado")
+        try:
+            tipo = int(h_tipo.valor) if h_tipo is not None else None
+        except (TypeError, ValueError):
+            return
+        if tipo in TIPOS_DE_ORGANIZACION and hallazgos.pop("sexo_afectado", None) is not None:
             res.atribucion.pop("sexo_afectado", None)
 
     @staticmethod
