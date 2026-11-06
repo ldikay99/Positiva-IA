@@ -381,6 +381,20 @@ class Orquestador:
             if repetido.motivo and not repetido.es_duplicado:
                 res.avisos.append(f"deduplicacion degradada: {repetido.motivo}")
             if repetido.es_duplicado:
+                cita = await self._pide_algo_nuevo(email, repetido, res)
+                if cita:
+                    # Igual que el anexo: no se radica, porque si el modelo se
+                    # equivoca un radicado nuevo es un duplicado en SGDEA, y no
+                    # se archiva, porque se perderia la solicitud.
+                    res.accion = "manual"
+                    res.motivo_manual = "POSIBLE_SOLICITUD_NUEVA"
+                    res.anexo_de = repetido.radicado
+                    res.avisos.append(
+                        f"Es del caso {repetido.radicado} pero parece pedir algo "
+                        f"distinto de lo radicado: «{cita[:300]}»")
+                    await self._a_revision_manual(
+                        email, res.motivo_manual, res.avisos, res)
+                    return await self._cerrar(res, inicio, bitacora, email)
                 res.accion = "duplicado"
                 res.radicado = repetido.radicado
                 res.razon_del_duplicado = repetido.motivo
@@ -1666,6 +1680,75 @@ class Orquestador:
             if avisos is not None:
                 for s in getattr(self.radicador, "suposiciones", []):
                     avisos.append(f"por defecto: {s}")
+
+    # Las capas que dicen de que radicado es el correo por lo que dice y no por
+    # su propia etiqueta. Un correo que ya lleva la etiqueta ES el radicado.
+    _CAPAS_DEL_MISMO_CASO = (
+        "otro correo del mismo hilo ya fue radicado",
+        "ya hay un correo radicado con este mismo asunto",
+        "el mismo remitente radico este caso en esta misma corrida",
+    )
+
+    async def _pide_algo_nuevo(
+        self, email: EmailMessage, repetido: Any, res: Resultado,
+    ) -> str:
+        """
+        La frase con que pide algo nuevo un correo que se iba a dar por duplicado.
+
+        Solo para quien escribe de afuera en el caso que el mismo radico, con un
+        texto que no es el del radicado: un reenvio exacto no se consulta. Lo
+        decide `seguimiento.clasificar` con una llamada al modelo; ante la duda
+        o un fallo devuelve vacio y el correo sigue como duplicado, que es lo
+        que pasaba antes. Ver `pipeline/seguimiento.py`.
+        """
+        from difflib import SequenceMatcher
+
+        from pipeline import seguimiento
+        from pipeline.duplicados import texto_propio, texto_que_distingue
+
+        motivo = (repetido.motivo or "")
+        if not repetido.radicado or not motivo.startswith(self._CAPAS_DEL_MISMO_CASO):
+            return ""
+        remitente = ((email.from_address.address if email.from_address else "")
+                     or "").strip().lower()
+        leer = getattr(self.outlook, "correo_con_etiqueta", None)
+        if (not remitente or es_buzon_de_positiva(remitente) or leer is None
+                or getattr(self.modelo, "generar", None) is None):
+            return ""
+        nuevo = clean_html_content(email.body.content or "")
+        propio = seguimiento.texto_sin_citas(nuevo)
+        if len(propio) < seguimiento.LARGO_MINIMO_DEL_TEXTO_PROPIO:
+            # Un reenvio sin nada propio no pide nada por su cuenta.
+            return ""
+        try:
+            radicado = await leer(repetido.radicado)
+        except Exception as e:
+            res.avisos.append(
+                f"no se pudo leer el radicado {repetido.radicado} para ver si "
+                f"esto es seguimiento ({type(e).__name__}: {e})")
+            return ""
+        if not radicado:
+            return ""
+        de = ((((radicado.get("from") or {}).get("emailAddress") or {})
+               .get("address")) or "").strip().lower()
+        if de != remitente:
+            return ""
+        anterior = clean_html_content((radicado.get("body") or {}).get("content") or "")
+        # Si el radicado casi no tiene texto, lo que pidio esta en sus adjuntos
+        # y no hay con que comparar: el modelo veria cualquier cosa como nueva.
+        if not texto_que_distingue(anterior):
+            return ""
+        if SequenceMatcher(None, texto_propio(nuevo), texto_propio(anterior)).ratio() >= 0.995:
+            return ""
+        c = await asyncio.to_thread(
+            seguimiento.clasificar, self.modelo,
+            radicado.get("subject") or "", " ".join(anterior.split()),
+            email.subject or "", propio)
+        res.tokens_entrada += c.tokens_entrada
+        res.tokens_salida += c.tokens_salida
+        if c.descartada:
+            res.avisos.append(f"seguimiento: {c.descartada}; queda como duplicado")
+        return c.cita if c.es_solicitud_nueva else ""
 
     async def _archivar_duplicado(
         self, email: EmailMessage, avisos: Optional[List[str]] = None,

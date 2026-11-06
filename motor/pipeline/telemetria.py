@@ -100,6 +100,8 @@ MOTIVOS_MANUAL = {
     "ADJUNTO_PROTEGIDO": "el adjunto con el soporte tiene contraseña",
     "ANEXO_DE_RADICADO": "es del hilo de un radicado y trae documentos que ese "
                          "radicado no tiene",
+    "POSIBLE_SOLICITUD_NUEVA": "es del hilo de un radicado de la misma persona "
+                               "pero pide algo distinto de lo radicado",
     "ADJUNTO_ILEGIBLE": "el adjunto no se pudo convertir",
     "ADJUNTO_NO_LEIDO": "un adjunto en un formato que no se convierte",
     "SIN_OCR": "imagen sin motor de OCR disponible",

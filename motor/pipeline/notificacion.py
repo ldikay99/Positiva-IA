@@ -72,6 +72,10 @@ MOTIVO_PARA_EL_CORREO = {
         "La comunicacion corresponde a un caso ya radicado y trae documentos "
         "que ese radicado no tiene. Se debe anexar al radicado o, si es una "
         "solicitud nueva, radicar.",
+    "POSIBLE_SOLICITUD_NUEVA":
+        "La comunicacion llega en el hilo de un caso ya radicado de la misma "
+        "persona, pero pide algo distinto de lo radicado. Se debe radicar si es "
+        "una solicitud nueva, o tratar como seguimiento del radicado.",
     "ADJUNTO_ILEGIBLE":
         "No fue posible leer uno de los documentos adjuntos.",
     "ADJUNTO_NO_LEIDO":

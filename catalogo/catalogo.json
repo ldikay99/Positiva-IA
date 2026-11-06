@@ -1,6 +1,6 @@
 {
  "meta": {
-  "fuente": "motor/ (mcp-fix, 6c04b20)",
+  "fuente": "motor/ (mcp-fix, 2f62a8b)",
   "generado": "2026-11-06",
   "punto_de_entrada": "correr.py -> pipeline/orquestador.py Orquestador.procesar",
   "total_nodos": 31,
@@ -22,6 +22,7 @@
    "MODELO_NO_RESPONDIO",
    "MODELO_SIN_PERMISO",
    "PETICION_MAL_FORMADA",
+   "POSIBLE_SOLICITUD_NUEVA",
    "RADICACION_SIN_CONFIRMAR",
    "RECLAMO_AGOTADO",
    "REMITENTE_EXCLUIDO",
@@ -2349,7 +2350,6 @@
      "usa": [
       "pipeline.conversion.ANCHO_MINIMO_OCR_PX",
       "pipeline.conversion.CONFIANZA_DUDOSA",
-      "pipeline.conversion.CONFIANZA_REINTENTO_OSD",
       "pipeline.conversion.DPI_DE_RESPALDO_OCR",
       "pipeline.conversion.DPI_MAXIMO_OCR",
       "pipeline.conversion.DPI_MINIMO_OCR",
@@ -2362,7 +2362,6 @@
       "pipeline.conversion.LIMITE_PAGINAS_PDF",
       "pipeline.conversion.MARCA_TRANSCRITO_POR_IA",
       "pipeline.conversion.MAX_IMAGENES_POR_PAGINA",
-      "pipeline.conversion.MINIMO_CARACTERES_OCR",
       "pipeline.conversion.PRESUPUESTO_OCR_POR_CORREO_S",
       "pipeline.conversion.PRESUPUESTO_OCR_SEGUNDOS",
       "pipeline.conversion.TIMEOUT_OCR_PAGINA_S",
@@ -13789,24 +13788,9 @@
       "SOLO_EMPRESA_SIN_AFECTADO": "La comunicacion identifica una empresa pero no una persona afectada.",
       "ADJUNTO_PROTEGIDO": "Uno de los documentos adjuntos esta protegido con contraseña.",
       "ANEXO_DE_RADICADO": "La comunicacion corresponde a un caso ya radicado y trae documentos que ese radicado no tiene. Se debe anexar al radicado o, si es una solicitud nueva, radicar.",
+      "POSIBLE_SOLICITUD_NUEVA": "La comunicacion llega en el hilo de un caso ya radicado de la misma persona, pero pide algo distinto de lo radicado. Se debe radicar si es una solicitud nueva, o tratar como seguimiento del radicado.",
       "ADJUNTO_ILEGIBLE": "No fue posible leer uno de los documentos adjuntos.",
-      "ADJUNTO_NO_LEIDO": "Uno de los documentos adjuntos esta en un formato que no se pudo leer.",
-      "SIN_OCR": "No fue posible extraer el texto de un documento adjunto.",
-      "VALIDACION_RECHAZO": "Los datos obtenidos no superaron las validaciones de consistencia.",
-      "PETICION_MAL_FORMADA": "La comunicacion no pudo registrarse en el sistema de radicacion.",
-      "RADICACION_SIN_CONFIRMAR": "El sistema de radicacion acepto la comunicacion sin confirmar su numero. Verificar si ya quedo registrada antes de radicarla de nuevo.",
-      "INYECCION_DETECTADA": "El contenido de la comunicacion requiere revision de un funcionario.",
-      "VOLUMEN_EXCESIVO": "La comunicacion trae mas documentos o paginas de los que se tramitan de forma automatica y requiere revision de un funcionario.",
-      "FACTURA_ELECTRONICA": "La comunicacion corresponde a una factura electronica y no a una PQRD.",
-      "REMITENTE_EXCLUIDO": "La comunicacion la escribe un buzon que no radica por este canal.",
-      "REMITENTE_NO_IDENTIFICABLE": "No fue posible identificar un remitente externo en la conversacion.",
-      "CLOUDFLARE_403": "El sistema de radicacion no estuvo disponible durante el procesamiento.",
-      "SGDEA_CAIDO": "El sistema de radicacion no estuvo disponible durante el procesamiento.",
-      "MODELO_NO_RESPONDIO": "El servicio de procesamiento automatico no estuvo disponible.",
-      "MODELO_SIN_PERMISO": "El servicio de procesamiento automatico no estuvo disponible.",
-      "RECLAMO_AGOTADO": "El procesamiento automatico no pudo completarse.",
-      "TIEMPO_DE_CORRIDA_AGOTADO": "El procesamiento automatico no alcanzo a completarse.",
-      "ERROR_INESPERADO": "El procesamiento automatico no pudo completarse."
+      "ADJUNTO_NO_LEIDO": "Uno de los documentos adjuntos esta en un formato que no se pudo leer."
      },
      "descripcion": "Redaccion externa de cada motivo. Describe QUE falto, no que componente fallo: quien lee el correo no opera el sistema.",
      "env": null,
@@ -13814,7 +13798,12 @@
      "nota_sobrescritura": "Si: pipeline.notificacion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/notificacion.py",
-     "linea": 49
+     "linea": 49,
+     "valor_resumido": {
+      "resumido": true,
+      "tamano_caracteres": 3016,
+      "elementos": 29
+     }
     },
     {
      "clave": "pipeline.notificacion.PIE",
@@ -13863,7 +13852,7 @@
      "nota_sobrescritura": "Si: pipeline.notificacion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/notificacion.py",
-     "linea": 119
+     "linea": 123
     },
     {
      "clave": "pipeline.notificacion._TITULOS",
@@ -13943,7 +13932,7 @@
      "nota_sobrescritura": "Si: pipeline.telemetria lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/telemetria.py",
-     "linea": 161
+     "linea": 163
     },
     {
      "clave": "pipeline.telemetria.MOTIVOS_AJENOS_AL_CONTENIDO",
@@ -13967,7 +13956,7 @@
      "nota_sobrescritura": "Si: pipeline.telemetria lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/telemetria.py",
-     "linea": 140
+     "linea": 142
     },
     {
      "clave": "pipeline.telemetria.MOTIVOS_MANUAL",
@@ -13985,6 +13974,7 @@
       "SOLO_EMPRESA_SIN_AFECTADO": "el correo identifica una empresa por su NIT y ninguna persona natural",
       "ADJUNTO_PROTEGIDO": "el adjunto con el soporte tiene contraseña",
       "ANEXO_DE_RADICADO": "es del hilo de un radicado y trae documentos que ese radicado no tiene",
+      "POSIBLE_SOLICITUD_NUEVA": "es del hilo de un radicado de la misma persona pero pide algo distinto de lo radicado",
       "ADJUNTO_ILEGIBLE": "el adjunto no se pudo convertir",
       "ADJUNTO_NO_LEIDO": "un adjunto en un formato que no se convierte",
       "SIN_OCR": "imagen sin motor de OCR disponible",
@@ -15430,7 +15420,7 @@
    "nombre": "MOTIVOS_MANUAL",
    "modulo": "pipeline/telemetria.py",
    "descripcion": "Motivos de revision manual -> descripcion para el informe.",
-   "tamano": 28,
+   "tamano": 29,
    "valor": {
     "SIN_NOMBRE_REMITENTE": "no se pudo determinar el nombre de quien escribe",
     "SIN_NOMBRE_AFECTADO": "no se pudo determinar el nombre del afectado",
@@ -15442,6 +15432,7 @@
     "SOLO_EMPRESA_SIN_AFECTADO": "el correo identifica una empresa por su NIT y ninguna persona natural",
     "ADJUNTO_PROTEGIDO": "el adjunto con el soporte tiene contraseña",
     "ANEXO_DE_RADICADO": "es del hilo de un radicado y trae documentos que ese radicado no tiene",
+    "POSIBLE_SOLICITUD_NUEVA": "es del hilo de un radicado de la misma persona pero pide algo distinto de lo radicado",
     "ADJUNTO_ILEGIBLE": "el adjunto no se pudo convertir",
     "ADJUNTO_NO_LEIDO": "un adjunto en un formato que no se convierte",
     "SIN_OCR": "imagen sin motor de OCR disponible",
@@ -15466,7 +15457,7 @@
    "nombre": "MOTIVO_PARA_EL_CORREO",
    "modulo": "pipeline/notificacion.py",
    "descripcion": "Motivo -> frase del aviso interno.",
-   "tamano": 28
+   "tamano": 29
   },
   {
    "nombre": "CLASES (errores)",

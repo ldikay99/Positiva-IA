@@ -263,6 +263,16 @@ class OutlookService:
             self.ultimo_error = f"{type(e).__name__}: {e}"
             return []
 
+    async def correo_con_etiqueta(self, etiqueta: str) -> Optional[Dict[str, Any]]:
+        """El correo que lleva la etiqueta de un radicado, con remitente, asunto y cuerpo."""
+        url = f"{self.base_url}/users/{self.user_email}/messages"
+        response = await self._consultar(url, {
+            "$filter": f"categories/any(c:c eq '{etiqueta}')",
+            "$select": "id,from,subject,body,receivedDateTime", "$top": 1})
+        response.raise_for_status()
+        valores = response.json().get("value", [])
+        return valores[0] if valores else None
+
     async def mensajes_del_hilo(self, folder_id: str, conversation_id: str) -> List[Dict[str, Any]]:
         """Los correos de un hilo en una carpeta, con remitente y si traen adjuntos."""
         url = f"{self.base_url}/users/{self.user_email}/mailFolders/{folder_id}/messages"
