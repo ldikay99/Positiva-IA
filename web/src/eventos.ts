@@ -301,6 +301,12 @@ export function solicitud(corrida: Corrida | undefined): EstadoCampo[] {
     } else if (e.tipo === "regla" && e.cumple && e.accion === "fijar" && e.campo) {
       fijar(String(e.campo), { fuente: "regla", valor: e.valor, confianza: 1, nota: `regla «${String(e.nombre)}»` });
     } else if (e.tipo === "paso" && e.nodo === "compuerta" && Array.isArray(e.reparos)) {
+      // Cada ronda de la compuerta reemplaza a la anterior: lo que la IA ya
+      // corrigió no sigue marcado como reparo.
+      for (const c of m.values()) {
+        c.reparo = undefined;
+        c.reparoDetalle = undefined;
+      }
       for (const r of e.reparos as { campo: string; codigo: string; bloqueante: boolean; detalle?: string }[]) {
         if (r.campo && m.has(r.campo)) fijar(r.campo, { reparo: `${reparoLegible(r.codigo)}${r.bloqueante ? "" : " · corregido"}`, reparoDetalle: `${r.codigo}${r.detalle ? `: ${r.detalle}` : ""}` });
       }

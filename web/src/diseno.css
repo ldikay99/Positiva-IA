@@ -311,3 +311,26 @@ h3 { font-size: 12.5px; font-weight: 650; color: var(--texto-2); text-transform:
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
 }
+
+/* ------------------------------------------------- nodos: carpetas con pestaña */
+
+.nodo { padding: 11px 13px 11px; border-radius: 16px; background: var(--pliego); transition: box-shadow 0.2s, transform 0.2s var(--suave); }
+.nodo-cabeza { margin: -11px -13px 0; padding: 8px 13px 7px; border-radius: 16px 16px 0 0; background: var(--tono-suave, var(--superficie-3)); }
+.nodo-icono { width: 24px; height: 24px; border-radius: 8px; background: var(--pliego); box-shadow: 0 1px 0 rgba(24, 32, 58, 0.06); }
+.nodo-titulo { margin-top: 8px; }
+.nodo-desc { color: var(--texto-2); }
+.nodo:hover { transform: translateY(-2px); }
+.nodo.sel { box-shadow: 0 0 0 2px var(--tinta), var(--sombra-3); }
+.nodo.activo { background: var(--pliego); box-shadow: 0 0 0 2px var(--azul), 0 0 0 7px rgba(48, 71, 209, 0.14), var(--sombra-3); animation: nodo-en-curso 1.8s ease-in-out infinite; }
+@keyframes nodo-en-curso { 50% { box-shadow: 0 0 0 2px var(--azul), 0 0 0 12px rgba(48, 71, 209, 0.06), var(--sombra-3); } }
+.nodo.hecho { background: var(--pliego); }
+.nodo.hecho .nodo-cabeza { box-shadow: inset 0 -1px 0 rgba(18, 122, 85, 0.18); }
+.nodo.fallo { background: var(--pliego); box-shadow: 0 0 0 2px var(--rojo), var(--sombra-2); }
+.insignia.hecho { background: var(--verde); box-shadow: 0 0 0 3px var(--pliego); }
+.fase-numero { font-family: var(--titulos); background: var(--tinta); color: #fff; }
+.react-flow__edge-path { stroke-linecap: round; }
+
+/* el inspector: misma tinta, mismo tipo */
+.inspector-cabeza { background: var(--superficie-2); }
+.inspector-cabeza h2 { font-size: 19px; line-height: 1.25; }
+.pestanas button { font-weight: 650; }
