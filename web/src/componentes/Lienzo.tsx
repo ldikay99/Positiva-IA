@@ -417,10 +417,16 @@ function disponer(catalogo: Catalogo, reglas: Regla[]): Disposicion {
   const fases: Node<DatosFase>[] = [];
   const existe = new Set(["__inicio", "__fin", ...catalogo.nodos.map((n) => n.id)]);
   const ubicadas = new Set<string>();
-  const columnas = FASES.map((f) => f.nodos.filter((id) => existe.has(id)));
+  // Cada flujo trae sus fases; PQRD usa las de siempre. La entrada abre la
+  // primera fase y el desenlace cierra la última.
+  const FASES_DEL_FLUJO = catalogo.fases?.length
+    ? catalogo.fases.map((f, i, todas) => ({ ...f, nodos: [...(i === 0 ? ["__inicio"] : []), ...f.nodos, ...(i === todas.length - 1 ? ["__fin"] : [])] }))
+    : FASES;
+  const FINALES: Record<string, string> = catalogo.fases?.length ? {} : FASE_DEL_FINAL;
+  const columnas = FASES_DEL_FLUJO.map((f) => f.nodos.filter((id) => existe.has(id)));
   // Lo que el catálogo traiga y no tenga fase va al final de la fase más cercana.
   for (const n of catalogo.nodos) {
-    if (n.terminal || FASE_DEL_FINAL[n.id] || columnas.some((c) => c.includes(n.id))) continue;
+    if (n.terminal || FINALES[n.id] || columnas.some((c) => c.includes(n.id))) continue;
     columnas[columnas.length - 1]!.push(n.id);
   }
   const filas = Math.max(...columnas.map((c) => c.length));
@@ -430,16 +436,16 @@ function disponer(catalogo: Catalogo, reglas: Regla[]): Disposicion {
       posiciones[id] = { x: i * COLUMNA, y: CABEZA_FASE + j * FILA };
       ubicadas.add(id);
     });
-    fases.push({ id: `__fase-${FASES[i]!.id}`, type: "fase", position: { x: i * COLUMNA - 18, y: 0 }, data: { nombre: FASES[i]!.nombre, numero: String(i + 1), ancho: ANCHO + 36, alto: altoFase }, draggable: false, selectable: false, focusable: false, zIndex: -1 });
+    fases.push({ id: `__fase-${FASES_DEL_FLUJO[i]!.id}`, type: "fase", position: { x: i * COLUMNA - 18, y: 0 }, data: { nombre: FASES_DEL_FLUJO[i]!.nombre, numero: String(i + 1), ancho: ANCHO + 36, alto: altoFase }, draggable: false, selectable: false, focusable: false, zIndex: -1 });
   });
 
-  const anchoTotal = (FASES.length - 1) * COLUMNA + ANCHO + 36;
+  const anchoTotal = (FASES_DEL_FLUJO.length - 1) * COLUMNA + ANCHO + 36;
   const y0 = altoFase + 72;
   const porFase: Record<string, number> = {};
   for (const n of catalogo.nodos) {
     if (ubicadas.has(n.id)) continue;
-    const fase = FASE_DEL_FINAL[n.id] ?? FASES[FASES.length - 1]!.id;
-    const i = Math.max(0, FASES.findIndex((f) => f.id === fase));
+    const fase = FINALES[n.id] ?? FASES_DEL_FLUJO[FASES_DEL_FLUJO.length - 1]!.id;
+    const i = Math.max(0, FASES_DEL_FLUJO.findIndex((f) => f.id === fase));
     const k = (porFase[fase] = (porFase[fase] ?? -1) + 1);
     const ancho = n.terminal ? ANCHO_FIN : ANCHO;
     posiciones[n.id] = { x: i * COLUMNA + (ANCHO - ancho) / 2, y: y0 + CABEZA_FASE + k * 66 };
@@ -829,7 +835,7 @@ export function Lienzo() {
         const activo = recorrido && p.nodos[a.hacia]?.estado === "activo";
         return { desde: a.desde, hacia: a.hacia, etiqueta: a.etiqueta, clase: (principal.has(`${a.desde}->${a.hacia}`) ? "principal" : "desvio") as DatosCable["clase"], estado: (activo ? "activo" : recorrido ? "recorrido" : "inactivo") as DatosCable["estado"] };
       }),
-      { desde: "aviso_y_cierre", hacia: "__fin", clase: "principal", estado: corrida?.resultado ? "recorrido" : "inactivo" },
+      { desde: catalogo.nodos.some((n) => n.id === "aviso_y_cierre") ? "aviso_y_cierre" : (catalogo.fases?.at(-1)?.nodos.at(-1) ?? catalogo.nodos.at(-1)?.id ?? ""), hacia: "__fin", clase: "principal", estado: corrida?.resultado ? "recorrido" : "inactivo" },
       ...reglas.flatMap((r) => {
         const ancla = ANCLA_DEL_PUNTO[r.punto];
         const ev = evaluadas[r.id];

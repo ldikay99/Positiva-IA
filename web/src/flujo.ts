@@ -56,6 +56,7 @@ const CATEGORIA_DEL_NODO: Record<string, Categoria> = {
 
 export function categoria(n: Nodo): Categoria {
   if (n.terminal) return "final";
+  if (n.categoria && n.categoria in CATEGORIAS) return n.categoria as Categoria;
   return CATEGORIA_DEL_NODO[n.id] ?? (n.usa_ia ? "ia" : "filtro");
 }
 

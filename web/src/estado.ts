@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { reglaNueva } from "./flujo.ts";
-import type { Buzon, Catalogo, Configuracion, Corrida, Correo, EstadoMotor, Evento, Regla } from "./tipos.ts";
+import type { Buzon, Catalogo, Configuracion, Corrida, Correo, EstadoMotor, Evento, FlujoResumen, Regla, TableroFlujo } from "./tipos.ts";
 
 export interface Nota {
   id: string;
@@ -39,7 +39,7 @@ export async function pedir<T>(ruta: string, init?: RequestInit): Promise<T> {
   return cuerpo;
 }
 
-export type Vista = "flujo" | "adjuntos" | "corridas" | "logs" | "herramientas" | "proveedores" | "configuracion";
+export type Vista = "tablero" | "flujo" | "adjuntos" | "corridas" | "logs" | "herramientas" | "proveedores" | "configuracion";
 export type Foco = { tipo: "nodo"; id: string } | { tipo: "regla"; id: string } | { tipo: "correo"; caso: string } | { tipo: "corrida"; id: string } | null;
 
 export interface Aviso {
@@ -64,6 +64,13 @@ export interface Cambio {
 }
 
 interface Estado {
+  /** El flujo abierto. Todo lo que se ve (catálogo, corridas, eventos) es de este flujo. */
+  flujo: string;
+  flujos: FlujoResumen[];
+  tablero: TableroFlujo[];
+  cambiarFlujo: (id: string) => Promise<void>;
+  cargarFlujos: () => Promise<void>;
+  cargarTablero: () => Promise<void>;
   catalogo: Catalogo | null;
   bandeja: Correo[];
   configuracion: Configuracion | null;
@@ -127,7 +134,35 @@ interface Estado {
 
 let siguienteAviso = 1;
 
+const CLAVE_FLUJO = "positiva-ia:flujo";
+const q = (ruta: string, flujo: string) => `${ruta}${ruta.includes("?") ? "&" : "?"}flujo=${encodeURIComponent(flujo)}`;
+
 export const usar = create<Estado>((set, get) => ({
+  flujo: leerLocal<string>(CLAVE_FLUJO, "pqrd"),
+  flujos: [],
+  tablero: [],
+
+  cargarFlujos: async () => set({ flujos: await pedir<FlujoResumen[]>("/api/flujos") }),
+  cargarTablero: async () => set({ tablero: await pedir<TableroFlujo[]>("/api/tablero") }),
+
+  cambiarFlujo: async (id) => {
+    if (id === get().flujo && get().catalogo) return;
+    guardarLocal(CLAVE_FLUJO, id);
+    // Nada del flujo anterior queda en pantalla.
+    set({ flujo: id, catalogo: null, corridas: {}, orden: [], recientes: [], corridaVisible: null, foco: null, seleccion: [], motor: null });
+    const [catalogo, lista, recientes, motor] = await Promise.all([
+      pedir<Catalogo>(q("/api/catalogo", id)),
+      pedir<(Omit<Corrida, "eventos"> & { nEventos: number })[]>(q("/api/corridas", id)),
+      pedir<Evento[]>(q("/api/eventos/recientes", id)),
+      pedir<EstadoMotor>(q("/api/salud", id)),
+    ]);
+    if (get().flujo !== id) return;
+    const corridas: Record<string, Corrida> = {};
+    for (const c of lista) corridas[c.id] = { ...c, eventos: [] };
+    for (const e of recientes) if (e.corrida && corridas[e.corrida]) corridas[e.corrida]!.eventos.push(e);
+    set({ catalogo, corridas, orden: lista.map((c) => c.id), recientes, motor });
+  },
+
   catalogo: null,
   bandeja: [],
   configuracion: null,
@@ -137,7 +172,7 @@ export const usar = create<Estado>((set, get) => ({
   recientes: [],
   motor: null,
   conectado: false,
-  vista: "flujo",
+  vista: "tablero",
   foco: null,
   corridaVisible: null,
   seguirEnVivo: true,
@@ -151,12 +186,15 @@ export const usar = create<Estado>((set, get) => ({
   parametroAbierto: null,
 
   cargar: async () => {
+    const flujos = await pedir<FlujoResumen[]>("/api/flujos");
+    const flujo = flujos.some((f) => f.id === get().flujo) ? get().flujo : "pqrd";
+    set({ flujos, flujo });
     const [catalogo, bandeja, conf, lista, recientes] = await Promise.all([
-      pedir<Catalogo>("/api/catalogo"),
+      pedir<Catalogo>(q("/api/catalogo", flujo)),
       pedir<Correo[]>("/api/bandeja"),
       pedir<Configuracion & { modelos: string[] }>("/api/configuracion"),
-      pedir<(Omit<Corrida, "eventos"> & { nEventos: number })[]>("/api/corridas"),
-      pedir<Evento[]>("/api/eventos/recientes"),
+      pedir<(Omit<Corrida, "eventos"> & { nEventos: number })[]>(q("/api/corridas", flujo)),
+      pedir<Evento[]>(q("/api/eventos/recientes", flujo)),
     ]);
     const { modelos, ...configuracion } = conf;
     const corridas: Record<string, Corrida> = {};
@@ -226,7 +264,7 @@ export const usar = create<Estado>((set, get) => ({
   },
 
   procesar: async (casos, comoElJob = false) => {
-    const creadas = await pedir<{ id: string; caso: string; lote?: string }[]>("/api/corridas", { method: "POST", body: JSON.stringify({ casos, comoElJob }) });
+    const creadas = await pedir<{ id: string; caso: string; lote?: string }[]>("/api/corridas", { method: "POST", body: JSON.stringify({ casos, comoElJob, flujo: get().flujo }) });
     set((s) => {
       const corridas = { ...s.corridas };
       for (const c of creadas) corridas[c.id] ??= { id: c.id, caso: c.caso, estado: "en_cola", creada: Date.now(), eventos: [], ...(c.lote ? { lote: c.lote } : {}) };
@@ -236,7 +274,7 @@ export const usar = create<Estado>((set, get) => ({
   },
 
   cancelarCola: async () => {
-    const r = await pedir<{ canceladas: number }>("/api/corridas/cola", { method: "DELETE" });
+    const r = await pedir<{ canceladas: number }>(q("/api/corridas/cola", get().flujo), { method: "DELETE" });
     get().avisar(`${r.canceladas} corridas canceladas`, "info");
   },
 
@@ -321,6 +359,17 @@ export const usar = create<Estado>((set, get) => ({
 }));
 
 function recibir(e: Evento): void {
+  const s0 = usar.getState();
+  if (e.tipo === "flujo_guardado" || e.tipo === "flujo_borrado") {
+    void s0.cargarFlujos();
+    if (e.flujo === s0.flujo) {
+      if (e.tipo === "flujo_borrado") void s0.cambiarFlujo("pqrd");
+      else void pedir<Catalogo>(q("/api/catalogo", s0.flujo)).then((catalogo) => usar.setState({ catalogo }));
+    }
+    return;
+  }
+  // Lo de otro flujo no entra aquí: cada flujo tiene sus propias corridas.
+  if (e.flujo && e.flujo !== s0.flujo) return;
   if (e.tipo === "motor") {
     usar.setState({ motor: e as unknown as EstadoMotor });
     return;

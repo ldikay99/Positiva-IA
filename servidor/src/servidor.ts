@@ -21,17 +21,29 @@ const bus = new EventEmitter();
 bus.setMaxListeners(0);
 const motores = new Map<string, Motor>();
 
-function motorDe(id: string): Motor | null {
+const arrancados = new Set<string>();
+
+/** El pool de un flujo. Solo arranca trabajadores cuando hay algo que correr. */
+function motorDe(id: string, arrancar = true): Motor | null {
   const existente = motores.get(id);
-  if (existente) return existente;
+  if (existente) {
+    if (arrancar) arrancarMotor(existente);
+    return existente;
+  }
   const f = flujos.obtener(id);
   if (!f) return null;
   const m = new Motor(f.id, f.trabajador, () => (f.tipo === "declarativo" ? { definicion: flujos.obtener(f.id)?.definicion } : {}));
   m.on("evento", (e: Evento) => bus.emit("evento", e));
   motores.set(id, m);
   void m.cargarHistorial();
-  m.ajustar(f.id === "pqrd" ? configuracion.obtener().concurrencia : 2);
+  if (arrancar) arrancarMotor(m);
   return m;
+}
+
+function arrancarMotor(m: Motor): void {
+  if (arrancados.has(m.flujo)) return;
+  arrancados.add(m.flujo);
+  m.ajustar(m.flujo === "pqrd" ? configuracion.obtener().concurrencia : 2);
 }
 
 const flujoDe = (q: unknown): string => (typeof q === "string" && q ? q : "pqrd");
@@ -53,6 +65,38 @@ app.get<{ Querystring: { flujo?: string } }>("/api/catalogo", async (req, res) =
 const sinDefinicion = (f: flujos.Flujo) => ({ ...f, trabajador: undefined, definicion: undefined, nodos: f.definicion?.nodos.length });
 
 app.get("/api/flujos", async () => flujos.listar().map(sinDefinicion));
+
+/** Los números de cada flujo, de sus propias corridas: lo que muestra el tablero. */
+app.get("/api/tablero", async () =>
+  flujos.listar().map((f) => {
+    const m = motorDe(f.id, false);
+    const lista = [...(m?.corridas.values() ?? [])].sort((a, b) => b.creada - a.creada);
+    const desenlaces: Record<string, number> = {};
+    const segundos: number[] = [];
+    let tokens = 0;
+    const porDia = new Map<string, { n: number; radicados: number }>();
+    for (const c of lista) {
+      const r = c.resultado;
+      const accion = r ? String(r.accion) : c.estado === "en_cola" ? "en_cola" : "procesando";
+      desenlaces[accion] = (desenlaces[accion] ?? 0) + 1;
+      if (r && typeof r.segundos === "number") segundos.push(r.segundos);
+      tokens += Number(r?.tokens_entrada ?? 0) + Number(r?.tokens_salida ?? 0);
+      const dia = new Date(c.creada).toISOString().slice(0, 10);
+      const d = porDia.get(dia) ?? { n: 0, radicados: 0 };
+      d.n += 1;
+      if (accion === "radicado") d.radicados += 1;
+      porDia.set(dia, d);
+    }
+    segundos.sort((a, b) => a - b);
+    return {
+      id: f.id, nombre: f.nombre, tipo: f.tipo, corridas: lista.length, desenlaces,
+      segundosMediana: segundos.length ? segundos[Math.floor(segundos.length / 2)]! : 0, tokens,
+      enCurso: lista.filter((c) => !c.resultado).length,
+      ultimas: lista.slice(0, 6).map((c) => ({ id: c.id, caso: c.caso, accion: String(c.resultado?.accion ?? c.estado), motivo: String(c.resultado?.motivo ?? ""), t: c.creada })),
+      porDia: [...porDia.entries()].sort().slice(-14).map(([dia, v]) => ({ dia, ...v })),
+    };
+  }),
+);
 
 app.get<{ Params: { id: string } }>("/api/flujos/:id", async (req, res) => {
   const f = flujos.obtener(req.params.id);
@@ -318,7 +362,7 @@ await configuracion.cargar();
 await flujos.cargar();
 catalogo();
 const motor = motorDe("pqrd")!;
-for (const f of flujos.listar()) if (f.tipo === "codigo") motorDe(f.id);
+for (const f of flujos.listar()) motorDe(f.id, f.tipo === "codigo");
 
 for (const senal of ["SIGINT", "SIGTERM"] as const) {
   process.on(senal, () => {

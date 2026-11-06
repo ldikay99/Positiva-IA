@@ -10,11 +10,14 @@ import { Dock } from "./componentes/Dock.tsx";
 import { MenuContextual, type Opcion } from "./componentes/MenuContextual.tsx";
 import { VistaAdjuntos } from "./componentes/Adjuntos.tsx";
 import { VistaConfiguracion, VistaCorridas, VistaHerramientas, VistaLogs, VistaProveedores } from "./componentes/Vistas.tsx";
+import { VistaTablero, pedirAlAsistente } from "./componentes/Tablero.tsx";
+import { Chat } from "./componentes/Chat.tsx";
 
 const NAVEGACION: { id: Vista; nombre: string; icono: NombreIcono; titulo: string }[] = [
-  { id: "flujo", nombre: "Flujo", icono: "flujo", titulo: "Radicación de PQRD" },
+  { id: "tablero", nombre: "Tablero", icono: "corridas", titulo: "Tablero" },
+  { id: "flujo", nombre: "Flujo", icono: "flujo", titulo: "" },
   { id: "adjuntos", nombre: "Adjuntos", icono: "documento", titulo: "Adjuntos, hoja por hoja" },
-  { id: "corridas", nombre: "Corridas", icono: "corridas", titulo: "Corridas frente a producción" },
+  { id: "corridas", nombre: "Corridas", icono: "historial", titulo: "Corridas" },
   { id: "logs", nombre: "Logs", icono: "logs", titulo: "Todo lo que pasa, en vivo" },
   { id: "herramientas", nombre: "Herramientas", icono: "herramientas", titulo: "Herramientas de la IA" },
   { id: "proveedores", nombre: "Sistemas", icono: "proveedores", titulo: "Sistemas que consulta" },
@@ -98,6 +101,10 @@ function BarraSuperior({ alternarBandeja, bandejaVisible }: { alternarBandeja: (
   const configuracion = usar((s) => s.configuracion);
   const irA = usar((s) => s.irA);
   const vista = usar((s) => s.vista);
+  const flujo = usar((s) => s.flujo);
+  const flujos = usar((s) => s.flujos);
+  const cambiarFlujo = usar((s) => s.cambiarFlujo);
+  const flujoActual = flujos.find((f) => f.id === flujo);
   const [menu, setMenu] = useState<{ x: number; y: number; opciones: Opcion[] } | null>(null);
   const ocupados = motor?.trabajadores.filter((t) => t.corrida).length ?? 0;
   const listos = motor?.trabajadores.filter((t) => t.listo).length ?? 0;
@@ -112,7 +119,7 @@ function BarraSuperior({ alternarBandeja, bandejaVisible }: { alternarBandeja: (
       )}
       <AnimatePresence mode="wait" initial={false}>
         <motion.h1 key={vista} className="barra-titulo" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}>
-          {NAVEGACION.find((n) => n.id === vista)?.titulo}
+          {NAVEGACION.find((n) => n.id === vista)?.titulo || flujoActual?.nombre}
         </motion.h1>
       </AnimatePresence>
       <button
@@ -123,16 +130,16 @@ function BarraSuperior({ alternarBandeja, bandejaVisible }: { alternarBandeja: (
             x: r.left,
             y: r.bottom + 6,
             opciones: [
-              { titulo: "Flujos de IA" },
-              { etiqueta: "Radicación de PQRD", icono: "correo", marcado: true, alHacer: () => irA("flujo") },
+              { titulo: "Flujos" },
+              ...flujos.map((f) => ({ etiqueta: f.nombre, icono: (f.tipo === "codigo" ? "terminal" : "flujo") as NombreIcono, marcado: f.id === flujo, pista: f.tipo === "codigo" ? "Motor del job" : `Creado aquí · v${f.version ?? 1}`, alHacer: () => { void cambiarFlujo(f.id); if (vista === "tablero") irA("flujo"); } })),
               { separador: true },
-              { etiqueta: "Nuevo flujo de IA", icono: "mas", deshabilitado: true, pista: "La plataforma admite más flujos: cada uno trae su motor y su catálogo de nodos.", alHacer: () => undefined },
+              { etiqueta: "Crear un flujo con IA", icono: "chispa", alHacer: () => pedirAlAsistente("Quiero crear un flujo nuevo. Pregúntame lo necesario y ármalo.") },
             ],
           });
         }}
       >
         <span>Flujo</span>
-        <b>PQRD</b>
+        <b>{flujoActual?.nombre ?? flujo}</b>
         <Icono n="abajo" tam={12} />
       </button>
       <span className="pastilla verde diminuto solo-ancho" title="Nada se escribe en SGDEA ni en el buzón real"><Icono n="candado" tam={11} />Solo lectura</span>
@@ -298,6 +305,7 @@ export default function App() {
         <main className="contenido">
           <AnimatePresence mode="wait" initial={false}>
             <motion.div key={vista} className="contenido-vista" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.16, ease: "easeOut" }}>
+              {vista === "tablero" && <VistaTablero />}
               {vista === "flujo" && <EspacioFlujo ancho={ancho} bandejaVisible={bandeja} cerrarBandeja={() => setBandeja(false)} />}
               {vista === "adjuntos" && <VistaAdjuntos />}
               {vista === "corridas" && <VistaCorridas />}
@@ -310,6 +318,7 @@ export default function App() {
         </main>
       </div>
       <Avisos />
+      <Chat />
     </div>
   );
 }

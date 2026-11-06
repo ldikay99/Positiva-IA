@@ -139,7 +139,8 @@ type Modo = "job" | "uno";
 function BandejaDeSalida({ elegidos, modo, setModo, alLimpiar, alCorrer, ocupado, extra }: {
   elegidos: { clave: string; nombre: string }[];
   modo: Modo;
-  setModo: (m: Modo) => void;
+  /** Sin esto el flujo no corre como el job y no se ofrece el modo. */
+  setModo?: (m: Modo) => void;
   alLimpiar: () => void;
   alCorrer: () => void;
   ocupado: boolean;
@@ -182,7 +183,7 @@ function BandejaDeSalida({ elegidos, modo, setModo, alLimpiar, alCorrer, ocupado
               </span>
             </div>
           )}
-          {n > 1 && (
+          {n > 1 && setModo && (
             <div className="salida-modo" role="radiogroup" aria-label="Cómo correrlos">
               {(["job", "uno"] as Modo[]).map((m) => (
                 <button key={m} role="radio" aria-checked={modo === m} className={modo === m ? "activo" : ""} onClick={() => setModo(m)}
@@ -255,12 +256,6 @@ function PanelBuzon({ porCaso }: { porCaso: Record<string, Corrida> }) {
 
   return (
     <>
-      <div className="buzon-cinta">
-        <span className="buzon-candado"><Icono n="candado" tam={13} /></span>
-        <p>
-          Lees <b>{buzon?.carpeta || "la carpeta del job"}</b> como la toma el job. El visor consulta el buzón pero no marca, no mueve ni radica: lo que el job haría sale en el flujo como bloqueado.
-        </p>
-      </div>
       <div className="buzon-controles">
         <label className="buzon-cuantos">
           <span>Próximos</span>
@@ -301,7 +296,7 @@ function PanelBuzon({ porCaso }: { porCaso: Record<string, Corrida> }) {
       <BandejaDeSalida
         elegidos={elegidos.map((id) => ({ clave: id, nombre: porId.get(id)?.remitente || porId.get(id)?.remitenteCorreo || "?" }))}
         modo="job"
-        setModo={() => undefined}
+        setModo={undefined}
         alLimpiar={() => setElegidos([])}
         alCorrer={() => void lanzar()}
         ocupado={corriendo}
@@ -315,7 +310,7 @@ function PanelBuzon({ porCaso }: { porCaso: Record<string, Corrida> }) {
 
 type Filtro = "todos" | "sin_procesar" | "procesados" | "del_buzon" | "radicado" | "manual" | string;
 
-function PanelDescargados({ porCaso }: { porCaso: Record<string, Corrida> }) {
+function PanelDescargados({ porCaso, conLote }: { porCaso: Record<string, Corrida>; conLote: boolean }) {
   const bandeja = usar((s) => s.bandeja);
   const seleccion = usar((s) => s.seleccion);
   const fijar = usar((s) => s.fijarSeleccion);
@@ -375,7 +370,7 @@ function PanelDescargados({ porCaso }: { porCaso: Record<string, Corrida> }) {
     setEnviando(true);
     try {
       const n = seleccion.length;
-      await procesar(seleccion, modo === "job");
+      await procesar(seleccion, conLote && modo === "job");
       avisar(`${n} ${n === 1 ? "caso" : "casos"} ${modo === "job" && n > 1 ? "corriendo como el job" : "en cola"}`);
     } catch (e) {
       avisar((e as Error).message, "error");
@@ -460,7 +455,7 @@ function PanelDescargados({ porCaso }: { porCaso: Record<string, Corrida> }) {
       <BandejaDeSalida
         elegidos={seleccion.map((caso) => ({ clave: caso, nombre: porClave.get(caso)?.remitente || porClave.get(caso)?.remitenteCorreo || caso }))}
         modo={modo}
-        setModo={setModo}
+        setModo={conLote ? setModo : undefined}
         alLimpiar={() => fijar([])}
         alCorrer={() => void lanzar()}
         ocupado={enviando}
@@ -475,14 +470,18 @@ function PanelDescargados({ porCaso }: { porCaso: Record<string, Corrida> }) {
 export function Bandeja() {
   const corridas = usar((s) => s.corridas);
   const orden = usar((s) => s.orden);
-  const [fuente, setFuente] = useState<"buzon" | "local">("buzon");
+  const flujo = usar((s) => s.flujos.find((f) => f.id === s.flujo));
+  const conBuzon = flujo?.buzonReal ?? false;
+  const [elegida, setFuente] = useState<"buzon" | "local">("buzon");
+  // El buzón real solo existe en los flujos que saben leerlo.
+  const fuente = conBuzon ? elegida : "local";
   const porCaso = useMemo(() => ultimas(corridas, orden), [corridas, orden]);
 
   return (
     <section className="bandeja" aria-label="Correos por radicar">
       <header className="bandeja-titulo">
         <h2>Correspondencia</h2>
-        <div className="fuentes" role="tablist" aria-label="De dónde salen los correos">
+        {conBuzon && <div className="fuentes" role="tablist" aria-label="De dónde salen los correos">
           {([["buzon", "Buzón real", "correo"], ["local", "Descargados", "bandeja"]] as const).map(([id, nombre, icono]) => (
             <button key={id} role="tab" aria-selected={fuente === id} className={fuente === id ? "activo" : ""} onClick={() => setFuente(id)}>
               {fuente === id && <motion.span layoutId="fuente-activa" className="fuente-fondo" transition={{ type: "spring", stiffness: 520, damping: 38 }} />}
@@ -490,9 +489,9 @@ export function Bandeja() {
               <span>{nombre}</span>
             </button>
           ))}
-        </div>
+        </div>}
       </header>
-      {fuente === "buzon" ? <PanelBuzon porCaso={porCaso} /> : <PanelDescargados porCaso={porCaso} />}
+      {fuente === "buzon" ? <PanelBuzon porCaso={porCaso} /> : <PanelDescargados porCaso={porCaso} conLote={flujo?.lote ?? false} />}
     </section>
   );
 }

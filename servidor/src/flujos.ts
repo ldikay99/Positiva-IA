@@ -182,7 +182,12 @@ export function catalogoDeclarativo(d: Definicion): Catalogo & { fases: { id: st
   }
   const columnas: string[][] = [];
   for (const n of d.nodos) (columnas[profundidad.get(n.id) ?? 0] ??= []).push(n.id);
-  const fases = columnas.filter(Boolean).map((ids, i) => ({ id: `paso-${i + 1}`, nombre: i === 0 ? "Entrada" : ids.every((x) => d.nodos.find((n) => n.id === x)?.tipo === "salida") ? "Salidas" : `Paso ${i + 1}`, nodos: ids }));
+  // Cada columna se llama por lo que hacen sus nodos ("IA · clasificar", "Validación").
+  const fases = columnas.filter(Boolean).map((ids, i) => {
+    const tipos = [...new Set(ids.map((x) => d.nodos.find((n) => n.id === x)?.tipo ?? ""))];
+    const nombre = i === 0 ? "Entrada" : tipos.every((t) => t === "salida") ? "Salidas" : tipos.map((t) => NOMBRE_TIPO[t] ?? t).join(" y ");
+    return { id: `paso-${i + 1}`, nombre, nodos: ids };
+  });
   return {
     nodos: d.nodos.map((n) => ({
       id: n.id, nombre: n.nombre, descripcion: n.descripcion || NOMBRE_TIPO[n.tipo] || n.tipo, etapa_cronometro: n.id,

@@ -27,6 +27,11 @@ export interface Nodo {
   reglas?: { id: string; descripcion: string; modulo?: string; funcion?: string; usa?: string[] }[];
   busquedas?: Busqueda[];
   parametros: Parametro[];
+  /** La categoría con que se dibuja, cuando el catálogo la trae (flujos que no son PQRD). */
+  categoria?: string;
+  /** El tipo y la configuración de un nodo de flujo declarativo. */
+  tipo_declarativo?: string;
+  config?: Record<string, unknown>;
 }
 
 export interface Busqueda {
@@ -80,6 +85,8 @@ export interface Catalogo {
   desenlaces: { accion: string; descripcion: string }[];
   variables_entorno: { nombre: string; uso: string; secreto: boolean }[];
   catalogos?: { nombre: string; modulo?: string; descripcion?: string; tamano?: number }[];
+  /** Las fases del lienzo de un flujo que no es PQRD (Tutelas, declarativos). */
+  fases?: { id: string; nombre: string; nodos: string[] }[];
 }
 
 export interface Adjunto {
@@ -118,6 +125,32 @@ export interface CorreoDelBuzon {
   conAdjuntos: boolean;
   hilo: string;
   traido?: boolean;
+}
+
+/** Un flujo de la plataforma: de código (un motor real) o declarativo (creado aquí o por la IA). */
+export interface FlujoResumen {
+  id: string;
+  nombre: string;
+  descripcion: string;
+  tipo: "codigo" | "declarativo";
+  buzonReal: boolean;
+  lote: boolean;
+  version?: number;
+  actualizado?: number;
+  nodos?: number;
+}
+
+export interface TableroFlujo {
+  id: string;
+  nombre: string;
+  tipo: "codigo" | "declarativo";
+  corridas: number;
+  desenlaces: Record<string, number>;
+  segundosMediana: number;
+  tokens: number;
+  enCurso: number;
+  ultimas: { id: string; caso: string; accion: string; motivo: string; t: number }[];
+  porDia: { dia: string; n: number; radicados: number }[];
 }
 
 export interface Buzon {
