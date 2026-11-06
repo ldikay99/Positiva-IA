@@ -1637,7 +1637,8 @@ class Orquestador:
         proceso y se mueve.
         """
         await self._archivar(
-            email, "", settings.OUTLOOK_FOLDER_DUPLICADOS, avisos)
+            email, "", settings.OUTLOOK_FOLDER_DUPLICADOS, avisos,
+            con_el_hilo=True)
 
     async def _archivar(
         self,
@@ -1645,6 +1646,7 @@ class Orquestador:
         etiqueta: str,
         carpeta: str,
         avisos: Optional[List[str]] = None,
+        con_el_hilo: bool = False,
     ) -> None:
         """
         Etiqueta el correo y lo saca de la bandeja.
@@ -1679,6 +1681,57 @@ class Orquestador:
         # de existir. Sin quedarse con el nuevo, responder al correo da 404.
         if nuevo_id:
             email.id = nuevo_id
+        if con_el_hilo:
+            await self._archivar_el_resto_del_hilo(email, avisos)
+
+    async def _archivar_el_resto_del_hilo(
+        self, email: EmailMessage, avisos: Optional[List[str]] = None,
+    ) -> None:
+        """
+        Saca de la bandeja los demas correos del hilo de uno ya radicado.
+
+        La bandeja entrega un solo correo por hilo en cada corrida. Si los
+        demas se quedan, cada corrida toma uno, lo detecta como duplicado del
+        hilo y lo archiva: un hilo de 50 correos tardaba 47 corridas en salir
+        y ocupaba un cupo del lote en cada una. El desenlace de cada uno no
+        cambia, porque la capa del hilo los iba a dar por duplicados igual;
+        solo deja de tardar un dia.
+
+        Solo se llama despues de radicar o de detectar un duplicado. Un correo
+        que fue a revision manual o se reenvio a otra area no deja radicado en
+        el hilo, y los demas correos tienen que procesarse por su cuenta.
+        """
+        conversacion = getattr(email, "conversation_id", None)
+        listar = getattr(self.outlook, "get_conversation_message_ids", None)
+        mover = getattr(self.outlook, "move_email", None)
+        if not conversacion or listar is None or mover is None:
+            return
+        try:
+            otros = await listar(settings.OUTLOOK_FOLDER_ID, conversacion)
+        except Exception as e:
+            if avisos is not None:
+                avisos.append(
+                    f"no se pudo listar el resto del hilo ({type(e).__name__}: "
+                    f"{e}): sus correos saldran como duplicados de a uno por "
+                    f"corrida")
+            return
+        movidos, fallidos = 0, 0
+        for otro in otros or []:
+            if otro == email.id:
+                continue
+            try:
+                await mover(otro, settings.OUTLOOK_FOLDER_DUPLICADOS)
+                movidos += 1
+            except Exception:
+                fallidos += 1
+        if avisos is not None and movidos:
+            avisos.append(
+                f"{movidos} correo(s) mas del mismo hilo se archivaron como "
+                f"duplicados")
+        if avisos is not None and fallidos:
+            avisos.append(
+                f"{fallidos} correo(s) del mismo hilo no se pudieron mover y "
+                f"saldran como duplicados en las siguientes corridas")
 
     async def _avisar(self, res: Resultado, email: EmailMessage) -> None:
         """
@@ -1939,4 +1992,5 @@ class Orquestador:
             return
         await self._archivar(
             email, etiqueta,
-            settings.OUTLOOK_FOLDER_RADICACION_EXITOSA, avisos)
+            settings.OUTLOOK_FOLDER_RADICACION_EXITOSA, avisos,
+            con_el_hilo=True)

@@ -338,3 +338,21 @@ async def test_el_resultado_dice_que_capa_lo_detecto(tmp_path):
     r = await orq.procesar(correo)
     assert r.accion == "duplicado"
     assert r.razon_del_duplicado == "el correo ya tiene etiqueta de radicado"
+
+
+def test_dos_personas_que_responden_a_la_misma_campana_no_son_el_mismo_caso():
+    """
+    Las dos citan al gestor de cartera que les escribio a todas: lo que las une
+    es la comunicacion masiva, no un reenvio.
+    """
+    campana = "De: Cartera <gestor6@cobranzas.com.co>\nAsunto: Le acompañamos\n"
+    assert not estan_vinculados(
+        "leo@hotmail.com", "Buenas tardes, ya pague.\n" + campana,
+        "contabilidad@empresa.com", "Solicito revisar el cobro.\n" + campana)
+
+
+def test_dos_areas_que_reenvian_lo_mismo_siguen_siendo_el_mismo_caso():
+    citado = "De: Ana <ana@empresa.com>\nAsunto: Incapacidad\n"
+    assert estan_vinculados(
+        "medicina@positiva.gov.co", "Remito para su gestion.\n" + citado,
+        "afiliaciones@positiva.gov.co", "Para tramite.\n" + citado)

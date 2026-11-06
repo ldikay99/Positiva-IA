@@ -40,7 +40,7 @@ from difflib import SequenceMatcher
 from typing import Any, Set
 
 from models.email import EmailMessage
-from utils.generic_filter import remitentes_externos_citados
+from utils.generic_filter import es_buzon_de_positiva, remitentes_externos_citados
 from utils.hash import limpiar_asunto
 from utils.radicado import etiqueta_de_radicado
 
@@ -80,12 +80,21 @@ def estan_vinculados(remitente: str, cuerpo: str, otro_remitente: str, otro_cuer
     Un reenvio arrastra a quien escribio, asi que un correo nombra al remitente
     del otro o los dos citan al mismo. Sin ese vinculo, compartir el asunto solo
     dice que usaron el mismo asunto generico.
+
+    Que los dos citen al mismo remitente solo vale si uno de ellos es un area
+    de la entidad, que es quien reenvia lo que escribio otro. Dos personas de
+    afuera que citan al mismo remitente estan respondiendo cada una a la misma
+    comunicacion masiva ("Le acompañamos en la normalizacion de su cartera",
+    "Comunicacion Cartera Preventiva"): son casos distintos, y en produccion
+    se estaban archivando como duplicados del radicado de otra persona.
     """
     de, otro = (remitente or "").strip().lower(), (otro_remitente or "").strip().lower()
     if not de or not otro:
         return False
     if otro in (cuerpo or "").lower() or de in (otro_cuerpo or "").lower():
         return True
+    if not (es_buzon_de_positiva(de) or es_buzon_de_positiva(otro)):
+        return False
     return bool(remitentes_externos_citados(cuerpo) & remitentes_externos_citados(otro_cuerpo))
 
 

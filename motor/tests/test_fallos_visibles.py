@@ -661,3 +661,97 @@ async def test_un_duplicado_se_saca_de_la_bandeja(tmp_path):
     assert outlook.movidos == [settings.OUTLOOK_FOLDER_DUPLICADOS], outlook.movidos
     # Se retiran las marcas de proceso: la del radicado ya identifica el correo.
     assert outlook.marcas and outlook.marcas[-1][1] is True
+
+
+# ── El resto del hilo sale con el correo radicado ──
+
+class OutlookConHilo:
+    """Bandeja con tres correos mas en el hilo del que se procesa."""
+
+    def __init__(self, falla_listar=False):
+        self.movidos = []
+        self.falla_listar = falla_listar
+
+    async def marcar(self, id_correo, marca="", quitar_de_proceso=False):
+        from pipeline.marcas import fusionar
+
+        return fusionar([], marca, quitar_de_proceso)
+
+    async def move_email(self, id_correo, carpeta):
+        self.movidos.append((id_correo, carpeta))
+        return f"{id_correo}-movido"
+
+    async def get_conversation_message_ids(self, carpeta, conversacion):
+        if self.falla_listar:
+            raise RuntimeError("Graph no responde")
+        assert conversacion == "hilo-1"
+        return ["c2", "c3", "c4"]
+
+    async def forward_email(self, id_correo, destino, cuerpo):
+        return None
+
+
+class DetectorQueDejaPasar:
+    async def comprobar(self, email):
+        from pipeline.duplicados import Veredicto
+
+        return Veredicto()
+
+    async def comprobar_contenido(self, email, nombres):
+        from pipeline.duplicados import Veredicto
+
+        return Veredicto()
+
+    async def registrar_radicado(self, email, nombres):
+        return ""
+
+
+@pytest.mark.asyncio
+async def test_al_radicar_el_resto_del_hilo_sale_como_duplicado(tmp_path, monkeypatch):
+    """
+    La bandeja da un correo por hilo en cada corrida: si el resto del hilo se
+    queda, sale un duplicado por corrida durante horas.
+    """
+    from config import settings
+
+    outlook = OutlookConHilo()
+    orq = Orquestador(modelo=_modelo(), outlook=outlook,
+                      radicador=RadicadorFalso(), base_workspace=str(tmp_path))
+    orq.duplicados = DetectorQueDejaPasar()
+    monkeypatch.setattr(orq, "_avisar", lambda *a, **k: _nada())
+    r = await orq.procesar(_email())
+
+    assert r.accion == "radicado", (r.accion, r.motivo_manual, r.avisos)
+    assert outlook.movidos[0] == ("c1", settings.OUTLOOK_FOLDER_RADICACION_EXITOSA)
+    assert outlook.movidos[1:] == [
+        (i, settings.OUTLOOK_FOLDER_DUPLICADOS) for i in ("c2", "c3", "c4")]
+    assert any("3 correo(s) mas del mismo hilo" in a for a in r.avisos), r.avisos
+
+
+async def _nada():
+    return None
+
+
+@pytest.mark.asyncio
+async def test_si_no_se_puede_listar_el_hilo_queda_constancia(tmp_path, monkeypatch):
+    outlook = OutlookConHilo(falla_listar=True)
+    orq = Orquestador(modelo=_modelo(), outlook=outlook,
+                      radicador=RadicadorFalso(), base_workspace=str(tmp_path))
+    orq.duplicados = DetectorQueDejaPasar()
+    monkeypatch.setattr(orq, "_avisar", lambda *a, **k: _nada())
+    r = await orq.procesar(_email())
+
+    assert r.accion == "radicado"
+    assert len(outlook.movidos) == 1
+    assert any("no se pudo listar el resto del hilo" in a for a in r.avisos), r.avisos
+
+
+@pytest.mark.asyncio
+async def test_un_correo_a_revision_manual_no_arrastra_su_hilo(tmp_path):
+    """Sin radicado en el hilo, los demas correos tienen que procesarse."""
+    outlook = OutlookConHilo()
+    orq = Orquestador(modelo=_modelo(), outlook=outlook,
+                      radicador=RadicadorFalso(), base_workspace=str(tmp_path))
+    await orq._a_revision_manual(_email(), "SIN_DOCUMENTO", [])
+
+    assert len(outlook.movidos) == 1

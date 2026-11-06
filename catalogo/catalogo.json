@@ -1,6 +1,6 @@
 {
  "meta": {
-  "fuente": "motor/ (mcp-fix, 14b08df)",
+  "fuente": "motor/ (mcp-fix, f65ddc4)",
   "generado": "2026-11-06",
   "punto_de_entrada": "correr.py -> pipeline/orquestador.py Orquestador.procesar",
   "total_nodos": 31,
@@ -2348,6 +2348,7 @@
      "usa": [
       "pipeline.conversion.ANCHO_MINIMO_OCR_PX",
       "pipeline.conversion.CONFIANZA_DUDOSA",
+      "pipeline.conversion.CONFIANZA_REINTENTO_OSD",
       "pipeline.conversion.DPI_DE_RESPALDO_OCR",
       "pipeline.conversion.DPI_MAXIMO_OCR",
       "pipeline.conversion.DPI_MINIMO_OCR",
@@ -2360,6 +2361,7 @@
       "pipeline.conversion.LIMITE_PAGINAS_PDF",
       "pipeline.conversion.MARCA_TRANSCRITO_POR_IA",
       "pipeline.conversion.MAX_IMAGENES_POR_PAGINA",
+      "pipeline.conversion.MINIMO_CARACTERES_OCR",
       "pipeline.conversion.PRESUPUESTO_OCR_POR_CORREO_S",
       "pipeline.conversion.PRESUPUESTO_OCR_SEGUNDOS",
       "pipeline.conversion.TIMEOUT_OCR_PAGINA_S",
