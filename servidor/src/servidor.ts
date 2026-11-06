@@ -126,6 +126,23 @@ app.get<{ Params: { id: string } }>("/api/corridas/:id", async (req, res) => {
   return c ?? res.code(404).send({ error: "no existe" });
 });
 
+// Hojas renderizadas y texto por hoja de cada corrida: los escribe el trabajador
+// en la carpeta de trabajo, que no sale de esta máquina.
+const TIPOS: Record<string, string> = { jpg: "image/jpeg", json: "application/json; charset=utf-8" };
+
+app.get<{ Params: { id: string; "*": string } }>("/api/corridas/:id/archivos/*", async (req, res) => {
+  const { id } = req.params;
+  const archivo = req.params["*"];
+  if (!/^[\w-]+$/.test(id) || !/^(textos\/)?[\w.-]+\.(jpg|json)$/.test(archivo) || archivo.includes("..")) return res.code(400).send({ error: "ruta inválida" });
+  const base = resolve(config.datos, "trabajo", "visor", id);
+  const ruta = resolve(base, archivo);
+  if (!ruta.startsWith(base) || !existsSync(ruta)) return res.code(404).send({ error: "no existe" });
+  return res
+    .header("Content-Type", TIPOS[archivo.split(".").pop()!]!)
+    .header("Cache-Control", "private, max-age=3600")
+    .send(createReadStream(ruta));
+});
+
 app.get("/api/eventos/recientes", async () => motor.recientes.slice(-1500));
 
 app.get("/api/eventos", { websocket: true }, (socket) => {
