@@ -50,6 +50,8 @@ os.environ.setdefault("RUTA_LOGS", str(TRABAJO / "logs"))
 os.chdir(MOTOR)  # el motor no carga ningún .env: no hay uno en su carpeta
 sys.path.insert(0, str(MOTOR))
 
+import visor_adjuntos as adjuntos  # noqa: E402  (junto a este archivo, no en el motor)
+
 _salida = sys.stdout
 _actual: Dict[str, Any] = {"corrida": None}
 _cerrojo = threading.Lock()  # el modelo corre en un hilo aparte
@@ -145,11 +147,29 @@ class ModeloObservado:
         self.nombre = real.nombre
         self.vuelta = 0
 
+    def transcribir_imagen(self, jpeg: bytes) -> str:
+        """Lo que el OCR no leyó lo transcribe el modelo con visión: se anuncia con su hoja."""
+        t = time.time()
+        try:
+            texto = self.real.transcribir_imagen(jpeg)
+        except Exception as e:
+            ms = int((time.time() - t) * 1000)
+            donde = adjuntos.vision(ms, 0, False, f"{type(e).__name__}: {e}")
+            evento("vision", ms=ms, ok=False, error=f"{type(e).__name__}: {e}"[:300], bytes=len(jpeg), **donde)
+            raise
+        ms = int((time.time() - t) * 1000)
+        sin_texto = (texto or "").strip().upper() == "SIN_TEXTO"
+        donde = adjuntos.vision(ms, len(texto or ""), not sin_texto)
+        evento("vision", ms=ms, ok=True, sin_texto=sin_texto, caracteres=len(texto or ""), bytes=len(jpeg),
+               muestra=(texto or "")[:600], **donde)
+        return texto
+
     def generar(self, sistema, mensajes, herramientas):
         from pipeline import revisor
 
         self.vuelta += 1
         quien = "revisor" if sistema == revisor.SISTEMA else "agente"
+        adjuntos.quien(quien)
         ultimo = mensajes[-1] if mensajes else {}
         evento("modelo_inicio", vuelta=self.vuelta, quien=quien, modelo=self.nombre,
                mensajes=len(mensajes),
@@ -223,12 +243,19 @@ def instalar_ganchos() -> None:
 
     def _invocar(ctx, nombre, argumentos=None):
         t = time.time()
-        r = invocar_original(ctx, nombre, argumentos)
+        adjuntos.herramienta(nombre)
+        try:
+            r = invocar_original(ctx, nombre, argumentos)
+        finally:
+            adjuntos.herramienta(None)
         d = r.a_dict()
+        extra = {}
+        if nombre == "reportar_hallazgo" and isinstance(argumentos, dict):
+            extra["ubicacion"] = adjuntos.ubicar(argumentos.get("valor"), argumentos.get("evidencia"))
         evento("herramienta", herramienta=nombre, argumentos=argumentos or {},
                ms=int((time.time() - t) * 1000), ok=r.ok,
                resultado=json.dumps(d.get("datos", d.get("error")), ensure_ascii=False,
-                                    default=str)[:2500])
+                                    default=str)[:2500], **extra)
         return r
 
     _reemplazar_en_modulos(invocar_original, _invocar)
@@ -248,6 +275,7 @@ def instalar_ganchos() -> None:
 
     grabador.registrar_radicacion, grabador.registrar = _radicacion, _registrar
 
+    adjuntos.instalar(evento)
     instalar_observadores()
     instalar_reglas()
 
@@ -343,7 +371,8 @@ def instalar_observadores() -> None:
                            campo=h.campo, encontrado=True, valor=h.valor,
                            confianza=round(h.confianza, 3), metodo=h.metodo,
                            evidencia=_corto(h.evidencia, 260), umbral=umbral,
-                           aceptado=h.confianza >= umbral, a_confirmar=h.a_confirmar)
+                           aceptado=h.confianza >= umbral, a_confirmar=h.a_confirmar,
+                           ubicacion=adjuntos.ubicar(h.valor, h.evidencia))
                 elif nr is not None:
                     evento("busqueda", funcion=funcion, que=_FUNCION_DEL_CAMPO.get(funcion, funcion),
                            campo=nr.campo, encontrado=False, motivo=nr.motivo,
@@ -398,8 +427,11 @@ def instalar_observadores() -> None:
     _envolver(generic_filter, "tiene_remitente_externo_identificable", remitente)
 
     def medir(v, a, k):
-        _paso("volumen", f"{v.adjuntos} adjuntos útiles · {v.paginas} páginas · {v.megabytes:.1f} MB",
-              "aviso" if v.excesos else "ok", "; ".join(v.excesos or []))
+        topes = f"topes: {volumen.MAX_ADJUNTOS} adjuntos, {volumen.MAX_PAGINAS} páginas, {volumen.MAX_MEGABYTES} MB"
+        _paso("volumen", f"{v.adjuntos} adjuntos útiles · {v.paginas} páginas · {v.megabytes:.1f} MB".replace(".", ","),
+              "aviso" if v.excesos else "ok", "; ".join(v.excesos or []) or topes,
+              adjuntos=v.adjuntos, paginas=v.paginas, megabytes=round(v.megabytes, 2),
+              topes={"adjuntos": volumen.MAX_ADJUNTOS, "paginas": volumen.MAX_PAGINAS, "megabytes": volumen.MAX_MEGABYTES})
     _envolver(volumen, "medir", medir)
 
     # --- conversión y OCR, documento por documento
@@ -441,6 +473,89 @@ def instalar_observadores() -> None:
         else:
             _paso("registro_de_personas", "El registro no aportó campos nuevos", "info")
     _envolver(personas, "rellenar_desde_el_registro", registro)
+
+    instalar_ciclo_de_validacion()
+
+
+def _valores(hallazgos: Any) -> Dict[str, Any]:
+    return {c: getattr(h, "valor", h) for c, h in (hallazgos or {}).items()}
+
+
+def instalar_ciclo_de_validacion() -> None:
+    """
+    La compuerta, la ronda de corrección y el revisor obligatorio.
+
+    La compuerta rechaza un campo → se le devuelve a la IA con el motivo → la
+    IA corrige → la compuerta vuelve a validar. Si la compuerta lo deja pasar,
+    el revisor comprueba la identidad; lo que objeta vuelve por la misma ronda.
+    """
+    import functools
+    from pipeline import orquestador
+
+    O = orquestador.Orquestador
+    corregir = O._corregir
+
+    @functools.wraps(corregir)
+    async def _corregir(self, ctx, determinista, hallazgos, a_corregir, *resto, **k):
+        origen = "revisor" if any(str(m).startswith("REVISOR_") for m in (a_corregir or {}).values()) else "compuerta"
+        antes = {c: getattr(hallazgos.get(c), "valor", None) for c in (a_corregir or {})}
+        _actual["fase_validacion"] = f"tras corregir lo que objetó la {'revisión' if origen == 'revisor' else 'compuerta'}"
+        evento("correccion", fase="inicio", origen=origen,
+               campos={c: {"motivo": str(m)[:400], "antes": antes.get(c)} for c, m in (a_corregir or {}).items()})
+        t = time.time()
+        r = await corregir(self, ctx, determinista, hallazgos, a_corregir, *resto, **k)
+        try:
+            nuevos, dictamen = r
+            despues = {c: getattr(nuevos.get(c), "valor", None) for c in (a_corregir or {})}
+            evento("correccion", fase="fin", origen=origen, ms=int((time.time() - t) * 1000),
+                   veredicto=getattr(dictamen.veredicto, "value", str(dictamen.veredicto)),
+                   campos={c: {"antes": antes.get(c), "despues": despues.get(c),
+                               "corregido": despues.get(c) not in (None, "") and str(despues.get(c)) != str(antes.get(c))}
+                           for c in (a_corregir or {})})
+        except Exception as e:
+            evento("consola", linea=f"[visor] no se pudo anunciar la corrección: {e}")
+        return r
+
+    O._corregir = _corregir
+
+    llamar = O._llamar_al_revisor
+
+    @functools.wraps(llamar)
+    def _llamar_al_revisor(self, ws, valores, hallazgos, fuentes, email, res):
+        _actual["revisiones"] = _actual.get("revisiones", 0) + 1
+        ronda = _actual["revisiones"]
+        evento("revision", fase="inicio", ronda=ronda, valores=dict(valores or {}))
+        t = time.time()
+        r = llamar(self, ws, valores, hallazgos, fuentes, email, res)
+        if r is None:
+            evento("revision", fase="fin", ronda=ronda, ok=False, ms=int((time.time() - t) * 1000),
+                   detalle="el revisor no se pudo ejecutar: la compuerta decide sola")
+        else:
+            evento("revision", fase="fin", ronda=ronda, ok=True, ms=int((time.time() - t) * 1000),
+                   vueltas=r.vueltas, valores=dict(valores or {}),
+                   veredictos={c: {"veredicto": x.veredicto, "valor": x.valor, "detalle": x.detalle}
+                               for c, x in (r.reparos or {}).items()},
+                   ilegibles=r.ilegibles[:5])
+        return r
+
+    O._llamar_al_revisor = _llamar_al_revisor
+
+    reparos = orquestador._reparos_de_identidad
+
+    @functools.wraps(reparos)
+    def _reparos_de_identidad(revision, valores, texto="", avisos=None):
+        previos = len(avisos) if avisos is not None else 0
+        r = reparos(revision, valores, texto, avisos)
+        try:
+            nuevos_avisos = list(avisos[previos:]) if avisos is not None else []
+            evento("revision", fase="decision", devueltos={c: str(m)[:300] for c, m in r.items()},
+                   se_mantienen=nuevos_avisos[:10])
+            _actual["fase_validacion"] = "tras la revisión" if not r else _actual.get("fase_validacion", "")
+        except Exception:
+            pass
+        return r
+
+    orquestador._reparos_de_identidad = _reparos_de_identidad
 
 
 UMBRAL_POR_DEFECTO = 0.7
@@ -548,11 +663,16 @@ def _anunciar_dictamen(d, a, k) -> None:
     veredicto = getattr(d.veredicto, "value", str(d.veredicto))
     textos = {"aprobado": "Aprobado: se puede radicar", "corregido": "Aprobado con correcciones",
               "rechazado": f"Rechazado: {d.motivo_manual}"}
-    _paso("compuerta", textos.get(veredicto, veredicto),
+    _actual["rondas"] = _actual.get("rondas", 0) + 1
+    ronda = _actual["rondas"]
+    contexto = "primera validación" if ronda == 1 else (_actual.get("fase_validacion") or "otra validación")
+    _paso("compuerta", f"{textos.get(veredicto, veredicto)} · ronda {ronda}" if ronda > 1 else textos.get(veredicto, veredicto),
           "error" if veredicto == "rechazado" else "aviso" if veredicto == "corregido" else "ok",
           "\n".join(f"{'✗' if r.bloqueante else '•'} {r.codigo} · {r.campo}: {r.detalle}" for r in d.reparos[:20]),
+          ronda=ronda, contexto=contexto, motivo=d.motivo_manual or "",
+          campos={c: _corto(v, 120) for c, v in _valores(a[0] if a else k.get("hallazgos")).items()},
           veredicto=veredicto,
-          reparos=[{"campo": r.campo, "codigo": r.codigo, "detalle": str(r.detalle)[:200], "bloqueante": r.bloqueante}
+          reparos=[{"campo": r.campo, "codigo": r.codigo, "detalle": str(r.detalle)[:300], "bloqueante": r.bloqueante}
                    for r in d.reparos[:30]],
           correcciones={c: _corto(v, 80) for c, v in (d.correcciones or {}).items()})
 
@@ -738,7 +858,9 @@ def modelo_vertex(nombre: str, ubicacion: str):
 
         def _generar(*a, **k):
             config = k.get("config")
-            if _ia["temperatura"] is not None and config is not None:
+            # La transcripción por visión va sin instrucciones de sistema y con
+            # temperatura 0: esa no se toca.
+            if _ia["temperatura"] is not None and config is not None and getattr(config, "system_instruction", None):
                 config.temperature = _ia["temperatura"]
             return generar_original(*a, **k)
 
@@ -779,11 +901,16 @@ async def procesar(orden: Dict[str, Any]) -> None:
                       base_workspace=str(TRABAJO / "ws" / _actual["corrida"]),
                       sgdea=RegistroObservado(_registro))
 
+    for clave in ("rondas", "revisiones", "fase_validacion"):
+        _actual.pop(clave, None)
+    adjuntos.iniciar(_actual["corrida"], TRABAJO)
     evento("inicio", caso=caso, asunto=crudo.get("subject", ""), modelo=modelo.nombre)
     t = time.time()
     try:
         r = await asyncio.wait_for(orq.procesar(email), orden.get("tope_s", 600))
         evento("resultado", caso=caso, accion=r.accion, motivo=r.motivo_manual,
+               ubicaciones={c: adjuntos.ubicar(h.valor, h.evidencia) for c, h in r.hallazgos.items()},
+               revision=r.revision,
                radicado=r.radicado, avisos=r.avisos, explicacion=r.explicacion_del_agente,
                vueltas=r.turnos_del_agente, tokens_entrada=r.tokens_entrada,
                tokens_salida=r.tokens_salida, etapas_ms=r.etapas_ms, duracion_ms=r.duracion_ms,
