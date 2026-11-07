@@ -116,12 +116,15 @@ Cada flujo, y cada nodo de IA, elige su proveedor y su modelo. Hoy todo usa Vert
   - [x] IA global de la plataforma (en Ajustes);
   - [x] IA de cada flujo: usa la global o una propia, con anulación por nodo; se resuelve nodo → flujo → global y se muestra en el editor y en el manifiesto;
   - [x] IA de Vera, aparte: una para el chat escrito (debe aceptar herramientas) y otra para la voz (debe tener voz en vivo).
-- [~] Vera funciona con cualquier proveedor que acepte herramientas (chat escrito) y su voz con cualquiera que tenga voz en vivo. Si el proveedor de Vera no tiene voz, el botón de llamar lo muestra y se desactiva con la razón.
+- [x] Vera escribe con cualquier proveedor que acepte herramientas (capa de proveedores) y habla con Vertex o Gemini directo (voz en vivo); si su proveedor de voz no tiene voz en vivo, el botón de llamar se desactiva con la razón; el chat muestra el proveedor de Vera cuando no es Vertex.
+- [x] Proveedores abiertos (compatible, Ollama, personalizado, OpenRouter, Azure): un modelo fuera del catálogo se acepta para Vera solo si pasa una prueba real de herramientas.
+- [x] Vera completa (chat con herramientas) probada de verdad sobre un proveedor no Vertex: adaptador estilo OpenAI (endpoint compatible de Vertex), pasó la prueba de herramientas, listó flujos y navegó; luego volvió a Vertex.
+- [x] Hallazgo: las llaves `OPENAI_API_KEY` y `GOOGLE_API_KEY` del job de PQRD están vencidas o no son válidas (OpenAI 401, Google 400); el job no las usa. Quedaron como conexiones `openai-positiva` y `gemini-positiva` para cuando haya llaves vigentes.
 - [x] Clientes y límites por proveedor, conexión y flujo: dos flujos con proveedores distintos a la vez no comparten estado.
 - [x] Reintentos, límite de tasa y concurrencia por proveedor y por flujo; un flujo no frena a otro.
 - [x] Consumo por flujo y por corrida: tokens, costo estimado, tiempo; visible en Corridas, en el tablero y en el manifiesto.
 - [x] Editor: selector de proveedor y modelo en el flujo y en cada nodo de IA (con lo que acepta cada modelo); «Probar conexión».
-- [ ] Vera: herramientas para listar proveedores y modelos, configurar el proveedor o el modelo de un flujo o un nodo, probar una conexión y explicar costos. Pide la llave a la persona, nunca la recibe.
+- [x] Herramientas de IA para Vera: proveedores_ia, modelos_ia, ver_ia_flujo, configurar_ia_flujo, probar_ia, configurar_ia_global (66 herramientas en total). Pide la llave a la persona (pedir_credencial), nunca la recibe.
 
 ### 2d. Recursos y rendimiento (pedido 2026-11-07)
 
