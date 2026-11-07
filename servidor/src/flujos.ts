@@ -8,6 +8,7 @@ import { config } from "./config.ts";
 import { ajustables, catalogo as catalogoDePqrd, type Catalogo } from "./catalogo.ts";
 import * as credenciales from "./credenciales.ts";
 import * as entornos from "./entornos.ts";
+import { PRODUCCION } from "./produccion.ts";
 import type { Corrida } from "./motor.ts";
 
 /**
@@ -721,9 +722,19 @@ export async function manifiesto(id: string): Promise<Record<string, unknown> | 
   const variables = (await entornos.listar(id)).map((v) => ({ nombre: v.nombre, secreto: v.secreto, definido: v.definido, descripcion: v.descripcion }));
   const base = { manifiesto: 1, generado: new Date().toISOString(), flujo: { id: f.id, nombre: f.nombre, descripcion: f.descripcion, tipo: f.tipo, version: f.version ?? null, actualizado: f.actualizado ?? null } };
   if (f.tipo === "codigo" || !f.definicion) {
+    const prod = PRODUCCION[f.id];
     return {
-      ...base, disparador: { tipo: "buzon_real", descripcion: "lo corre el job o el visor sobre el buzón de solo lectura de la plataforma" },
-      entorno: variables, conexiones: [], escrituras: [{ descripcion: "Radicación en SGDEA: la hace el job de producción; desde este visor siempre queda simulada (MODO_TEST)" }],
+      ...base,
+      disparador: prod?.disparador ?? { tipo: "buzon_real", descripcion: "lo corre el job o el visor sobre el buzón de solo lectura de la plataforma" },
+      ejecucion: prod?.ejecucion,
+      // Las variables propias del flujo en esta plataforma y las que usa el job en producción (sin valores).
+      entorno: variables,
+      entorno_produccion: prod?.entorno ?? [],
+      conexiones: prod?.conexiones ?? [],
+      escrituras: prod?.escrituras ?? [{ donde: "SGDEA", que: "Radicación", en_este_visor: "simulada (MODO_TEST)" }],
+      despliegue: prod?.despliegue,
+      verificado_en_job: prod?.verificado_en_job,
+      observaciones: prod?.observaciones ?? [],
     };
   }
   const d = f.definicion;

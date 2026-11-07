@@ -221,7 +221,7 @@ def _sqlite(valores: dict, sql: str, params: Dict[str, Any], modo: str, max_fila
 
 def _postgres(valores: dict, sql: str, params: Dict[str, Any], modo: str, max_filas: int, timeout_s: float) -> dict:
     host, puerto = str(valores.get("host") or ""), int(valores.get("puerto") or 5432)
-    ip = destino_seguro(host, puerto)  # antes que nada: un destino vetado no llega ni a cargar el controlador
+    ip = destino_seguro(host, puerto, red_privada=True)  # antes que nada: un destino vetado no llega ni a cargar el controlador
     import pg8000.native as pgn
 
     usa_ssl = _verdad(valores.get("ssl"))
@@ -253,7 +253,7 @@ def _postgres(valores: dict, sql: str, params: Dict[str, Any], modo: str, max_fi
 
 def _mysql(valores: dict, sql: str, params: Dict[str, Any], modo: str, max_filas: int, timeout_s: float) -> dict:
     host, puerto = str(valores.get("host") or ""), int(valores.get("puerto") or 3306)
-    ip = destino_seguro(host, puerto)
+    ip = destino_seguro(host, puerto, red_privada=True)
     import pymysql
 
     usa_ssl = _verdad(valores.get("ssl"))

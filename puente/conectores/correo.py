@@ -57,7 +57,7 @@ def revisar_buzon(direccion: str) -> None:
 # ------------------------------------------------------------------- IMAP
 
 def _imap_real(host: str, puerto: int, tls: str, timeout: float):
-    ip = destino_seguro(host, puerto)
+    ip = destino_seguro(host, puerto, red_privada=True)
     if tls == "ssl":
         return imaplib.IMAP4_SSL(host, puerto, ssl_context=ssl.create_default_context(), timeout=timeout)
     con = imaplib.IMAP4(ip, puerto, timeout=timeout)
@@ -294,7 +294,7 @@ def leer(tipo: str, valores: dict, carpeta: str, filtro: Dict[str, Any], desde: 
 # ------------------------------------------------------------------- envío
 
 def _smtp_real(host: str, puerto: int, tls: str, timeout: float):
-    ip = destino_seguro(host, puerto)
+    ip = destino_seguro(host, puerto, red_privada=True)
     if tls == "ssl":
         return smtplib.SMTP_SSL(host, puerto, timeout=timeout, context=ssl.create_default_context())
     s = smtplib.SMTP(ip, puerto, timeout=timeout)

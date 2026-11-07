@@ -1758,7 +1758,7 @@ class HttpConCredencial(Http):
 class SecretosYEntorno(Plataforma):
     def test_ningun_secreto_sale_en_eventos_resultado_ni_consola(self):
         creds = {**self.creds, "api": cred("http_bearer", secretos=["token"], token=TOKEN, hosts="api.ejemplo.test"),
-                 "base-clave": cred("postgres", secretos=["clave"], host="10.0.0.5", usuario="u", clave=CLAVE_SQL)}
+                 "base-clave": cred("postgres", secretos=["clave"], host="127.0.0.1", usuario="u", clave=CLAVE_SQL)}
         d = manual(nodo("t", "transformar", operaciones=[{"op": "plantilla", "plantilla": "token={{entorno.TOKEN_API}} url={{entorno.URL_BASE}}", "salida": "fuga"}]),
                    nodo("x", "expresion", expresion="entorno.TOKEN_API + '!'", salida="fuga2"),
                    nodo("n", "notificar", para="a@ejemplo.test", cuerpo="{{fuga}} {{fuga2}}"),
@@ -1770,7 +1770,7 @@ class SecretosYEntorno(Plataforma):
         self.assertNotIn(CLAVE_SQL, texto)
         self.assertIn("token=••••", r["variables"]["fuga"])
         self.assertIn("https://api.ejemplo.test", r["variables"]["fuga"])  # lo que no es secreto sí se ve
-        self.assertTrue(any("10.0.0.5" in a for a in r["avisos"]))  # el fallo (IP privada) sí se ve, la clave no
+        self.assertTrue(any("127.0.0.1" in a for a in r["avisos"]))  # el fallo (loopback) sí se ve, la clave no
         # la consola (stderr de bibliotecas y trazas) pasa por la misma máscara
         fd._secretos_activos.add(TOKEN)
         buf = io.StringIO()
@@ -1824,6 +1824,28 @@ class ParidadConElServidor(unittest.TestCase):
         self.assertEqual(r["malos"], [False] * len(malos))
         for m in malos:  # y Python también los rechaza
             self.assertTrue(fd._validar_config({"id": "n", **m}), m)
+
+
+class RedPrivadaDeCredenciales(unittest.TestCase):
+    """Bases de datos y correo (credencial creada por una persona) pueden vivir en IP privadas; el resto no."""
+
+    def test_reglas(self):
+        from conectores.base import ip_bloqueada
+        self.assertEqual(ip_bloqueada("10.20.0.5"), "es privada")
+        self.assertIsNone(ip_bloqueada("10.20.0.5", red_privada=True))
+        self.assertIsNone(ip_bloqueada("172.19.0.3", red_privada=True))
+        self.assertIsNone(ip_bloqueada("192.168.1.10", red_privada=True))
+        self.assertEqual(ip_bloqueada("127.0.0.1", red_privada=True), "es de loopback")
+        self.assertIsNotNone(ip_bloqueada("169.254.169.254", red_privada=True))
+        self.assertEqual(ip_bloqueada("169.254.10.1", red_privada=True), "es de enlace local")
+        self.assertEqual(ip_bloqueada("::1", red_privada=True), "es de loopback")
+        self.assertIsNone(ip_bloqueada("8.8.8.8"))
+
+    def test_hosts_vetados_siguen_vetados(self):
+        from conectores.base import destino_seguro, ErrorDeNegocio
+        for h in ("metadata.google.internal", "localhost", "sgdea-prod.proyectos-3t.tech", "x.positiva.gov.co"):
+            with self.assertRaises(ErrorDeNegocio):
+                destino_seguro(h, 5432, red_privada=True)
 
 
 if __name__ == "__main__":

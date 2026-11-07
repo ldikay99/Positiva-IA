@@ -39,7 +39,9 @@ Una plataforma de flujos de IA con nodos, más potente que n8n, donde **Vera** (
 - [x] Vera armó, validó, corrigió y corrió una automatización real (entrada manual → para cada → fecha → tabla → salida), por escrito y por voz.
 - [x] Antes de correr un flujo, Vera revisa la entrada contra lo que pide su disparador y corrige sola.
 - [x] Voz en paralelo sin choques: los resultados se entregan solo cuando no hay un turno abierto, una tarea idéntica en curso no se repite, el proceso escrito no repite lo que la voz ya lanzó y no se guardan marcadores ni ruido.
-- [ ] Probar los conectores reales (Postgres, MySQL, Graph, Drive) con cuentas de prueba: hoy solo están probados con dobles.
+- [x] Conectores SQL probados contra bases reales (Postgres 16 y MariaDB 11 temporales): leen filas reales; sin permiso la escritura queda retenida; con permiso de una persona la escritura llega a la base.
+- [x] Bases de datos y servidores de correo de una credencial pueden estar en IP privadas (redes internas); loopback, metadatos, enlace local, Positiva y SGDEA siguen vetados; el nodo http mantiene el bloqueo estricto.
+- [ ] Probar Graph y Drive con cuentas reales (Graph: con los secretos de PQRD y tutelas copiados, en solo lectura; Drive: necesita una cuenta de servicio de prueba).
 
 ## 2. Motor de flujos
 
@@ -75,7 +77,7 @@ Una plataforma de flujos de IA con nodos, más potente que n8n, donde **Vera** (
 - [x] Vista «Conexiones».
 - [x] Sección «Entorno» por flujo y vista del manifiesto.
 - [x] Eventos de control del editor para Vera.
-- [ ] Tooltips propios en lugar de los `title` nativos.
+- [x] Tooltips propios en toda la plataforma (capa global; el del navegador ya no aparece).
 
 ## 3b. Canal de eventos y paralelismo
 
@@ -88,19 +90,34 @@ Una plataforma de flujos de IA con nodos, más potente que n8n, donde **Vera** (
 - [x] Editar una conexión conserva los campos no enviados; la escritura solo se apaga si cambia algún valor.
 - [x] Volumen persistente para `/datos/archivos`.
 
-## 4. Flujos de producción
+## 4. La plataforma corre todo, como un job o como cualquier automatización
+
+Pedido de Jonathan (2026-11-07): que desde aquí se puedan hacer TODOS los flujos de IA que necesitan, con sus variables, secretos y conectores. PQRD y tutelas corren aquí con todo lo real, pero con una compuerta de radicación apagada: pasan por la simulación completa y solo radican de verdad cuando él la active. No se trata de replicar el job, sino de que la plataforma funcione como un job, como un flujo o como cualquier automatización, con IA o sin ella.
+
+- [ ] Copiar las variables y los secretos de los jobs `ms-radicacion-ia-pqrd` y `ms-radicacion-ia-tutelas` con sus valores (Secret Manager y valores directos) al entorno cifrado de cada flujo. Ningún valor se imprime ni queda en el repo.
+- [ ] Que PQRD y tutelas usen ese entorno real (no dobles) para todo lo que lee: buzón por Graph, Supabase, Redis, Postgres, SGDEA en lectura y Vertex.
+- [ ] Compuerta de radicación por flujo, apagada por defecto:
+  - [ ] apagada: corren completos en simulación, con todas las escrituras retenidas y visibles;
+  - [ ] encendida: escriben como el job (SGDEA, mover, etiquetar y responder en el buzón, trazas en Supabase y Redis);
+  - [ ] la enciende solo una persona, con confirmación explícita;
+  - [ ] segunda llave en el despliegue (`PERMITIR_RADICACION_REAL=si`), sin la cual la compuerta no se puede encender.
+- [ ] Programación de PQRD y tutelas igual a la del job (leída de Cloud Scheduler), configurable por flujo. Queda apagada hasta que Jonathan la encienda.
+- [ ] Probar de punta a punta en simulación con el entorno real: PQRD y tutelas leen su buzón real, procesan y dejan las escrituras retenidas, sin escribir nada.
+- [ ] Cualquier flujo creado aquí puede usar el mismo esquema: entorno real, programación como job y escrituras habilitadas por una persona.
+
+## 5. Flujos de producción
 
 - [x] PQRD, con el motor de `mcp-fix` y su buzón real en solo lectura.
 - [x] Tutelas fiel al job, con buzón real en solo lectura e hilo como unidad.
-- [ ] Revisar el manifiesto de PQRD y tutelas frente a lo que corre hoy en producción (paridad).
+- [x] Manifiesto de PQRD y tutelas verificado contra la configuración real de sus jobs, con observaciones de seguridad (`servidor/src/produccion.ts`).
 
-## 5. Paso a producción (cuando aprueben)
+## 6. Paso a producción (cuando aprueben)
 
 - [x] Documento de despliegue (`docs/PRODUCCION.md`): principios, entorno y secretos de PQRD y tutelas con sus nombres reales, conexiones, cómo jala la información cada flujo, qué escribe y los pasos para salir a producción.
-- [ ] Completar `docs/PRODUCCION.md` con lo que entregue el motor (manifiesto real, conexiones y entorno por flujo).
-- [ ] Mapeo del entorno de cada flujo a Secret Manager o a las variables del job en Cloud Run, sin secretos en el repo.
+- [x] `docs/PRODUCCION.md` completo: lo verificado en los jobs, las rutas de la plataforma y el script de despliegue.
+- [x] Mapeo del entorno de cada flujo a Secret Manager y Cloud Run (`scripts/manifiesto_a_gcp.py`, solo imprime comandos).
 
-## 6. Pendientes menores
+## 7. Pendientes menores
 
 - [x] Descripciones del catálogo con tildes (`catalogo/generador/tildes.py`; corrige solo textos para leer, nunca claves, valores ni nombres de código).
 - [x] Limpiar del scratchpad los datos personales de los análisis (logs, buzón, OCR, corpus, capturas de casos).

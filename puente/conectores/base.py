@@ -165,8 +165,13 @@ def direcciones(texto: Any) -> List[str]:
 
 # ------------------------------------------------------------------- red
 
-def ip_bloqueada(ip: str) -> Optional[str]:
-    """Por qué no se puede llamar a una IP (SSRF), o None si es pública."""
+def ip_bloqueada(ip: str, red_privada: bool = False) -> Optional[str]:
+    """Por qué no se puede llamar a una IP (SSRF), o None si es pública.
+
+    Con `red_privada` (conexiones a bases de datos y servidores de correo que una
+    persona configuró en una credencial) se aceptan las IP privadas (10/8, 172.16/12,
+    192.168/16), donde suelen vivir esos servidores; siguen vetados loopback, enlace
+    local, metadatos, multicast y reservadas. El nodo http genérico nunca la usa."""
     if ip in IPS_PERMITIDAS_PRUEBAS:
         return None
     try:
@@ -177,16 +182,18 @@ def ip_bloqueada(ip: str) -> Optional[str]:
         a = a.ipv4_mapped
     if str(a) in HOSTS_METADATOS:
         return "es un servicio de metadatos"
-    for prop, motivo in (("is_loopback", "es de loopback"), ("is_link_local", "es de enlace local"), ("is_private", "es privada"),
+    for prop, motivo in (("is_loopback", "es de loopback"), ("is_link_local", "es de enlace local"),
                          ("is_multicast", "es multicast"), ("is_unspecified", "no está especificada"), ("is_reserved", "es reservada")):
         if getattr(a, prop):
             return motivo
+    if a.is_private:
+        return None if red_privada and isinstance(a, ipaddress.IPv4Address) else "es privada"
     if not a.is_global:
         return "no es pública"
     return None
 
 
-def destino_seguro(host: str, puerto: int) -> str:
+def destino_seguro(host: str, puerto: int, red_privada: bool = False) -> str:
     """Resuelve el host y devuelve la IP a la que conectar; ErrorDeNegocio si es vetado o alguna IP es interna."""
     h = (host or "").lower().rstrip(".")
     if h in HOSTS_METADATOS or h.endswith(".internal") or h == "localhost" or h.endswith(".localhost"):
@@ -204,7 +211,7 @@ def destino_seguro(host: str, puerto: int) -> str:
     if not ips:
         raise ErrorDeNegocio(f"no se pudo resolver {host}")
     for ip in ips:
-        motivo = ip_bloqueada(ip)
+        motivo = ip_bloqueada(ip, red_privada)
         if motivo:
             raise ErrorDeNegocio(f"bloqueado por seguridad: {host} apunta a {ip}, que {motivo}")
     return ips[0]

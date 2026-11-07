@@ -323,6 +323,9 @@ const TITULOS: Record<string, string> = {
   escrituras: "Escrituras", capacidades_escritura: "Escrituras", escritura: "Escrituras", horario: "Horario", programado: "Horario", webhook: "Webhook", version: "Versión", modelo: "Modelo de IA",
   descripcion: "Descripción", obligatorio: "Obligatorio", tipo: "Tipo", id: "Id", actualizado: "Actualizado", creado: "Creado", nombre: "Nombre",
   campos: "Campos", direccion: "Dirección", metodo: "Método", credencial: "Conexión", habilitada: "Habilitada", destino: "Destino", alcance: "Alcance",
+  entorno_produccion: "Variables del job en producción", ejecucion: "Cómo se ejecuta", despliegue: "Despliegue", sistema: "Sistema", como: "Cómo se conecta",
+  acceso: "Acceso", donde: "Dónde", que: "Qué hace", en_este_visor: "En este visor", origen: "Origen", para: "Para qué", secreto: "Secreto",
+  verificado_en_job: "Verificado en el job", observaciones: "Observaciones", secreto_gcp: "Secreto en GCP",
   operacion: "Operación", consulta: "Consulta", ruta: "Ruta", categoria: "Categoría", accion: "Acción", ultima_ejecucion: "Última ejecución",
 };
 
