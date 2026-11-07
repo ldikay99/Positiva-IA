@@ -7,6 +7,7 @@ import { usarEditor, type Credencial, type TipoCredencial } from "../editor/alma
 import { Interruptor } from "./Editores.tsx";
 import { Selector } from "./Selector.tsx";
 import { CampoNumero } from "./Formulario.tsx";
+import { AccionesDeConexion, AyudaRedireccion } from "./ConexionOAuth.tsx";
 
 /**
  * Las conexiones (credenciales) con que los nodos hablan con otros sistemas.
@@ -76,7 +77,7 @@ export function FormularioCredencial({ credencial, tiposPermitidos, alcance, alT
     setEnviando(true);
     try {
       const propio = alcance ?? (credencial?.alcance && credencial.alcance !== "global" ? credencial.alcance : undefined);
-      await pedir(`/api/credenciales/${encodeURIComponent(nombre)}${propio ? `?flujo=${encodeURIComponent(propio)}` : ""}`, { method: "PUT", body: JSON.stringify({ tipo, valores: enviar, descripcion, ...(propio ? { alcance: propio } : {}) }) });
+      await pedir(`/api/credenciales/${encodeURIComponent(nombre)}${propio ? `?flujo=${encodeURIComponent(propio)}` : ""}`, { method: "PUT", headers: { "X-Confirmado-Por-Persona": "si" }, body: JSON.stringify({ tipo, valores: enviar, descripcion, ...(propio ? { alcance: propio } : {}) }) });
       await cargar();
       avisar(editando ? `Conexión «${nombre}» actualizada` : `Conexión «${nombre}» creada`);
       alTerminar(nombre);
@@ -110,6 +111,7 @@ export function FormularioCredencial({ credencial, tiposPermitidos, alcance, alT
         </div>
       </div>
       {t?.ayuda && <p className="c-ayuda"><Icono n="info" tam={13} />{t.ayuda}</p>}
+      {t && <AyudaRedireccion tipo={t.tipo} />}
       <div className="f-campo">
         <label className="f-etiqueta" htmlFor="c-desc"><span>Para qué es</span></label>
         <input id="c-desc" className="campo" value={descripcion} placeholder="Ambiente de pruebas de SGDEA" onChange={(e) => setDescripcion(e.target.value)} />
@@ -205,6 +207,7 @@ function TarjetaCredencial({ c, tipo, pendiente, setPendiente, editar }: { c: Cr
           <dd>{c.usada_por === undefined ? <span className="texto-3">{c.usada ? `la usó una corrida ${hace(c.usada)}` : "ninguna corrida todavía"}</span> : c.usada_por.length ? c.usada_por.map((u, i) => <span key={i} className="ficha">{flujos.find((f) => f.id === u.flujo)?.nombre ?? u.flujo}{u.nombre || u.nodo ? ` · ${u.nombre ?? u.nodo}` : ""}</span>) : <span className="texto-3">ningún nodo</span>}</dd>
         </div>
       </dl>
+      <AccionesDeConexion c={c} />
       <div className="c-escritura">
         <div className="crece">
           <b>{c.permitir_escritura ? "Puede escribir de verdad" : "Solo lectura"}</b>

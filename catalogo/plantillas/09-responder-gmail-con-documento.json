@@ -1,0 +1,48 @@
+{
+  "id": "responder-gmail-con-documento",
+  "orden": 9,
+  "nombre": "Responder correos de Gmail con documento",
+  "categoria": "Correo",
+  "resumen": "Cuando llega un correo a Gmail, la IA saca los datos, redacta un documento Word con la respuesta, contesta en el mismo hilo con el documento y marca el correo como «Procesado».",
+  "descripcion": "Revisa Gmail cada 5 minutos (solo lectura, sin repetir correos) y, por cada correo nuevo con adjuntos que cumpla la búsqueda, lee los adjuntos (con OCR si son escaneos), extrae los datos del caso con IA, redacta un documento de respuesta en Word y el texto del correo, responde en el MISMO hilo de Gmail con el documento y le pone la etiqueta «Procesado». El documento queda como resultado de la ejecución, descargable en el historial. Mientras la conexión de Gmail no tenga la escritura habilitada por una persona, la respuesta y la etiqueta se arman completas y quedan retenidas en el detalle de la ejecución: no salen.",
+  "como_probar": "Crea en Conexiones una «Google (OAuth)» llamada gmail-del-area y pulsa «Conectar con Google». Instala la plantilla, revisa la búsqueda del disparador y enciéndelo (activo). Mándate un correo con un PDF: en unos minutos verás la ejecución con el documento generado y la respuesta retenida. En el editor puedes probar cada paso con «Probar este paso». Para que responda de verdad, una persona tiene que habilitar la escritura de la conexión.",
+  "necesita": [
+    { "tipo": "conexion", "texto": "Una conexión «Google (OAuth)» (gmail-del-area) conectada con la cuenta de Gmail del área: client_id y client_secret de un cliente OAuth de Google Cloud con la URI de redirección <URL_PUBLICA>/api/oauth/callback." },
+    { "tipo": "conexion", "texto": "Para responder de verdad: la escritura de esa conexión habilitada por una persona." }
+  ],
+  "definicion": {
+    "nombre": "Responder correos de Gmail con documento",
+    "descripcion": "Por cada correo nuevo de Gmail: extrae los datos, redacta un documento con IA, responde en el hilo con el documento y lo etiqueta.",
+    "ia": { "usar": "global" },
+    "nodos": [
+      { "id": "llega", "tipo": "gmail_nuevo", "nombre": "Llega un correo a Gmail", "config": { "credencial": "gmail-del-area", "consulta": "has:attachment -label:Procesado", "cada_minutos": 5, "activo": false, "leer_adjuntos": false } },
+      { "id": "adjuntos", "tipo": "leer_adjuntos", "nombre": "Leer los adjuntos", "config": { "max_paginas": 15 } },
+      { "id": "datos", "tipo": "ia_extraer", "nombre": "Datos del caso", "config": {
+        "instrucciones": "Saca del correo y de sus adjuntos los datos del caso. Si un dato no aparece, déjalo vacío: no lo inventes.",
+        "entradas": ["correo", "adjuntos.texto"], "salida": "datos",
+        "campos": [
+          { "nombre": "solicitante", "descripcion": "nombre completo de quien escribe o de la persona del caso" },
+          { "nombre": "documento", "descripcion": "número de documento de identidad (cédula, NIT…)" },
+          { "nombre": "solicitud", "descripcion": "qué pide, en una frase" }
+        ] } },
+      { "id": "documento", "tipo": "documento_generar", "nombre": "Documento de respuesta", "config": {
+        "formato": "docx", "nombre": "respuesta-{{datos.documento}}", "salida": "documento",
+        "desde_ia": { "instrucciones": "Redacta la respuesta formal a la solicitud recibida: saludo, resumen de lo que pide, la respuesta o los pasos que siguen y un cierre cordial firmado por «Equipo de atención». Incluye una sección «Datos del caso» con una tabla (Dato, Valor) con el solicitante, el documento y la solicitud. Usa solo la información recibida.", "entradas": ["correo", "datos"] } } },
+      { "id": "redactar", "tipo": "ia_redactar", "nombre": "Texto del correo", "config": {
+        "instrucciones": "Redacta un correo breve y cordial (máximo 5 líneas) para {{correo.remitente_nombre}}: dile que adjuntamos la respuesta a su solicitud en un documento. Firma como «Equipo de atención». No inventes datos.", "variable": "respuesta" } },
+      { "id": "responder", "tipo": "gmail_responder", "nombre": "Responder en el hilo", "config": { "credencial": "gmail-del-area", "cuerpo": "{{respuesta}}", "adjuntos": ["{{documento}}"], "incluir_original": true } },
+      { "id": "etiquetar", "tipo": "gmail_etiquetar", "nombre": "Marcar «Procesado»", "config": { "credencial": "gmail-del-area", "agregar": ["Procesado"], "marcar_leido": true } },
+      { "id": "listo", "tipo": "salida", "nombre": "Respuesta enviada o retenida", "config": { "desenlace": "responder", "motivo": "Respuesta con documento para {{datos.solicitante}}", "plantilla_respuesta": "{{respuesta}}", "archivos": ["{{documento}}"] } }
+    ],
+    "aristas": [
+      { "desde": "llega", "hacia": "adjuntos" },
+      { "desde": "adjuntos", "hacia": "datos", "cuando": "ok" },
+      { "desde": "adjuntos", "hacia": "datos", "cuando": "sin_adjuntos" },
+      { "desde": "datos", "hacia": "documento" },
+      { "desde": "documento", "hacia": "redactar" },
+      { "desde": "redactar", "hacia": "responder" },
+      { "desde": "responder", "hacia": "etiquetar" },
+      { "desde": "etiquetar", "hacia": "listo" }
+    ]
+  }
+}

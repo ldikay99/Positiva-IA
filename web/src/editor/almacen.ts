@@ -49,6 +49,10 @@ export interface Credencial {
   actualizado?: number;
   /** Cuándo la usó una corrida por última vez. */
   usada?: number;
+  /** La guardó una persona desde la web (necesario para red_privada). */
+  creada_por_persona?: boolean;
+  /** OAuth (google_oauth, microsoft_oauth): la cuenta conectada y sus permisos; nunca tokens. */
+  conexion?: { conectada: boolean; cuenta?: string; alcances?: string[]; conectada_en?: number; expira?: number };
 }
 
 export interface CampoCredencial {
@@ -61,6 +65,8 @@ export interface CampoCredencial {
   placeholder?: string;
   opciones?: string[];
   defecto?: string | number | boolean;
+  /** Lo llena la plataforma (tokens OAuth): no va en el formulario. */
+  interno?: boolean;
 }
 
 export interface TipoCredencial {
@@ -100,6 +106,8 @@ function normalizarCredenciales(x: unknown): Credencial[] {
       : undefined,
     actualizado: typeof c.actualizado === "number" ? c.actualizado : typeof c.actualizada === "number" ? c.actualizada : undefined,
     usada: typeof c.usada === "number" ? c.usada : undefined,
+    creada_por_persona: c.creada_por_persona === true,
+    conexion: c.conexion && typeof c.conexion === "object" ? (c.conexion as Credencial["conexion"]) : undefined,
   }));
 }
 
@@ -115,7 +123,8 @@ function normalizarTiposCredencial(x: unknown): TipoCredencial[] {
         descripcion: typeof t.descripcion === "string" ? t.descripcion : undefined,
         ayuda: typeof t.ayuda === "string" ? t.ayuda : undefined,
         escritura: typeof t.escritura === "string" ? t.escritura : undefined,
-        campos: (crudos as Record<string, unknown>[]).map((c) => ({
+        // los campos internos (tokens de OAuth, cuenta conectada) los llena la plataforma: no van en el formulario
+        campos: (crudos as Record<string, unknown>[]).filter((c) => c.interno !== true).map((c) => ({
           nombre: String(c.nombre ?? c.clave ?? ""),
           titulo: String(c.titulo ?? c.title ?? c.etiqueta ?? c.nombre ?? ""),
           secreto: Boolean(c.secreto),

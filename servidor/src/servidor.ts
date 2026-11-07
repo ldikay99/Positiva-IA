@@ -330,7 +330,7 @@ app.post<{ Params: { id: string } }>("/api/flujos/:id/correr", async (req, res) 
   const disp = flujos.disparadorDe(f.definicion);
   const m = motorDe(f.id)!;
   if (!m.cabe(1)) return res.code(429).send(colaLlena(m));
-  if (flujos.DISPARADORES_DE_CORREO.has(disp?.tipo ?? "")) {
+  if (disp && flujos.DISPARADORES_DE_CORREO.has(disp.tipo)) {
     if (!r.data.caso || !bandeja.casoValido(r.data.caso)) return res.code(400).send({ error: `este flujo empieza con ${disp.tipo}: manda caso (un correo de SU correspondencia: GET /api/bandeja?flujo=${f.id})` });
     // solo un correo de su propia correspondencia (nunca el universo de PQRD ni lo de otro flujo)
     if (!(await bandeja.esDe(deBandeja(f), r.data.caso))) return res.code(400).send({ error: `el caso «${r.data.caso}» no es de la correspondencia de este flujo (súbelo a su bandeja de prueba o tráelo de su buzón)` });

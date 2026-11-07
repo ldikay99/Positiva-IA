@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { config } from "./config.ts";
 import type { Definicion, Flujo } from "./flujos.ts";
+import { DISPARADORES_DE_SONDEO } from "./flujos_integraciones.ts";
 
 /**
  * Lo que corre solo:
@@ -24,11 +25,14 @@ import type { Definicion, Flujo } from "./flujos.ts";
  * programación de los flujos de código en <estado>/programaciones.json.
  */
 
+/** Lo que devuelve el sondeo: un correo (caso) o un evento (entrada). */
+export interface Sondeado { caso?: string; id: string; asunto?: string; entrada?: unknown }
+
 export interface Dependencias {
   flujos: () => Flujo[];
   /** Cuántas corridas de ese origen tiene el flujo en cola o en curso. */
   enCurso: (flujo: string, origen: string) => number;
-  disparar: (flujo: string, origen: "programado" | "correo_nuevo", datos: { entrada?: unknown; caso?: string }) => void;
+  disparar: (flujo: string, origen: string, datos: { entrada?: unknown; caso?: string }) => void;
   /** La orden para `flujo_declarativo.py sondear` (definición y credenciales), o null. */
   ordenDeSondeo: (flujo: string) => Record<string, unknown> | null;
   aviso: (msg: string, datos?: Record<string, unknown>) => void;
@@ -247,7 +251,7 @@ async function guardarEstado(): Promise<void> {
   await writeFile(ruta(), JSON.stringify(ultimas, null, 2), "utf8");
 }
 
-const disparadorDe = (d: Definicion) => d.nodos.find((n) => ["programado", "correo_nuevo"].includes(n.tipo));
+const disparadorDe = (d: Definicion) => d.nodos.find((n) => n.tipo === "programado" || DISPARADORES_DE_SONDEO.has(n.tipo));
 
 /** Un tic del reloj: lo que toca ahora. Se puede llamar a mano (pruebas). */
 export function tic(deps: Dependencias, ahora = new Date()): void {
@@ -287,19 +291,19 @@ export function tic(deps: Dependencias, ahora = new Date()): void {
       if (ahora.getTime() - (ultimas[clave] ?? 0) < cada * 60_000 - 2_000 || sondeando.has(f.id)) continue;
       ultimas[clave] = ahora.getTime();
       cambio = true;
-      void sondear(deps, f.id);
+      void sondear(deps, f.id, n.tipo);
     }
   }
   if (cambio) void guardarEstado().catch(() => undefined);
 }
 
 /** Revisa el buzón de un correo_nuevo con el motor (solo lectura) y arranca una corrida por cada correo nuevo. */
-export async function sondear(deps: Dependencias, flujo: string): Promise<{ casos: { caso: string; id: string; asunto: string }[]; error?: string }> {
+export async function sondear(deps: Dependencias, flujo: string, origen = "correo_nuevo"): Promise<{ casos: Sondeado[]; error?: string }> {
   const orden = deps.ordenDeSondeo(flujo);
   if (!orden) return { casos: [], error: "ese flujo no tiene correo_nuevo" };
   sondeando.add(flujo);
   try {
-    const r = await new Promise<{ ok?: boolean; casos?: { caso: string; id: string; asunto: string }[]; error?: string }>((resolver) => {
+    const r = await new Promise<{ ok?: boolean; casos?: Sondeado[]; error?: string }>((resolver) => {
       const p = spawn(config.python, [resolve(config.raiz, "puente", "flujo_declarativo.py"), "sondear"], { env: { ...process.env, PYTHONIOENCODING: "utf-8" } });
       let salida = "";
       p.stdout.setEncoding("utf8").on("data", (t: string) => (salida += t));
@@ -315,10 +319,14 @@ export async function sondear(deps: Dependencias, flujo: string): Promise<{ caso
       p.stdin.end(JSON.stringify(orden));
     });
     if (!r.ok) {
-      deps.aviso("correo_nuevo: no se pudo revisar el buzón", { flujo, error: r.error });
+      deps.aviso(`${origen}: no se pudo revisar ${origen === "calendar_evento_proximo" ? "el calendario" : "el buzón"}`, { flujo, error: r.error });
       return { casos: [], error: r.error };
     }
-    for (const x of r.casos ?? []) deps.disparar(flujo, "correo_nuevo", { caso: x.caso, entrada: { id: x.id, asunto: x.asunto } });
+    for (const x of r.casos ?? []) {
+      // un correo (gmail_nuevo, outlook_nuevo, correo_nuevo) llega como caso; un evento del calendario, como entrada
+      if (x.caso) deps.disparar(flujo, origen, { caso: x.caso, entrada: { id: x.id, asunto: x.asunto ?? "", ...(x.entrada && typeof x.entrada === "object" ? x.entrada as object : {}) } });
+      else if (x.entrada !== undefined) deps.disparar(flujo, origen, { entrada: x.entrada });
+    }
     return { casos: r.casos ?? [] };
   } finally {
     sondeando.delete(flujo);

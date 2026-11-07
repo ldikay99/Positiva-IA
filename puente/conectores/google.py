@@ -29,7 +29,7 @@ BASES = {
 A = "https://www.googleapis.com/auth/"
 ALCANCES = {"gmail": [A + "gmail.modify"], "calendar": [A + "calendar"], "docs": [A + "documents", A + "drive"],
             "forms": [A + "forms.responses.readonly", A + "forms.body.readonly"], "drive": [A + "drive"]}
-ID = re.compile(r"^[A-Za-z0-9_-]{6,200}$")
+ID = re.compile(r"^[A-Za-z0-9_-]{1,200}$")
 SISTEMA = {"INBOX", "UNREAD", "STARRED", "IMPORTANT", "SPAM", "TRASH", "SENT", "DRAFT", "CATEGORY_PERSONAL", "CATEGORY_SOCIAL",
            "CATEGORY_PROMOTIONS", "CATEGORY_UPDATES", "CATEGORY_FORUMS"}
 MAX_ADJUNTO = 15_000_000

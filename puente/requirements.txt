@@ -11,5 +11,7 @@ PyMySQL==1.1.2
 # Documentos de los nodos de producto (puente/documentos.py), sin dependencias nuevas: pypdfium2 (arriba) une, divide,
 # lee y pasa a imagen los PDF; python-docx (MIT), openpyxl (MIT) y Pillow (HPND) vienen con motor/requirements.txt;
 # el PDF se escribe con un generador propio. Sin LibreOffice.
+# Especificaciones OpenAPI/Swagger en YAML del conector api_operacion (MIT; solo safe_load).
+PyYAML==6.0.2
 # openpyxl (MIT), google-auth y requests (Apache-2.0) ya vienen con motor/requirements.txt:
 # Hojas XLSX y Google Drive por REST con la cuenta de servicio, sin google-api-python-client.

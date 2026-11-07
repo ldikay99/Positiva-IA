@@ -91,8 +91,8 @@ from conectores import hojas as c_hojas  # noqa: E402
 from conectores import sql as c_sql  # noqa: E402
 from conectores import tablas as c_tablas  # noqa: E402
 import proveedores as ia_proveedores  # noqa: E402  (la capa de proveedores de IA: Vertex, Gemini, OpenAI, Claude…)
-import nodos_producto as np_  # noqa: E402
-import nodos_integraciones as ni_  # noqa: E402  (Google Workspace, Microsoft 365, OpenAPI y disparadores por evento)  (aprobación humana, documentos, datos personales, hojas, mensajería, IA, datos y control)
+import nodos_producto as np_  # noqa: E402  (aprobación humana, documentos, datos personales, hojas, mensajería, IA, datos y control)
+import nodos_integraciones as ni_  # noqa: E402  (Google Workspace, Microsoft 365, OpenAPI y disparadores por evento)
 import cache_conversion  # noqa: E402  (conversión, OCR y visión por huella del archivo)
 from conectores.base import (HOSTS_METADATOS, ErrorDeNegocio, ErrorTransitorio, destino_seguro, direccion_vetada,  # noqa: E402,F401
                              host_vetado, ip_bloqueada, ruta_estado, timeout_de)
@@ -214,6 +214,7 @@ HTTP_TIMEOUT_MS, HTTP_TIMEOUT_MAX_MS = 15000, 60000
 HTTP_MAX_BYTES = 2_000_000
 ENCABEZADOS_SECRETOS = {"authorization", "proxy-authorization", "cookie", "x-api-key", "api-key", "apikey", "x-auth-token"}
 CREDENCIAL = re.compile(r"^[A-Z][A-Z0-9_]{2,63}$")  # el nombre de una variable de entorno (forma de antes)
+CREDENCIALES_DE.update(ni_.CREDENCIALES_DE)
 # Reintentos: lo que vale si el nodo no lo dice y los topes.
 REINTENTO_ESPERA_MS, REINTENTO_FACTOR, REINTENTO_MAXIMO_MS = 500, 2.0, 10000
 _dormir = time.sleep  # las pruebas lo cambian para no esperar
@@ -610,8 +611,9 @@ def referencias(n: dict) -> List[Tuple[str, Set[str]]]:
                 locales.add(o["salida"])
         return refs
     if t == "http":
-        for k in ("url", "query", "encabezados", "cuerpo"):
+        for k in ("url", "query", "encabezados", "cuerpo", "nombre_archivo"):
             refs += [(r, set()) for r in _plantillas_todas(c.get(k))]
+        refs += [(r, set()) for r in np_.refs_archivos(c.get("archivos"), _ref_de_fuente)] + [(r, set()) for r in _plantillas_en(c.get("archivos"))]
         for m in c.get("mapeo") or []:
             if isinstance(m, dict):
                 refs += [(r, set()) for r in _plantillas_todas(m.get("defecto"))]
@@ -790,6 +792,7 @@ def _validar_http(c: dict, q) -> None:
                     q(f"mapeo {i}: ruta «{m.get('ruta')}» no es válida (p. ej. «items.0.id», «items[estado=activo].id», «[\"a.b\"]»)")
                 if "obligatorio" in m and not isinstance(m["obligatorio"], bool):
                     q(f"mapeo {i}: obligatorio tiene que ser true o false")
+    ni_.validar_http(c, q)  # paginación, archivos que suben y descarga
 
 
 NUEVOS = (DISPARADORES - {"entrada_correo"}) | CONECTORES | {
