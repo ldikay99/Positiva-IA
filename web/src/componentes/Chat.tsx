@@ -10,7 +10,13 @@ import { Selector } from "./Selector.tsx";
 type Adjunto = { id: string; nombre: string; tipo: string; tamano: number };
 type Paso = { nombre: string; argumentos?: unknown; resultado?: string };
 type Propuesta = { accion: string; id: string; estado?: "hecha" | "descartada" };
-type Mensaje = { rol: "usuario" | "asistente"; texto: string; t: number; adjuntos?: Adjunto[]; pasos?: Paso[]; cambiados?: string[]; error?: boolean; voz?: boolean; propuestas?: Propuesta[] };
+type ArchivoSalida = { corrida: string; id: string; nombre: string; tipo: string; tamano?: number };
+type Mensaje = { rol: "usuario" | "asistente"; texto: string; t: number; adjuntos?: Adjunto[]; pasos?: Paso[]; cambiados?: string[]; error?: boolean; voz?: boolean; propuestas?: Propuesta[]; archivos?: ArchivoSalida[] };
+
+/** Dónde vive un archivo que generó un flujo: en su ejecución, o en los archivos del flujo si salió de una prueba. */
+function urlDeSalida(x: ArchivoSalida): string {
+  return x.corrida.startsWith("prueba:") ? `/api/flujos/${encodeURIComponent(x.corrida.slice(7))}/archivos/${encodeURIComponent(x.id)}` : `/api/corridas/${encodeURIComponent(x.corrida)}/archivos/${encodeURIComponent(x.id)}`;
+}
 type Conversacion = { id: string; titulo: string; flujo: string; creada: number; actualizada: number; mensajes: Mensaje[] };
 type Resumen = Omit<Conversacion, "mensajes"> & { n: number; ultimo: string };
 type Subiendo = { clave: string; nombre: string; tipo: string; listo?: Adjunto; error?: string };
@@ -86,8 +92,8 @@ function Capsula({ chat, a, alAbrir, alQuitar, cargando, error }: { chat: string
 }
 
 /** El visor de adjuntos, dentro del chat: nada se abre en otra ventana. */
-function Visor({ chat, a, cerrar }: { chat: string; a: Adjunto; cerrar: () => void }) {
-  const url = `/api/chats/${chat}/adjuntos/${a.id}`;
+function Visor({ chat, a, cerrar, url: urlDada }: { chat: string; a: Adjunto; cerrar: () => void; url?: string }) {
+  const url = urlDada ?? `/api/chats/${chat}/adjuntos/${a.id}`;
   const [texto, setTexto] = useState<string | null>(null);
   const comoTexto = !a.tipo.startsWith("image/") && !a.tipo.startsWith("video/") && !a.tipo.startsWith("audio/") && a.tipo !== "application/pdf";
   useEffect(() => {
@@ -253,6 +259,11 @@ export function Chat() {
   const [pensando, setPensando] = useState("");
   const [ocupado, setOcupado] = useState(false);
   const [visor, setVisor] = useState<Adjunto | null>(null);
+  const [visorUrl, setVisorUrl] = useState<string | undefined>(undefined);
+  const abrirSalida = (x: ArchivoSalida) => {
+    setVisorUrl(urlDeSalida(x));
+    setVisor({ id: x.id, nombre: x.nombre, tipo: x.tipo || "application/octet-stream", tamano: x.tamano ?? 0 });
+  };
   const [renombrando, setRenombrando] = useState<string | null>(null);
   const [confirmando, setConfirmando] = useState<string | null>(null);
   const [arrastrando, setArrastrando] = useState(false);
@@ -452,6 +463,9 @@ export function Chat() {
           } else if (d.tipo === "fin") {
             actualizar((m) => ({ ...m, cambiados: d.flujos_cambiados ?? [] }));
             if (d.flujos_cambiados?.length) void cargarFlujos();
+          } else if (d.tipo === "archivos" && Array.isArray(d.archivos)) {
+            const nuevos = d.archivos as ArchivoSalida[];
+            actualizar((m) => ({ ...m, archivos: [...(m.archivos ?? []), ...nuevos] }));
           } else if (d.tipo === "renombrado") {
             void cargarLista();
           } else {
@@ -591,9 +605,22 @@ export function Chat() {
                       <div key={i} className={`chat-msj ${m.rol} ${m.error ? "error" : ""}`}>
                         {m.voz && <span className="chat-de-voz"><Icono n="mic" tam={11} />{m.rol === "usuario" ? "Dicho en la llamada" : `${NOMBRE} en la llamada`}</span>}
                         {!!m.adjuntos?.length && actual && (
-                          <div className="chat-adjuntos">{m.adjuntos.map((a) => <Capsula key={a.id} chat={actual.id} a={a} alAbrir={() => setVisor(a)} />)}</div>
+                          <div className="chat-adjuntos">{m.adjuntos.map((a) => <Capsula key={a.id} chat={actual.id} a={a} alAbrir={() => { setVisorUrl(undefined); setVisor(a); }} />)}</div>
                         )}
                         {m.texto && <div className="chat-texto">{m.rol === "asistente" ? <Markdown texto={m.texto} /> : m.texto.split("\n").map((l, j) => <p key={j}>{l}</p>)}</div>}
+                        {!!m.archivos?.length && (
+                          <div className="chat-adjuntos chat-salidas" aria-label="Archivos generados">
+                            {m.archivos.map((x) => (
+                              <span key={`${x.corrida}-${x.id}`} className="capsula salida">
+                                <button type="button" className="capsula-cuerpo" onClick={() => abrirSalida(x)} title={`Abrir ${x.nombre}`}>
+                                  {x.tipo.startsWith("image/") ? <img src={urlDeSalida(x)} alt="" /> : <span className="capsula-icono"><Icono n={iconoDe(x.tipo, x.nombre)} tam={14} /></span>}
+                                  <span className="capsula-texto"><b>{x.nombre}</b><small>{x.tamano ? peso(x.tamano) : "generado"}</small></span>
+                                </button>
+                                <a className="capsula-descargar" href={`${urlDeSalida(x)}?descargar=1`} download={x.nombre} aria-label={`Descargar ${x.nombre}`} title="Descargar"><Icono n="abajo" tam={12} /></a>
+                              </span>
+                            ))}
+                          </div>
+                        )}
                         {!!m.propuestas?.length && (
                           <div className="chat-propuestas">
                             {m.propuestas.map((p) => {
@@ -735,7 +762,7 @@ export function Chat() {
               )}
             </div>
 
-            <AnimatePresence>{visor && actual && <Visor key="visor" chat={actual.id} a={visor} cerrar={() => setVisor(null)} />}</AnimatePresence>
+            <AnimatePresence>{visor && actual && <Visor key="visor" chat={actual.id} a={visor} url={visorUrl} cerrar={() => { setVisor(null); setVisorUrl(undefined); }} />}</AnimatePresence>
             {arrastrando && !enLlamada && <div className="chat-soltar"><Icono n="adjunto" tam={22} />Suelta para adjuntar</div>}
           </motion.section>
         )}

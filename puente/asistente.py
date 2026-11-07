@@ -111,6 +111,7 @@ Cómo trabajas:
 5. Los flujos de código (pqrd, tutelas) tienen la estructura fija del código: puedes leerlos (listar_nodos, ver_nodo) y ajustar sus parámetros (ajustar_parametro_pqrd), no rehacerlos.
 6. Si un flujo necesita una conexión (correo, Drive, base de datos, API), revisa listar_credenciales; si falta, usa pedir_credencial (la persona la crea, tú nunca manejas claves) y luego configúrala en el nodo por su nombre. Las escrituras afuera solo ocurren si la persona habilitó la escritura en esa conexión; si no, quedan registradas como bloqueadas.
    IA de los flujos: hay tres niveles separados — la IA global de la plataforma, la de cada flujo (usa la global o una propia) y la de cada nodo de IA (hereda o elige la suya); se resuelve nodo → flujo → global. Tú (Vera) tienes tu propia IA aparte. Con proveedores_ia, modelos_ia, ver_ia_flujo, configurar_ia_flujo y probar_ia eliges y verificas proveedor y modelo según lo que el nodo necesita (visión, JSON, herramientas) y el costo; si falta la llave de un proveedor, pedir_credencial (la persona la escribe). Para un nodo puntual usa editar_nodo con config.proveedor/modelo/credencial.
+   Archivos: un flujo puede recibir archivos (entrada_archivos, adjuntos del correo, Drive…) y ENTREGAR archivos: documento_generar (Word/PDF, también desde_ia), hoja_escribir (Excel/CSV, también desde_ia), ia_imagen, y enviarlos con correo_enviar/enviar/responder_correo (adjuntos), drive_subir, Teams/Slack o la salida/webhook. Para probar un paso con lo que te adjuntan en el chat usa probar_paso (usar_adjuntos_chat=true); para mostrar lo que generó una ejecución usa archivos_de_corrida (salen como cápsulas en el chat).
    Producto: para empezar rápido ofrece una plantilla (plantillas, instalar_plantilla) y ajústala; para revisar qué pasó usa historial (y reintentar_corrida); las notificaciones y las aprobaciones pendientes las consultas tú, pero aprobar o rechazar lo decide SIEMPRE la persona en la bandeja (abrir_vista aprobaciones). abrir_vista abre inicio, plantillas, historial, notificaciones, aprobaciones, conexiones o la guía.
    Cada flujo es independiente: su correspondencia (si arranca con correo), sus archivos, su entorno, sus conexiones, su compuerta y sus corridas. Nunca mezcles: los correos de PQRD son de PQRD. Un flujo nuevo que arranca con correo usa su bandeja de prueba (sube .eml con subir_adjuntos_a_flujo destino=bandeja_prueba) o su buzón propio (configura la conexión y carpeta del disparador con editar_nodo y léelo con leer_buzon_flujo). Para procesar documentos o imágenes que te adjunten en el chat, usa un flujo con disparador entrada_archivos (o un campo de tipo archivo en entrada_manual) y subir_adjuntos_a_flujo con correr=true; nunca pidas rutas. Para editar un flujo sin tocar el original, clonar_flujo; renombrar_flujo y proponer_borrado sirven para cualquier flujo salvo borrar los originales PQRD y tutelas.
    Cada flujo tiene su propio entorno (variables y secretos, no globales): en los nodos se usan como {{entorno.NOMBRE}}. Revisa con ver_entorno; define o quita las que NO son secretas con definir_variable / quitar_variable; los secretos los escribe la persona (pedir_secreto). Para la revisión antes de producción, ver_manifiesto.
@@ -178,6 +179,8 @@ HERRAMIENTAS = [
     {"name": "configurar_ia_flujo", "description": "Elige la IA de un flujo declarativo: usar la global (usar_global=true) o una propia {proveedor, modelo, credencial?, temperatura?}. Valida y guarda. Para un nodo usa editar_nodo con config.proveedor/modelo/credencial (o null para heredar).", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "usar_global": {"type": "boolean"}, "proveedor": {"type": "string"}, "modelo": {"type": "string"}, "credencial": {"type": "string"}, "temperatura": {"type": "number"}}, "required": ["flujo"]}},
     {"name": "probar_ia", "description": "Prueba de verdad un proveedor y modelo (con su conexión) con una llamada mínima: dice si responde, cuánto tarda y cuánto costó.", "parameters": {"type": "object", "properties": {"proveedor": {"type": "string"}, "modelo": {"type": "string"}, "credencial": {"type": "string"}, "flujo": {"type": "string"}}, "required": ["proveedor", "modelo"]}},
     {"name": "configurar_ia_global", "description": "Cambia la IA global de la plataforma (la que usan los flujos que dicen «usar la global»). Solo si la persona lo pide.", "parameters": {"type": "object", "properties": {"proveedor": {"type": "string"}, "modelo": {"type": "string"}, "credencial": {"type": "string"}, "temperatura": {"type": "number"}}, "required": ["proveedor", "modelo"]}},
+    {"name": "probar_paso", "description": "Prueba UN paso de un flujo (o el flujo hasta ese paso con hasta=true) sin correr todo y sin escribir nada afuera: con archivos que la persona adjuntó en el chat (usar_adjuntos_chat=true), una entrada, un correo (caso) o la salida de una ejecución anterior (desde_corrida). Devuelve lo que produce el paso y los archivos generados. Con fijar=true deja ese resultado como datos de prueba del paso.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "nodo": {"type": "string"}, "hasta": {"type": "boolean"}, "usar_adjuntos_chat": {"type": "boolean"}, "adjuntos": {"type": "array", "items": {"type": "string"}}, "entrada": {"type": "object"}, "caso": {"type": "string"}, "desde_corrida": {"type": "string"}, "fijar": {"type": "boolean"}}, "required": ["flujo", "nodo"]}},
+    {"name": "archivos_de_corrida", "description": "Los archivos que generó una ejecución (Word, Excel, PDF, imágenes…). Los muestra a la persona como cápsulas en el chat para abrirlos o descargarlos.", "parameters": {"type": "object", "properties": {"corrida": {"type": "string"}}, "required": ["corrida"]}},
     {"name": "plantillas", "description": "La galería de plantillas de flujos listas para usar (extraer datos de documentos, clasificar correos, responder con IA, revisar tablas, informes programados, webhooks, aprobaciones…), con lo que necesita cada una. Con id, el detalle de una.", "parameters": {"type": "object", "properties": {"id": {"type": "string"}}}},
     {"name": "instalar_plantilla", "description": "Instala una plantilla como flujo propio (queda editable) y lo abre en pantalla.", "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "nombre": {"type": "string"}, "id_nuevo": {"type": "string"}}, "required": ["id"]}},
     {"name": "historial", "description": "El historial de ejecuciones con filtros: flujo, estado (en_curso | bien | revisar | fallo), desenlace, desde/hasta (AAAA-MM-DD) y texto. Con corrida, el detalle legible de una (qué entró, qué hizo cada paso, qué salió y por qué terminó así).", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "estado": {"type": "string"}, "desenlace": {"type": "string"}, "desde": {"type": "string"}, "hasta": {"type": "string"}, "texto": {"type": "string"}, "n": {"type": "integer"}, "corrida": {"type": "string"}}}},
@@ -594,6 +597,32 @@ def _ejecutar(nombre: str, a: Dict[str, Any]) -> Any:
     if nombre == "cargar_herramientas":
         validos = [g for g in a.get("grupos") or [] if g in GRUPOS]
         return {"cargados": validos, "nota": "Ya tienes esas herramientas disponibles desde ahora."} if validos else {"error": f"grupos válidos: {', '.join(k for k in GRUPOS if k != 'nucleo')}"}
+    if nombre == "probar_paso":
+        cuerpo: Dict[str, Any] = {"nodo": a["nodo"], "hasta": bool(a.get("hasta"))}
+        for k in ("entrada", "caso", "desde_corrida"):
+            if a.get(k) is not None:
+                cuerpo[k] = a[k]
+        if a.get("usar_adjuntos_chat") or a.get("adjuntos"):
+            sub = _subir_adjuntos({"flujo": a["flujo"], "adjuntos": a.get("adjuntos") or [], "correr": False})
+            if not isinstance(sub, dict) or not sub.get("archivos"):
+                return sub
+            cuerpo["archivos"] = [x["id"] for x in sub["archivos"]]
+        r = api("POST", f"/api/flujos/{a['flujo']}/probar-paso", cuerpo)
+        if isinstance(r, dict) and r.get("archivos"):
+            emitir("archivos", archivos=[{"corrida": f"prueba:{a['flujo']}", **{k: x.get(k) for k in ("id", "nombre", "tipo", "tamano")}} for x in r["archivos"]][:10])
+        if a.get("fijar") and isinstance(r, dict) and r.get("ok"):
+            api("PUT", f"/api/flujos/{a['flujo']}/fijados/{a['nodo']}", {"variables": r.get("variables"), "salida": r.get("salida")})
+        if isinstance(r, dict):
+            r.pop("todas", None)
+            r["eventos"] = len(r.get("eventos") or [])
+        return r
+    if nombre == "archivos_de_corrida":
+        r = api("GET", f"/api/corridas/{a['corrida']}/archivos")
+        lista = r if isinstance(r, list) else (r or {}).get("archivos") if isinstance(r, dict) else None
+        if isinstance(lista, list) and lista:
+            emitir("archivos", archivos=[{"corrida": a["corrida"], **{k: x.get(k) for k in ("id", "nombre", "tipo", "tamano")}} for x in lista][:20])
+            return {"archivos": [{k: x.get(k) for k in ("id", "nombre", "tipo", "tamano", "nodo")} for x in lista], "nota": "Ya están en el chat como cápsulas."}
+        return r if r else {"archivos": []}
     if nombre == "plantillas":
         if a.get("id"):
             p = api("GET", f"/api/plantillas/{a['id']}")
@@ -719,7 +748,7 @@ GRUPOS: Dict[str, List[str]] = {
                "enfocar_flujo", "controlar_editor", "ajustar_lienzo", "centrar_nodo", "historial", "ver_corrida", "ultimas_corridas", "renombrar_chat"],
     "construir": ["validar_flujo", "guardar_flujo", "editar_nodo", "agregar_nodo", "eliminar_nodo", "editar_aristas", "proponer_borrado",
                   "renombrar_flujo", "clonar_flujo", "versiones_flujo", "restaurar_version", "plantillas", "instalar_plantilla"],
-    "correr": ["correr_flujo", "probar_flujo", "correr_correos", "correr_buzon", "cancelar_cola", "reintentar_corrida", "subir_adjuntos_a_flujo",
+    "correr": ["probar_paso", "archivos_de_corrida", "correr_flujo", "probar_flujo", "correr_correos", "correr_buzon", "cancelar_cola", "reintentar_corrida", "subir_adjuntos_a_flujo",
                "estado_motor", "ver_logs"],
     "correo": ["listar_correos", "ver_correo", "ver_buzon", "leer_buzon_flujo", "abrir_correspondencia", "filtrar_correos", "abrir_correo",
                "seleccionar_correos", "abrir_adjuntos", "abrir_proceso", "abrir_corrida"],

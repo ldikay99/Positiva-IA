@@ -31,6 +31,8 @@ export interface MensajeChat {
   adjuntos?: AdjuntoChat[];
   pasos?: PasoChat[];
   cambiados?: string[];
+  /** Archivos que generó una ejecución y Vera muestra en el chat (se abren desde la ejecución). */
+  archivos?: { corrida: string; id: string; nombre: string; tipo: string; tamano?: number }[];
   error?: boolean;
   /** Dicho en una llamada de voz. */
   voz?: boolean;

@@ -877,13 +877,14 @@ app.post<{ Params: { id: string } }>("/api/chats/:id/mensajes", async (req, res)
     pendiente = lineas.pop() ?? "";
     for (const l of lineas) {
       try {
-        const d = JSON.parse(l) as { tipo: string; texto?: string; nombre?: string; argumentos?: unknown; resultado?: string; flujos_cambiados?: string[]; propuesta?: { accion: string; id: string } };
+        const d = JSON.parse(l) as { tipo: string; texto?: string; nombre?: string; argumentos?: unknown; resultado?: string; flujos_cambiados?: string[]; propuesta?: { accion: string; id: string }; archivos?: unknown[] };
         if (d.tipo === "herramienta") respuesta.pasos!.push({ nombre: d.nombre ?? "", argumentos: d.argumentos });
         else if (d.tipo === "resultado_herramienta" && respuesta.pasos!.length) respuesta.pasos![respuesta.pasos!.length - 1]!.resultado = d.resultado;
         else if (d.tipo === "texto") respuesta.texto = (respuesta.texto ? `${respuesta.texto}\n\n` : "") + (d.texto ?? "");
         else if (d.tipo === "error") { respuesta.texto = `No pude terminar: ${d.texto}`; respuesta.error = true; }
         else if (d.tipo === "fin") respuesta.cambiados = d.flujos_cambiados ?? [];
         else if (d.tipo === "propuesta" && d.propuesta) (respuesta.propuestas ??= []).push({ accion: d.propuesta.accion, id: d.propuesta.id });
+        else if (d.tipo === "archivos" && Array.isArray(d.archivos)) (respuesta.archivos ??= []).push(...(d.archivos as NonNullable<chats.MensajeChat["archivos"]>).slice(0, 20));
       } catch {
         /* línea cortada */
       }
