@@ -189,6 +189,15 @@ CASOS = [
     {"nombre": "navegar", "flujo": None,
      "pedido": "Llévame a las corridas de tutelas.",
      "espera_eventos": lambda evs: any(e.get("tipo") == "navegar" and e.get("vista") == "corridas" and e.get("flujo") == "tutelas" for e in evs)},
+    {"nombre": "error por correo a Jira", "flujo": "ev-jira",
+     "pedido": "Crea el flujo 'ev-jira': cuando llegue a Gmail (conexión 'gmail_soporte') un correo con «error» en el asunto, crea un issue en Jira en el proyecto SOP "
+               "con la conexión 'jira_soporte' (el asunto como título y el correo en la descripción) y avísame por Telegram con la conexión 'bot_avisos' con la clave del issue. "
+               "Guárdalo y valídalo, no lo corras ni lo enciendas.",
+     "entrada": None, "espera": None,
+     "verificar_def": lambda d: (lambda nodos: any(n["tipo"] in ("gmail_nuevo", "correo_nuevo", "outlook_nuevo") for n in nodos)
+                                 and any(n["tipo"] == "jira_issues" and (n.get("config") or {}).get("operacion") == "crear" for n in nodos)
+                                 and any(n["tipo"] == "telegram_mensaje" for n in nodos)
+                                 and not any((n.get("config") or {}).get("activo") is True for n in nodos))(d["nodos"])},
 ]
 
 

@@ -44,8 +44,10 @@ from conectores.base import ErrorDeNegocio, ErrorTransitorio, direcciones, host_
 from especificacion_integraciones import (CON_REINTENTOS, CREDENCIALES_DE, DISPARADORES, DISPARADORES_DE_CORREO,  # noqa: E402,F401
                                           ESCRITURA, LECTURA, TIPOS)
 import nodos_externos as nx  # noqa: E402  (fase 2: páginas sin API, almacenamiento, datos y mensajería transaccional)
+import nodos_trabajo as nt  # noqa: E402  (fase 3: trabajo y clientes, firma electrónica)
 
 nx.ni = sys.modules[__name__]
+nt.ni = sys.modules[__name__]
 
 fd: Any = None
 _reloj: Callable[[], float] = time.time
@@ -66,6 +68,8 @@ def enlazar(modulo: Any) -> None:
 # =====================================================================
 
 def salidas(t: str, c: dict) -> Tuple[List[str], List[str]]:
+    if t in nt.TIPOS:
+        return nt.salidas(t, c)
     if t in nx.TIPOS:
         return nx.salidas(t, c)
     if t in LISTAS:
@@ -81,6 +85,8 @@ def salidas(t: str, c: dict) -> Tuple[List[str], List[str]]:
 
 
 def produce(t: str, c: dict, nid: str) -> Set[str]:
+    if t in nt.TIPOS:
+        return nt.produce(t, c, nid)
     if t in nx.TIPOS:
         return nx.produce(t, c, nid)
     if t in DISPARADORES:
@@ -92,6 +98,8 @@ def produce(t: str, c: dict, nid: str) -> Set[str]:
 
 
 def referencias(t: str, c: dict, plantillas_en: Callable, ref_de_fuente: Callable) -> List[Tuple[str, Set[str]]]:
+    if t in nt.TIPOS:
+        return nt.referencias(t, c, plantillas_en, ref_de_fuente)
     if t in nx.TIPOS:
         return nx.referencias(t, c, plantillas_en, ref_de_fuente)
     if t in DISPARADORES:
@@ -199,6 +207,8 @@ def validar_http(c: dict, q: Callable[[str], None]) -> None:
 
 def validar(t: str, c: dict, q: Callable[[str], None]) -> None:
     _revisar(t, c, _esquema(t), q)
+    if t in nt.TIPOS:
+        return nt.validar(t, c, q)
     if t in nx.TIPOS:
         return nx.validar(t, c, q)
     for k in ("adjuntos", "archivos"):
@@ -337,7 +347,7 @@ def _nombre_de(url: str, encabezados: Dict[str, str], tipo: str) -> str:
 #   los métodos (Ejecucion hereda de aquí)
 # =====================================================================
 
-class NodosIntegraciones(nx.NodosExternos):
+class NodosIntegraciones(nx.NodosExternos, nt.NodosTrabajo):
     # ----------------------------------------------------------- conexiones
     def _cfg(self, n: dict) -> dict:
         return n.get("config") or {}
@@ -1356,6 +1366,8 @@ def probar_conexion(entrada: dict) -> dict:
     cred = {"tipo": tipo, "valores": v, "creada_por_persona": entrada.get("creada_por_persona") is True, "nombre": "prueba"}
     try:
         externa = nx.probar_conexion(tipo, v, cred)  # FTP, S3, MongoDB, SQL Server, Oracle, Telegram, SendGrid, Mailgun, Twilio
+        if externa is None:
+            externa = nt.probar_conexion(tipo, v, cred)  # Jira, Trello, Asana, Notion, HubSpot, Salesforce, Zoho, DocuSign
         if externa is not None:
             return externa
         if tipo == "http_oauth2":
@@ -1431,6 +1443,6 @@ if __name__ == "__main__":
     texto = json.dumps(r, ensure_ascii=False, default=str)
     for k, x in (entrada.get("valores") or {}).items():
         if isinstance(x, str) and len(x) >= 6 and k in ("client_secret", "token", "clave", "refresh_token", "access_token", "json", "secret_key",
-                                                         "api_key", "auth_token"):
+                                                         "api_key", "auth_token", "api_token", "private_key"):
             texto = texto.replace(x, "••••")
     print(texto)

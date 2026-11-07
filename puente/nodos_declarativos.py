@@ -39,7 +39,9 @@ TIPOS_CREDENCIAL = ["imap", "smtp", "microsoft_graph", "google_servicio", "googl
                     "postgres", "mysql", "sqlite", "http_bearer", "http_basico",
                     "webhook_teams", "webhook_slack", "webhook_saliente",
                     # fase 2 (especificacion_externos.py): almacenamiento, datos y mensajería transaccional
-                    "sqlserver", "oracle", "mongodb", "ftp", "s3", "telegram_bot", "sendgrid", "mailgun", "twilio", *TIPOS_CREDENCIAL_IA]
+                    "sqlserver", "oracle", "mongodb", "ftp", "s3", "telegram_bot", "sendgrid", "mailgun", "twilio",
+                    # fase 3 (especificacion_trabajo.py): trabajo y clientes, firma electrónica
+                    "jira", "trello", "asana", "notion", "hubspot", "salesforce", "zoho", "docusign", *TIPOS_CREDENCIAL_IA]
 # Las bases SQL de sql_consulta y sql_ejecutar.
 TIPOS_SQL = ["postgres", "mysql", "sqlite", "sqlserver", "oracle"]
 # Los proveedores de IA (los registra puente/proveedores/; una prueba compara las listas).

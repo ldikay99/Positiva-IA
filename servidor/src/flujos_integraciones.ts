@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { CATEGORIA_EXTERNO, configExternos, describirExterno, DISPARADORES_EXTERNOS, ESCRITURA_EXTERNOS, LECTURA_EXTERNOS, NOMBRE_EXTERNO, TIPOS_EXTERNOS } from "./flujos_externos.ts";
+import { CATEGORIA_TRABAJO, configTrabajo, describirTrabajo, ESCRITURA_TRABAJO, NOMBRE_TRABAJO, TIPOS_TRABAJO } from "./flujos_trabajo.ts";
 
 /**
  * La forma de la config de los nodos de integración (plan 5d): Google Workspace, Microsoft 365,
@@ -22,6 +23,8 @@ export const TIPOS_INTEGRACION = [
   "api_operacion",
   // fase 2 (flujos_externos.ts): páginas sin API, almacenamiento, datos y mensajería transaccional
   ...TIPOS_EXTERNOS,
+  // fase 3 (flujos_trabajo.ts): trabajo y clientes, firma electrónica
+  ...TIPOS_TRABAJO,
 ] as const;
 export type TipoIntegracion = (typeof TIPOS_INTEGRACION)[number];
 
@@ -33,7 +36,7 @@ export const DISPARADORES_DE_CORREO_TODOS = new Set<string>(["entrada_correo", "
 export const DISPARADORES_DE_SONDEO = new Set<string>(["correo_nuevo", ...DISPARADORES_INTEGRACION]);
 export const ESCRITURA_INTEGRACION = ["gmail_enviar", "gmail_responder", "gmail_etiquetar", "calendar_crear", "calendar_actualizar", "docs_crear_desde_plantilla",
   "outlook_enviar", "outlook_responder", "outlook_mover", "outlook_categorizar", "outlook_calendario_crear", "onedrive_subir",
-  "sharepoint_archivos", "sharepoint_lista", "teams_mensaje", "excel_en_linea", "api_operacion", ...ESCRITURA_EXTERNOS];
+  "sharepoint_archivos", "sharepoint_lista", "teams_mensaje", "excel_en_linea", "api_operacion", ...ESCRITURA_EXTERNOS, ...ESCRITURA_TRABAJO];
 export const LECTURA_INTEGRACION = ["gmail_buscar", "calendar_eventos", "calendar_disponibilidad", "forms_respuestas", "outlook_buscar", "outlook_calendario_eventos",
   "onedrive_listar", "onedrive_leer", ...LECTURA_EXTERNOS];
 /** Hablan con un servicio de afuera: aceptan reintentos (los disparadores no). */
@@ -49,12 +52,14 @@ export const NOMBRE_INTEGRACION: Record<TipoIntegracion, string> = {
   onedrive_listar: "OneDrive · listar", onedrive_leer: "OneDrive · leer", onedrive_subir: "OneDrive · subir", sharepoint_archivos: "SharePoint · archivos",
   sharepoint_lista: "SharePoint · lista", teams_mensaje: "Teams · mensaje (Graph)", excel_en_linea: "Excel en línea", api_operacion: "API · operación (OpenAPI)",
   ...NOMBRE_EXTERNO,
+  ...NOMBRE_TRABAJO,
 };
 
 export const CATEGORIA_INTEGRACION: Record<TipoIntegracion, string> = {
   ...Object.fromEntries(TIPOS_INTEGRACION.map((t) => [t,
     (DISPARADORES_INTEGRACION as readonly string[]).includes(t) ? "entrada" : t === "docs_crear_desde_plantilla" ? "documentos" : t === "teams_mensaje" || t === "api_operacion" ? "integracion" : "conector"])),
   ...CATEGORIA_EXTERNO,
+  ...CATEGORIA_TRABAJO,
 } as Record<TipoIntegracion, string>;
 
 /** Lo que flujos.ts le presta a este módulo. */
@@ -182,6 +187,7 @@ export function configIntegraciones(p: Piezas): Record<TipoIntegracion, z.ZodTyp
       cuerpo: z.union([z.string(), z.record(z.string(), z.unknown()), z.array(z.unknown())], { error: "cuerpo: un objeto JSON con plantillas o un texto" }).optional(),
       paginacion: paginacion.optional(), mapeo: mapeo.optional() }),
     ...configExternos(p),
+    ...configTrabajo(p),
   };
 }
 
@@ -214,6 +220,7 @@ export function extensionHttp(p: Pick<Piezas, "entre" | "opcional" | "archivosRe
 export function describirIntegracion(tipo: string, c: Record<string, unknown>, add: (d: string) => void): boolean {
   if (!(TIPOS_INTEGRACION as readonly string[]).includes(tipo)) return false;
   if (describirExterno(tipo, c, add)) return true;
+  if (describirTrabajo(tipo, c, add)) return true;
   const cred = `con la conexión «${String(c.credencial ?? "—")}»`;
   const t = tipo as TipoIntegracion;
   switch (t) {

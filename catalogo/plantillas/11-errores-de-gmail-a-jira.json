@@ -1,0 +1,42 @@
+{
+  "id": "errores-de-gmail-a-jira",
+  "orden": 11,
+  "nombre": "Correos con «error» a issues de Jira",
+  "categoria": "Integraciones",
+  "resumen": "Cuando llega a Gmail un correo que reporta un error, la IA lo resume, se crea un issue en Jira (o se comenta el que ya existe) y se avisa por Telegram con el enlace.",
+  "descripcion": "Revisa Gmail cada 5 minutos (solo lectura, sin repetir correos) buscando correos con «error» en el asunto. Por cada uno, la IA escribe un resumen corto del problema; luego busca en Jira un issue abierto con el mismo asunto: si no hay, crea uno nuevo (tipo Bug, con el resumen, quién lo reportó y el correo completo); si ya existe, le agrega un comentario con el nuevo reporte. Al final avisa por Telegram con la clave y el enlace del issue y etiqueta el correo como «Jira». Mientras las conexiones no tengan la escritura habilitada por una persona, el issue, el comentario, el aviso y la etiqueta se arman completos y quedan retenidos en el detalle de la ejecución: no salen.",
+  "como_probar": "Crea en Conexiones una «Google (OAuth)» llamada gmail-soporte y pulsa «Conectar con Google»; una «Jira Cloud» llamada jira-soporte (sitio, correo y token de API) y una «Telegram (bot)» llamada bot-avisos. Instala la plantilla, cambia SOP por la clave de tu proyecto de Jira y prueba cada paso con «Probar este paso». Enciende el disparador (activo) y mándate un correo con «error» en el asunto: en unos minutos verás la ejecución con el issue y el aviso retenidos. Para que salgan de verdad, una persona tiene que habilitar la escritura de cada conexión.",
+  "necesita": [
+    { "tipo": "conexion", "texto": "Una conexión «Google (OAuth)» (gmail-soporte) conectada con la cuenta de Gmail que recibe los reportes." },
+    { "tipo": "conexion", "texto": "Una conexión «Jira Cloud» (jira-soporte): el sitio https://tuempresa.atlassian.net, el correo de la cuenta y un token de API." },
+    { "tipo": "conexion", "texto": "Una conexión «Telegram (bot)» (bot-avisos) con el token de @BotFather y el chat por defecto donde avisar." },
+    { "tipo": "conexion", "texto": "Para que salga de verdad: la escritura de las tres conexiones habilitada por una persona." }
+  ],
+  "definicion": {
+    "nombre": "Correos con «error» a issues de Jira",
+    "descripcion": "Por cada correo de Gmail con «error» en el asunto: resumen con IA, issue en Jira (nuevo o comentario en el que ya existe), aviso por Telegram y etiqueta «Jira».",
+    "ia": { "usar": "global" },
+    "nodos": [
+      { "id": "llega", "tipo": "gmail_nuevo", "nombre": "Llega un correo con «error»", "config": { "credencial": "gmail-soporte", "consulta": "subject:error -label:Jira", "cada_minutos": 5, "activo": false, "leer_adjuntos": false } },
+      { "id": "resumen", "tipo": "resumir", "nombre": "Resumen del error", "config": { "entradas": ["correo"], "longitud": "4 líneas", "enfoque": "qué falla, dónde, desde cuándo y qué pasos lo reproducen", "salida": "resumen" } },
+      { "id": "buscar", "tipo": "jira_issues", "nombre": "¿Ya hay un issue?", "config": { "credencial": "jira-soporte", "operacion": "buscar", "jql": "project = SOP AND statusCategory != Done AND summary ~ \"{{correo.asunto}}\" ORDER BY created DESC", "max": 1, "salida": "existentes" } },
+      { "id": "crear", "tipo": "jira_issues", "nombre": "Crear el issue", "config": { "credencial": "jira-soporte", "operacion": "crear", "proyecto": "SOP", "tipo_issue": "Bug", "resumen": "{{correo.asunto}}", "descripcion": "Reportado por {{correo.remitente}} el {{correo.recibido}}.\n\nResumen:\n{{resumen}}\n\nCorreo original:\n{{correo.cuerpo}}", "etiquetas": ["correo", "error"], "salida": "issue" } },
+      { "id": "comentar", "tipo": "jira_issues", "nombre": "Comentar el que ya existe", "config": { "credencial": "jira-soporte", "operacion": "comentar", "issue": "{{existentes.0.clave}}", "comentario": "Nuevo reporte de {{correo.remitente}}:\n{{resumen}}" } },
+      { "id": "avisar_nuevo", "tipo": "telegram_mensaje", "nombre": "Avisar: issue nuevo", "config": { "credencial": "bot-avisos", "formato": "html", "texto": "<b>Nuevo error reportado</b>\n{{correo.asunto}}\nIssue: {{issue.clave}} {{issue.url}}\n\n{{resumen}}" } },
+      { "id": "avisar_repetido", "tipo": "telegram_mensaje", "nombre": "Avisar: se repite", "config": { "credencial": "bot-avisos", "formato": "html", "texto": "<b>Otro reporte del mismo error</b>\n{{existentes.0.clave}} [{{existentes.0.estado}}] {{existentes.0.url}}\n\n{{resumen}}" } },
+      { "id": "etiquetar", "tipo": "gmail_etiquetar", "nombre": "Marcar «Jira»", "config": { "credencial": "gmail-soporte", "agregar": ["Jira"], "marcar_leido": true } },
+      { "id": "listo", "tipo": "salida", "nombre": "Registrado en Jira", "config": { "desenlace": "manual", "motivo": "Error «{{correo.asunto}}» registrado en Jira" } }
+    ],
+    "aristas": [
+      { "desde": "llega", "hacia": "resumen" },
+      { "desde": "resumen", "hacia": "buscar" },
+      { "desde": "buscar", "hacia": "crear", "cuando": "vacio" },
+      { "desde": "buscar", "hacia": "comentar", "cuando": "ok" },
+      { "desde": "crear", "hacia": "avisar_nuevo" },
+      { "desde": "comentar", "hacia": "avisar_repetido" },
+      { "desde": "avisar_nuevo", "hacia": "etiquetar" },
+      { "desde": "avisar_repetido", "hacia": "etiquetar" },
+      { "desde": "etiquetar", "hacia": "listo" }
+    ]
+  }
+}

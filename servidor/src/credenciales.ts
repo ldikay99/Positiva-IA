@@ -172,6 +172,45 @@ export const TIPOS_CREDENCIAL: TipoDeCredencial[] = [
     ayuda: "Account SID (AC…) y Auth Token de la consola de Twilio, y el número remitente (+…) o un Messaging Service (MG…).",
     campos: [{ nombre: "account_sid", titulo: "Account SID", tipo: "texto", obligatorio: true, ayuda: "AC…" }, { nombre: "auth_token", titulo: "Auth token", tipo: "texto", secreto: true, obligatorio: true },
       { nombre: "remitente", titulo: "Remitente", tipo: "texto", obligatorio: true, ayuda: "+15551234567 o MG…" }] },
+  // ---- fase 3 (plan 5d): trabajo y clientes, firma electrónica (puente/especificacion_trabajo.py)
+  { tipo: "jira", nombre: "Jira Cloud", descripcion: "Buscar, ver, crear, comentar y cambiar de estado issues de Jira Cloud (nodo jira_issues; escribir: hay que habilitarla).",
+    ayuda: "Crea un token de API en id.atlassian.com › Seguridad › Tokens de API con la cuenta que usará el flujo. Nunca cuentas de Positiva.",
+    campos: [{ nombre: "sitio", titulo: "Sitio", tipo: "texto", obligatorio: true, ayuda: "https://tuempresa.atlassian.net" },
+      { nombre: "correo", titulo: "Correo de la cuenta", tipo: "texto", obligatorio: true },
+      { nombre: "api_token", titulo: "Token de API", tipo: "texto", secreto: true, obligatorio: true }] },
+  { tipo: "trello", nombre: "Trello", descripcion: "Tableros, listas y tarjetas de Trello (nodo trello_tarjetas; crear, mover y comentar: hay que habilitar la escritura).",
+    ayuda: "En trello.com/power-ups/admin crea un Power-Up, copia su API key y genera un token con la cuenta que usará el flujo.",
+    campos: [{ nombre: "api_key", titulo: "API key", tipo: "texto", secreto: true, obligatorio: true },
+      { nombre: "token", titulo: "Token", tipo: "texto", secreto: true, obligatorio: true }] },
+  { tipo: "asana", nombre: "Asana", descripcion: "Listar, ver, crear, completar y comentar tareas de Asana (nodo asana_tareas; escribir: hay que habilitarla).",
+    ayuda: "En Asana: Configuración › Aplicaciones › Herramientas para desarrolladores › token de acceso personal. «Probar conexión» lista tus espacios de trabajo.",
+    campos: [{ nombre: "token", titulo: "Token de acceso personal", tipo: "texto", secreto: true, obligatorio: true },
+      { nombre: "espacio", titulo: "Espacio de trabajo", tipo: "texto", ayuda: "opcional: el gid del espacio por defecto" }] },
+  { tipo: "notion", nombre: "Notion", descripcion: "Consultar bases de datos y crear o actualizar páginas de Notion (nodo notion_paginas; escribir: hay que habilitarla).",
+    ayuda: "Crea una integración interna en notion.so/my-integrations y compártele cada base o página (••• › Conexiones).",
+    campos: [{ nombre: "token", titulo: "Token de la integración", tipo: "texto", secreto: true, obligatorio: true, ayuda: "secret_… o ntn_…" }] },
+  { tipo: "hubspot", nombre: "HubSpot", descripcion: "Contactos, empresas y negocios del CRM de HubSpot (nodo hubspot_crm; crear, actualizar y notas: hay que habilitar la escritura).",
+    ayuda: "Configuración › Integraciones › Aplicaciones privadas: crea una con los alcances de contactos, empresas y negocios y copia su token (pat-…).",
+    campos: [{ nombre: "token", titulo: "Token de la aplicación privada", tipo: "texto", secreto: true, obligatorio: true }] },
+  { tipo: "salesforce", nombre: "Salesforce", descripcion: "SOQL de solo lectura y crear o actualizar registros de Salesforce (nodo salesforce_registros; escribir: hay que habilitarla).",
+    ayuda: "Una External Client App (o Connected App) con el flujo «Client Credentials» y un usuario de ejecución con los permisos justos.",
+    campos: [{ nombre: "instancia", titulo: "Instancia (My Domain)", tipo: "texto", obligatorio: true, ayuda: "https://tuempresa.my.salesforce.com" },
+      { nombre: "client_id", titulo: "Consumer key (client_id)", tipo: "texto", obligatorio: true },
+      { nombre: "client_secret", titulo: "Consumer secret", tipo: "texto", secreto: true, obligatorio: true },
+      { nombre: "version", titulo: "Versión de la API", tipo: "texto", defecto: "v61.0" }] },
+  { tipo: "zoho", nombre: "Zoho CRM", descripcion: "Buscar, ver, crear y actualizar registros de Zoho CRM (nodo zoho_crm; escribir: hay que habilitarla).",
+    ayuda: "En api-console.zoho.com crea un «Self Client», genera un código con ZohoCRM.modules.ALL,ZohoCRM.users.READ y cámbialo por un refresh_token.",
+    campos: [{ nombre: "region", titulo: "Región", tipo: "opcion", opciones: ["com", "eu", "in", "au", "jp", "ca", "sa", "uk", "cn"], defecto: "com", ayuda: "la de tu cuenta (zoho.com, zoho.eu…)" },
+      { nombre: "client_id", titulo: "Client ID", tipo: "texto", obligatorio: true },
+      { nombre: "client_secret", titulo: "Client secret", tipo: "texto", secreto: true, obligatorio: true },
+      { nombre: "refresh_token", titulo: "Refresh token", tipo: "texto", secreto: true, obligatorio: true }] },
+  { tipo: "docusign", nombre: "DocuSign", descripcion: "Enviar documentos a firmar y consultar o descargar sobres de DocuSign (nodo docusign_sobre; enviar: hay que habilitar la escritura).",
+    ayuda: "Apps and Keys: Integration Key, un par RSA (pega la llave privada), tu User ID y el API Account ID. Da el consentimiento una vez. Nunca firmantes de Positiva.",
+    campos: [{ nombre: "entorno", titulo: "Entorno", tipo: "opcion", opciones: ["demo", "produccion"], defecto: "demo" },
+      { nombre: "integration_key", titulo: "Integration key", tipo: "texto", obligatorio: true },
+      { nombre: "user_id", titulo: "User ID", tipo: "texto", obligatorio: true, ayuda: "el GUID del usuario que firma la llave" },
+      { nombre: "account_id", titulo: "API Account ID", tipo: "texto", obligatorio: true },
+      { nombre: "private_key", titulo: "Llave privada RSA", tipo: "texto-largo", secreto: true, obligatorio: true }] },
   // Proveedores de IA (ia_<proveedor>): ver ia_credenciales.ts.
   ...TIPOS_CREDENCIAL_IA,
 ];
@@ -183,7 +222,7 @@ const VETADO = (h: string) => /(^|\.)positiva\.gov\.co$/i.test(h) || /sgdea/i.te
 const CORREO_VETADO = (d: string) => /@([\w-]+\.)*positiva\.gov\.co$/i.test(d.trim());
 /** Campos que se pueden mostrar en el manifiesto de un flujo (dónde se conecta), nunca secretos. */
 const CAMPOS_DE_DESTINO = ["host", "puerto", "base", "buzon", "hosts", "ruta", "tenant", "remitente", "usuario", "base_url", "endpoint", "url", "cuenta", "spec_url", "token_url",
-  "bucket", "region", "prefijo", "dominio", "servicio", "carpeta_base", "chat_id"];
+  "bucket", "region", "prefijo", "dominio", "servicio", "carpeta_base", "chat_id", "sitio", "instancia", "entorno", "espacio"];
 
 interface Cifrado { iv: string; tag: string; datos: string }
 interface Guardada {
@@ -373,18 +412,27 @@ export async function guardar(nombre: string, cuerpo: unknown, porPersona = fals
       return "";
     }
   };
-  for (const k of ["spec_url", "base_url", "token_url", "endpoint"]) {
+  for (const k of ["spec_url", "base_url", "token_url", "endpoint", "sitio", "instancia"]) {
     const h = hostDeUrl(valores[k]);
     if (h === "") return { ok: false, error: `${k}: no es una URL válida` };
-    if (h && (k === "spec_url" || k === "token_url" || k === "endpoint") && !String(valores[k]).trim().toLowerCase().startsWith("https://")) return { ok: false, error: `${k}: tiene que ser https://` };
+    if (h && k !== "base_url" && !String(valores[k]).trim().toLowerCase().startsWith("https://")) return { ok: false, error: `${k}: tiene que ser https://` };
   }
+  // fase 3: el sitio de Jira y la instancia de Salesforce solo en los dominios del servicio
+  const dominioDe = (k: string, sufijos: string[], ejemplo: string): string | null => {
+    const h = hostDeUrl(valores[k]);
+    return h && !sufijos.some((s) => h === s || h.endsWith(`.${s}`)) ? `${k}: tiene que ser una dirección de ${sufijos.join(" o ")} (p. ej. ${ejemplo})` : null;
+  };
+  const fueraDeDominio = t.tipo === "jira" ? dominioDe("sitio", ["atlassian.net", "jira.com"], "https://tuempresa.atlassian.net")
+    : t.tipo === "salesforce" ? dominioDe("instancia", ["salesforce.com", "force.com", "salesforce.mil", "cloudforce.com"], "https://tuempresa.my.salesforce.com") : null;
+  if (fueraDeDominio) return { ok: false, error: fueraDeDominio };
+  if (t.tipo === "docusign" && !/-----BEGIN (RSA )?PRIVATE KEY-----/.test(String(valores.private_key))) return { ok: false, error: "private_key: pega la llave RSA privada completa (-----BEGIN RSA PRIVATE KEY----- …)" };
   // host admite varios «host:puerto» separados por coma (MongoDB); el dominio de Mailgun también se revisa
   const destinos = [...String(valores.host ?? "").split(/[,\s]+/).map((x) => x.replace(/:\d+$/, "")), ...String(valores.hosts ?? "").split(/[,\s]+/),
-    ...["spec_url", "base_url", "token_url", "endpoint"].map((k) => hostDeUrl(valores[k])), ...(t.tipo === "mailgun" ? [valores.dominio] : [])]
+    ...["spec_url", "base_url", "token_url", "endpoint", "sitio", "instancia"].map((k) => hostDeUrl(valores[k])), ...(t.tipo === "mailgun" ? [valores.dominio] : [])]
     .filter((x): x is string => typeof x === "string" && x.trim() !== "");
   const malo = destinos.find((h) => VETADO(h.trim().toLowerCase()));
   if (malo) return { ok: false, error: `bloqueado por seguridad: ${malo} es un destino que esta plataforma nunca toca (Positiva, SGDEA, metadatos o interno)` };
-  for (const k of ["buzon", "usuario", "remitente"]) {
+  for (const k of ["buzon", "usuario", "remitente", "correo"]) {
     if (typeof valores[k] === "string" && CORREO_VETADO(valores[k] as string)) return { ok: false, error: `bloqueado por seguridad: ${String(valores[k])} es un buzón de Positiva` };
   }
   if (t.tipo.startsWith("webhook_")) {
