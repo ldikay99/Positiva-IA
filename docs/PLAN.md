@@ -62,6 +62,21 @@ Una plataforma de flujos de IA con nodos, más potente que n8n, donde **Vera** (
 - [x] Manifiesto por flujo para la revisión antes de producción.
 - [x] Versiones, restaurar, duplicar y renombrar por API.
 
+### 2b. Búsqueda robusta en todos los nodos (pedido 2026-11-07)
+
+Al buscar, el nodo encuentra lo que se busca sin importar mayúsculas, tildes, espacios ni mezclas, con IA o sin ella. En cada nodo se pueden agregar los campos de búsqueda que hagan falta.
+
+- [x] `igual` y `contiene` (filtro y condición), categorías de IA, `bifurcar_por_valor`, `buscar_en_tabla` y `en_lista` ya ignoran mayúsculas, tildes y espacios.
+- [ ] Regex (`coincide`, `no_coincide`, `extraer_regex`, nombre de adjunto) que ignoren tildes, devolviendo el texto original encontrado.
+- [ ] Varias condiciones por nodo (`condiciones` + «todas» o «alguna»), cada una sobre uno o varios campos; compatible con los flujos de hoy.
+- [ ] Operadores nuevos:
+  - [ ] de texto: no contiene, distinto, empieza con, termina con, palabra completa, contiene alguna / todas de una lista, parecido (tolera errores de escritura);
+  - [ ] de números y fechas: mayor, menor, entre, antes de, después de.
+- [ ] Opciones por condición: distinguir mayúsculas y tildes solo si se pide (por defecto se ignoran).
+- [ ] Mismos operadores y normalización en `tabla_consultar`.
+- [ ] Panel del nodo: «Agregar condición» y «Agregar campo» salen del esquema; ayuda y ejemplos de cada operador; Vera los conoce por la ficha del nodo.
+- [ ] Pruebas con textos mixtos («PETICIÓN», «peticion», «Petición  urgente», «peticiòn»).
+
 ## 3. Editor visual e interfaz
 
 - [x] Selectores y controles propios en toda la plataforma (nada con estilo del navegador).
