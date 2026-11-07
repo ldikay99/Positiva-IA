@@ -17,6 +17,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from . import busqueda
 from .base import ErrorDeNegocio, ruta_estado
 
 NOMBRE = re.compile(r"^[a-z][a-z0-9_]{0,40}$")
@@ -82,33 +83,63 @@ def guardar(ambito: str, tabla: str, clave: Optional[str], datos: Any, modo: str
     return clave, not previo, {"clave": clave, **datos}
 
 
-def consultar(ambito: str, tabla: str, clave: Optional[str] = None, filtro: Optional[Dict[str, Any]] = None,
-              limite: int = 100, orden: str = "-creada") -> List[dict]:
+def campo_valido(campo: Any) -> bool:
+    """Un campo de la fila («estado», «clave») o una ruta dentro de un objeto («datos.estado»)."""
+    return isinstance(campo, str) and all(CAMPO.match(x) for x in campo.split("."))
+
+
+def _campo_de_fila(fila: dict, campo: str) -> Any:
+    v: Any = fila
+    for parte in campo.split("."):
+        if not isinstance(v, dict):
+            return None
+        v = v.get(parte)
+    return v
+
+
+def consultar(ambito: str, tabla: str, clave: Optional[str] = None, filtro: Any = None,
+              limite: int = 100, orden: str = "-creada", modo: str = "todas") -> List[dict]:
+    """Las filas de una tabla. filtro: {campo: valor} (cada par tiene que ser igual) o una lista de condiciones
+    {campo | campos, operador, valor, …} con los mismos operadores y la misma normalización que filtro y condición
+    (sin distinguir mayúsculas, tildes ni espacios, salvo que se pida); modo: todas o alguna."""
     tabla = revisar_tabla(tabla)
+    condiciones = busqueda.condiciones_de_filtro(filtro)
+    for c in condiciones:
+        for campo in busqueda.campos_de(c, ""):
+            if not campo_valido(campo):
+                raise ErrorDeNegocio(f"campo de filtro inválido «{campo}»")
+        if (c.get("operador") or "contiene") not in busqueda.OPERADORES:
+            raise ErrorDeNegocio(f"operador de filtro desconocido «{c.get('operador')}»")
+    if modo not in busqueda.MODOS:
+        raise ErrorDeNegocio("modo: todas o alguna")
     sql = "SELECT clave, datos, creada, actualizada FROM filas WHERE tabla = ?"
     args: List[Any] = [tabla]
     if clave not in (None, ""):
         sql += " AND clave = ?"
         args.append(str(clave))
-    for k, v in (filtro or {}).items():
-        if not CAMPO.match(str(k)):
-            raise ErrorDeNegocio(f"campo de filtro inválido «{k}»")
-        sql += f" AND CAST(json_extract(datos, '$.{k}') AS TEXT) = ?"
-        # json_extract devuelve los booleanos como 1/0 y los números como números
-        args.append(v if isinstance(v, str) else json.dumps(v) if isinstance(v, (dict, list)) else str(int(v)) if isinstance(v, bool) else str(v))
     campo, desc = (orden[1:], True) if orden.startswith("-") else (orden, False)
     if campo not in ("creada", "actualizada", "clave"):
         raise ErrorDeNegocio("orden: creada, actualizada o clave (con «-» delante para descendente)")
-    sql += f" ORDER BY {campo} {'DESC' if desc else 'ASC'} LIMIT ?"
-    args.append(max(1, min(500, int(limite or 100))))
+    tope = max(1, min(500, int(limite or 100)))
+    sql += f" ORDER BY {campo} {'DESC' if desc else 'ASC'}"
+    if not condiciones:
+        sql += " LIMIT ?"
+        args.append(tope)
     if not _archivo(ambito).exists():
         return []
+    r: List[dict] = []
     con = _conectar(ambito)
     try:
-        filas = con.execute(sql, args).fetchall()
+        for c_, d, cr, ac in con.execute(sql, args):
+            fila = {"clave": c_, **json.loads(d), "_creada": cr, "_actualizada": ac}
+            if condiciones and not busqueda.evaluar(condiciones, modo, lambda k: _campo_de_fila(fila, k))[0]:
+                continue
+            r.append(fila)
+            if len(r) >= tope:
+                break
     finally:
         con.close()
-    return [{"clave": c, **json.loads(d), "_creada": cr, "_actualizada": ac} for c, d, cr, ac in filas]
+    return r
 
 
 def borrar(ambito: str, tabla: str, clave: str) -> bool:

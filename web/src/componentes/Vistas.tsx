@@ -8,6 +8,7 @@ import { LineaDeTiempo } from "./Dock.tsx";
 import { Deslizador, Interruptor } from "./Editores.tsx";
 import { Selector } from "./Selector.tsx";
 import { fraseDeRegla } from "../flujo.ts";
+import { TarjetasIa, consumoDe, textoCosto } from "./IA.tsx";
 
 function Cabecera({ titulo, sub, children }: { titulo: string; sub: string; children?: React.ReactNode }) {
   return (
@@ -70,6 +71,7 @@ export function VistaCorridas() {
   const cuenta: Record<string, number> = {};
   for (const c of terminadas) cuenta[String(c.resultado!.accion)] = (cuenta[String(c.resultado!.accion)] ?? 0) + 1;
   const tokens = terminadas.reduce((s, c) => s + Number(c.resultado?.tokens_entrada ?? 0) + Number(c.resultado?.tokens_salida ?? 0), 0);
+  const costo = terminadas.reduce((s, c) => s + (consumoDe(c.resultado)?.costo_estimado_usd ?? 0), 0);
   const segs = terminadas.map((c) => Number(c.resultado?.segundos ?? 0)).filter((x) => x > 0).sort((a, b) => a - b);
   const mediana = segs.length ? segs[Math.floor(segs.length / 2)]! : 0;
   const pct = (n: number) => (terminadas.length ? Math.round((n / terminadas.length) * 100) : 0);
@@ -126,7 +128,7 @@ export function VistaCorridas() {
                   {perdidos ? `, y ${perdidos} que allá se radicaron aquí no.` : ", y ninguno que allá se radicó se pierde aquí."}
                 </p>
               )}
-              <p className="texto-3">{tokens.toLocaleString("es-CO")} tokens de IA en total.</p>
+              <p className="texto-3">{tokens.toLocaleString("es-CO")} tokens de IA en total{costo > 0 ? `, ${textoCosto(costo)} estimado con precios aproximados` : ""}.</p>
             </div>
           </section>
           <div className="tabla-envoltura">
@@ -154,7 +156,10 @@ export function VistaCorridas() {
                         </td>
                       )}
                       <td className="num">{r ? String(r.vueltas ?? 0) : ""}</td>
-                      <td className="num">{r ? (Number(r.tokens_entrada ?? 0) + Number(r.tokens_salida ?? 0)).toLocaleString("es-CO") : ""}</td>
+                      <td className="num" title={r ? `Entrada ${Number(consumoDe(r)?.tokens_entrada ?? 0).toLocaleString("es-CO")} · salida ${Number(consumoDe(r)?.tokens_salida ?? 0).toLocaleString("es-CO")}` : undefined}>
+                        {r ? (Number(r.tokens_entrada ?? 0) + Number(r.tokens_salida ?? 0)).toLocaleString("es-CO") : ""}
+                        {r && (consumoDe(r)?.costo_estimado_usd ?? 0) > 0 ? <span className="texto-3 diminuto" style={{ display: "block" }}>{textoCosto(consumoDe(r)?.costo_estimado_usd)}</span> : null}
+                      </td>
                       <td className="num">{r?.segundos !== undefined ? `${String(r.segundos).replace(".", ",")} s` : ""}</td>
                     </tr>
                   );
@@ -419,8 +424,9 @@ export function VistaConfiguracion() {
       </Cabecera>
       <div className="columnas-config">
         <div className="pila">
+          <TarjetasIa />
           <article className="tarjeta plana">
-            <h3>Modelo de IA</h3>
+            <h3>Modelo de IA de PQRD</h3>
             <div className="etiqueta">Modelo
               <Selector valor={b.ia.modelo} opciones={[...new Set([...modelos, b.ia.modelo])].map((m) => ({ valor: m, etiqueta: m }))} alCambiar={(m) => setB({ ...b, ia: { ...b.ia, modelo: m } })} etiqueta="Modelo de IA" />
             </div>

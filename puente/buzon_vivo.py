@@ -56,11 +56,26 @@ ESCRITURA = frozenset({
 })
 
 _credenciales: Dict[str, str] = {}
+_origen: Dict[str, str] = {"de": ""}
+
+
+def origen_credenciales() -> str:
+    """De dónde salieron las credenciales de Graph: «entorno del flujo» o «Secret Manager»."""
+    return _origen["de"]
 
 
 def credenciales() -> Dict[str, str]:
-    """Los secretos de Graph, leídos una vez de Secret Manager con el ADC."""
+    """
+    Los secretos de Graph: los del entorno del flujo pqrd si los tiene (los mismos
+    nombres del job), o si no, leídos una vez de Secret Manager con el ADC.
+    """
     if _credenciales:
+        return _credenciales
+    from solo_lectura import definida
+
+    if all(definida(v) for v in SECRETOS):
+        _credenciales.update({v: os.environ[v].strip() for v in SECRETOS})
+        _origen["de"] = "entorno del flujo"
         return _credenciales
     import google.auth
     import google.auth.transport.requests
@@ -78,6 +93,7 @@ def credenciales() -> Dict[str, str]:
             raise PermissionError(f"Secret Manager respondió {r.status_code} para {secreto}")
         leidos[variable] = base64.b64decode(r.json()["payload"]["data"]).decode().strip()
     _credenciales.update(leidos)
+    _origen["de"] = "Secret Manager"
     return _credenciales
 
 
@@ -143,13 +159,19 @@ def preparar_settings() -> None:
         setattr(settings, variable, valor)
 
 
-def servicio():
-    """Un `OutlookService` del motor con el cliente HTTP de solo lectura."""
+def servicio(escribir: bool = False):
+    """
+    Un `OutlookService` del motor con el cliente HTTP de solo lectura. Solo con la
+    compuerta de radicación encendida (las dos llaves) el trabajador lo pide para
+    escribir, como el job.
+    """
     from services.outlook import OutlookService
+    from solo_lectura import radicacion_real
 
     preparar_settings()
     s = OutlookService()
-    s._client = ClienteSoloLectura(s._client)
+    if not (escribir and radicacion_real()):
+        s._client = ClienteSoloLectura(s._client)
     return s
 
 
@@ -307,6 +329,45 @@ class BuzonVivo(_Buzon):
         return _anotar
 
 
+class BuzonQueEscribe(BuzonVivo):
+    """
+    Solo con la compuerta de radicación encendida: el buzón de producción como lo usa
+    el job. Lee igual que BuzonVivo y ESCRIBE de verdad (marcar, mover, reenviar,
+    responder); cada escritura se anuncia con bloqueada=False.
+    """
+
+    def __init__(self, real, carpeta: Path, mensaje: dict, evento: Callable[..., None]) -> None:
+        from solo_lectura import radicacion_real
+
+        if not radicacion_real():
+            raise PermissionError("el buzón que escribe solo existe con la compuerta de radicación encendida")
+        super().__init__(real, carpeta, mensaje, evento)
+
+    def __getattr__(self, nombre):
+        if nombre in LECTURA:
+            async def _lectura(*a, **k):
+                return await self._leer(nombre, a, k)
+            return _lectura
+        if nombre.startswith("_"):
+            raise AttributeError(nombre)
+
+        async def _escribir(*a, **k):
+            self.escrituras.append(nombre)
+            t = time.time()
+            try:
+                r = await getattr(self._real, nombre)(*a, **k)
+            except Exception as e:
+                self.evento("escritura", sistema="buzon", operacion=nombre, bloqueada=False, ok=False,
+                            ms=int((time.time() - t) * 1000), error=f"{type(e).__name__}: {e}"[:300],
+                            propio=self._es_el_propio(a[0] if a else ""))
+                raise
+            self.evento("escritura", sistema="buzon", operacion=nombre, bloqueada=False, ok=True,
+                        ms=int((time.time() - t) * 1000), propio=self._es_el_propio(a[0] if a else ""),
+                        detalle=[str(x)[:120] for x in a][:3])
+            return r
+        return _escribir
+
+
 def _resumen(r: Any) -> str:
     if r is None:
         return "nada"
@@ -398,13 +459,19 @@ def _arrancar_motor() -> None:
     """Lo mismo que hace el trabajador antes de importar el motor."""
     raiz = Path(__file__).resolve().parent.parent
     motor = Path(os.environ.get("RUTA_MOTOR", raiz / "motor"))
+    sys.path.insert(0, str(raiz / "puente"))
+    from solo_lectura import definida
+
+    # Este script solo lista y baja correos: siempre en modo prueba, con su cliente de solo lectura.
     os.environ["MODO_TEST"] = "true"
     os.environ["DEDUP_EN_PRUEBAS"] = "false"
     for var in ("MICROSOFT_CLIENT_ID", "MICROSOFT_CLIENT_SECRET", "MICROSOFT_TENANT_ID",
                 "OUTLOOK_REFRESH_TOKEN", "OUTLOOK_FOLDER_ID", "REDIS_PASSWORD",
                 "SUPABASE_SERVICE_ROLE_KEY", "SGDEA_CLIENT_SECRET", "SGDEA_PASSWORD"):
-        os.environ[var] = "x"
-    os.environ["SUPABASE_URL"] = "http://127.0.0.1:9"
+        if not definida(var):  # lo que trae el entorno del flujo se conserva
+            os.environ[var] = "x"
+    if not definida("SUPABASE_URL"):
+        os.environ["SUPABASE_URL"] = "http://127.0.0.1:9"
     os.chdir(motor)
     sys.path.insert(0, str(motor))
 

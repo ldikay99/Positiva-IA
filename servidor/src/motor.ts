@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { config } from "./config.ts";
 import type { Configuracion } from "./configuracion.ts";
+import { enmascarar, enmascararTexto, variantes } from "./enmascarar.ts";
 
 const MARCA = "\x1eEVT ";
 
@@ -45,6 +46,10 @@ interface Trabajador {
   activas: Map<string, Corrida>;
   /** Se retira apenas quede libre (cambió el entorno del flujo): no recibe más trabajo. */
   retirar?: boolean;
+  /** Si arrancó con la radicación real (compuerta encendida y segunda llave). */
+  real: boolean;
+  /** Por qué se cortó (tope de tiempo), para el resultado de sus corridas. */
+  cortado?: string;
 }
 
 /** Lo que espera trabajador: un correo suelto o un lote entero, que va a un solo trabajador. */
@@ -67,6 +72,12 @@ export class Motor extends EventEmitter {
   private readonly ordenExtra: (corrida: Corrida) => Record<string, unknown>;
   /** El entorno propio del flujo con que arrancan sus trabajadores (encima del de la plataforma). */
   entornoDeProceso: () => Record<string, string> = () => ({});
+  /** Los valores secretos del entorno del flujo: se enmascaran en todo lo que sale de sus trabajadores. */
+  secretosDeProceso: () => string[] = () => [];
+  /** Si la compuerta de radicación de este flujo está encendida (con la segunda llave). */
+  radicacionReal: () => boolean = () => false;
+  /** Todas las formas de los secretos que conoció algún trabajador de este flujo. */
+  private mascaras: string[] = [];
 
   constructor(flujo = "pqrd", trabajador: string = config.trabajador, ordenExtra: (corrida: Corrida) => Record<string, unknown> = () => ({})) {
     super();
@@ -123,9 +134,9 @@ export class Motor extends EventEmitter {
    * Varios correos como una corrida del job: van juntos a un mismo trabajador,
    * que los atiende con un solo orquestador y de a `concurrencia` a la vez.
    */
-  encolarLote(casos: string[], configuracion: Configuracion, concurrencia = 0): { lote: string; corridas: Corrida[] } {
+  encolarLote(casos: string[], configuracion: Configuracion, concurrencia = 0, origen?: string): { lote: string; corridas: Corrida[] } {
     const lote = `lote-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "")}-${randomUUID().slice(0, 4)}`;
-    const corridas = casos.map((caso) => this.nueva(caso, configuracion, lote));
+    const corridas = casos.map((caso) => this.nueva(caso, configuracion, lote, origen ? { origen } : {}));
     this.cola.push({ tipo: "lote", id: lote, corridas, concurrencia });
     this.repartir();
     return { lote, corridas };
@@ -147,6 +158,33 @@ export class Motor extends EventEmitter {
     this.repartir();
   }
 
+  /**
+   * Corta esas corridas (tope de tiempo, como el job): las que esperan salen de la
+   * cola y los trabajadores que las atienden se detienen; al salir, cada corrida
+   * cortada queda con el motivo.
+   */
+  cortar(ids: string[], motivo: string): number {
+    const buscadas = new Set(ids);
+    let n = 0;
+    for (const p of [...this.cola]) {
+      const cs = p.tipo === "uno" ? [p.corrida] : p.corridas;
+      if (!cs.some((c) => buscadas.has(c.id))) continue;
+      this.cola.splice(this.cola.indexOf(p), 1);
+      for (const c of cs) {
+        c.estado = "fallida";
+        this.publicar({ tipo: "resultado", corrida: c.id, t: Date.now() / 1000, caso: c.caso, accion: "error", motivo });
+        n++;
+      }
+    }
+    for (const t of this.trabajadores) {
+      if (![...t.activas.keys()].some((id) => buscadas.has(id))) continue;
+      t.cortado = motivo;
+      n += t.activas.size;
+      t.proceso.kill();
+    }
+    return n;
+  }
+
   cancelarCola(): number {
     const pendientes = this.cola.splice(0).flatMap((p) => (p.tipo === "uno" ? [p.corrida] : p.corridas));
     for (const c of pendientes) {
@@ -156,12 +194,26 @@ export class Motor extends EventEmitter {
     return pendientes.length;
   }
 
+  /** Suma las formas de los secretos actuales a las que se enmascaran (nunca se quitan: un trabajador viejo pudo conocerlas). */
+  private recordarSecretos(): void {
+    const todas = new Set([...this.mascaras, ...variantes(this.secretosDeProceso())]);
+    this.mascaras = [...todas].sort((a, b) => b.length - a.length);
+  }
+
+  /** Lo que sale de los trabajadores, sin los valores secretos del flujo. */
+  enmascarar<T>(x: T): T {
+    return enmascarar(x, this.mascaras);
+  }
+
   private lanzar(): void {
+    this.recordarSecretos();
+    const real = this.radicacionReal();
+    // La compuerta va DESPUÉS del entorno del flujo: el flujo no la puede poner (y entornos.ts tampoco lo deja).
     const proceso = spawn(config.python, [this.trabajador], {
-      env: { ...process.env, ...this.entornoDeProceso(), PYTHONUNBUFFERED: "1", PYTHONIOENCODING: "utf-8", RUTA_BANDEJA: config.bandeja, RUTA_VIVO: config.vivo, RUTA_TRABAJO: join(config.datos, "trabajo") },
+      env: { ...process.env, ...this.entornoDeProceso(), RADICACION_REAL: real ? "si" : "no", PYTHONUNBUFFERED: "1", PYTHONIOENCODING: "utf-8", RUTA_BANDEJA: config.bandeja, RUTA_VIVO: config.vivo, RUTA_TRABAJO: join(config.datos, "trabajo") },
       stdio: ["pipe", "pipe", "pipe"],
     });
-    const t: Trabajador = { id: this.siguienteId++, proceso, listo: false, activas: new Map() };
+    const t: Trabajador = { id: this.siguienteId++, proceso, listo: false, activas: new Map(), real };
     this.trabajadores.push(t);
     let pendiente = "";
     proceso.stdout.setEncoding("utf8");
@@ -175,16 +227,32 @@ export class Motor extends EventEmitter {
       }
     });
     proceso.stderr.setEncoding("utf8");
+    // Por líneas completas, como stdout: un secreto partido entre dos trozos no escaparía a la máscara.
+    let pendienteError = "";
+    const lineaDeError = (linea: string) => {
+      if (linea.trim()) this.recibir(t, { tipo: "consola", corrida: this.unica(t)?.id ?? null, t: Date.now() / 1000, linea, error: true });
+    };
     proceso.stderr.on("data", (trozo: string) => {
-      for (const linea of trozo.split("\n")) {
-        if (linea.trim()) this.recibir(t, { tipo: "consola", corrida: this.unica(t)?.id ?? null, t: Date.now() / 1000, linea, error: true });
+      pendienteError += trozo;
+      let i: number;
+      while ((i = pendienteError.indexOf("\n")) >= 0) {
+        lineaDeError(pendienteError.slice(0, i));
+        pendienteError = pendienteError.slice(i + 1);
       }
+      if (pendienteError.length > 64_000) {
+        lineaDeError(pendienteError);
+        pendienteError = "";
+      }
+    });
+    proceso.stderr.on("end", () => {
+      lineaDeError(pendienteError);
+      pendienteError = "";
     });
     proceso.on("exit", (codigo) => {
       this.trabajadores = this.trabajadores.filter((x) => x !== t);
       for (const c of t.activas.values()) {
         if (c.estado === "procesando") {
-          this.recibir(t, { tipo: "resultado", corrida: c.id, t: Date.now() / 1000, caso: c.caso, accion: "error", motivo: `el trabajador terminó (código ${codigo})` });
+          this.recibir(t, { tipo: "resultado", corrida: c.id, t: Date.now() / 1000, caso: c.caso, accion: "error", motivo: t.cortado ?? `el trabajador terminó (código ${codigo})` });
         }
       }
       if (this.trabajadores.length < this.deseados && !this.errorInicio) setTimeout(() => this.ajustar(this.deseados), 1000);
@@ -204,7 +272,9 @@ export class Motor extends EventEmitter {
     }
   }
 
-  private recibir(t: Trabajador, e: Evento): void {
+  private recibir(t: Trabajador, crudo: Evento): void {
+    // Antes de guardarlo o reenviarlo: ningún valor secreto del flujo sale de aquí.
+    const e = this.enmascarar(crudo);
     if (e.tipo === "listo") {
       t.listo = true;
       this.errorInicio = "";
@@ -213,7 +283,7 @@ export class Motor extends EventEmitter {
       return;
     }
     if (e.tipo === "fallo_inicio") {
-      this.errorInicio = String(e.error ?? "fallo al iniciar el motor");
+      this.errorInicio = enmascararTexto(String(e.error ?? "fallo al iniciar el motor"), this.mascaras);
       this.publicarEstado();
       return;
     }
@@ -239,9 +309,11 @@ export class Motor extends EventEmitter {
   }
 
   private repartir(): void {
+    const real = this.radicacionReal();
     for (const t of [...this.trabajadores]) {
       if (!t.listo || t.activas.size) continue;
-      if (t.retirar || this.trabajadores.length > this.deseados) {
+      // Un trabajador que arrancó con otra compuerta no recibe nada más: se retira y arranca uno nuevo.
+      if (t.retirar || t.real !== real || this.trabajadores.length > this.deseados) {
         t.listo = false;
         t.proceso.stdin.end();
         continue;
@@ -255,7 +327,7 @@ export class Motor extends EventEmitter {
         corrida.inicio = Date.now();
       }
       const c = corridas[0]!.configuracion;
-      const comun = { parametros: c.parametros, entorno: c.entorno, ia: c.ia, tope_s: c.topeSegundos, reglas: c.reglas.filter((r) => r.activa), ...this.ordenExtra(corridas[0]!) };
+      const comun = { parametros: c.parametros, entorno: c.entorno, ia: c.ia, tope_s: c.topeSegundos, reglas: c.reglas.filter((r) => r.activa), ...this.ordenExtra(corridas[0]!), radicacion_real: t.real };
       const orden =
         pedido.tipo === "uno"
           ? { cmd: "procesar", corrida: pedido.corrida.id, caso: pedido.corrida.caso, ...comun }
@@ -318,6 +390,8 @@ export class Motor extends EventEmitter {
   }
 
   detener(): void {
+    // Sin trabajadores deseados: al salir, ninguno se vuelve a lanzar.
+    this.deseados = 0;
     for (const t of this.trabajadores) t.proceso.kill();
   }
 }

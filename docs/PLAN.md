@@ -67,23 +67,24 @@ Una plataforma de flujos de IA con nodos, más potente que n8n, donde **Vera** (
 Al buscar, el nodo encuentra lo que se busca sin importar mayúsculas, tildes, espacios ni mezclas, con IA o sin ella. En cada nodo se pueden agregar los campos de búsqueda que hagan falta.
 
 - [x] `igual` y `contiene` (filtro y condición), categorías de IA, `bifurcar_por_valor`, `buscar_en_tabla` y `en_lista` ya ignoran mayúsculas, tildes y espacios.
-- [ ] Regex (`coincide`, `no_coincide`, `extraer_regex`, nombre de adjunto) que ignoren tildes, devolviendo el texto original encontrado.
-- [ ] Varias condiciones por nodo (`condiciones` + «todas» o «alguna»), cada una sobre uno o varios campos; compatible con los flujos de hoy.
-- [ ] Operadores nuevos:
-  - [ ] de texto: no contiene, distinto, empieza con, termina con, palabra completa, contiene alguna / todas de una lista, parecido (tolera errores de escritura);
-  - [ ] de números y fechas: mayor, menor, entre, antes de, después de.
-- [ ] Opciones por condición: distinguir mayúsculas y tildes solo si se pide (por defecto se ignoran).
-- [ ] Mismos operadores y normalización en `tabla_consultar`.
-- [ ] Modo de comparación por condición: flexible (ignora mayúsculas, tildes y espacios), exacta (todo cuenta, incluidos espacios) o parecida (similitud con umbral); ajustes finos para distinguir mayúsculas, tildes o espacios.
-- [ ] Longitud como criterio en todo lo que compara o extrae:
-  - [ ] operadores `longitud_igual`, `longitud_mayor`, `longitud_menor` y `longitud_entre`, contando caracteres, dígitos, letras o palabras;
-  - [ ] `extraer_regex` con longitud mínima, máxima o exacta y solo dígitos (elige el candidato que cumple, por ejemplo el radicado de 23 dígitos y no un número más corto);
-  - [ ] `ia_extraer` con longitud por campo, revisada después de la respuesta del modelo;
-  - [ ] `validar` con longitud consistente;
-  - [ ] `transformar` con recortar y rellenar.
-- [ ] Opciones iguales en todos los nodos que comparan o extraen, para construir cualquier automatización con IA o sin ella.
-- [ ] Panel del nodo: «Agregar condición» y «Agregar campo» salen del esquema; ayuda y ejemplos de cada operador; Vera los conoce por la ficha del nodo.
-- [ ] Pruebas con textos mixtos («PETICIÓN», «peticion», «Petición  urgente», «peticiòn»).
+- [x] Regex (`coincide`, `no_coincide`, `extraer_regex`, `regex_extraer`, `regex_reemplazar`, nombre de adjunto) que ignoran tildes, devolviendo el texto original encontrado (`puente/conectores/busqueda.py`).
+- [x] Varias condiciones por nodo (`condiciones` + «todas» o «alguna»), cada una sobre uno o varios campos; compatible con los flujos de hoy.
+- [x] Operadores nuevos:
+  - [x] de texto: no contiene, distinto, empieza con, termina con, palabra completa, contiene alguna / todas de una lista, en lista, parecido (tolera errores de escritura);
+  - [x] de números y fechas: mayor, menor, mayor o igual, menor o igual, entre, antes de, después de, entre fechas.
+- [x] Opciones por condición: distinguir mayúsculas y tildes solo si se pide (por defecto se ignoran).
+- [x] Mismos operadores y normalización en `tabla_consultar` (`filtro` {campo: valor} o lista, y `condiciones`).
+- [x] Modo de comparación por condición: flexible (ignora mayúsculas, tildes y espacios), exacta (todo cuenta, incluidos espacios) o parecida (similitud con umbral); ajustes finos para distinguir mayúsculas, tildes o espacios.
+- [x] Longitud como criterio en todo lo que compara o extrae:
+  - [x] operadores `longitud_igual`, `longitud_mayor`, `longitud_menor` y `longitud_entre`, contando caracteres, dígitos, letras o palabras;
+  - [x] `extraer_regex` con longitud mínima, máxima o exacta y solo dígitos (elige el candidato que cumple, por ejemplo el radicado de 23 dígitos y no un número más corto);
+  - [x] `ia_extraer` con longitud por campo, revisada después de la respuesta del modelo;
+  - [x] `validar` con longitud consistente;
+  - [x] `transformar` con recortar y rellenar.
+- [x] Opciones iguales en todos los nodos que comparan o extraen, para construir cualquier automatización con IA o sin ella.
+- [x] Panel del nodo: «Agregar condición» y «Agregar campo» salen del esquema; ayuda y ejemplos de cada operador; Vera los conoce por la ficha del nodo.
+- [x] Pruebas con textos mixtos («PETICIÓN», «peticion», «Petición  urgente», «peticiòn»).
+- [ ] Reconstruir la imagen para que el servidor use el zod nuevo de `servidor/src/flujos.ts` (hasta entonces rechaza `condiciones`).
 
 ### 2b-bis. Vera arma flujos (evaluación)
 
@@ -130,6 +131,30 @@ Cada flujo, y cada nodo de IA, elige su proveedor y su modelo. Hoy todo usa Vert
 - [ ] Medición de CPU y memoria por trabajador y alertas en el tablero.
 - [ ] Revisar qué conviene en cada lenguaje: Node para el servidor y los eventos, Python para el motor y la IA, y lo que haga falta en código nativo solo si una medición lo justifica.
 
+### 2e. Cada flujo independiente, nada quemado de PQRD (pedido 2026-11-07)
+
+El proyecto nació como PQRD y quedan cosas de PQRD que se ven en todos los flujos. Cada flujo debe funcionar como lo que es.
+
+- [ ] La «Correspondencia» (bandeja descargada y buzón real de PQRD) solo aparece en los flujos que la usan. Un flujo nuevo no ve los correos de PQRD.
+- [ ] Un flujo nuevo con disparador de correo se conecta a SU buzón (conexión IMAP o Graph, carpeta) o a su bandeja de prueba propia (subir .eml/.msg), no a la de PQRD.
+- [ ] Nodo para subir archivos (imágenes y documentos; no video ni audio):
+  - [ ] disparador «archivos» y campo de archivo en «entrada manual», con arrastrar y soltar en «Correr»;
+  - [ ] el archivo se guarda como archivo del flujo (no como una ruta escrita a mano) y pasa por la misma lectura, OCR y visión que los adjuntos;
+  - [ ] también por webhook (multipart) y desde el chat de Vera (los adjuntos del chat sirven para correr un flujo).
+- [ ] Renombrar, clonar y borrar a la vista en cada flujo (cabecera y tarjeta del tablero), con confirmación al borrar.
+- [ ] Clonar también PQRD y tutelas: la copia es una instancia propia (su entorno, conexiones, compuerta y programación) que corre el mismo motor; los originales no se borran.
+- [ ] Vera hace todo esto: crear, editar, renombrar, clonar, borrar (con botón), conectar un buzón o una carpeta a un flujo y correrlo con archivos.
+
+### 2f. Vera, la voz y el chat (pedido 2026-11-07)
+
+- [ ] El saludo, la despedida y la forma de colgar no gustan: rehacerlos (natural, breve, sin cortar).
+- [ ] A veces la llamada se corta o la voz se corta antes de terminar de hablar: encontrar la causa y corregirla.
+- [ ] «Tareas en curso» se tapa con los botones de la llamada: mostrarlas en su propio espacio, legible, con el nombre de cada tarea.
+
+### 3a. Detalles visuales
+
+- [ ] El fondo claro del área principal no debe tener esquinas redondeadas.
+
 ## 3. Editor visual e interfaz
 
 - [x] Selectores y controles propios en toda la plataforma (nada con estilo del navegador).
@@ -163,15 +188,18 @@ Cada flujo, y cada nodo de IA, elige su proveedor y su modelo. Hoy todo usa Vert
 
 Pedido de Jonathan (2026-11-07): que desde aquí se puedan hacer TODOS los flujos de IA que necesitan, con sus variables, secretos y conectores. PQRD y tutelas corren aquí con todo lo real, pero con una compuerta de radicación apagada: pasan por la simulación completa y solo radican de verdad cuando él la active. No se trata de replicar el job, sino de que la plataforma funcione como un job, como un flujo o como cualquier automatización, con IA o sin ella.
 
-- [ ] Copiar las variables y los secretos de los jobs `ms-radicacion-ia-pqrd` y `ms-radicacion-ia-tutelas` con sus valores (Secret Manager y valores directos) al entorno cifrado de cada flujo. Ningún valor se imprime ni queda en el repo.
-- [ ] Que PQRD y tutelas usen ese entorno real (no dobles) para todo lo que lee: buzón por Graph, Supabase, Redis, Postgres, SGDEA en lectura y Vertex.
-- [ ] Compuerta de radicación por flujo, apagada por defecto:
-  - [ ] apagada: corren completos en simulación, con todas las escrituras retenidas y visibles;
-  - [ ] encendida: escriben como el job (SGDEA, mover, etiquetar y responder en el buzón, trazas en Supabase y Redis);
-  - [ ] la enciende solo una persona, con confirmación explícita;
-  - [ ] segunda llave en el despliegue (`PERMITIR_RADICACION_REAL=si`), sin la cual la compuerta no se puede encender.
-- [ ] Programación de PQRD y tutelas igual a la del job (leída de Cloud Scheduler), configurable por flujo. Queda apagada hasta que Jonathan la encienda.
-- [ ] Probar de punta a punta en simulación con el entorno real: PQRD y tutelas leen su buzón real, procesan y dejan las escrituras retenidas, sin escribir nada.
+- [x] El entorno de PQRD y tutelas acepta exactamente los nombres de su job (con guiones solo en tutelas); cada variable del job la pone una persona.
+- [x] Copiadas cifradas las 22 variables de los jobs (12 de PQRD y 10 de tutelas) con `scripts/copiar_entorno_de_job.py`; ningún valor se imprimió. (Lo hace Jonathan por `PUT /api/flujos/:id/entorno/:nombre`.)
+- [x] Que PQRD y tutelas usen ese entorno real para lo que leen, con adaptadores de solo lectura (Graph GET, Supabase select por GET, Redis GET, Postgres en sesión de solo lectura). Sin credenciales, los dobles de siempre, anunciados en el evento «fuentes». SGDEA de tutelas queda simulado (ver `docs/PRODUCCION.md` 5b).
+- [x] Secretos de los flujos de código enmascarados en eventos, consola, resultados, historial y errores del buzón.
+- [x] Compuerta de radicación por flujo, apagada por defecto (`/api/flujos/:id/compuerta`, «Entorno › Ejecución» y pastilla en la barra):
+  - [x] apagada: corren completos en simulación, con todas las escrituras retenidas y visibles;
+  - [x] encendida: escriben como el job (SGDEA, mover, etiquetar y responder en el buzón, trazas en Supabase y Redis); sin probar contra sistemas reales, a propósito;
+  - [x] la enciende solo una persona, con confirmación explícita; Vera no puede;
+  - [x] segunda llave en el despliegue (`PERMITIR_RADICACION_REAL=si`), sin la cual la compuerta no se puede encender. No está en docker-compose.
+- [x] Programación de PQRD y tutelas igual a la del job (`*/30 * * * *` y `5,25,45 6-17 * * *`, America/Bogota), configurable por flujo, sin solapes y con tope de 3600 s. Queda apagada hasta que Jonathan la encienda.
+- [x] PQRD de punta a punta en simulación con el entorno real: leyó Graph y Supabase de verdad, detectó un duplicado real y retuvo sus 12 escrituras; ningún secreto en la corrida.
+- [ ] Tutelas de punta a punta en simulación con el entorno real (su carpeta estaba vacía el 2026-11-07; repetir cuando llegue un correo).
 - [ ] Cualquier flujo creado aquí puede usar el mismo esquema: entorno real, programación como job y escrituras habilitadas por una persona.
 
 ## 5. Flujos de producción

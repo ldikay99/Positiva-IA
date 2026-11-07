@@ -4,6 +4,7 @@ import { usar } from "../estado.ts";
 import { Icono } from "../iconos.tsx";
 import { NOMBRES_CORTOS_DESENLACE, TONO_DESENLACE, motivoLegible } from "../progreso.ts";
 import type { TableroFlujo } from "../tipos.ts";
+import { textoConsumo } from "./IA.tsx";
 
 /** Pide algo al asistente: abre la burbuja con el texto ya escrito y lo envía. */
 export function pedirAlAsistente(texto: string): void {
@@ -74,6 +75,7 @@ function TarjetaFlujo({ f, i }: { f: TableroFlujo; i: number }) {
           <div><dt>A revisión manual</dt><dd>{manual}</dd></div>
           <div><dt>Con error</dt><dd className={errores ? "malo" : ""}>{errores}</dd></div>
           <div><dt>Tiempo típico</dt><dd>{f.segundosMediana ? `${Math.round(f.segundosMediana)} s` : "—"}</dd></div>
+          <div title="Costo estimado con precios publicados aproximados"><dt>IA</dt><dd>{textoConsumo(f.consumo ?? { tokens_entrada: f.tokens, tokens_salida: 0 }) || "—"}</dd></div>
         </dl>
       </div>
       <Actividad dias={f.porDia} />

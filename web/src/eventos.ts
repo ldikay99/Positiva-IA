@@ -142,7 +142,7 @@ export function describir(e: Evento, _catalogo?: Catalogo | null): Omit<Paso, "i
         tono: "ia",
         icono: "chispa",
         titulo: llamadas.length ? `${e.quien === "revisor" ? "El revisor" : "La IA"} decide usar ${llamadas.map((l) => l.herramienta.replace(/_/g, " ")).join(", ")}` : `${e.quien === "revisor" ? "El revisor" : "La IA"} responde`,
-        extra: `${segundos(Number(e.ms))} · ${(Number(e.tokens_entrada) + Number(e.tokens_salida)).toLocaleString("es-CO")} tokens`,
+        extra: `${segundos(Number(e.ms))} · ${(Number(e.tokens_entrada) + Number(e.tokens_salida)).toLocaleString("es-CO")} tokens${Number(e.costo_estimado_usd ?? 0) > 0 ? ` · ≈ US$ ${Number(e.costo_estimado_usd).toLocaleString("es-CO", { maximumSignificantDigits: 2 })}` : ""}${e.proveedor && e.proveedor !== "vertex" ? ` · ${String(e.proveedor)}` : ""}`,
         detalle: String(e.texto || "") || undefined,
       };
     }
@@ -150,7 +150,24 @@ export function describir(e: Evento, _catalogo?: Catalogo | null): Omit<Paso, "i
       return herramienta(e);
     case "proveedor":
       return { tono: e.ok === false ? "error" : "info", icono: "persona", titulo: e.ok === false ? "El registro de personas falló" : e.encontrado ? `Registro de personas: ${String(e.nombre || "persona encontrada")}` : "Registro de personas: sin resultado", extra: segundos(Number(e.ms)), detalle: e.error ? String(e.error) : e.documento ? `documento ${String(e.documento)}` : undefined };
+    case "compuerta":
+      return e.radicacion_real
+        ? { tono: "error", icono: "alerta", titulo: "Radicación real: encendida", extra: "escribe como el job" }
+        : { tono: "tenue", icono: "candado", titulo: "Radicación real: apagada (simulación)", extra: "toda escritura queda retenida" };
+    case "fuentes": {
+      const l = (e.lecturas as { sistema: string; real: boolean; detalle: string }[] | undefined) ?? [];
+      const reales = l.filter((x) => x.real).map((x) => x.sistema);
+      return { tono: "info", icono: "proveedores", titulo: `Lee de verdad: ${reales.join(", ") || "nada"}`, extra: `${l.length - reales.length} con doble`, detalle: l.map((x) => `${x.real ? "real " : "doble"} · ${x.sistema}: ${x.detalle}`).join("\n") };
+    }
+    case "lectura_real":
+      return e.ok === false
+        ? { tono: "aviso", icono: "alerta", titulo: `${String(e.sistema)} no respondió (${String(e.operacion)})`, detalle: [e.error, e.detalle].filter(Boolean).map(String).join("\n") || undefined }
+        : { tono: "info", icono: "base", titulo: `${String(e.sistema)} real · ${String(e.operacion)} (solo lectura)`, extra: `${String(e.resultado ?? "")} · ${segundos(Number(e.ms ?? 0))}` };
+    case "aviso_programador":
+      return { tono: "aviso", icono: "calendario", titulo: String(e.mensaje), detalle: e.error ? String(e.error) : undefined };
     case "escritura":
+      if (e.bloqueada === false)
+        return { tono: e.ok === false ? "error" : "escritura", icono: "alerta", titulo: `ESCRIBE DE VERDAD · ${String(e.sistema)} · ${String(e.operacion).replace(/_/g, " ")}`, extra: "compuerta de radicación encendida", detalle: e.detalle || e.error ? json(e.detalle ?? e.error) : undefined };
       if (e.sistema === "sgdea" && e.operacion === "radicar") return { tono: "escritura", icono: "enviar", titulo: "Envía la radicación a SGDEA (simulado, no se escribe)", extra: `${String(e.n_adjuntos ?? 0)} adjuntos`, detalle: json(e.payload) };
       if (e.sistema === "buzon") return { tono: "escritura", icono: "correo", titulo: `El job ${loQueHaria(e)}`, extra: "bloqueado: el visor no escribe en el buzón", detalle: e.detalle ? json(e.detalle) : undefined };
       return { tono: "tenue", icono: "enviar", titulo: `SGDEA · ${String(e.operacion).replace(/_/g, " ")} (simulado)`, detalle: e.payload || e.detalle ? json(e.payload ?? e.detalle) : undefined };

@@ -21,11 +21,16 @@ import copy
 import json
 from typing import Any, Dict, List, Optional, Sequence
 
-VERSION = 4
+VERSION = 5
 
 DESENLACES = ["radicar", "manual", "reenviar", "descartar", "responder", "duplicado"]
 DISPARADORES = ["entrada_correo", "entrada_manual", "programado", "webhook", "correo_nuevo"]
-TIPOS_CREDENCIAL = ["imap", "smtp", "microsoft_graph", "google_servicio", "postgres", "mysql", "sqlite", "http_bearer", "http_basico"]
+TIPOS_CREDENCIAL_IA = ["ia_gemini", "ia_openai", "ia_azure_openai", "ia_anthropic", "ia_deepseek", "ia_mistral", "ia_groq", "ia_openrouter",
+                       "ia_ollama", "ia_compatible", "ia_cohere", "ia_personalizado"]
+TIPOS_CREDENCIAL = ["imap", "smtp", "microsoft_graph", "google_servicio", "postgres", "mysql", "sqlite", "http_bearer", "http_basico", *TIPOS_CREDENCIAL_IA]
+# Los proveedores de IA (los registra puente/proveedores/; una prueba compara las listas).
+PROVEEDORES_IA = ["vertex", "gemini", "openai", "azure_openai", "deepseek", "mistral", "groq", "openrouter", "ollama", "openai_compatible",
+                  "anthropic", "cohere", "personalizado"]
 
 
 # ----------------------------------------------------------- ayudas de esquema
@@ -137,7 +142,11 @@ COMUNES: Dict[str, Dict[str, Any]] = {
     "entradas": {"tipo": "lista de texto", "descripcion": "Lo que el nodo recibe: variables («datos», «datos.nombre») o datos del correo "
                  "(«correo», «correo.cuerpo», «adjuntos.texto»). En los nodos de IA, si se da, el modelo ve SOLO esto; si no, ve el correo, los adjuntos y las variables."},
     "salida": {"tipo": "nombre de variable", "descripcion": "Dónde deja su resultado (letras, números y guion bajo)."},
+    "proveedor": {"tipo": "texto", "descripcion": "Solo nodos de IA (y leer_adjuntos para la visión): proveedor de IA de este nodo "
+                  "(vertex, gemini, openai, azure_openai, deepseek, mistral, groq, openrouter, ollama, openai_compatible, anthropic, cohere, personalizado); si no, el del flujo."},
     "modelo": {"tipo": "texto", "descripcion": "Solo nodos de IA: modelo de este nodo (si no, el del flujo)."},
+    "credencial_ia": {"tipo": "credencial ia_<proveedor>", "descripcion": "Solo nodos de IA: en config.credencial, el NOMBRE de la conexión con la llave del proveedor "
+                      "(si no, la del flujo). Vertex no la necesita."},
     "temperatura": {"tipo": "número 0..2", "descripcion": "Solo nodos de IA: creatividad (0,1 por defecto; 0,4–0,7 para redactar)."},
     "deshabilitado": {"tipo": "booleano", "defecto": False, "descripcion": "No se ejecuta: sigue por la arista por defecto (o la primera). No vale en disparadores, salida, fin_ciclo, para_cada, paralelo ni unir."},
     "continuar_si_falla": {"tipo": "booleano", "defecto": False, "descripcion": "Si el nodo falla, sigue por su arista normal y anota el fallo como aviso (y en {{fallo.*}})."},
@@ -151,7 +160,9 @@ _REINTENTOS = objeto({"intentos": entero("intentos en total, contando el primero
                       "maximo_ms": entero("tope de espera", 0, 120000, 10000)}, ["intentos"], "repite ante fallos pasajeros")
 ESQUEMA_COMUNES: Dict[str, Dict[str, Any]] = {
     "entradas": lista(texto(), COMUNES["entradas"]["descripcion"]),
-    "modelo": texto(COMUNES["modelo"]["descripcion"]),
+    "proveedor": {**opcion(PROVEEDORES_IA, "proveedor de IA de este nodo (si no, el del flujo)"), "title": "Proveedor de IA", "format": "proveedor-ia"},
+    "modelo": {**texto(COMUNES["modelo"]["descripcion"]), "format": "modelo-ia"},
+    "credencial": credencial(TIPOS_CREDENCIAL_IA, "conexión con la llave del proveedor de este nodo (si no, la del flujo)"),
     "temperatura": numero(COMUNES["temperatura"]["descripcion"], 0, 2),
     "deshabilitado": booleano("no se ejecuta: el flujo pasa de largo", False),
     "continuar_si_falla": booleano(COMUNES["continuar_si_falla"]["descripcion"], False),
@@ -178,6 +189,122 @@ _CAMPO_ENTRADA = objeto({"nombre": variable("nombre del campo (queda en {{entrad
 _FILTRO_CORREO = objeto({"remitente": plantilla("contiene este remitente"), "asunto": plantilla("el asunto contiene"),
                          "texto": plantilla("el asunto o el cuerpo contiene"), "no_leidos": booleano("solo los no leídos", False)},
                         desc="qué correos traer")
+
+# ------------------------------------------------- búsqueda y comparación
+#
+# Lo mismo en filtro, condición, tabla_consultar, extraer_regex, ia_extraer,
+# validar, transformar, buscar_en_tabla y bifurcar_por_valor (el motor lo
+# implementa en conectores/busqueda.py; las pruebas comprueban que coincidan).
+
+OPERADORES_AYUDA: Dict[str, str] = {
+    "contiene": "el texto contiene el valor · «Solicitud de PETICIÓN urgente» contiene «peticion» → sí (sin valor: siempre sí)",
+    "no_contiene": "el texto no contiene el valor · asunto no_contiene «respuesta automática»",
+    "igual": "el texto entero es el valor · « Petición » igual «peticion» → sí",
+    "distinto": "el texto entero no es el valor · estado distinto «cerrado»",
+    "empieza_con": "el texto empieza con el valor · «RE: Tutela 2026» empieza_con «re:»",
+    "termina_con": "el texto termina con el valor · «ACTA.PDF» termina_con «.pdf»",
+    "palabra": "el valor aparece como palabra o frase completa · «una tutela nueva» → sí; «tutelado» → no (valor «tutela»)",
+    "contiene_alguna": "contiene al menos uno de valores · valores [«tutela», «desacato»]",
+    "contiene_todas": "contiene todos los valores · valores [«incapacidad», «pago»]",
+    "en_lista": "el texto entero es uno de valores · «Afiliación» en_lista [«afiliacion», «pagos»] → sí",
+    "no_en_lista": "el texto entero no es ninguno de valores",
+    "parecido": "se parece al valor aunque tenga errores de escritura (umbral 0,85; mira el texto entero y cada trozo) · «peticion urjente» ≈ «Petición urgente»",
+    "coincide": "regex que no distingue mayúsculas ni tildes · «radicad[oa]\\s*\\d{23}»",
+    "no_coincide": "la regex no aparece",
+    "vacio": "no tiene nada (o solo espacios)",
+    "no_vacio": "tiene algo",
+    "mayor": "número mayor que el valor · «$ 1.500.000» mayor 1000000 → sí (entiende «1.234,56» y «$ 1,234.56»)",
+    "menor": "número menor que el valor",
+    "mayor_igual": "número mayor o igual que el valor",
+    "menor_igual": "número menor o igual que el valor",
+    "entre": "número entre valor y hasta, incluidos (o valor [mínimo, máximo])",
+    "antes_de": "fecha anterior al valor · «7 de noviembre de 2026» antes_de «2026-12-01» → sí (ISO, DD/MM/AAAA, DD-MM-AAAA, mes en letras, hoy/ayer/mañana)",
+    "despues_de": "fecha posterior al valor · fecha despues_de «hoy»",
+    "entre_fechas": "fecha entre valor y hasta, incluidas",
+    "longitud_igual": "mide exactamente valor (según contar: caracteres, digitos, letras o palabras) · cédula longitud_igual 10 con contar digitos",
+    "longitud_mayor": "mide más que valor",
+    "longitud_menor": "mide menos que valor",
+    "longitud_entre": "mide entre valor y hasta, incluidos · radicado longitud_entre 20 y 23 con contar digitos",
+}
+OPERADORES = list(OPERADORES_AYUDA)
+COMPARACIONES = ["flexible", "exacta", "parecida"]
+CONTAR = ["caracteres", "digitos", "letras", "palabras"]
+COMPARACION_AYUDA = {
+    "flexible": "por defecto: no importan mayúsculas, tildes ni espacios de más («PETICIÓN» = «peticion» = « Petición » = «peticiòn»)",
+    "exacta": "tal cual, letra por letra: mayúsculas, tildes y espacios cuentan («Petición» ≠ «peticion»)",
+    "parecida": "tolera errores de escritura: similitud ≥ umbral (0,85 por defecto) sobre el texto sin mayúsculas ni tildes («peticion urjente» ≈ «Petición urgente»)",
+}
+
+
+def _opciones_busqueda() -> Dict[str, Any]:
+    return {
+        "comparacion": opcion(COMPARACIONES, "flexible (por defecto): sin mayúsculas, tildes ni espacios de más; exacta: tal cual; parecida: tolera errores de escritura"),
+        "umbral": numero("parecida y parecido: similitud mínima de 0 a 1 (por defecto 0,85)", 0, 1),
+        "distinguir_mayusculas": booleano("con flexible: que sí cuenten las mayúsculas"),
+        "distinguir_tildes": booleano("con flexible: que sí cuenten las tildes"),
+        "distinguir_espacios": booleano("con flexible: que sí cuenten los espacios de más"),
+    }
+
+
+def _longitud(con_contar: bool = True) -> Dict[str, Any]:
+    d = {"longitud": entero("longitud exacta del valor", 0), "longitud_min": entero("longitud mínima", 0), "longitud_max": entero("longitud máxima", 0)}
+    if con_contar:
+        d["contar"] = opcion(CONTAR, "qué se cuenta en la longitud (por defecto caracteres)")
+    d["solo_digitos"] = booleano("quitar todo lo que no sea dígito antes de medir y devolver («1.023.456.789» → 1023456789)")
+    return d
+
+
+def _props_condicion(campo_desc: str) -> Dict[str, Any]:
+    return {
+        "campo": texto(campo_desc, titulo="Campo"),
+        "campos": lista(texto(), "o varios campos a la vez: basta que uno cumpla (con no_contiene, distinto, no_coincide, no_en_lista y vacio, tienen que cumplir todos)"),
+        "operador": opcion(OPERADORES, "texto: contiene, igual, empieza_con, palabra, parecido, coincide (regex)…; números: mayor, menor, entre; "
+                                      "fechas: antes_de, despues_de, entre_fechas; longitud: longitud_igual, longitud_entre…", "contiene"),
+        "valor": libre("con qué comparar: texto, número, fecha, regex (coincide) o plantilla {{…}}; en entre, entre_fechas y longitud_entre, el mínimo"),
+        "valores": lista(texto(), "contiene_alguna, contiene_todas, en_lista y no_en_lista: los valores (o en valor separados por | o ;)"),
+        "hasta": libre("entre, entre_fechas y longitud_entre: el máximo"),
+        "contar": opcion(CONTAR, "operadores de longitud: qué se cuenta (por defecto caracteres)"),
+        **_opciones_busqueda(),
+    }
+
+
+def _condicion(campo_desc: str) -> Dict[str, Any]:
+    d = objeto(_props_condicion(campo_desc), desc="una condición: campo (o campos), operador y valor")
+    d["title"] = "Condición"
+    return d
+
+
+_CAMPO_FILTRO = "dónde buscar: asunto, cuerpo, remitente, adjuntos, texto (todo), una ruta (correo.asunto) o una variable"
+_CONDICIONES = lista(_condicion(_CAMPO_FILTRO), "varias condiciones (en vez de campo, operador y valor); cada una sobre uno o varios campos", 1)
+_MODO = opcion(["todas", "alguna"], "con condiciones: tienen que cumplirse todas (por defecto) o basta alguna", "todas")
+
+
+def _texto_busqueda() -> str:
+    lineas = ["Búsqueda y comparación (filtro, condicion, tabla_consultar y, donde aplica, extraer_regex, ia_extraer, validar, transformar, "
+              "buscar_en_tabla y bifurcar_por_valor):",
+              "- Una condición es {campo | campos, operador, valor, valores, hasta, comparacion, umbral, distinguir_mayusculas, distinguir_tildes, "
+              "distinguir_espacios, contar}. filtro y condicion aceptan una sola (campo, operador y valor en la config) o varias en "
+              "condiciones: [...] con modo \"todas\" (por defecto) o \"alguna\"; no mezcles las dos formas. Salen por «si» o «no».",
+              "- campos: [\"asunto\", \"cuerpo\"] busca en varios a la vez: basta que uno cumpla (los negativos no_contiene, distinto, no_coincide, "
+              "no_en_lista y vacio tienen que cumplirse en todos).",
+              "- comparacion:"]
+    lineas += [f"  · {k}: {v}" for k, v in COMPARACION_AYUDA.items()]
+    lineas += ["  distinguir_mayusculas / distinguir_tildes / distinguir_espacios: true afinan la flexible.",
+               "- Operadores:"]
+    lineas += [f"  · {k}: {v}" for k, v in OPERADORES_AYUDA.items()]
+    lineas += ["- Las regex (coincide, no_coincide, extraer_regex, regex_extraer, regex_reemplazar, nombre_patron de leer_adjuntos) no distinguen "
+               "mayúsculas ni tildes («peticion» encuentra «PETICIÓN») y devuelven el texto ORIGINAL con sus tildes; distinguir_tildes / "
+               "distinguir_mayusculas: true lo cambian por campo.",
+               "- Longitud: en extraer_regex, regex_extraer e ia_extraer cada campo acepta longitud (exacta), longitud_min, longitud_max, "
+               "contar (caracteres, digitos, letras, palabras) y solo_digitos; los candidatos que no cumplen se saltan y se toma el siguiente "
+               "(p. ej. el radicado de 23 dígitos y no otro número). En ia_extraer, un valor que no cumple se descarta con aviso y cuenta como faltante.",
+               "- Ejemplos: {\"condiciones\": [{\"campos\": [\"asunto\", \"cuerpo\"], \"operador\": \"contiene_alguna\", \"valores\": [\"tutela\", \"desacato\"]}, "
+               "{\"campo\": \"correo.remitente_correo\", \"operador\": \"termina_con\", \"valor\": \"ramajudicial.gov.co\"}], \"modo\": \"todas\"} · "
+               "{\"campo\": \"monto\", \"operador\": \"entre\", \"valor\": 1000000, \"hasta\": 5000000} · "
+               "{\"campo\": \"documento\", \"operador\": \"longitud_entre\", \"valor\": 6, \"hasta\": 10, \"contar\": \"digitos\"} · "
+               "{\"campo\": \"asunto\", \"operador\": \"parecido\", \"valor\": \"derecho de peticion\", \"umbral\": 0.8} · "
+               "extraer_regex {\"nombre\": \"cedula\", \"patron\": \"\\\\d[\\\\d.]{5,14}\", \"solo_digitos\": true, \"longitud_min\": 6, \"longitud_max\": 10}."]
+    return "\n".join(lineas)
 
 TIPOS: Dict[str, Dict[str, Any]] = {
     # ------------------------------------------------------------ disparadores
@@ -237,7 +364,7 @@ TIPOS: Dict[str, Dict[str, Any]] = {
         "config": conf({"ocr": booleano("aplicar OCR a escaneos e imágenes", True),
                         "vision": booleano("transcribir con el modelo las hojas que tesseract lee mal", True),
                         "tipos": lista(texto(), "solo estos tipos: pdf, imagen, docx, xlsx, texto, p7m o extensiones como «.pdf»"),
-                        "nombre_patron": texto("regex: solo adjuntos cuyo nombre coincida"),
+                        "nombre_patron": texto("regex: solo adjuntos cuyo nombre coincida (sin distinguir mayúsculas ni tildes)"),
                         "max_paginas": entero("páginas por PDF", 1, 60, 60), "max_caracteres": entero("caracteres por adjunto", 1, None, 60000),
                         "salida": variable("además de adjuntos.texto, deja el texto en esta variable")}),
         "salidas": ["ok", "sin_adjuntos"], "produce": "adjuntos.texto, adjuntos.leidos (+ salida)",
@@ -246,19 +373,18 @@ TIPOS: Dict[str, Dict[str, Any]] = {
     # ------------------------------------------------------------- lógica y ruta
     "filtro": {
         "nombre": "Filtro", "categoria": "filtro",
-        "descripcion": "Compara un dato con un valor y sale por «si» o «no».",
-        "config": conf({"campo": texto("asunto, cuerpo, remitente, adjuntos, texto (todo), una ruta (correo.asunto) o una variable"),
-                        "operador": opcion(["contiene", "coincide", "no_coincide", "igual", "vacio", "no_vacio"], "cómo comparar", "contiene"),
-                        "valor": texto("texto o regex (coincide); obligatorio salvo vacio/no_vacio")}, ["campo"]),
+        "descripcion": "Compara uno o varios datos con uno o varios valores y sale por «si» o «no». Por defecto no importan mayúsculas, tildes ni "
+                       "espacios de más. Operadores de texto, números, fechas y longitud; varias condiciones con «todas» o «alguna».",
+        "config": conf({**_props_condicion(_CAMPO_FILTRO), "condiciones": _CONDICIONES, "modo": _MODO}),
         "salidas": ["si", "no"],
         "ejemplo": {"id": "es_juzgado", "tipo": "filtro", "nombre": "¿Viene de un juzgado?", "config": {"campo": "remitente", "operador": "coincide", "valor": "@cendoj\\.ramajudicial\\.gov\\.co"}},
     },
     "condicion": {
         "nombre": "Condición", "categoria": "ruta",
-        "descripcion": "Igual que filtro, pensado para variables ya obtenidas.",
-        "config": conf({"campo": texto("variable, ruta o plantilla"),
-                        "operador": opcion(["contiene", "coincide", "no_coincide", "igual", "vacio", "no_vacio"], "como en filtro", "contiene"),
-                        "valor": texto("texto o regex")}, ["campo"]),
+        "descripcion": "Igual que filtro, pensado para variables ya obtenidas: mismos operadores (texto, números, fechas y longitud) y varias condiciones.",
+        "config": conf({**_props_condicion("variable, ruta (datos.documento) o plantilla"),
+                        "condiciones": lista(_condicion("variable, ruta (datos.documento) o plantilla"), "varias condiciones (en vez de campo, operador y valor)", 1),
+                        "modo": _MODO}),
         "salidas": ["si", "no"],
         "ejemplo": {"id": "tiene_cedula", "tipo": "condicion", "nombre": "¿Hay cédula?", "config": {"campo": "documento", "operador": "no_vacio"}},
     },
@@ -292,7 +418,8 @@ TIPOS: Dict[str, Dict[str, Any]] = {
         "descripcion": "La IA extrae cada campo con confianza y evidencia; deja vacío lo que no está. Cada campo queda como variable.",
         "config": conf({"campos": lista(objeto({"nombre": variable("nombre de la variable"), "descripcion": texto("qué buscar"),
                                                 "tipo": opcion(["texto", "numero", "fecha", "lista", "booleano"], "", "texto"),
-                                                "obligatorio": booleano("", False)}, ["nombre"]), "los campos a extraer", 1),
+                                                "obligatorio": booleano("", False), **_longitud()}, ["nombre"]),
+                                        "los campos a extraer (con longitud: lo que no cumple se descarta con aviso y cuenta como faltante)", 1),
                         "instrucciones": plantilla("indicaciones extra", largo=True),
                         "salida": variable("además, deja todos los campos juntos como JSON")}, ["campos"]),
         "salidas": ["ok"], "produce": "<cada campo> (+ salida)",
@@ -303,10 +430,14 @@ TIPOS: Dict[str, Dict[str, Any]] = {
     },
     "extraer_regex": {
         "nombre": "Extraer con regex", "categoria": "busqueda",
-        "descripcion": "Extracción determinista con expresiones regulares (sin IA). Sale por «ok» o «incompleto» si falta un obligatorio.",
+        "descripcion": "Extracción determinista con expresiones regulares (sin IA), sin distinguir mayúsculas ni tildes y devolviendo el texto original. "
+                       "Con longitud o solo_digitos se salta los candidatos que no cumplen. Sale por «ok» o «incompleto» si falta un obligatorio.",
         "config": conf({"de": plantilla("dónde buscar (por defecto asunto + cuerpo + adjuntos)"),
-                        "campos": lista(objeto({"nombre": variable(), "patron": texto("regex"), "grupo": entero("grupo (1 si hay grupos, si no 0)", 0),
-                                                "todos": booleano("lista con todas las coincidencias", False), "obligatorio": booleano("", False)},
+                        "campos": lista(objeto({"nombre": variable(), "patron": texto("regex (sin distinguir mayúsculas ni tildes)"),
+                                                "grupo": entero("grupo (1 si hay grupos, si no 0)", 0),
+                                                "todos": booleano("lista con todas las coincidencias que cumplen", False), "obligatorio": booleano("", False),
+                                                **_longitud(), "distinguir_mayusculas": booleano("que sí cuenten las mayúsculas"),
+                                                "distinguir_tildes": booleano("que sí cuenten las tildes")},
                                                ["nombre", "patron"]), "campos o patron+salida", 1),
                         "patron": texto("atajo: un solo patrón (con salida)"), "salida": variable("con patron: dónde dejarlo")}),
         "salidas": ["ok", "incompleto"], "produce": "<cada campo>",
@@ -317,7 +448,10 @@ TIPOS: Dict[str, Dict[str, Any]] = {
         "nombre": "Validación", "categoria": "validacion",
         "descripcion": "Revisa reglas sobre variables. Sale por «ok» o «falla» (con los reparos).",
         "config": conf({"reglas": lista(objeto({"campo": texto("variable o ruta"), "regla": opcion(["obligatorio", "patron", "en_lista", "longitud"], "", "obligatorio"),
-                                                "valor": libre("patron: regex completo; en_lista: lista; longitud: [min, max]"),
+                                                "valor": libre("patron: regex completo; en_lista: lista; longitud: [min, max] o un entero (exacta)"),
+                                                "contar": opcion(CONTAR, "longitud: qué se cuenta (por defecto caracteres)"),
+                                                "comparacion": opcion(COMPARACIONES, "en_lista: flexible (por defecto), exacta o parecida"),
+                                                "umbral": numero("en_lista parecida: similitud mínima de 0 a 1", 0, 1),
                                                 "codigo": texto("código del reparo"), "mensaje": plantilla("explicación")}, ["campo"]), "las reglas", 1),
                         "salida": variable("deja la lista de reparos")}, ["reglas"]),
         "salidas": ["ok", "falla"], "produce": "_motivo (+ salida con los reparos)",
@@ -329,11 +463,21 @@ TIPOS: Dict[str, Dict[str, Any]] = {
         "nombre": "Transformar", "categoria": "datos",
         "descripcion": "Asigna, combina y limpia variables sin IA. Una lista de operaciones que se aplican en orden; cada una deja su resultado en «salida».",
         "config": conf({"operaciones": lista(objeto({
-            "op": opcion(["plantilla", "asignar", "mayusculas", "minusculas", "titulo", "limpiar", "solo_digitos", "regex_extraer", "regex_reemplazar", "concatenar", "defecto"]),
+            "op": opcion(["plantilla", "asignar", "mayusculas", "minusculas", "titulo", "limpiar", "solo_digitos", "sin_tildes", "regex_extraer",
+                          "regex_reemplazar", "concatenar", "defecto", "recortar", "rellenar"]),
             "salida": variable(), "de": libre("variable o plantilla (concatenar: lista)"), "plantilla": plantilla(), "valor": libre("asignar / defecto"),
-            "patron": texto("regex"), "reemplazo": texto(), "separador": texto("", " "), "grupo": entero("", 0)}, ["op", "salida"]),
-            "op: plantilla {plantilla} | asignar {valor} | mayusculas|minusculas|titulo|limpiar|solo_digitos {de} | regex_extraer {de, patron, grupo, defecto} | "
-            "regex_reemplazar {de, patron, reemplazo} | concatenar {de: [..], separador} | defecto {de, valor}", 1)}, ["operaciones"]),
+            "patron": texto("regex (sin distinguir mayúsculas ni tildes)"), "reemplazo": texto(), "separador": texto("", " "), "grupo": entero("", 0),
+            "largo": entero("recortar / rellenar: a cuántos caracteres (o palabras)", 1),
+            "lado": opcion(["izquierda", "derecha"], "rellenar: de qué lado (por defecto izquierda, como 0001234)"),
+            "caracter": texto("rellenar: con qué carácter (por defecto 0)"), "sufijo": texto("recortar: lo que se añade si se cortó (p. ej. «…»)"),
+            "contar": opcion(CONTAR, "recortar: caracteres o palabras; regex_extraer: qué cuenta en la longitud"),
+            "longitud_min": entero("regex_extraer: longitud mínima del candidato", 0), "longitud_max": entero("regex_extraer: longitud máxima del candidato", 0),
+            "solo_digitos": booleano("regex_extraer: quedarse solo con los dígitos"),
+            "distinguir_mayusculas": booleano("regex: que sí cuenten las mayúsculas"), "distinguir_tildes": booleano("regex: que sí cuenten las tildes")},
+            ["op", "salida"]),
+            "op: plantilla {plantilla} | asignar {valor} | mayusculas|minusculas|titulo|limpiar|solo_digitos|sin_tildes {de} | "
+            "regex_extraer {de, patron, grupo, defecto, longitud_min, longitud_max, solo_digitos} | regex_reemplazar {de, patron, reemplazo} | "
+            "concatenar {de: [..], separador} | defecto {de, valor} | recortar {de, largo, contar, sufijo} | rellenar {de, largo, caracter, lado}", 1)}, ["operaciones"]),
         "salidas": ["ok"], "produce": "<salida de cada operación>",
         "ejemplo": {"id": "normalizar", "tipo": "transformar", "nombre": "Limpiar datos", "config": {"operaciones": [
             {"op": "solo_digitos", "de": "documento", "salida": "documento"},
@@ -346,7 +490,8 @@ TIPOS: Dict[str, Dict[str, Any]] = {
         "config": conf({"buscar": plantilla("variable o plantilla con el valor a buscar"), "tabla": lista(mapa(libre()), "filas embebidas (o archivo)"),
                         "archivo": texto("ruta .csv relativa al repositorio (o tabla)"), "columna": texto("columna donde buscar"),
                         "traer": lista(texto(), "columnas a traer (por defecto todas)"),
-                        "modo": opcion(["igual", "contiene"], "sin distinguir mayúsculas ni tildes", "igual"),
+                        "modo": opcion(["igual", "contiene"], "igual: el valor entero; contiene: uno dentro del otro", "igual"),
+                        **_opciones_busqueda(),
                         "salida": variable("la fila como JSON: {{salida.columna}} (por defecto: id del nodo)")}, ["buscar", "columna"]),
         "salidas": ["encontrado", "no_encontrado"], "produce": "salida",
         "ejemplo": {"id": "area", "tipo": "buscar_en_tabla", "nombre": "Área responsable", "config": {
@@ -356,8 +501,10 @@ TIPOS: Dict[str, Dict[str, Any]] = {
     },
     "bifurcar_por_valor": {
         "nombre": "Bifurcar por valor", "categoria": "ruta",
-        "descripcion": "Switch: sale por el caso que coincide con el valor de la variable (sin distinguir mayúsculas ni tildes) o por «otro».",
-        "config": conf({"variable": plantilla("variable o plantilla"), "casos": lista(texto(), "los valores (cada uno es una salida)", 1)}, ["variable", "casos"]),
+        "descripcion": "Switch: sale por el caso que coincide con el valor de la variable (por defecto sin distinguir mayúsculas, tildes ni espacios; "
+                       "con comparacion parecida, el caso más parecido) o por «otro».",
+        "config": conf({"variable": plantilla("variable o plantilla"), "casos": lista(texto(), "los valores (cada uno es una salida)", 1),
+                        **_opciones_busqueda()}, ["variable", "casos"]),
         "salidas": ["<cada caso>", "otro"], "salidas_desde": "casos[]",
         "ejemplo": {"id": "por_tema", "tipo": "bifurcar_por_valor", "nombre": "Según el tema", "config": {"variable": "tema", "casos": ["incapacidad", "afiliacion"]}},
     },
@@ -453,8 +600,12 @@ TIPOS: Dict[str, Dict[str, Any]] = {
     },
     "tabla_consultar": {
         "nombre": "Consultar tabla", "categoria": "datos",
-        "descripcion": "Trae filas de la tabla integrada por clave o por igualdad de campos. Sale por «encontrado» o «vacio».",
-        "config": conf({"tabla": texto("nombre"), "clave": plantilla("una clave"), "filtro": mapa(plantilla(), "{campo: valor} que tienen que coincidir"),
+        "descripcion": "Trae filas de la tabla integrada por clave, por campos iguales (filtro) o por condiciones con los operadores de filtro "
+                       "(sin distinguir mayúsculas, tildes ni espacios, salvo que se pida). Sale por «encontrado» o «vacio».",
+        "config": conf({"tabla": texto("nombre"), "clave": plantilla("una clave"),
+                        "filtro": mapa(plantilla(), "{campo: valor} que tienen que ser iguales (también vale una lista de condiciones)"),
+                        "condiciones": lista(_condicion("campo de la fila (estado, clave o datos.estado)"), "condiciones con operadores (contiene, mayor, antes_de…)", 1),
+                        "modo": _MODO,
                         "limite": entero("tope de filas", 1, 500, 100), "orden": opcion(["-creada", "creada", "-actualizada", "actualizada", "clave", "-clave"], "", "-creada"),
                         "ambito": opcion(["flujo", "compartida"], "", "flujo"), "salida": SALIDA()}, ["tabla"]),
         "salidas": ["encontrado", "vacio"], "produce": "salida (lista de filas)",
@@ -684,16 +835,25 @@ AYUDA: Dict[str, Dict[str, Any]] = {
     "leer_adjuntos": {
         "ejemplos": [{"tipos": ["pdf", "imagen"], "max_paginas": 10}, {"nombre_patron": "incapacidad", "ocr": False, "salida": "texto_incapacidad"}],
         "consejos": ["Sale por «sin_adjuntos» si no leyó ninguno: dale una arista a revisión manual.",
-                     "Bajar max_paginas acelera mucho los PDF escaneados largos."],
+                     "Bajar max_paginas acelera mucho los PDF escaneados largos.",
+                     "nombre_patron no distingue mayúsculas ni tildes: «peticion» lee «PETICIÓN.pdf»."],
     },
     "filtro": {
         "ejemplos": [{"campo": "asunto", "operador": "contiene", "valor": "incapacidad"},
-                     {"campo": "correo.remitente_correo", "operador": "coincide", "valor": "@(cendoj\\.)?ramajudicial\\.gov\\.co$"}],
-        "consejos": ["contiene e igual no distinguen mayúsculas ni tildes; coincide usa regex.", "campo «texto» mira asunto, cuerpo y adjuntos juntos."],
+                     {"condiciones": [{"campos": ["asunto", "cuerpo"], "operador": "contiene_alguna", "valores": ["tutela", "desacato"]},
+                                      {"campo": "correo.remitente_correo", "operador": "termina_con", "valor": "ramajudicial.gov.co"}], "modo": "todas"}],
+        "consejos": ["Por defecto no importan mayúsculas, tildes ni espacios: «peticion» encuentra «PETICIÓN» y «Petición  urgente»; "
+                     "comparacion exacta lo distingue todo y parecida tolera errores de escritura.",
+                     "«Agregar condición» suma condiciones (modo todas o alguna); campos busca en varios a la vez y basta uno.",
+                     "Operadores: contiene, igual, empieza_con, palabra, contiene_alguna, parecido, coincide (regex sin tildes), mayor, entre, "
+                     "antes_de, longitud_entre… campo «texto» mira asunto, cuerpo y adjuntos juntos."],
     },
     "condicion": {
-        "ejemplos": [{"campo": "documento", "operador": "no_vacio"}, {"campo": "{{area.area}}", "operador": "igual", "valor": "Prestaciones"}],
-        "consejos": ["Úsala con variables ya obtenidas; para comparar números usa expresion con como_condicion."],
+        "ejemplos": [{"campo": "documento", "operador": "longitud_entre", "valor": 6, "hasta": 10, "contar": "digitos"},
+                     {"condiciones": [{"campo": "monto", "operador": "mayor", "valor": "1.000.000"},
+                                      {"campo": "fecha_radicado", "operador": "antes_de", "valor": "hoy"}], "modo": "alguna"}],
+        "consejos": ["Mismos operadores que filtro: texto, números («1.234,56», «$ 1,234.56»), fechas (ISO, DD/MM/AAAA, «7 de noviembre de 2026», hoy) y longitud.",
+                     "entre, entre_fechas y longitud_entre usan valor (mínimo) y hasta (máximo)."],
     },
     "ia_clasificar": {
         "ejemplos": [{"variable": "tema", "categorias": [{"valor": "incapacidad", "descripcion": "pide pago o transcripción"}, {"valor": "otro", "descripcion": "lo demás"}]},
@@ -710,33 +870,46 @@ AYUDA: Dict[str, Dict[str, Any]] = {
         "ejemplos": [{"entradas": ["correo", "adjuntos.texto"], "salida": "datos", "campos": [
             {"nombre": "nombre", "descripcion": "nombre completo", "obligatorio": True}, {"nombre": "documento", "descripcion": "cédula", "tipo": "numero"}]}],
         "consejos": ["Lo que no está queda vacío (no se inventa): valídalo después con un nodo validar.",
-                     "Con entradas limitas lo que ve la IA: menos texto, menos costo y menos errores."],
+                     "Con entradas limitas lo que ve la IA: menos texto, menos costo y menos errores.",
+                     "longitud_min, longitud_max, longitud, contar y solo_digitos por campo: lo que no cumple se descarta con aviso y cuenta como faltante."],
     },
     "extraer_regex": {
         "ejemplos": [{"de": "{{correo.asunto}} {{correo.cuerpo}}", "campos": [{"nombre": "radicado", "patron": "\\b(\\d{23})\\b", "obligatorio": True}]},
-                     {"de": "adjuntos.texto", "campos": [{"nombre": "cie10", "patron": "\\b[A-Z]\\d{2}(?:\\.\\d)?\\b", "todos": True}]}],
-        "consejos": ["Es gratis y determinista: úsalo antes que la IA para números con formato fijo.", "todos: true deja una lista sin repetidos."],
+                     {"de": "{{correo.cuerpo}} {{adjuntos.texto}}", "campos": [
+                         {"nombre": "cedula", "patron": "\\d[\\d.]{5,14}", "solo_digitos": True, "longitud_min": 6, "longitud_max": 10},
+                         {"nombre": "cie10", "patron": "\\b[A-Z]\\d{2}(?:\\.\\d)?\\b", "todos": True}]}],
+        "consejos": ["Es gratis y determinista: úsalo antes que la IA para números con formato fijo.",
+                     "No distingue mayúsculas ni tildes («peticion» encuentra «PETICIÓN») y devuelve el texto original; todos: true deja una lista sin repetidos.",
+                     "Con longitud_min/longitud_max (y contar, solo_digitos) salta los números que no cumplen: elige la cédula, el NIT o el radicado correcto."],
     },
     "validar": {
         "ejemplos": [{"reglas": [{"campo": "documento", "regla": "patron", "valor": "[0-9]{6,10}", "codigo": "DOCUMENTO_INVALIDO"}]},
-                     {"reglas": [{"campo": "tema", "regla": "en_lista", "valor": ["incapacidad", "afiliacion"]}, {"campo": "nombre", "regla": "longitud", "valor": [3, 120]}]}],
-        "consejos": ["El código del primer reparo queda en el motivo de la salida.", "patron exige que todo el texto coincida, no un pedazo."],
+                     {"reglas": [{"campo": "tema", "regla": "en_lista", "valor": ["incapacidad", "afiliacion"]}, {"campo": "nombre", "regla": "longitud", "valor": [3, 120]},
+                                 {"campo": "telefono", "regla": "longitud", "valor": 10, "contar": "digitos", "codigo": "TELEFONO_INVALIDO"}]}],
+        "consejos": ["El código del primer reparo queda en el motivo de la salida.", "patron exige que todo el texto coincida, no un pedazo.",
+                     "en_lista no distingue mayúsculas, tildes ni espacios (comparacion exacta o parecida lo cambia); longitud acepta [min, max] o un entero y contar."],
     },
     "transformar": {
         "ejemplos": [{"operaciones": [{"op": "solo_digitos", "de": "documento", "salida": "documento"}, {"op": "titulo", "de": "nombre", "salida": "nombre"}]},
-                     {"operaciones": [{"op": "plantilla", "plantilla": "{{lista[estado=activo].id}}", "salida": "id_activo"}]}],
-        "consejos": ["Las operaciones corren en orden: una puede usar la salida de la anterior.", "defecto rellena una variable vacía con un valor fijo o plantilla."],
+                     {"operaciones": [{"op": "regex_extraer", "de": "correo.cuerpo", "patron": "nit\\D{0,5}([\\d.\\-]{9,15})", "solo_digitos": True,
+                                       "longitud_min": 9, "longitud_max": 10, "salida": "nit"},
+                                      {"op": "rellenar", "de": "nit", "largo": 10, "salida": "nit_10"}]}],
+        "consejos": ["Las operaciones corren en orden: una puede usar la salida de la anterior.", "defecto rellena una variable vacía con un valor fijo o plantilla.",
+                     "Las regex no distinguen mayúsculas ni tildes; recortar corta a largo caracteres o palabras y rellenar completa (0001234)."],
     },
     "buscar_en_tabla": {
         "ejemplos": [{"buscar": "tema", "columna": "tema", "traer": ["area", "correo"], "salida": "area",
                       "tabla": [{"tema": "incapacidad", "area": "Prestaciones", "correo": "prestaciones@ejemplo.gov.co"}]},
                      {"buscar": "{{correo.asunto}}", "modo": "contiene", "columna": "palabra", "salida": "ruta",
                       "tabla": [{"palabra": "tutela", "area": "Jurídica"}, {"palabra": "incapacidad", "area": "Prestaciones"}]}],
-        "consejos": ["La fila queda como JSON: úsala con {{salida.columna}}.", "modo contiene sirve cuando el valor viene dentro de un texto más largo."],
+        "consejos": ["La fila queda como JSON: úsala con {{salida.columna}}.", "modo contiene sirve cuando el valor viene dentro de un texto más largo.",
+                     "Por defecto no importan mayúsculas, tildes ni espacios; comparacion parecida trae la fila más parecida (umbral) y exacta, la idéntica."],
     },
     "bifurcar_por_valor": {
-        "ejemplos": [{"variable": "tema", "casos": ["incapacidad", "afiliacion"]}],
-        "consejos": ["Lo que no coincide sale por «otro»: dale siempre una arista.", "No uses «error» como caso: es la rama de fallo."],
+        "ejemplos": [{"variable": "tema", "casos": ["incapacidad", "afiliacion"]},
+                     {"variable": "entrada.tipo", "casos": ["peticion", "queja", "reclamo"], "comparacion": "parecida", "umbral": 0.8}],
+        "consejos": ["Lo que no coincide sale por «otro»: dale siempre una arista.", "No uses «error» como caso: es la rama de fallo.",
+                     "Por defecto «PETICIÓN» cae en el caso «peticion»; con comparacion parecida también «peticon»."],
     },
     "para_cada": {
         "ejemplos": [{"lista": "filas", "variable": "fila", "salida": "resultados"}, {"lista": "correos", "variable": "c", "recoger": "{{c.asunto}}", "al_fallar": "continuar"}],
@@ -781,8 +954,11 @@ AYUDA: Dict[str, Dict[str, Any]] = {
         "consejos": ["modo insertar + arista «existente» sirve para no procesar dos veces lo mismo.", "No escribe afuera: es estado propio de la plataforma."],
     },
     "tabla_consultar": {
-        "ejemplos": [{"tabla": "procesados", "clave": "{{fila.id}}", "salida": "previo"}, {"tabla": "procesados", "filtro": {"estado": "pendiente"}, "limite": 50}],
-        "consejos": ["Sale por «vacio» si no hay filas: úsalo como «¿ya lo vi?»."],
+        "ejemplos": [{"tabla": "procesados", "clave": "{{fila.id}}", "salida": "previo"},
+                     {"tabla": "procesados", "filtro": {"estado": "pendiente"}, "limite": 50,
+                      "condiciones": [{"campo": "monto", "operador": "mayor", "valor": 1000000}, {"campo": "creado", "operador": "despues_de", "valor": "2026-01-01"}]}],
+        "consejos": ["Sale por «vacio» si no hay filas: úsalo como «¿ya lo vi?».",
+                     "filtro {campo: valor} compara sin mayúsculas, tildes ni espacios; condiciones usa los operadores de filtro (modo todas o alguna)."],
     },
     "archivo_leer": {
         "ejemplos": [{"ruta": "entradas/lista.csv", "salida": "lista"}, {"ruta": "contratos/{{entrada.nombre}}.pdf", "formato": "texto", "salida": "contrato"}],
@@ -880,8 +1056,12 @@ for _t, _s in TIPOS.items():
     _comunes: Dict[str, Any] = {}
     if _t not in TERMINALES and _t not in DISPARADORES:
         _comunes["entradas"] = ESQUEMA_COMUNES["entradas"]
-    if _t in TIPOS_IA:
+    if _t in TIPOS_IA or _t == "leer_adjuntos":
+        # proveedor, modelo y credencial de IA propios del nodo (o heredan del flujo y de la global)
+        _comunes["proveedor"] = ESQUEMA_COMUNES["proveedor"]
         _comunes["modelo"] = ESQUEMA_COMUNES["modelo"]
+        _comunes["credencial"] = ESQUEMA_COMUNES["credencial"]
+    if _t in TIPOS_IA:
         _comunes["temperatura"] = ESQUEMA_COMUNES["temperatura"]
     if _t not in NO_DESHABILITABLES:
         _comunes["deshabilitado"] = ESQUEMA_COMUNES["deshabilitado"]
@@ -929,7 +1109,7 @@ EJEMPLO_AUTOMATIZACION: Dict[str, Any] = {
                 {"desde": "total", "hacia": "anotar"}, {"desde": "por_fila", "hacia": "fin", "cuando": "listo"}],
 }
 
-REGLAS = """Un flujo declarativo es {id, nombre, descripcion, modelo, nodos: [{id, tipo, nombre, descripcion, config}], aristas: [{desde, hacia, cuando}]}.
+REGLAS = """Un flujo declarativo es {id, nombre, descripcion, ia, nodos: [{id, tipo, nombre, descripcion, config}], aristas: [{desde, hacia, cuando}]}.
 - id del flujo: minúsculas con guiones (ej. "derechos-de-peticion"); id de nodo: minúsculas con guion bajo.
 - Exactamente un DISPARADOR (entrada_correo, entrada_manual, programado, webhook o correo_nuevo) y al menos una salida. Todo nodo alcanzable desde el disparador;
   sin ciclos (los bucles se hacen con para_cada); las salidas no tienen aristas que salgan.
@@ -955,7 +1135,12 @@ REGLAS = """Un flujo declarativo es {id, nombre, descripcion, modelo, nodos: [{i
   solo lectura en sql_consulta, tiempos de espera (20 s) y tope de filas (500).
 - http: un GET sale de verdad solo a hosts de HTTP_HOSTS_PERMITIDOS o a los hosts de su credencial; "credencial" puede ser una credencial guardada
   (http_bearer, http_basico) o el nombre de una variable de entorno (HTTP_TOKEN_X).
-- Modelos: gemini-2.5-flash (por defecto), gemini-2.5-pro, gemini-3-flash-preview, gemini-3.1-flash-lite."""
+- IA: "ia" del flujo es {"usar": "global"} (la IA global de la plataforma, lo normal) o {"proveedor", "modelo", "credencial", "temperatura"} propia;
+  cada nodo de IA (y leer_adjuntos para la visión) puede poner config.proveedor, config.modelo y config.credencial (si no, hereda: nodo → flujo → global).
+  Proveedores: vertex (sin credencial), gemini, openai, azure_openai, deepseek, mistral, groq, openrouter, ollama, openai_compatible, anthropic,
+  cohere y personalizado; credencial es el NOMBRE de una conexión ia_<proveedor> que creó una persona (nunca la llave). El modelo tiene que aceptar
+  lo que pide el nodo (JSON en clasificar/decidir/extraer, imágenes en leer_adjuntos con vision). Un flujo sin "ia" usa Vertex con "modelo".
+- Modelos de Vertex: gemini-2.5-flash (por defecto), gemini-2.5-pro, gemini-3-flash-preview, gemini-3.1-flash-lite, gemini-3.1-pro-preview."""
 
 
 def _tipo_humano(v: Dict[str, Any]) -> str:
@@ -1014,7 +1199,7 @@ def _linea_comunes() -> str:
 
 
 def _documentacion() -> str:
-    lineas = [REGLAS, "", "Config común: " + _linea_comunes(), "", "Tipos (config · salidas · ejemplo):"]
+    lineas = [REGLAS, "", "Config común: " + _linea_comunes(), "", _texto_busqueda(), "", "Tipos (config · salidas · ejemplo):"]
     for tipo, t in TIPOS.items():
         sal = ", ".join(t["salidas"]) or "termina (el flujo o la vuelta)"
         marcas = (" [DISPARADOR]" if t["disparador"] else "") + (" [ESCRIBE AFUERA]" if t["escritura"] else "")
@@ -1069,6 +1254,7 @@ def esquema() -> Dict[str, Any]:
     """La especificación de tipos (con sus ejemplos y consejos), serializable a JSON."""
     return copy.deepcopy({"version": VERSION, "reglas": REGLAS, "comunes": COMUNES, "plantillas": PLANTILLAS, "desenlaces": DESENLACES,
                           "disparadores": DISPARADORES, "tipos_credencial": TIPOS_CREDENCIAL, "tipos": TIPOS,
+                          "busqueda": {"operadores": OPERADORES_AYUDA, "comparaciones": COMPARACION_AYUDA, "contar": CONTAR, "modos": ["todas", "alguna"]},
                           "ejemplo_flujo": EJEMPLO_FLUJO, "ejemplo_automatizacion": EJEMPLO_AUTOMATIZACION})
 
 

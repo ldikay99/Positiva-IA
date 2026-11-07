@@ -48,8 +48,9 @@ class ModeloFalso:
         self.llamadas = []
         self.fallos = []  # excepciones que lanzan las próximas llamadas, en orden
 
-    def __call__(self, modelo, sistema, tarea, esquema, temperatura, json_libre=False):
-        self.llamadas.append({"modelo": modelo, "sistema": sistema, "tarea": tarea, "esquema": esquema, "temperatura": temperatura, "json": json_libre})
+    def __call__(self, modelo, sistema, tarea, esquema, temperatura, json_libre=False, **ia):
+        self.llamadas.append({"modelo": modelo, "sistema": sistema, "tarea": tarea, "esquema": esquema, "temperatura": temperatura, "json": json_libre,
+                              "proveedor": ia.get("proveedor") or "vertex", "credencial": ia.get("credencial"), "flujo": ia.get("flujo")})
         if self.fallos:
             raise self.fallos.pop(0)
         tok = {"entrada": 10, "salida": 5}
@@ -1000,7 +1001,7 @@ class Documentacion(unittest.TestCase):
 
     def test_contrato_de_tipos(self):
         """GET /api/nodos/tipos: la forma que esperan el editor y Vera, con JSON Schema del subconjunto acordado."""
-        formatos = {"plantilla", "credencial", "variable", "expresion", "texto-largo", "cron"}
+        formatos = {"plantilla", "credencial", "variable", "expresion", "texto-largo", "cron", "proveedor-ia", "modelo-ia"}
         claves = {"type", "properties", "required", "enum", "items", "description", "default", "minimum", "maximum", "title", "format",
                   "x-credencial-tipos", "x-comun", "x-largo", "additionalProperties", "minItems"}
 
@@ -1796,6 +1797,345 @@ class SecretosYEntorno(Plataforma):
         self.assertTrue(any("NO_ESTA" in x for x in json.loads(p.stdout.strip().splitlines()[-1])), p.stdout + p.stderr)
 
 
+# ------------------------------------------- búsqueda robusta en todos los nodos
+
+from conectores import busqueda as bq  # noqa: E402
+
+MIXTOS = ["PETICIÓN", "peticion", "Petición  urgente", "peticiòn", "  petición "]
+
+
+def desde_manual(nodos, aristas):
+    """entrada_manual («inicio») seguida de estos nodos con estas aristas."""
+    return flujo([nodo("inicio", "entrada_manual")] + list(nodos), aristas)
+
+
+class BusquedaRobusta(Plataforma):
+    """Mayúsculas, tildes, espacios y mezclas no impiden encontrar; varias condiciones, operadores nuevos y longitud."""
+
+    def rama(self, conf, entrada, tipo="condicion"):
+        """Corre entrada_manual → (condición) → «SI» o «NO»."""
+        ns = [nodo("inicio", "entrada_manual"), nodo("c", tipo, **conf),
+              nodo("si", "salida", desenlace="manual", motivo="SI"), nodo("no", "salida", desenlace="descartar", motivo="NO")]
+        d = flujo(ns, [{"desde": "inicio", "hacia": "c"}, {"desde": "c", "hacia": "si", "cuando": "si"}, {"desde": "c", "hacia": "no", "cuando": "no"}])
+        self.assertEqual(self.problemas(d), [], conf)
+        r, ev = self.correr_orden(d, entrada=entrada)
+        return r["motivo"] == "SI"
+
+    def test_textos_mixtos_en_cada_operador_de_texto(self):
+        T, F = True, False
+        casos = [("contiene", {"valor": "petición"}, [T, T, T, T, T]),
+                 ("igual", {"valor": "PETICION"}, [T, T, F, T, T]),
+                 ("distinto", {"valor": "peticion"}, [F, F, T, F, F]),
+                 ("no_contiene", {"valor": "peticion"}, [F, F, F, F, F]),
+                 ("empieza_con", {"valor": "petició"}, [T, T, T, T, T]),
+                 ("termina_con", {"valor": "CION"}, [T, T, F, T, T]),
+                 ("palabra", {"valor": "Peticion"}, [T, T, T, T, T]),
+                 ("contiene_alguna", {"valores": ["queja", "petición"]}, [T, T, T, T, T]),
+                 ("contiene_todas", {"valor": "petición | URGENTE"}, [F, F, T, F, F]),
+                 ("en_lista", {"valores": ["queja", "PETICIÓN"]}, [T, T, F, T, T]),
+                 ("no_en_lista", {"valores": ["queja", "PETICIÓN"]}, [F, F, T, F, F]),
+                 ("parecido", {"valor": "petcion"}, [T, T, T, T, T]),
+                 ("coincide", {"valor": "^\\s*petici[oó]n"}, [T, T, T, T, T]),
+                 ("no_coincide", {"valor": "petición$"}, [F, F, T, F, T]),
+                 ("no_vacio", {}, [T, T, T, T, T]),
+                 ("vacio", {}, [F, F, F, F, F])]
+        for op, extra, esperado in casos:
+            for texto, e in zip(MIXTOS, esperado):
+                with self.subTest(op=op, texto=texto):
+                    self.assertEqual(bq.evaluar_valor(op, texto, {"operador": op, **extra}), e)
+        # y de punta a punta en los dos nodos
+        for tipo in ("condicion", "filtro"):
+            for texto in MIXTOS:
+                with self.subTest(tipo=tipo, texto=texto):
+                    self.assertTrue(self.rama({"campo": "entrada.x", "operador": "contiene", "valor": "petición"}, {"x": texto}, tipo))
+                    self.assertTrue(self.rama({"campo": "entrada.x", "operador": "palabra", "valor": "PETICION"}, {"x": texto}, tipo))
+            self.assertFalse(self.rama({"campo": "entrada.x", "operador": "igual", "valor": "petición"}, {"x": "petición urgente"}, tipo))
+        self.assertTrue(self.rama({"campo": "entrada.x", "operador": "vacio"}, {"x": "   "}))
+        self.assertFalse(self.rama({"campo": "entrada.x", "operador": "palabra", "valor": "tutela"}, {"x": "fue tutelado"}))
+
+    def test_regex_ignora_tildes_y_devuelve_el_original(self):
+        texto = "La Señora PÉREZ NÚÑEZ presentó una PETICIÓN; radicádo 11001310300120240012300"
+        d = manual(nodo("r", "extraer_regex", de="entrada.x", campos=[
+            {"nombre": "quien", "patron": "senora (\\w+ \\w+)"},
+            {"nombre": "tipo", "patron": "peticion"},
+            {"nombre": "con_tildes", "patron": "peticion", "distinguir_tildes": True},
+            {"nombre": "mayusculas", "patron": "petición", "distinguir_mayusculas": True},
+            {"nombre": "radicado", "patron": "radicado:?\\s*(\\d{23})"},
+            {"nombre": "verbo", "patron": "present[oó]"}]))
+        self.assertEqual(self.problemas(d), [])
+        r, _ = self.correr_orden(d, entrada={"x": texto})
+        v = r["variables"]
+        self.assertEqual((v["quien"], v["tipo"], v["con_tildes"], v["mayusculas"]), ("PÉREZ NÚÑEZ", "PETICIÓN", "", ""))
+        self.assertEqual((v["radicado"], v["verbo"]), ("11001310300120240012300", "presentó"))
+        # texto con tildes combinadas (NFD): lo encontrado sigue siendo el original completo
+        nfd = "Señora Pérez"
+        self.assertEqual(bq.Patron("senora (\\w+)").search(nfd).group(), nfd)
+        self.assertEqual(bq.Patron("senora (\\w+)").search(nfd).group(1), "Pérez")
+        self.assertEqual(bq.plegar_patron("[áa]ño\\é"), "[aa]noe")
+        self.assertIsNotNone(bq.Patron("[áa]rbol").search("ÁRBOL"))
+        # transformar: regex_extraer y regex_reemplazar sobre el original
+        t = manual(nodo("t", "transformar", operaciones=[
+            {"op": "regex_extraer", "de": "entrada.x", "patron": "senora (\\w+)", "salida": "apellido"},
+            {"op": "regex_reemplazar", "de": "entrada.y", "patron": "peticion", "reemplazo": "[\\g<0>]", "salida": "marcado"},
+            {"op": "regex_reemplazar", "de": "entrada.y", "patron": "(peticion)", "reemplazo": "«\\1»", "distinguir_tildes": True, "salida": "solo_sin"}]))
+        self.assertEqual(self.problemas(t), [])
+        r, _ = self.correr_orden(t, entrada={"x": texto, "y": "Una PETICIÓN, otra petición y una peticion"})
+        self.assertEqual(r["variables"]["apellido"], "PÉREZ")
+        self.assertEqual(r["variables"]["marcado"], "Una [PETICIÓN], otra [petición] y una [peticion]")
+        self.assertEqual(r["variables"]["solo_sin"], "Una PETICIÓN, otra petición y una «peticion»")
+
+    def test_nombre_de_adjunto_sin_tildes(self):
+        for patron, leidos in (("CERTIFICÁDO", 1), ("^certificado\\.TXT$", 1), ("incapacidad", 0)):
+            with self.subTest(patron=patron):
+                d = cadena(nodo("adj", "leer_adjuntos", nombre_patron=patron, tipos=["texto"], ocr=False, salida="t"))
+                d["nodos"][0]["config"]["leer_adjuntos"] = False
+                r, _ = self.correr(d)
+                self.assertEqual(bool(r["variables"].get("t")), bool(leidos), r["variables"].get("t"))
+
+    def test_varias_condiciones_todas_alguna_y_varios_campos(self):
+        conds = [{"campos": ["entrada.asunto", "entrada.cuerpo"], "operador": "contiene", "valor": "tutela"},
+                 {"campo": "entrada.monto", "operador": "mayor", "valor": "1.000.000"}]
+        base = {"asunto": "Acción de TUTÉLA", "cuerpo": "", "monto": "$ 1.500.000"}
+        self.assertTrue(self.rama({"condiciones": conds}, base))
+        self.assertFalse(self.rama({"condiciones": conds, "modo": "todas"}, {**base, "monto": "900.000"}))
+        self.assertTrue(self.rama({"condiciones": conds, "modo": "alguna"}, {**base, "monto": "900.000"}))
+        self.assertTrue(self.rama({"condiciones": conds}, {**base, "asunto": "Solicitud", "cuerpo": "anexo la tutela"}))  # basta un campo
+        self.assertFalse(self.rama({"condiciones": conds, "modo": "alguna"}, {"asunto": "x", "cuerpo": "y", "monto": "10"}, "filtro"))
+        # los negativos con varios campos tienen que cumplirse en todos
+        self.assertFalse(self.rama({"campos": ["entrada.asunto", "entrada.cuerpo"], "operador": "no_contiene", "valor": "tutela"},
+                                   {"asunto": "nada", "cuerpo": "una TUTELA"}))
+        self.assertTrue(self.rama({"campos": ["entrada.asunto", "entrada.cuerpo"], "operador": "no_contiene", "valor": "tutela"},
+                                  {"asunto": "nada", "cuerpo": "otra cosa"}))
+        # validación: no se mezclan las dos formas; cada condición necesita campo; lista no vacía
+        self.assertTrue(any("no las dos formas" in x for x in fd._validar_config(nodo("f", "filtro", campo="asunto", condiciones=conds))))
+        self.assertTrue(any("falta campo" in x for x in fd._validar_config(nodo("f", "filtro", condiciones=[{"operador": "igual", "valor": "x"}]))))
+        self.assertTrue(any("al menos una" in x for x in fd._validar_config(nodo("f", "condicion", condiciones=[]))))
+        self.assertTrue(any("modo" in x for x in fd._validar_config(nodo("f", "condicion", condiciones=conds, modo="casi"))))
+        # la forma de antes sigue igual
+        self.assertEqual(fd._validar_config(nodo("f", "filtro", campo="asunto", operador="coincide", valor="@cendoj\\.ramajudicial\\.gov\\.co")), [])
+        self.assertTrue(any("necesita campo" in x for x in fd._validar_config(nodo("f", "filtro", operador="contiene", valor="x"))))
+        self.assertTrue(any("necesita valor" in x for x in fd._validar_config(nodo("f", "filtro", campo="asunto", operador="igual"))))
+        # una variable que no existe en una condición se detecta
+        d = desde_manual([nodo("c", "condicion", condiciones=[{"campo": "no_existe", "operador": "no_vacio"}]),
+                          nodo("si", "salida", desenlace="manual"), nodo("no", "salida", desenlace="descartar")],
+                         [{"desde": "inicio", "hacia": "c"}, {"desde": "c", "hacia": "si", "cuando": "si"}, {"desde": "c", "hacia": "no", "cuando": "no"}])
+        self.assertProblema(d, "no_existe")
+
+    def test_numeros_y_fechas_en_formatos_colombianos(self):
+        for texto, n in (("1.234,56", 1234.56), ("$ 1,234.56", 1234.56), ("$1.500.000", 1500000.0), ("1,5", 1.5), ("-3", -3.0), ("12.345.678", 12345678.0),
+                         ("COP 2.000", 2000.0), ("0,25 %", 0.25), (42, 42.0), ("sin número", None)):
+            with self.subTest(texto=texto):
+                self.assertEqual(bq.numero(texto), n)
+        for texto in ("2026-11-07", "07/11/2026", "7-11-2026", "7 de noviembre de 2026", "Bogotá, noviembre 7 de 2026", "7 NOV 2026", "2026-11-07T10:30:00Z", "07.11.26"):
+            with self.subTest(fecha=texto):
+                self.assertEqual(bq.fecha(texto)[0].date().isoformat(), "2026-11-07")
+        self.assertIsNone(bq.fecha("31/02/2026"))
+        x = lambda v: {"x": v}  # noqa: E731
+        self.assertTrue(self.rama({"campo": "entrada.x", "operador": "mayor", "valor": "1.000.000"}, x("$ 1,500,000.00")))
+        self.assertFalse(self.rama({"campo": "entrada.x", "operador": "menor", "valor": 100}, x("100")))
+        self.assertTrue(self.rama({"campo": "entrada.x", "operador": "menor_igual", "valor": 100}, x("100,0")))
+        self.assertTrue(self.rama({"campo": "entrada.x", "operador": "mayor_igual", "valor": "99,5"}, x("Total: 99,50")))
+        self.assertTrue(self.rama({"campo": "entrada.x", "operador": "entre", "valor": 1000, "hasta": "5.000"}, x("2.500")))
+        self.assertFalse(self.rama({"campo": "entrada.x", "operador": "entre", "valor": [1000, 2000]}, x("2.500")))
+        self.assertFalse(self.rama({"campo": "entrada.x", "operador": "mayor", "valor": 5}, x("no hay número")))
+        self.assertTrue(self.rama({"campo": "entrada.x", "operador": "antes_de", "valor": "2026-12-01"}, x("7 de noviembre de 2026")))
+        self.assertTrue(self.rama({"campo": "entrada.x", "operador": "despues_de", "valor": "01/11/2026"}, x("radicado el 7-11-2026")))
+        self.assertTrue(self.rama({"campo": "entrada.x", "operador": "entre_fechas", "valor": "1 de noviembre de 2026", "hasta": "2026-11-30"}, x("07/11/2026")))
+        self.assertFalse(self.rama({"campo": "entrada.x", "operador": "entre_fechas", "valor": ["2026-12-01", "2026-12-31"]}, x("07/11/2026")))
+        self.assertTrue(self.rama({"campo": "entrada.x", "operador": "antes_de", "valor": "hoy"}, x("2020-01-01")))
+        for conf, texto in (({"operador": "mayor", "valor": "mucho"}, "necesita un número"), ({"operador": "antes_de", "valor": "pronto"}, "necesita una fecha"),
+                            ({"operador": "entre", "valor": 1}, "dos límites"), ({"operador": "entre_fechas", "valor": "ayer", "hasta": "nunca"}, "dos fechas"),
+                            ({"operador": "longitud_igual", "valor": "diez"}, "un entero"), ({"operador": "teletransporta"}, "desconocido"),
+                            ({"operador": "contiene_alguna"}, "necesita valores"), ({"operador": "coincide", "valor": "("}, "patrón inválido"),
+                            ({"operador": "igual", "valor": "x", "comparacion": "casi"}, "comparacion"), ({"operador": "parecido", "valor": "x", "umbral": 2}, "umbral"),
+                            ({"operador": "igual", "valor": "x", "distinguir_tildes": "si"}, "true o false")):
+            with self.subTest(conf=conf):
+                p = fd._validar_config(nodo("c", "condicion", campo="x", **conf))
+                self.assertTrue(any(texto in m for m in p), p)
+        self.assertEqual(fd._validar_config(nodo("c", "condicion", campo="x", operador="mayor", valor="{{limite}}")), [])  # plantilla: se ve al correr
+
+    def test_parecida_exacta_y_opciones_por_condicion(self):
+        x = lambda v: {"x": v}  # noqa: E731
+        self.assertTrue(self.rama({"campo": "entrada.x", "operador": "parecido", "valor": "peticion urjente"}, x("Presento una Petición urgente, gracias")))
+        self.assertFalse(self.rama({"campo": "entrada.x", "operador": "parecido", "valor": "peticion urjente", "umbral": 0.99}, x("Petición urgente")))
+        self.assertTrue(self.rama({"campo": "entrada.x", "operador": "igual", "valor": "derecho de peticion", "comparacion": "parecida"}, x("Derecho de petcion")))
+        self.assertFalse(self.rama({"campo": "entrada.x", "operador": "igual", "valor": "derecho de peticion"}, x("Derecho de petcion")))
+        # exacta: mayúsculas, tildes y espacios cuentan
+        self.assertTrue(self.rama({"campo": "entrada.x", "operador": "igual", "valor": "Petición", "comparacion": "exacta"}, x("Petición")))
+        for otro in ("petición", "Peticion", "Petición ", "PETICIÓN"):
+            with self.subTest(exacta=otro):
+                self.assertFalse(self.rama({"campo": "entrada.x", "operador": "igual", "valor": "Petición", "comparacion": "exacta"}, x(otro)))
+        self.assertFalse(self.rama({"campo": "entrada.x", "operador": "coincide", "valor": "peticion", "comparacion": "exacta"}, x("PETICIÓN")))
+        # afinando la flexible
+        o = {"campo": "entrada.x", "operador": "igual", "valor": "Petición"}
+        self.assertFalse(self.rama({**o, "distinguir_mayusculas": True}, x("PETICIÓN")))
+        self.assertTrue(self.rama({**o, "distinguir_mayusculas": True}, x("  Peticion ")))  # tildes y espacios siguen sin contar
+        self.assertFalse(self.rama({**o, "distinguir_tildes": True}, x("peticion")))
+        self.assertTrue(self.rama({**o, "distinguir_tildes": True}, x("PETICIÓN")))
+        self.assertFalse(self.rama({"campo": "entrada.x", "operador": "igual", "valor": "petición urgente", "distinguir_espacios": True}, x("Petición  urgente")))
+        self.assertTrue(self.rama({"campo": "entrada.x", "operador": "igual", "valor": "petición urgente"}, x("Petición  urgente")))
+        self.assertEqual(bq.normalizar("  PETICIÓN  Urgente "), "peticion urgente")
+        self.assertEqual(bq.normalizar("  PETICIÓN ", bq.opciones_de({"comparacion": "exacta"})), "  PETICIÓN ")
+
+    def test_longitud_cedula_radicado_nit_y_telefono(self):
+        x = lambda v: {"x": v}  # noqa: E731
+        self.assertTrue(self.rama({"campo": "entrada.x", "operador": "longitud_igual", "valor": 10, "contar": "digitos"}, x("C.C. 1.023.456.789")))
+        self.assertTrue(self.rama({"campo": "entrada.x", "operador": "longitud_entre", "valor": "6", "hasta": "10", "contar": "digitos"}, x("79.456.123")))
+        self.assertFalse(self.rama({"campo": "entrada.x", "operador": "longitud_mayor", "valor": 3, "contar": "palabras"}, x("Ana  María Pérez")))
+        self.assertTrue(self.rama({"campo": "entrada.x", "operador": "longitud_menor", "valor": 6, "contar": "letras"}, x("Ñ-12-ÁÉ")))
+        self.assertEqual(bq.medir("  Ana   María ", "caracteres"), 9)
+        self.assertEqual(bq.medir("  Ana   María ", "caracteres", bq.opciones_de({"comparacion": "exacta"})), 14)
+        texto = ("Rad. 2024 del caso 11001310300120240012300. Cédula del trabajador: C.C. 1.023.456.789. "
+                 "Empresa NIT 900.123.456-7. Teléfonos: 601 234 5678 y 300 123 4567; ext 12")
+        d = manual(nodo("r", "extraer_regex", de="entrada.x", campos=[
+            {"nombre": "radicado", "patron": "\\d+", "longitud": 23, "obligatorio": True},
+            {"nombre": "cedula", "patron": "c\\.?c\\.?\\s*([\\d.]+)", "solo_digitos": True, "longitud_min": 6, "longitud_max": 10},
+            {"nombre": "nit", "patron": "nit\\D{0,5}([\\d.\\-]+)", "solo_digitos": True, "longitud_min": 9, "longitud_max": 10},
+            {"nombre": "telefonos", "patron": "\\d[\\d ]{8,}\\d", "solo_digitos": True, "longitud": 10, "todos": True},
+            {"nombre": "corto", "patron": "\\d+", "longitud": 2},
+            {"nombre": "imposible", "patron": "\\d+", "longitud": 40}]))
+        self.assertEqual(self.problemas(d), [])
+        r, ev = self.correr_orden(d, entrada={"x": texto})
+        v = r["variables"]
+        self.assertEqual((v["radicado"], v["cedula"], v["nit"]), ("11001310300120240012300", "1023456789", "9001234567"))
+        self.assertEqual(v["telefonos"], ["6012345678", "3001234567"])
+        self.assertEqual((v["corto"], v["imposible"]), ("12", ""))
+        self.assertTrue(any("longitud_min" in m for m in fd._validar_config(nodo("r", "extraer_regex", campos=[
+            {"nombre": "a", "patron": "\\d+", "longitud_min": 5, "longitud_max": 2}]))))
+        self.assertTrue(any("contar" in m for m in fd._validar_config(nodo("r", "extraer_regex", campos=[{"nombre": "a", "patron": "\\d+", "contar": "bytes"}]))))
+        # validar: longitud exacta o [min, max] con contar
+        val = manual(nodo("v", "validar", reglas=[{"campo": "entrada.tel", "regla": "longitud", "valor": 10, "contar": "digitos", "codigo": "TEL"},
+                                                  {"campo": "entrada.tema", "regla": "en_lista", "valor": ["Petición", "queja"]}]))
+        self.assertEqual(self.problemas(val), [])
+        reparos = lambda ev: next(e for e in ev if e.get("veredicto"))["reparos"]  # noqa: E731
+        _, ev = self.correr_orden(val, entrada={"tel": "300 123 4567", "tema": "PETICION"})
+        self.assertEqual(reparos(ev), [])
+        r, ev = self.correr_orden(val, entrada={"tel": "300 123", "tema": "peticion"})
+        self.assertEqual(([x["codigo"] for x in reparos(ev)], r["motivo"]), (["TEL"], "TEL"))
+        _, ev = self.correr_orden(val, entrada={"tel": "3001234567", "tema": "reclamo"})
+        self.assertEqual([x["codigo"] for x in reparos(ev)], ["EN_LISTA"])
+        # transformar: recortar, rellenar, sin_tildes y regex_extraer con longitud
+        t = manual(nodo("t", "transformar", operaciones=[
+            {"op": "recortar", "de": "entrada.x", "largo": 8, "sufijo": "…", "salida": "corto"},
+            {"op": "recortar", "de": "entrada.x", "largo": 2, "contar": "palabras", "salida": "dos"},
+            {"op": "rellenar", "de": "entrada.n", "largo": 6, "salida": "ceros"},
+            {"op": "rellenar", "de": "entrada.n", "largo": 6, "caracter": "*", "lado": "derecha", "salida": "estrellas"},
+            {"op": "sin_tildes", "de": "entrada.x", "salida": "plano"},
+            {"op": "regex_extraer", "de": "entrada.doc", "patron": "\\d[\\d.]*", "solo_digitos": True, "longitud_min": 6, "salida": "cedula"}]))
+        self.assertEqual(self.problemas(t), [])
+        r, _ = self.correr_orden(t, entrada={"x": "Señora Pérez Núñez", "n": "123", "doc": "año 2026, C.C. 1.023.456.789"})
+        v = r["variables"]
+        self.assertEqual((v["corto"], v["dos"], v["ceros"], v["estrellas"], v["plano"], v["cedula"]),
+                         ("Señora P…", "Señora Pérez", "000123", "123***", "Senora Perez Nunez", "1023456789"))
+        self.assertTrue(any("largo" in m for m in fd._validar_config(nodo("t", "transformar", op="rellenar", de="x", salida="y"))))
+
+    def test_ia_extraer_respeta_la_longitud(self):
+        self.modelo.r["campos"] = {"nombre": "Ana María Pérez", "documento": "C.C. 1.023.456.789", "telefono": "12345"}
+        d = manual(nodo("ia", "ia_extraer", campos=[
+            {"nombre": "nombre", "descripcion": "nombre"},
+            {"nombre": "documento", "descripcion": "cédula", "solo_digitos": True, "longitud_min": 6, "longitud_max": 10, "obligatorio": True},
+            {"nombre": "telefono", "descripcion": "celular", "solo_digitos": True, "longitud": 10, "contar": "digitos"}]))
+        self.assertEqual(self.problemas(d), [])
+        r, ev = self.correr_orden(d, entrada={})
+        self.assertEqual((r["variables"]["documento"], r["variables"]["telefono"]), ("1023456789", ""))
+        self.assertTrue(any("telefono" in a and "se descarta" in a for a in r.get("avisos") or []), r.get("avisos"))
+        self.assertIn("solo dígitos, exactamente 10 dígitos", self.modelo.llamadas[-1]["sistema"])
+        self.assertTrue(any("longitud_min" in m for m in fd._validar_config(nodo("ia", "ia_extraer", campos=[
+            {"nombre": "a", "longitud_min": 9, "longitud_max": 3}]))))
+
+    def test_tabla_consultar_normaliza_y_opera(self):
+        t = fd.c_tablas
+        t.guardar("flujo-prueba", "casos", "a", {"estado": "Pendiente", "monto": "1.500.000", "fecha": "7 de noviembre de 2026", "nombre": "José Pérez"})
+        t.guardar("flujo-prueba", "casos", "b", {"estado": "PENDIENTE ", "monto": 900000, "fecha": "2026-12-15", "nombre": "Ana Núñez", "datos": {"ciudad": "Bogotá"}})
+        t.guardar("flujo-prueba", "casos", "c", {"estado": "cerrado", "monto": "2,000,000.00", "fecha": "01/10/2026", "nombre": "jose perez"})
+        claves = lambda filas: sorted(f["clave"] for f in filas)  # noqa: E731
+        self.assertEqual(claves(t.consultar("flujo-prueba", "casos", filtro={"estado": "pendiente"})), ["a", "b"])
+        self.assertEqual(claves(t.consultar("flujo-prueba", "casos", filtro={"monto": 900000})), ["b"])
+        self.assertEqual(claves(t.consultar("flujo-prueba", "casos", filtro=[{"campo": "monto", "operador": "mayor", "valor": "1.000.000"}])), ["a", "c"])
+        self.assertEqual(claves(t.consultar("flujo-prueba", "casos", filtro=[{"campo": "nombre", "operador": "contiene", "valor": "JOSE PEREZ"}])), ["a", "c"])
+        self.assertEqual(claves(t.consultar("flujo-prueba", "casos", filtro=[{"campo": "nombre", "operador": "igual", "valor": "José Pérez", "comparacion": "exacta"}])), ["a"])
+        self.assertEqual(claves(t.consultar("flujo-prueba", "casos", filtro=[{"campo": "fecha", "operador": "antes_de", "valor": "2026-12-01"}])), ["a", "c"])
+        self.assertEqual(claves(t.consultar("flujo-prueba", "casos", filtro=[{"campo": "datos.ciudad", "operador": "igual", "valor": "bogota"}])), ["b"])
+        alguna = [{"campo": "estado", "operador": "igual", "valor": "cerrado"}, {"campo": "monto", "operador": "menor", "valor": 1000000}]
+        self.assertEqual(claves(t.consultar("flujo-prueba", "casos", filtro=alguna, modo="alguna")), ["b", "c"])
+        self.assertEqual(claves(t.consultar("flujo-prueba", "casos", filtro=alguna)), [])
+        self.assertEqual(len(t.consultar("flujo-prueba", "casos", filtro={"estado": "pendiente"}, limite=1)), 1)
+        with self.assertRaises(fd.ErrorDeNegocio):
+            t.consultar("flujo-prueba", "casos", filtro=[{"campo": "x') OR 1=1 --", "operador": "igual", "valor": 1}])
+        # desde el nodo: filtro de iguales y condiciones juntos, con plantillas
+        d = desde_manual([nodo("q", "tabla_consultar", tabla="casos", filtro={"estado": "{{entrada.estado}}"},
+                               condiciones=[{"campos": ["nombre", "estado"], "operador": "parecido", "valor": "{{entrada.quien}}"}], salida="filas"),
+                          nodo("si", "salida", desenlace="manual"), nodo("no", "salida", desenlace="descartar")],
+                         [{"desde": "inicio", "hacia": "q"}, {"desde": "q", "hacia": "si", "cuando": "encontrado"}, {"desde": "q", "hacia": "no", "cuando": "vacio"}])
+        self.assertEqual(self.problemas(d), [])
+        r, _ = self.correr_orden(d, entrada={"estado": "PENDIENTE", "quien": "jose peres"})
+        self.assertEqual([f["clave"] for f in r["variables"]["filas"]], ["a"])
+        for conf, texto in (({"filtro": [{"campo": "a b", "operador": "igual", "valor": 1}]}, "inválido"), ({"filtro": []}, "vacía"),
+                            ({"condiciones": [{"campo": "a", "operador": "mayor", "valor": "x"}]}, "número"), ({"modo": "casi", "condiciones": [{"campo": "a"}]}, "modo")):
+            with self.subTest(conf=conf):
+                p = fd._validar_config(nodo("q", "tabla_consultar", tabla="casos", **conf))
+                self.assertTrue(any(texto in m for m in p), p)
+
+    def test_buscar_en_tabla_y_bifurcar_con_comparacion(self):
+        def bifurcar(valor, **conf):
+            casos = ["peticion", "queja", "otro"]
+            d = desde_manual([nodo("b", "bifurcar_por_valor", variable="entrada.x", casos=casos[:2], **conf)] +
+                             [nodo(f"s_{x}", "salida", desenlace="manual", motivo=x) for x in casos],
+                             [{"desde": "inicio", "hacia": "b"}] + [{"desde": "b", "hacia": f"s_{x}", "cuando": x} for x in casos])
+            self.assertEqual(self.problemas(d), [])
+            return self.correr_orden(d, entrada={"x": valor})[0]["motivo"]
+        self.assertEqual(bifurcar("  PETICIÓN "), "peticion")
+        self.assertEqual(bifurcar("PETICIÓN", comparacion="exacta"), "otro")
+        self.assertEqual(bifurcar("peticon"), "otro")
+        self.assertEqual(bifurcar("peticon", comparacion="parecida"), "peticion")
+        self.assertEqual(bifurcar("felicitación", comparacion="parecida"), "otro")
+        tabla = [{"tema": "Incapacidad", "area": "Prestaciones"}, {"tema": "Afiliación", "area": "Afiliaciones"}]
+        def buscar(valor, **conf):
+            d = desde_manual([nodo("t", "buscar_en_tabla", buscar="entrada.x", columna="tema", tabla=tabla, salida="fila", **conf),
+                              nodo("si", "salida", desenlace="manual", motivo="{{fila.area}}"), nodo("no", "salida", desenlace="descartar", motivo="nada")],
+                             [{"desde": "inicio", "hacia": "t"}, {"desde": "t", "hacia": "si", "cuando": "encontrado"}, {"desde": "t", "hacia": "no", "cuando": "no_encontrado"}])
+            self.assertEqual(self.problemas(d), [])
+            return self.correr_orden(d, entrada={"x": valor})[0]["motivo"]
+        self.assertEqual(buscar(" AFILIACION "), "Afiliaciones")
+        self.assertEqual(buscar("afiliacion", comparacion="exacta"), "nada")
+        self.assertEqual(buscar("afilacion"), "nada")
+        self.assertEqual(buscar("afilacion", comparacion="parecida"), "Afiliaciones")
+        self.assertEqual(buscar("solicito pago de incapasidad", modo="contiene", comparacion="parecida"), "Prestaciones")
+        self.assertTrue(any("umbral" in m for m in fd._validar_config(nodo("b", "bifurcar_por_valor", variable="x", casos=["a"], umbral=5))))
+
+    def test_documentacion_y_esquema_de_busqueda(self):
+        self.assertEqual(nd.OPERADORES, list(bq.OPERADORES))
+        self.assertEqual(set(nd.OPERADORES), fd.OPERADORES)
+        self.assertEqual(nd.CONTAR, list(bq.CONTAR))
+        self.assertEqual(nd.COMPARACIONES, list(bq.COMPARACIONES))
+        for op in bq.OPERADORES:
+            self.assertIn(f"· {op}:", nd.DOCUMENTACION)
+        for t in ("filtro", "condicion", "tabla_consultar"):
+            props = nd.TIPOS[t]["config"]["properties"]
+            self.assertEqual(props["condiciones"]["type"], "array")
+            self.assertEqual(props["condiciones"]["items"]["title"], "Condición")  # el formulario muestra «Agregar condición»
+            self.assertEqual(props["condiciones"]["items"]["properties"]["operador"]["enum"], nd.OPERADORES)
+            self.assertEqual(props["modo"]["enum"], ["todas", "alguna"])
+        self.assertNotIn("required", nd.TIPOS["filtro"]["config"])
+        for texto in ("comparacion", "parecida", "distinguir_tildes", "solo_digitos", "longitud_min", "texto ORIGINAL"):
+            self.assertIn(texto, nd.DOCUMENTACION)
+        self.assertIn("busqueda", nd.esquema())
+
+    def test_flujos_guardados_siguen_validos_y_corren(self):
+        carpeta = Path(os.environ.get("RUTA_FLUJOS_GUARDADOS", "/datos/estado/flujos"))
+        archivos = sorted(carpeta.glob("*.json")) if carpeta.is_dir() else []
+        if not archivos:
+            self.skipTest("no hay flujos guardados")
+        for a in archivos:
+            with self.subTest(flujo=a.name):
+                j = json.loads(a.read_text(encoding="utf-8"))
+                d = j.get("definicion", j)
+                self.assertEqual(fd.validar(d), [])
+                if d.get("id") == "solicitudes-de-incapacidad":
+                    self.correr(d)  # corre de punta a punta sin error
+        self.assertEqual(self.problemas(INCAPACIDAD), [])
+
+
 # ------------------------------------------------------------- paridad con zod
 
 class ParidadConElServidor(unittest.TestCase):
@@ -1811,7 +2151,26 @@ class ParidadConElServidor(unittest.TestCase):
         malos = [{"tipo": "sql_consulta", "config": {"credencial": "b"}}, {"tipo": "para_cada", "config": {"lista": "x", "max_iteraciones": 5000}},
                  {"tipo": "esperar", "config": {"segundos": 120}}, {"tipo": "programado", "config": {"cron": "1 2 3"}},
                  {"tipo": "correo_enviar", "config": {"credencial": "s", "para": "a@b.c", "asunto": "x"}},
-                 {"tipo": "archivo_guardar", "config": {"ruta": "../x", "contenido": "x"}}, {"tipo": "expresion", "config": {}}]
+                 {"tipo": "archivo_guardar", "config": {"ruta": "../x", "contenido": "x"}}, {"tipo": "expresion", "config": {}},
+                 # búsqueda: formas mezcladas, operador o comparación desconocidos, condiciones sin campo o sin valores, rangos incompletos
+                 {"tipo": "filtro", "config": {"campo": "asunto", "condiciones": [{"campo": "cuerpo"}]}},
+                 {"tipo": "filtro", "config": {"campo": "asunto", "operador": "teletransporta"}},
+                 {"tipo": "filtro", "config": {"operador": "contiene", "valor": "x"}},
+                 {"tipo": "filtro", "config": {"campo": "asunto", "comparacion": "casi"}},
+                 {"tipo": "filtro", "config": {"campo": "asunto", "operador": "igual"}},
+                 {"tipo": "condicion", "config": {"condiciones": []}},
+                 {"tipo": "condicion", "config": {"condiciones": [{"operador": "igual", "valor": "x"}]}},
+                 {"tipo": "condicion", "config": {"campo": "monto", "operador": "entre", "valor": 1}},
+                 {"tipo": "condicion", "config": {"campo": "x", "operador": "coincide", "valor": "("}},
+                 {"tipo": "condicion", "config": {"condiciones": [{"campo": "x", "operador": "parecido", "valor": "y", "umbral": 3}], "modo": "todas"}},
+                 {"tipo": "condicion", "config": {"condiciones": [{"campo": "x"}], "modo": "casi"}},
+                 {"tipo": "extraer_regex", "config": {"campos": [{"nombre": "x", "patron": "\\d+", "longitud_min": 5, "longitud_max": 2}]}},
+                 {"tipo": "extraer_regex", "config": {"campos": [{"nombre": "x", "patron": "\\d+", "contar": "bytes"}]}},
+                 {"tipo": "transformar", "config": {"operaciones": [{"op": "rellenar", "de": "x", "salida": "y"}]}},
+                 {"tipo": "transformar", "config": {"operaciones": [{"op": "rellenar", "de": "x", "salida": "y", "largo": 5, "lado": "centro"}]}},
+                 {"tipo": "tabla_consultar", "config": {"tabla": "t", "condiciones": [{"campo": "a", "operador": "contiene_alguna"}]}},
+                 {"tipo": "tabla_consultar", "config": {"tabla": "t", "filtro": [{"operador": "igual", "valor": 1}]}},
+                 {"tipo": "tabla_consultar", "config": {"tabla": "t", "filtro": []}}]
         guion = ("const f = await import(process.argv[1]); const d = JSON.parse(process.argv[2]);"
                  "const r = (xs) => xs.map((e) => { const s = f.CONFIG_DE[e.tipo]; return s ? s.safeParse(e.config).success : null; });"
                  "console.log(JSON.stringify({tipos: [...f.TIPOS_DE_NODO], buenos: r(d.buenos), malos: r(d.malos)}));")
@@ -1846,6 +2205,412 @@ class RedPrivadaDeCredenciales(unittest.TestCase):
         for h in ("metadata.google.internal", "localhost", "sgdea-prod.proyectos-3t.tech", "x.positiva.gov.co"):
             with self.assertRaises(ErrorDeNegocio):
                 destino_seguro(h, 5432, red_privada=True)
+
+
+# ------------------------------------------------- proveedores de IA (2c)
+#
+# Servidores falsos en 127.0.0.1 (solo aquí se permite loopback): uno con la API
+# de chat de OpenAI y otro con la Messages API de Anthropic. La única llamada de
+# verdad es a Vertex con la identidad del servicio (se salta si no hay ADC).
+
+import proveedores as pv  # noqa: E402
+from proveedores import base as pv_base  # noqa: E402
+from proveedores import claude as pv_claude  # noqa: E402
+from proveedores import estilo_openai as pv_openai  # noqa: E402
+
+LLAVE_IA = "sk-prueba-LLAVE-MUY-SECRETA-1234567890"
+LLAVE_CLAUDE = "sk-ant-prueba-OTRA-LLAVE-SECRETA-0987"
+
+
+class _FalsoIA(http.server.BaseHTTPRequestHandler):
+    """Responde como OpenAI (/v1/chat/completions, /v1/models) o como Anthropic (/v1/messages).
+
+    `guion`: lista de respuestas que se toman en orden: (status, encabezados, cuerpo dict). Vacía: responde lo normal."""
+    vistas: list = []
+    guion: list = []
+    demora = 0.0
+    activos = 0
+    maximo = 0
+    cerrojo = threading.Lock()
+
+    def log_message(self, *a):  # sin ruido en la consola
+        pass
+
+    def _responder(self, status, cuerpo, encabezados=None):
+        datos = json.dumps(cuerpo).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        for k, v in (encabezados or {}).items():
+            self.send_header(k, v)
+        self.send_header("Content-Length", str(len(datos)))
+        self.end_headers()
+        self.wfile.write(datos)
+
+    def do_GET(self):
+        _FalsoIA.vistas.append({"ruta": self.path, "auth": self.headers.get("Authorization"), "x-api-key": self.headers.get("x-api-key")})
+        if self.path.startswith("/v1/models"):
+            if "anthropic" in self.path or self.headers.get("x-api-key"):
+                return self._responder(200, {"data": [{"id": "claude-haiku-5-5", "display_name": "Claude Haiku 5.5", "max_input_tokens": 1000000},
+                                                      {"id": "claude-nuevo-9", "display_name": "Claude Nuevo"}]})
+            return self._responder(200, {"data": [{"id": "gpt-4o-mini"}, {"id": "modelo-local-7b"}]})
+        self._responder(404, {"error": "no"})
+
+    def do_POST(self):
+        cuerpo = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+        with _FalsoIA.cerrojo:
+            _FalsoIA.activos += 1
+            _FalsoIA.maximo = max(_FalsoIA.maximo, _FalsoIA.activos)
+            _FalsoIA.vistas.append({"ruta": self.path, "cuerpo": cuerpo, "auth": self.headers.get("Authorization"),
+                                    "x-api-key": self.headers.get("x-api-key"), "version": self.headers.get("anthropic-version"),
+                                    "x-title": self.headers.get("X-Title")})
+            paso = _FalsoIA.guion.pop(0) if _FalsoIA.guion else None
+        try:
+            if _FalsoIA.demora:
+                time.sleep(_FalsoIA.demora)
+            if paso:
+                return self._responder(paso[0], paso[2], paso[1])
+            if self.path.startswith("/v1/messages"):
+                return self._responder(200, self._anthropic(cuerpo))
+            return self._responder(200, self._openai(cuerpo))
+        finally:
+            with _FalsoIA.cerrojo:
+                _FalsoIA.activos -= 1
+
+    @staticmethod
+    def _openai(c):
+        uso = {"prompt_tokens": 100, "completion_tokens": 20}
+        msgs = c.get("messages") or []
+        if c.get("tools") and not any(m.get("role") == "tool" for m in msgs):
+            return {"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "call_1", "type": "function", "function": {"name": "sumar", "arguments": json.dumps({"a": 2, "b": 3})}}]},
+                "finish_reason": "tool_calls"}], "usage": uso}
+        if any(m.get("role") == "tool" for m in msgs):
+            res = next(m["content"] for m in msgs if m.get("role") == "tool")
+            return {"choices": [{"message": {"role": "assistant", "content": f"El resultado es {res}"}, "finish_reason": "stop"}], "usage": uso}
+        sistema = (msgs[0].get("content") if msgs and msgs[0].get("role") == "system" else "") or ""
+        if c.get("response_format") or "JSON" in sistema:
+            return {"choices": [{"message": {"role": "assistant", "content": json.dumps({"categoria": "incapacidad", "confianza": 0.9, "evidencia": "pago"})},
+                                 "finish_reason": "stop"}], "usage": uso}
+        return {"choices": [{"message": {"role": "assistant", "content": "hola desde el falso"}, "finish_reason": "stop"}], "usage": uso}
+
+    @staticmethod
+    def _anthropic(c):
+        uso = {"input_tokens": 50, "output_tokens": 10}
+        msgs = c.get("messages") or []
+        tiene_resultado = any(isinstance(b, dict) and b.get("type") == "tool_result" for m in msgs for b in (m.get("content") if isinstance(m.get("content"), list) else []))
+        if c.get("tools") and not tiene_resultado:
+            return {"content": [{"type": "thinking", "thinking": "", "signature": "firma"}, {"type": "tool_use", "id": "toolu_1", "name": "sumar", "input": {"a": 4, "b": 5}}],
+                    "stop_reason": "tool_use", "usage": uso}
+        if tiene_resultado:
+            return {"content": [{"type": "text", "text": "Listo: 9"}], "stop_reason": "end_turn", "usage": uso}
+        if c.get("output_config"):
+            return {"content": [{"type": "text", "text": json.dumps({"categoria": "otro", "confianza": 0.7, "evidencia": "x"})}], "stop_reason": "end_turn", "usage": uso}
+        return {"content": [{"type": "text", "text": "hola, soy Claude falso"}], "stop_reason": "end_turn", "usage": uso}
+
+
+ESQUEMA_CAT = {"type": "object", "properties": {"categoria": {"type": "string", "enum": ["incapacidad", "otro"]}, "confianza": {"type": "number"},
+                                                "evidencia": {"type": "string"}}, "required": ["categoria", "confianza"]}
+
+
+class ProveedoresDeIA(Base):
+    @classmethod
+    def setUpClass(cls):
+        cls.srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _FalsoIA)
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+        cls.url = f"http://127.0.0.1:{cls.srv.server_address[1]}"
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+
+    def setUp(self):
+        super().setUp()
+        fd._llamar_modelo = self._orig[2]  # la capa de proveedores de verdad, contra los servidores falsos
+        fd._IPS_PERMITIDAS_PRUEBAS.add("127.0.0.1")
+        _FalsoIA.vistas, _FalsoIA.guion, _FalsoIA.demora, _FalsoIA.maximo, _FalsoIA.activos = [], [], 0.0, 0, 0
+        self.dormidas = []
+        self._dormir_pv, self._reloj_pv = pv_base.dormir, pv_base.reloj
+        pv_base.dormir = self.dormidas.append
+        pv_base.reiniciar_limites()
+        self._urls = dict(pv_openai.URLS), dict(pv_claude.URL)
+        pv_openai.URLS["openai"] = f"{self.url}/v1"
+        pv_claude.URL["base"] = self.url
+        self.cred = {"base_url": f"{self.url}/v1", "api_key": LLAVE_IA}
+
+    def tearDown(self):
+        pv_base.dormir, pv_base.reloj = self._dormir_pv, self._reloj_pv
+        pv_openai.URLS.clear()
+        pv_openai.URLS.update(self._urls[0])
+        pv_claude.URL.update(self._urls[1])
+        pv_base.reiniciar_limites()
+        super().tearDown()
+
+    # ------------------------------------------------------------ texto y JSON
+    def test_texto_compatible(self):
+        r = pv.generar("openai_compatible", "modelo-local-7b", "Eres breve.", tarea="Hola", temperatura=0.2, credencial=self.cred)
+        self.assertEqual(r["texto"], "hola desde el falso")
+        self.assertEqual((r["tokens_entrada"], r["tokens_salida"], r["proveedor"]), (100, 20, "openai_compatible"))
+        self.assertFalse(r["costo_conocido"])  # un modelo propio no tiene precio en el catálogo
+        v = _FalsoIA.vistas[-1]
+        self.assertEqual(v["auth"], f"Bearer {LLAVE_IA}")
+        self.assertEqual(v["cuerpo"]["messages"][0], {"role": "system", "content": "Eres breve."})
+        self.assertEqual(v["cuerpo"]["temperature"], 0.2)
+
+    def test_json_nativo_en_openai_con_costo(self):
+        r = pv.generar("openai", "gpt-4o-mini", "Clasifica.", tarea="Pago de incapacidad", esquema_json=ESQUEMA_CAT, temperatura=0.1,
+                       credencial={"api_key": LLAVE_IA})
+        self.assertEqual(r["json"]["categoria"], "incapacidad")
+        formato = _FalsoIA.vistas[-1]["cuerpo"]["response_format"]
+        self.assertEqual(formato["type"], "json_schema")
+        self.assertFalse(formato["json_schema"]["schema"]["additionalProperties"])  # OpenAI lo exige
+        self.assertTrue(r["costo_conocido"])
+        self.assertAlmostEqual(r["costo_estimado_usd"], (100 * 0.15 + 20 * 0.60) / 1e6, places=9)
+
+    def test_json_instruido_se_valida_y_se_repara_una_vez(self):
+        _FalsoIA.guion = [(200, {}, {"choices": [{"message": {"content": "no sé, quizá incapacidad"}}], "usage": {"prompt_tokens": 5, "completion_tokens": 5}})]
+        r = pv.generar("openai_compatible", "modelo-local-7b", "Clasifica.", tarea="x", esquema_json=ESQUEMA_CAT, credencial=self.cred)
+        self.assertTrue(r["reparado"])
+        self.assertEqual(r["errores_json"], [])
+        self.assertEqual(r["json"]["categoria"], "incapacidad")
+        self.assertEqual(r["tokens_entrada"], 105)  # suma las dos llamadas
+        self.assertIn("JSON Schema", _FalsoIA.vistas[0]["cuerpo"]["messages"][0]["content"])  # instruido: el esquema va en el sistema
+        self.assertIn("no sirve", json.dumps(_FalsoIA.vistas[1]["cuerpo"]["messages"], ensure_ascii=False))
+
+    # -------------------------------------------------------- reintentos y límites
+    def test_reintenta_429_respetando_retry_after(self):
+        _FalsoIA.guion = [(429, {"Retry-After": "2"}, {"error": {"message": "despacio"}})]
+        r = pv.generar("openai_compatible", "m", "", tarea="hola", credencial=self.cred)
+        self.assertEqual(r["intentos"], 2)
+        self.assertEqual(len(self.dormidas), 1)
+        self.assertTrue(2.0 <= self.dormidas[0] <= 2.25, self.dormidas)
+
+    def test_5xx_se_agota_y_no_reintenta_401(self):
+        _FalsoIA.guion = [(503, {}, {"error": "caído"})] * 3
+        with self.assertRaises(pv.ErrorDeProveedor) as e:
+            pv.generar("openai_compatible", "m", "", tarea="hola", credencial=self.cred)
+        self.assertEqual(e.exception.status_code, 503)
+        self.assertEqual(len(_FalsoIA.vistas), 3)
+        self.assertTrue(fd.es_transitorio(e.exception))
+        _FalsoIA.vistas, _FalsoIA.guion = [], [(401, {}, {"error": {"message": "llave mala"}})]
+        with self.assertRaises(pv.ErrorDeProveedor):
+            pv.generar("openai_compatible", "m", "", tarea="hola", credencial=self.cred)
+        self.assertEqual(len(_FalsoIA.vistas), 1)
+
+    def test_balde_de_tasa_por_flujo(self):
+        t = [0.0]
+        pv_base.reloj = lambda: t[0]
+        pv_base.dormir = lambda s: (self.dormidas.append(round(s, 3)), t.__setitem__(0, t[0] + s))
+        b = pv_base.balde("openai", "huella", "flujo-a", por_minuto=6)  # una cada 10 s, ráfaga de 1
+        for _ in range(3):
+            b.tomar(30)
+        self.assertEqual(self.dormidas, [10.0, 10.0])
+        # el balde de otro flujo está lleno: la ráfaga de flujo-a no lo frena
+        pv_base.balde("openai", "huella", "flujo-b", por_minuto=6).tomar(0)
+        self.assertEqual(self.dormidas, [10.0, 10.0])
+        with self.assertRaises(pv_base.ErrorTransitorio):
+            b.tomar(0.1)  # haría falta esperar más del tope
+
+    def test_semaforo_por_proveedor_y_credencial(self):
+        os.environ["IA_CONCURRENCIA_OPENAI_COMPATIBLE"] = "2"
+        _FalsoIA.demora = 0.3
+        try:
+            hilos = [threading.Thread(target=pv.generar, args=("openai_compatible", "m", "", None, "hola"), kwargs={"credencial": self.cred})
+                     for _ in range(5)]
+            for h in hilos:
+                h.start()
+            for h in hilos:
+                h.join(30)
+        finally:
+            os.environ.pop("IA_CONCURRENCIA_OPENAI_COMPATIBLE", None)
+        self.assertEqual(len(_FalsoIA.vistas), 5)
+        self.assertEqual(_FalsoIA.maximo, 2)
+
+    # ------------------------------------------------------------------ máscara
+    def test_la_llave_nunca_sale(self):
+        _FalsoIA.guion = [(401, {}, {"error": {"message": f"Incorrect API key provided: {LLAVE_IA}"}})]
+        with self.assertRaises(pv.ErrorDeProveedor) as e:
+            pv.generar("openai_compatible", "m", "", tarea="hola", credencial=self.cred)
+        self.assertNotIn(LLAVE_IA, str(e.exception))
+        self.assertIn("••••", str(e.exception))
+        r = pv.probar("anthropic", "claude-haiku-5-5", {"api_key": LLAVE_CLAUDE})
+        self.assertTrue(r["ok"], r)
+        self.assertNotIn(LLAVE_CLAUDE, json.dumps(r))
+        self.assertEqual(pv.enmascarar(f"key={LLAVE_IA} y AIzaSyA1234567890abcdefghijklmn"), "key=•••• y ••••")
+        # el CLI del servidor: una URL vetada (metadatos) falla sin red y sin dejar salir la llave
+        p = subprocess.run([sys.executable, str(AQUI / "proveedores" / "cli.py"), "probar"],
+                           input=json.dumps({"proveedor": "openai_compatible", "modelo": "m", "credencial": {"base_url": "http://169.254.169.254/v1", "api_key": LLAVE_IA}}),
+                           capture_output=True, text=True, encoding="utf-8", timeout=60, env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+        r = json.loads(p.stdout.strip().splitlines()[-1])
+        self.assertFalse(r["ok"])
+        self.assertIn("bloqueado", r["error"])
+        self.assertNotIn(LLAVE_IA, p.stdout + p.stderr)
+
+    # ----------------------------------------------------- Claude y herramientas
+    def test_anthropic_texto_json_y_modelos(self):
+        r = pv.generar("anthropic", "claude-haiku-5-5", "Clasifica.", tarea="x", esquema_json=ESQUEMA_CAT, temperatura=0.3, credencial={"api_key": LLAVE_CLAUDE})
+        self.assertEqual(r["json"]["categoria"], "otro")
+        v = _FalsoIA.vistas[-1]
+        self.assertEqual((v["x-api-key"], v["version"]), (LLAVE_CLAUDE, pv_claude.VERSION))
+        self.assertEqual(v["cuerpo"]["output_config"]["format"]["type"], "json_schema")
+        self.assertNotIn("temperature", v["cuerpo"])  # los modelos actuales la rechazan
+        self.assertEqual(r["costo_estimado_usd"], round((50 * 0.10 + 10 * 0.50) / 1e6, 6))
+        vivos = pv.catalogo.en_vivo("anthropic", {"api_key": LLAVE_CLAUDE})
+        self.assertEqual({m["id"] for m in vivos}, {"claude-haiku-5-5", "claude-nuevo-9"})
+        self.assertTrue(next(m for m in vivos if m["id"] == "claude-haiku-5-5")["acepta"]["imagenes"])  # lo conocido trae su ficha
+
+    def test_conversar_con_herramientas_en_claude_y_estilo_openai(self):
+        sumar = {"nombre": "sumar", "descripcion": "suma dos números", "parametros": {"type": "object", "properties": {"a": {"type": "number"}, "b": {"type": "number"}}}}
+        avisos = []
+        r = pv.conversar_con_herramientas("anthropic", "claude-haiku-5-5", {"api_key": LLAVE_CLAUDE}, "Usa herramientas.",
+                                          [{"rol": "usuario", "texto": "¿4+5?"}], [sumar], lambda n, a: {"total": a["a"] + a["b"]},
+                                          aviso=lambda t, **d: avisos.append(t))
+        self.assertEqual(r["texto"], "Listo: 9")
+        self.assertEqual(r["pasos"][0]["resultado"], {"total": 9})
+        segunda = _FalsoIA.vistas[-1]["cuerpo"]["messages"]
+        self.assertEqual(segunda[1]["content"][0]["type"], "thinking")  # el contenido del asistente vuelve tal cual
+        self.assertEqual(segunda[2]["content"][0]["type"], "tool_result")
+        self.assertIn("herramienta_fin", avisos)
+        r = pv.conversar_con_herramientas("openai_compatible", "m", self.cred, "", [{"rol": "usuario", "texto": "¿2+3?"}], [sumar],
+                                          lambda n, a: a["a"] + a["b"])
+        self.assertEqual(r["texto"], "El resultado es 5")
+        self.assertEqual(r["vueltas"], 2)
+        self.assertEqual(r["tokens_entrada"], 200)
+
+    def test_personalizado_sin_codigo(self):
+        cred = {"url": f"{self.url}/v1/chat/completions", "api_key": LLAVE_IA, "encabezados": json.dumps({"Authorization": "Token {{api_key}}"}),
+                "cuerpo": json.dumps({"model": "{{modelo}}", "messages": "{{mensajes_con_sistema}}", "temperature": "{{temperatura}}"}),
+                "ruta_texto": "choices.0.message.content", "ruta_tokens_entrada": "usage.prompt_tokens", "ruta_tokens_salida": "usage.completion_tokens"}
+        r = pv.generar("personalizado", "mi-modelo", "Sé breve.", tarea="hola", temperatura=0.5, credencial=cred)
+        self.assertEqual((r["texto"], r["tokens_entrada"]), ("hola desde el falso", 100))
+        v = _FalsoIA.vistas[-1]
+        self.assertEqual(v["auth"], f"Token {LLAVE_IA}")
+        self.assertEqual(v["cuerpo"]["temperature"], 0.5)
+        self.assertEqual(v["cuerpo"]["messages"][1], {"role": "user", "content": "hola"})
+
+    def test_partes_que_el_modelo_no_acepta(self):
+        with self.assertRaises(fd.ErrorDeNegocio) as e:
+            pv.generar("deepseek", "deepseek-chat", "", tarea="lee", partes=[{"tipo": "imagen", "datos": b"\xff\xd8", "mime": "image/jpeg"}],
+                       credencial={"api_key": LLAVE_IA})
+        self.assertIn("no acepta imágenes", str(e.exception))
+        with self.assertRaises(fd.ErrorDeNegocio):
+            pv.generar("vertex", "gemini-3.8-live", "", tarea="hola")  # solo voz
+
+    # --------------------------------------------------------- resolución y validación
+    def test_resolucion_nodo_flujo_global(self):
+        g = {"proveedor": "openai", "modelo": "gpt-4o-mini", "credencial": "ia-openai"}
+        self.assertEqual(pv.ia_del_flujo({"modelo": "gemini-2.5-pro"}, g)["proveedor"], "vertex")  # los de antes siguen en Vertex
+        self.assertEqual(pv.ia_del_flujo({"modelo": "gemini-2.5-pro"}, g)["modelo"], "gemini-2.5-pro")
+        f = pv.ia_del_flujo({"ia": {"usar": "global"}}, g)
+        self.assertEqual((f["proveedor"], f["modelo"], f["origen"]), ("openai", "gpt-4o-mini", "global"))
+        self.assertEqual(pv.ia_del_flujo({"ia": {"usar": "global"}}, None)["proveedor"], "vertex")
+        propio = pv.ia_del_flujo({"ia": {"proveedor": "anthropic", "modelo": "claude-haiku-5-5", "credencial": "c"}}, g)
+        self.assertEqual(propio["origen"], "flujo")
+        n = pv.ia_del_nodo({"proveedor": "deepseek", "modelo": "deepseek-chat", "credencial": "ds"}, propio)
+        self.assertEqual((n["proveedor"], n["credencial"], n["origen"]), ("deepseek", "ds", "nodo"))
+        n = pv.ia_del_nodo({"modelo": "claude-sonnet-5-5"}, propio)
+        self.assertEqual((n["proveedor"], n["modelo"], n["credencial"]), ("anthropic", "claude-sonnet-5-5", "c"))
+
+    def test_validacion_de_la_ia(self):
+        creds = {"ia-ds": {"tipo": "ia_deepseek", "alcance": "global"}, "ia-otro": {"tipo": "ia_openai", "alcance": "otro-flujo"},
+                 "buzon": {"tipo": "imap", "alcance": "global"}}
+        base = cadena(nodo("tema", "ia_clasificar", categorias=["a", "b"], salida="tema"))
+
+        def con(ia=None, **conf):
+            d = copy.deepcopy(base)
+            if ia is not None:
+                d["ia"] = ia
+            d["nodos"][1]["config"].update(conf)
+            return fd.validar(d, credenciales=creds)
+
+        self.assertEqual([p for p in con({"usar": "global"}) if "ia" in p.lower()], [])
+        self.assertTrue(any("desconocido" in p for p in con({"proveedor": "nadie", "modelo": "x"})))
+        self.assertTrue(any("necesita credencial" in p for p in con({"proveedor": "deepseek", "modelo": "deepseek-chat"})))
+        self.assertTrue(any("es de tipo imap" in p for p in con({"proveedor": "deepseek", "modelo": "deepseek-chat", "credencial": "buzon"})))
+        self.assertTrue(any("no existe" in p for p in con({"proveedor": "deepseek", "modelo": "deepseek-chat", "credencial": "no-esta"})))
+        self.assertTrue(any("del flujo «otro-flujo»" in p for p in con({"proveedor": "openai", "modelo": "gpt-4o", "credencial": "ia-otro"})))
+        self.assertTrue(any("voz en vivo" in p for p in con({"proveedor": "vertex", "modelo": "gemini-3.8-live"})))
+        self.assertEqual([p for p in con({"proveedor": "deepseek", "modelo": "deepseek-chat", "credencial": "ia-ds"}) if "ia" in p.lower()], [])
+        # por nodo: proveedor sin modelo, y visión que el modelo no tiene
+        self.assertTrue(any("hace falta también el modelo" in p for p in con(None, proveedor="openai")))
+        d = cadena(nodo("adj", "leer_adjuntos", vision=True), fin=nodo("fin", "salida", desenlace="manual"))
+        d["ia"] = {"proveedor": "deepseek", "modelo": "deepseek-chat", "credencial": "ia-ds"}
+        self.assertTrue(any("no acepta imágenes" in p for p in fd.validar(d, credenciales=creds)))
+        d["nodos"][1]["config"].pop("vision")  # sin pedirla explícitamente: no bloquea (se avisa al correr y queda solo OCR)
+        self.assertFalse(any("no acepta" in p for p in fd.validar(d, credenciales=creds)))
+        # la forma también la revisa la biblioteca de nodos: los comunes de IA están en el esquema de cada nodo de IA
+        props = nd.TIPOS["ia_extraer"]["config"]["properties"]
+        self.assertTrue(all(k in props and props[k].get("x-comun") for k in ("proveedor", "modelo", "credencial")))
+        self.assertEqual(nd.PROVEEDORES_IA, list(pv.PROVEEDORES))
+
+    # ------------------------------------------- un flujo de verdad con dos proveedores
+    def test_flujo_con_proveedor_propio_override_y_consumo(self):
+        d = cadena(nodo("tema", "ia_clasificar", categorias=["incapacidad", "otro"], salida="tema"),
+                   nodo("resumen", "resumir", proveedor="anthropic", modelo="claude-haiku-5-5", credencial="ia-claude", salida="resumen"))
+        d["ia"] = {"proveedor": "openai_compatible", "modelo": "modelo-local-7b", "credencial": "ia-local"}
+        creds = {"ia-local": cred("ia_compatible", secretos=["api_key"], base_url=f"{self.url}/v1", api_key=LLAVE_IA),
+                 "ia-claude": cred("ia_anthropic", secretos=["api_key"], api_key=LLAVE_CLAUDE)}
+        self.salida.seek(0)
+        self.salida.truncate()
+        asyncio.run(fd.procesar({"cmd": "procesar", "corrida": "x", "caso": CASO, "definicion": d, "credenciales": creds,
+                                 "ia_global": {"proveedor": "vertex", "modelo": "gemini-2.5-flash"}}))
+        eventos = [json.loads(x[len(fd.MARCA):]) for x in self.salida.getvalue().split(SALTO) if x.startswith(fd.MARCA)]
+        r = next(e for e in eventos if e["tipo"] == "resultado")
+        self.assertNotEqual(r["accion"], "error", r.get("motivo"))
+        self.assertEqual(r["variables"]["tema"], "incapacidad")
+        self.assertEqual(r["variables"]["resumen"], "hola, soy Claude falso")
+        fines = [e for e in eventos if e["tipo"] == "modelo_fin"]
+        self.assertEqual([f["proveedor"] for f in fines], ["openai_compatible", "anthropic"])
+        self.assertTrue(all("costo_estimado_usd" in f and "tokens_entrada" in f for f in fines))
+        c = r["consumo"]
+        self.assertEqual((c["tokens_entrada"], c["tokens_salida"], c["llamadas"]), (150, 30, 2))
+        self.assertEqual(set(c["por_proveedor"]), {"openai_compatible", "anthropic"})
+        self.assertEqual(c["por_proveedor"]["anthropic"]["modelos"], {"claude-haiku-5-5": 1})
+        self.assertEqual(r["ia"]["origen"], "flujo")
+        texto = self.salida.getvalue()
+        self.assertNotIn(LLAVE_IA, texto)
+        self.assertNotIn(LLAVE_CLAUDE, texto)
+        # sin la credencial (otro flujo no la recibe), la corrida no arranca: la validación lo dice
+        asyncio.run(fd.procesar({"cmd": "procesar", "corrida": "y", "caso": CASO, "definicion": d, "credenciales": {}}))
+        r = [json.loads(x[len(fd.MARCA):]) for x in self.salida.getvalue().split(SALTO) if x.startswith(fd.MARCA)][-1]
+        self.assertEqual(r["accion"], "error")
+        self.assertTrue(any("no existe o este flujo no la puede usar" in a for a in r["avisos"]), r["avisos"])
+
+    # ------------------------------------------------------------- Vertex de verdad
+    def test_vertex_de_verdad(self):
+        if os.environ.get("SIN_VERTEX"):
+            self.skipTest("SIN_VERTEX")
+        try:
+            import google.auth
+
+            google.auth.default()
+        except Exception:
+            self.skipTest("sin identidad de Google (ADC)")
+        pv_base.dormir = time.sleep
+        r = pv.generar("vertex", "gemini-2.5-flash", "Clasifica el texto.", tarea="Solicito el pago de mi incapacidad", esquema_json=ESQUEMA_CAT,
+                       temperatura=0.0, flujo="prueba")
+        self.assertEqual(r["json"]["categoria"], "incapacidad")
+        self.assertGreater(r["tokens_entrada"], 0)
+        self.assertGreater(r["costo_estimado_usd"], 0)
+
+
+class ParidadDeProveedores(unittest.TestCase):
+    """Los proveedores y sus tipos de credencial son los mismos en Python, en la biblioteca de nodos y en el servidor."""
+
+    def test_listas(self):
+        import shutil
+
+        self.assertEqual(nd.PROVEEDORES_IA, list(pv.PROVEEDORES))
+        tipos = {a.id: a.tipo_credencial for a in pv.PROVEEDORES.values()}
+        self.assertTrue({t for t in tipos.values() if t} <= set(nd.TIPOS_CREDENCIAL_IA))
+        dist = Path(os.environ.get("RUTA_SERVIDOR_DIST", "/app/servidor/dist")) / "ia.js"
+        node = shutil.which("node")
+        if not node or not dist.exists():
+            self.skipTest("no hay servidor compilado o node")
+        guion = "const f = await import(process.argv[1]); console.log(JSON.stringify({p: [...f.PROVEEDORES_IA], c: f.CREDENCIAL_DE}));"
+        p = subprocess.run([node, "--input-type=module", "-e", guion, dist.as_uri()], capture_output=True, text=True, encoding="utf-8", timeout=60)
+        r = json.loads(p.stdout.strip().splitlines()[-1])
+        self.assertEqual(r["p"], list(pv.PROVEEDORES))
+        self.assertEqual(r["c"], tipos)
 
 
 if __name__ == "__main__":

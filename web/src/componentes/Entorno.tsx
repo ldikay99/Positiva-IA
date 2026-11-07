@@ -7,16 +7,21 @@ import { textoJson } from "../editor/modelo.ts";
 import { Dialogo } from "./Dialogos.tsx";
 import { Interruptor } from "./Editores.tsx";
 import { FormularioCredencial } from "./Conexiones.tsx";
+import { CampoCron, CampoNumero } from "./Formulario.tsx";
+import { describirCron } from "../editor/modelo.ts";
 
 /**
  * El entorno de un flujo (de código o declarativo): sus variables y secretos,
  * sus conexiones propias junto a las globales que usa, y el manifiesto que se
- * revisa antes de llevarlo a producción.
+ * revisa antes de llevarlo a producción. Los flujos de código (pqrd, tutelas)
+ * tienen además «Ejecución»: la compuerta de radicación y la programación del job.
  */
 
-export type SeccionEntorno = "variables" | "conexiones" | "manifiesto";
+export type SeccionEntorno = "variables" | "conexiones" | "manifiesto" | "ejecucion";
 
 const NOMBRE = /^[A-Z][A-Z0-9_]{1,63}$/;
+// Tutelas usa en su job nombres con guiones (TUTELAS-REDIS-PASSWORD…): solo ahí se aceptan.
+const NOMBRE_CON_GUION = /^[A-Z][A-Z0-9_-]{1,63}$/;
 const HEADER_CONFIRMADO = { "X-Confirmado-Por-Persona": "si" };
 
 function hace(t?: number): string {
@@ -44,11 +49,14 @@ function FormularioVariable({ flujo, variable, existentes, alTerminar }: { flujo
   const editando = Boolean(variable);
   const tocaSecreto = secreto && cambiarSecreto && valor !== "";
   // Todo lo que toca un secreto (ponerlo, cambiarlo, describirlo o volverlo público) lo confirma una persona.
-  const pideConfirmar = secreto || Boolean(variable?.secreto);
+  const deCodigo = usar((s) => s.flujos.find((f) => f.id === flujo)?.tipo === "codigo");
+  // En un flujo de código las variables son las del job: deciden a dónde lee y escribe, así que también se confirman.
+  const pideConfirmar = secreto || Boolean(variable?.secreto) || deCodigo;
+  const conGuion = flujo === "tutelas";
 
   const revisar = () => {
     setError("");
-    if (!NOMBRE.test(nombre)) return setError("El nombre va en mayúsculas con guion bajo, por ejemplo SGDEA_URL o TOKEN_API."), false;
+    if (!(conGuion ? NOMBRE_CON_GUION : NOMBRE).test(nombre)) return setError(conGuion ? "El nombre va en mayúsculas, como en el job: TUTELAS-REDIS-PASSWORD o DATABASE_HOST." : "El nombre va en mayúsculas con guion bajo, por ejemplo SGDEA_URL o TOKEN_API."), false;
     if (!editando && existentes.includes(nombre)) return setError(`Ya existe ${nombre}: edítala en la lista.`), false;
     if (secreto && !editando && !valor) return setError("Escribe el valor del secreto."), false;
     return true;
@@ -82,7 +90,7 @@ function FormularioVariable({ flujo, variable, existentes, alTerminar }: { flujo
       <div className="c-rejilla">
         <div className="f-campo">
           <label className="f-etiqueta" htmlFor="ent-nombre"><span>Nombre</span><span className="f-obligatorio">obligatorio</span></label>
-          <input id="ent-nombre" className="campo mono" value={nombre} disabled={editando} placeholder="SGDEA_URL" autoFocus={!editando} onChange={(e) => setNombre(e.target.value.toUpperCase().replace(/[^A-Z0-9_]/g, "_"))} />
+          <input id="ent-nombre" className="campo mono" value={nombre} disabled={editando} placeholder="SGDEA_URL" autoFocus={!editando} onChange={(e) => setNombre(e.target.value.toUpperCase().replace(conGuion ? /[^A-Z0-9_-]/g : /[^A-Z0-9_]/g, "_"))} />
         </div>
         <div className="f-campo f-interruptor">
           <div className="crece">
@@ -122,6 +130,8 @@ function FormularioVariable({ flujo, variable, existentes, alTerminar }: { flujo
               <Icono n="candado" tam={16} />
               {variable?.secreto && !secreto ? (
                 <p>Vas a volver pública <b>{nombre}</b>: su valor dejará de estar cifrado y se verá en esta pantalla y en el manifiesto.</p>
+              ) : !secreto && !variable?.secreto ? (
+                <p>Vas a {editando ? "cambiar" : "poner"} <b>{nombre}</b> en el entorno de este flujo de código. Si es una variable del job, decide a dónde lee (y, con la radicación real encendida, a dónde escribe) el flujo.</p>
               ) : tocaSecreto ? (
                 <p>Vas a {variable?.secreto && variable.definido ? "reemplazar" : "guardar"} el secreto <b>{nombre}</b> de este flujo. Queda cifrado en el servidor, nadie lo vuelve a ver desde aquí y los nodos lo usan al correr.</p>
               ) : (
@@ -327,6 +337,10 @@ const TITULOS: Record<string, string> = {
   acceso: "Acceso", donde: "Dónde", que: "Qué hace", en_este_visor: "En este visor", origen: "Origen", para: "Para qué", secreto: "Secreto",
   verificado_en_job: "Verificado en el job", observaciones: "Observaciones", secreto_gcp: "Secreto en GCP",
   operacion: "Operación", consulta: "Consulta", ruta: "Ruta", categoria: "Categoría", accion: "Acción", ultima_ejecucion: "Última ejecución",
+  compuerta: "Compuerta de radicación", radicacion_real: "Radicación real", encendida_en_la_plataforma: "Encendida en la plataforma", permitido_en_despliegue: "Permitida en el despliegue",
+  estado: "Estado", cambiado_por: "Cambiada por", cambiado: "Cambiada", como_se_enciende: "Cómo se enciende", como_el_job: "Como el job", tope_por_corrida_s: "Tope por corrida (s)",
+  sin_solapes: "Sin solapes", activo: "Encendida", zona: "Zona", cron: "Cron", n: "Correos por corrida",
+  lecturas_con_la_compuerta_apagada: "Qué se lee de verdad con la compuerta apagada", con_credenciales: "Con credenciales", sin_credenciales: "Sin credenciales",
 };
 
 function etiqueta(k: string): string {
@@ -402,7 +416,7 @@ function Manifiesto({ flujo }: { flujo: string }) {
   };
   if (datos === undefined) return <div className="vacio"><span className="girando" />Armando el manifiesto…</div>;
   if (datos === null) return <div className="vacio grande"><Icono n="documento" tam={26} /><b>El manifiesto todavía no está disponible en el servidor.</b><button className="boton" onClick={() => void cargar()}>Volver a intentar</button></div>;
-  const escrituras = JSON.stringify(datos).match(/"(permitir_escritura|escribe|habilitada)":true/g)?.length ?? 0;
+  const escrituras = JSON.stringify(datos).match(/"(permitir_escritura|escribe|habilitada|radicacion_real)":true/g)?.length ?? 0;
   return (
     <div className="pila manifiesto">
       <div className="man-portada">
@@ -423,18 +437,221 @@ function Manifiesto({ flujo }: { flujo: string }) {
   );
 }
 
+// ------------------------------------------- ejecución (solo flujos de código)
+
+export interface EstadoCompuerta {
+  radicacion_real: boolean;
+  radicacion_real_efectiva?: boolean;
+  permitido_en_despliegue: boolean;
+  cambiado_por?: string;
+  cambiado?: number;
+  texto?: string;
+}
+
+interface Programacion {
+  cron: string;
+  zona: string;
+  activo: boolean;
+  n: number;
+  del_job?: { cron: string; zona: string; n: number };
+  tope_por_corrida_s?: number;
+  en_curso?: { desde: number; corridas: number } | null;
+  ultima_ejecucion?: number | null;
+}
+
+/** Lo que escribe cada job cuando la compuerta está encendida: se lee antes de confirmar. */
+const CONSECUENCIAS: Record<string, string[]> = {
+  pqrd: [
+    "Radica en SGDEA las PQRD que el motor dé por buenas.",
+    "Etiqueta, mueve y reenvía los correos del buzón servicioalcliente@positiva.gov.co.",
+    "Deja las trazas de radicación en Supabase.",
+  ],
+  tutelas: [
+    "Radica las tutelas en SGDEA y crea su trazabilidad.",
+    "Responde, etiqueta y mueve los hilos del buzón notificacionesjudiciales@positiva.gov.co.",
+    "Reclama cada radicado en Redis (el job lo verá como ya procesado).",
+  ],
+};
+
+/** Avisa a la barra superior que la compuerta cambió. */
+export const avisarCompuerta = (flujo: string, c: EstadoCompuerta) => window.dispatchEvent(new CustomEvent("positiva:compuerta", { detail: { flujo, ...c } }));
+
+function Compuerta({ flujo }: { flujo: string }) {
+  const avisar = usar((s) => s.avisar);
+  const [c, setC] = useState<EstadoCompuerta | null | undefined>(undefined);
+  const [confirmar, setConfirmar] = useState(false);
+  const [ocupado, setOcupado] = useState(false);
+  const cargar = useCallback(async () => {
+    try {
+      setC(await pedir<EstadoCompuerta>(`/api/flujos/${encodeURIComponent(flujo)}/compuerta`));
+    } catch {
+      setC(null);
+    }
+  }, [flujo]);
+  useEffect(() => void cargar(), [cargar]);
+
+  const cambiar = async (encender: boolean) => {
+    setOcupado(true);
+    try {
+      // El encabezado solo va tras la confirmación explícita de una persona en esta pantalla.
+      const r = await pedir<EstadoCompuerta>(`/api/flujos/${encodeURIComponent(flujo)}/compuerta`, { method: "PUT", headers: encender ? HEADER_CONFIRMADO : undefined, body: JSON.stringify({ radicacion_real: encender }) });
+      setC(r);
+      avisarCompuerta(flujo, r);
+      avisar(encender ? "Radicación real encendida: las corridas siguientes escriben como el job" : "Radicación real apagada: todo vuelve a la simulación", encender ? "error" : "ok");
+    } catch (e) {
+      avisar((e as Error).message, "error");
+    } finally {
+      setOcupado(false);
+      setConfirmar(false);
+    }
+  };
+
+  if (c === undefined) return <div className="vacio"><span className="girando" />Leyendo la compuerta…</div>;
+  if (c === null) return <div className="vacio"><Icono n="alerta" tam={20} /><b>No se pudo leer la compuerta.</b><button className="boton chico" onClick={() => void cargar()}>Volver a intentar</button></div>;
+  const efectiva = c.radicacion_real_efectiva ?? (c.radicacion_real && c.permitido_en_despliegue);
+  // Encender necesita la segunda llave; apagar siempre se puede.
+  const bloqueado = !efectiva && !c.permitido_en_despliegue && !c.radicacion_real;
+  return (
+    <section className="seccion">
+      <h3>Compuerta de radicación</h3>
+      <div className="ent-caja pila">
+        <div className="ent-principal">
+          <Icono n={efectiva ? "alerta" : "candado"} tam={16} />
+          <b className="crece">{efectiva ? "Radicación real: encendida" : "Radicación real: apagada (simulación)"}</b>
+          <span className={`ficha ${efectiva ? "tono-rojo" : "tono-gris"}`}>{efectiva ? "escribe como el job" : "nada se escribe"}</span>
+          <Interruptor
+            valor={c.radicacion_real}
+            peligro
+            etiqueta="Radicación real"
+            deshabilitado={ocupado || bloqueado || confirmar}
+            alCambiar={(v) => (v ? setConfirmar(true) : void cambiar(false))}
+          />
+        </div>
+        <p className="texto-2 chico">
+          {efectiva
+            ? "Las corridas de este flujo (también las programadas) escriben de verdad en SGDEA, el buzón y las trazas, como el job. Apágala para volver a la simulación."
+            : "Corre el proceso completo con el entorno real: lee lo que se puede leer en solo lectura y toda escritura (radicar, mover, etiquetar, responder, trazas) queda retenida y visible en cada corrida."}
+        </p>
+        {!c.permitido_en_despliegue && (
+          <p className="texto-3 chico">
+            <Icono n="candado" tam={11} /> Este despliegue no permite encenderla: falta la segunda llave <code>PERMITIR_RADICACION_REAL=si</code> en el entorno del contenedor. La pone quien despliega; Vera no puede.
+            {c.radicacion_real && " La compuerta figura encendida, pero sin esa llave no escribe nada."}
+          </p>
+        )}
+        {c.cambiado ? <p className="texto-3 chico">Cambiada {hace(c.cambiado)}{c.cambiado_por ? ` · ${c.cambiado_por}` : ""}</p> : null}
+        <AnimatePresence>
+          {confirmar && (
+            <motion.div className="c-confirmar" role="alertdialog" aria-label="Confirmar la radicación real" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }}>
+              <div className="c-confirmar-texto">
+                <Icono n="alerta" tam={16} />
+                <div>
+                  <p><b>Vas a encender la radicación real de este flujo.</b> Desde la próxima corrida deja de ser una simulación:</p>
+                  <ul className="man-frases">{(CONSECUENCIAS[flujo] ?? ["Escribe en los sistemas reales como el job."]).map((x) => <li key={x}>{x}</li>)}</ul>
+                  <p>Lo que se radique o se mueva no se deshace desde aquí. Si el job de producción también está corriendo, los dos pueden tomar los mismos correos.</p>
+                </div>
+              </div>
+              <div className="fila c-acciones">
+                <button type="button" className="boton" autoFocus onClick={() => setConfirmar(false)}>Cancelar</button>
+                <button type="button" className="boton peligro-solido" disabled={ocupado} onClick={() => void cambiar(true)}>{ocupado && <span className="girando" />}Sí, radicar de verdad</button>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </section>
+  );
+}
+
+function ProgramacionDelJob({ flujo }: { flujo: string }) {
+  const avisar = usar((s) => s.avisar);
+  const [p, setP] = useState<Programacion | null | undefined>(undefined);
+  const [borrador, setBorrador] = useState<Programacion | null>(null);
+  const [ocupado, setOcupado] = useState(false);
+  const cargar = useCallback(async () => {
+    try {
+      const r = await pedir<Programacion>(`/api/flujos/${encodeURIComponent(flujo)}/programacion`);
+      setP(r);
+      setBorrador(r);
+    } catch {
+      setP(null);
+    }
+  }, [flujo]);
+  useEffect(() => void cargar(), [cargar]);
+
+  const guardar = async (cambios: Partial<Programacion>) => {
+    setOcupado(true);
+    try {
+      await pedir(`/api/flujos/${encodeURIComponent(flujo)}/programacion`, { method: "PUT", body: JSON.stringify(cambios) });
+      avisar("Programación guardada");
+      await cargar();
+    } catch (e) {
+      avisar((e as Error).message, "error");
+    } finally {
+      setOcupado(false);
+    }
+  };
+
+  if (p === null) return <div className="vacio"><b>No se pudo leer la programación.</b><button className="boton chico" onClick={() => void cargar()}>Volver a intentar</button></div>;
+  if (p === undefined || !borrador) return <div className="vacio"><span className="girando" />Leyendo la programación…</div>;
+  const editado = borrador.cron !== p.cron || borrador.n !== p.n;
+  const delJob = p.del_job && p.cron === p.del_job.cron && p.n === p.del_job.n && p.zona === p.del_job.zona;
+  return (
+    <section className="seccion">
+      <h3>Programación como el job</h3>
+      <div className="ent-caja pila">
+        <div className="ent-principal">
+          <Icono n="calendario" tam={16} />
+          <b className="crece">{p.activo ? `Encendida: corre ${describirCron(p.cron)}` : "Apagada"}</b>
+          {delJob && <span className="ficha tono-gris">igual al Cloud Scheduler</span>}
+          <Interruptor valor={p.activo} etiqueta="Programación encendida" deshabilitado={ocupado} alCambiar={(v) => void guardar({ activo: v })} />
+        </div>
+        <p className="texto-2 chico">
+          En cada toque toma del buzón real (solo lectura) los siguientes {p.n} correos en el orden del job y los corre; nunca dos corridas a la vez, y cada una tiene un tope de {p.tope_por_corrida_s ?? 3600} s. Con la compuerta apagada, cada corrida es una simulación.
+        </p>
+        <CampoCron valor={borrador.cron} alCambiar={(cron) => setBorrador({ ...borrador, cron })} />
+        <div className="fila envuelve">
+          <span className="texto-2 chico">Correos por corrida</span>
+          <CampoNumero valor={borrador.n} min={1} max={150} alCambiar={(n) => setBorrador({ ...borrador, n: n ?? p.n })} />
+          <span className="texto-3 chico">Zona {p.zona}</span>
+          <span className="espacio" />
+          {p.del_job && !delJob && <button type="button" className="boton chico" disabled={ocupado} onClick={() => void guardar({ cron: p.del_job!.cron, zona: p.del_job!.zona, n: p.del_job!.n })}>Volver a la del job</button>}
+          {editado && <button type="button" className="boton chico primario" disabled={ocupado} onClick={() => void guardar({ cron: borrador.cron, n: borrador.n })}>{ocupado ? <span className="girando" /> : <Icono n="guardar" tam={13} />}Guardar</button>}
+        </div>
+        {(p.en_curso || p.ultima_ejecucion) && (
+          <p className="texto-3 chico">
+            {p.en_curso ? `Corrida programada en curso desde ${hace(p.en_curso.desde)} (${p.en_curso.corridas} correo${p.en_curso.corridas === 1 ? "" : "s"}). ` : ""}
+            {p.ultima_ejecucion ? `Último toque ${hace(p.ultima_ejecucion)}.` : ""}
+          </p>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function Ejecucion({ flujo }: { flujo: string }) {
+  return (
+    <div className="pila">
+      <Compuerta flujo={flujo} />
+      <ProgramacionDelJob flujo={flujo} />
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------- panel
 
-export function PanelEntorno({ abierto, seccion, cambiarSeccion, cerrar }: { abierto: boolean; seccion: SeccionEntorno; cambiarSeccion: (s: SeccionEntorno) => void; cerrar: () => void }) {
+export function PanelEntorno({ abierto, seccion: pedida, cambiarSeccion, cerrar }: { abierto: boolean; seccion: SeccionEntorno; cambiarSeccion: (s: SeccionEntorno) => void; cerrar: () => void }) {
+  const tipoActual = usar((s) => s.flujos.find((f) => f.id === s.flujo)?.tipo);
+  // «Ejecución» es solo de los flujos de código: en un declarativo se muestran las variables.
+  const seccion: SeccionEntorno = pedida === "ejecucion" && tipoActual !== "codigo" ? "variables" : pedida;
   const flujo = usar((s) => s.flujo);
   const nombre = usar((s) => s.flujos.find((f) => f.id === s.flujo)?.nombre ?? s.flujo);
   const tipo = usar((s) => s.flujos.find((f) => f.id === s.flujo)?.tipo);
   return (
     <Dialogo abierto={abierto} cerrar={cerrar} titulo={`Entorno de «${nombre}»`} sub={tipo === "codigo" ? "Flujo de código: estas variables y conexiones son solo suyas." : "Variables, secretos y conexiones solo de este flujo."} ancho={760}>
       <nav className="pestanas ent-pestanas" role="tablist" aria-label="Secciones del entorno">
-        {(["variables", "conexiones", "manifiesto"] as const).map((s) => (
+        {(tipo === "codigo" ? (["variables", "conexiones", "ejecucion", "manifiesto"] as const) : (["variables", "conexiones", "manifiesto"] as const)).map((s) => (
           <button key={s} role="tab" aria-selected={seccion === s} className={seccion === s ? "activa" : ""} onClick={() => cambiarSeccion(s)}>
-            {s === "variables" ? "Variables" : s === "conexiones" ? "Conexiones" : "Manifiesto"}
+            {s === "variables" ? "Variables" : s === "conexiones" ? "Conexiones" : s === "ejecucion" ? "Ejecución" : "Manifiesto"}
             {seccion === s && <motion.i layoutId="pestana-entorno" className="pestana-linea" />}
           </button>
         ))}
@@ -442,6 +659,7 @@ export function PanelEntorno({ abierto, seccion, cambiarSeccion, cerrar }: { abi
       <div className="ent-cuerpo">
         {seccion === "variables" && <Variables flujo={flujo} />}
         {seccion === "conexiones" && <ConexionesDelFlujo flujo={flujo} />}
+        {seccion === "ejecucion" && tipo === "codigo" && <Ejecucion flujo={flujo} />}
         {seccion === "manifiesto" && <Manifiesto flujo={flujo} />}
       </div>
     </Dialogo>

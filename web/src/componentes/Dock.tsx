@@ -7,6 +7,7 @@ import { Icono } from "../iconos.tsx";
 import { Selector, type OpcionSelector } from "./Selector.tsx";
 import { NOMBRES_DESENLACE, TONO_DESENLACE, motivoLegible, segundos } from "../progreso.ts";
 import type { Evento } from "../tipos.ts";
+import { PastillaConsumo, consumoDe, textoConsumo } from "./IA.tsx";
 
 // ------------------------------------------------------------ piezas comunes
 
@@ -157,7 +158,8 @@ export function Dock({ plegado, alternar }: { plegado: boolean; alternar: () => 
     const c = corridas[id];
     if (!c) return [];
     const estado = c.resultado ? (NOMBRES_DESENLACE[String(c.resultado.accion)] ?? String(c.resultado.accion)) : c.estado === "en_cola" ? "En espera" : "Corriendo";
-    return [{ valor: id, etiqueta: c.caso, texto: c.caso, detalle: estado }];
+    const gasto = textoConsumo(consumoDe(c.resultado));
+    return [{ valor: id, etiqueta: c.caso, texto: c.caso, detalle: gasto ? `${estado} · ${gasto}` : estado }];
   });
 
   // Sin corrida a la vista: una barra delgada que dice qué hacer.
@@ -194,6 +196,7 @@ export function Dock({ plegado, alternar }: { plegado: boolean; alternar: () => 
             {r ? (NOMBRES_DESENLACE[accion] ?? accion) : corrida.estado === "en_cola" ? "En espera" : "Corriendo"}
           </span>
         )}
+        {r && <PastillaConsumo r={r} />}
         <Selector valor={corrida.id} opciones={opcionesCorrida} alCambiar={(v) => verCorrida(v)} etiqueta="Corrida a la vista" tamano="chico" ancho={260} />
         <button className="boton chico" onClick={() => irA("adjuntos")} title="Cada adjunto hoja por hoja: imagen, texto, búsquedas y origen de cada dato"><Icono n="documento" tam={13} />Ver hojas</button>
         <button className="boton chico" onClick={() => enfocar({ tipo: "corrida", id: corrida.id })}>Ver resultado</button>

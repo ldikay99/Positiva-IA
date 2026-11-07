@@ -184,9 +184,9 @@ export function EditorJson({ valor, alCambiar }: { valor: unknown; alCambiar: (v
   );
 }
 
-export function Interruptor({ valor, alCambiar }: { valor: boolean; alCambiar: (v: boolean) => void }) {
+export function Interruptor({ valor, alCambiar, deshabilitado = false, etiqueta, peligro = false }: { valor: boolean; alCambiar: (v: boolean) => void; deshabilitado?: boolean; etiqueta?: string; peligro?: boolean }) {
   return (
-    <button role="switch" aria-checked={valor} className={`interruptor ${valor ? "si" : ""}`} onClick={() => alCambiar(!valor)}>
+    <button type="button" role="switch" aria-checked={valor} aria-label={etiqueta} disabled={deshabilitado} className={`interruptor ${valor ? "si" : ""} ${peligro ? "peligro" : ""}`} onClick={() => alCambiar(!valor)}>
       <span />
     </button>
   );

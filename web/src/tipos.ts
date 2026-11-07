@@ -151,6 +151,8 @@ export interface TableroFlujo {
   desenlaces: Record<string, number>;
   segundosMediana: number;
   tokens: number;
+  /** Lo que gastó en IA (tokens y costo estimado con precios aproximados). */
+  consumo?: { tokens_entrada: number; tokens_salida: number; costo_estimado_usd: number; llamadas: number; por_proveedor: Record<string, { tokens_entrada: number; tokens_salida: number; costo_estimado_usd: number; llamadas: number }> };
   enCurso: number;
   ultimas: { id: string; caso: string; accion: string; motivo: string; t: number }[];
   porDia: { dia: string; n: number; radicados: number }[];

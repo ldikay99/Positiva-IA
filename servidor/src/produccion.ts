@@ -23,12 +23,40 @@ export interface DescripcionProduccion {
   /** Verificado en la configuración real del job (`gcloud run jobs describe`, solo nombres) el 2026-11-07. */
   verificado_en_job: string;
   observaciones: string[];
+  /** La IA que usa (fija: los flujos de código no cambian de proveedor). */
+  ia?: { proveedor: "vertex"; modelos: string[]; ubicacion: string; autenticacion: string; fija: true };
 }
 
-const SIMULADA = "simulada (MODO_TEST): queda registrada como escritura retenida";
+const SIMULADA = "simulada mientras la compuerta de radicación esté apagada (MODO_TEST): queda registrada como escritura retenida";
+
+/**
+ * Lo que cada flujo de código lee DE VERDAD con la compuerta apagada (si su entorno
+ * tiene las credenciales) y lo que queda simulado. Es lo mismo que `docs/PRODUCCION.md`.
+ * Sin las credenciales de un sistema, el trabajador usa el doble de siempre y lo dice
+ * en el evento «fuentes» de cada corrida.
+ */
+export interface LecturaEnSimulacion { sistema: string; con_credenciales: string; sin_credenciales: string; escrituras: string }
+
+export const LECTURAS_EN_SIMULACION: Record<string, LecturaEnSimulacion[]> = {
+  pqrd: [
+    { sistema: "Microsoft Graph (buzón)", con_credenciales: "lee de verdad la carpeta, el hilo, los radicados con el mismo asunto y los adjuntos (solo GET; MICROSOFT_* y OUTLOOK_FOLDER_ID del entorno, o Secret Manager con el ADC)", sin_credenciales: "carpeta local de la bandeja: las consultas del buzón no encuentran nada", escrituras: "marcar, mover, reenviar y responder quedan retenidas (cliente HTTP que solo deja GET y el token)" },
+    { sistema: "Supabase (auditoría)", con_credenciales: "consulta de verdad radicados_pqrd para la capa de remitente y asunto (GET de PostgREST, solo select)", sin_credenciales: "capa apagada: el detector lo anota en el motivo", escrituras: "las trazas (insert) quedan retenidas en el grabador de MODO_TEST" },
+    { sistema: "Redis", con_credenciales: "no se lee: el job (correr.py) no le pasa caché de hashes al orquestador", sin_credenciales: "igual", escrituras: "ninguna" },
+    { sistema: "SGDEA", con_credenciales: "el registro de personas (GET) se consulta de verdad, como siempre", sin_credenciales: "igual (no usa secretos)", escrituras: "radicar, asignar y trazabilidad quedan retenidas (MODO_TEST: sin token, sin red)" },
+    { sistema: "Vertex AI (Gemini)", con_credenciales: "real, con el ADC del contenedor", sin_credenciales: "igual", escrituras: "ninguna" },
+  ],
+  tutelas: [
+    { sistema: "Microsoft Graph (buzón)", con_credenciales: "lee de verdad la carpeta de entrada y cada hilo con sus adjuntos al traerlos (solo GET; TUTELAS-MICROSOFT-* del entorno, o Secret Manager con el ADC)", sin_credenciales: "correos de la carpeta local", escrituras: "etiquetar, responder y mover quedan retenidas" },
+    { sistema: "Redis (deduplicación)", con_credenciales: "consulta de verdad si el radicado ya fue reclamado (GET de la llave tutelas:<hash>, cliente que solo deja leer)", sin_credenciales: "memoria vacía en cada corrida", escrituras: "reclamar (SET NX), liberar y marcar procesado quedan retenidos" },
+    { sistema: "Postgres (juzgados)", con_credenciales: "consulta de verdad la tabla juzgados con una sesión de solo lectura (default_transaction_read_only)", sin_credenciales: "la tabla juzgados_actualizada.csv del repositorio, con la misma búsqueda (también si la base no responde desde aquí)", escrituras: "ninguna" },
+    { sistema: "SGDEA", con_credenciales: "simulado: la única lectura del job (obtener_info_radicado) es sobre el número que devuelve la radicación, que con la compuerta apagada es de prueba", sin_credenciales: "igual", escrituras: "radicar y trazabilidad quedan retenidas (sesión de prueba sin red)" },
+    { sistema: "Vertex AI (Gemini)", con_credenciales: "real, con el ADC del contenedor", sin_credenciales: "igual", escrituras: "ninguna" },
+  ],
+};
 
 export const PRODUCCION: Record<string, DescripcionProduccion> = {
   pqrd: {
+    ia: { proveedor: "vertex", modelos: ["gemini-2.5-flash"], ubicacion: "global", autenticacion: "identidad del servicio (ADC) del proyecto positiva-sgda-prd-416417", fija: true },
     ejecucion: "Job de Cloud Run (proyecto positiva-sgda-prd-416417) que procesa la carpeta AUTOMATIZACION por lotes, con un orquestador y concurrencia por remitente.",
     disparador: { tipo: "job_programado", descripcion: "El job corre periódicamente y toma los correos de la carpeta AUTOMATIZACION del buzón servicioalcliente@positiva.gov.co, en orden y agrupados por hilo." },
     entorno: [
@@ -62,7 +90,7 @@ export const PRODUCCION: Record<string, DescripcionProduccion> = {
     escrituras: [
       { donde: "SGDEA", que: "Radica la solicitud con sus datos y adjuntos", en_este_visor: SIMULADA },
       { donde: "Buzón (Graph)", que: "Etiqueta, mueve o reenvía el correo según el desenlace", en_este_visor: SIMULADA },
-      { donde: "Supabase y Redis", que: "Trazas y huellas para deduplicar", en_este_visor: "no se escribe (MODO_TEST)" },
+      { donde: "Supabase y Redis", que: "Trazas y huellas para deduplicar", en_este_visor: "no se escribe mientras la compuerta esté apagada (MODO_TEST); Supabase se lee en solo lectura" },
       { donde: "Correo", que: "Avisos internos a CORREO_DE_AVISOS", en_este_visor: SIMULADA },
     ],
     despliegue: "Pipeline de Azure DevOps (id 69) del repositorio de radicación; nunca desde este visor.",
@@ -74,6 +102,7 @@ export const PRODUCCION: Record<string, DescripcionProduccion> = {
     ],
   },
   tutelas: {
+    ia: { proveedor: "vertex", modelos: ["gemini-2.5-flash"], ubicacion: "global", autenticacion: "identidad del servicio (ADC) del proyecto positiva-sgda-prd-416417", fija: true },
     ejecucion: "Job de Cloud Run (proyecto positiva-sgda-prd-416417) que procesa por hilo la carpeta de entrada de notificaciones judiciales.",
     disparador: { tipo: "job_programado", descripcion: "El job corre periódicamente y toma los hilos de la carpeta de entrada del buzón notificacionesjudiciales@positiva.gov.co." },
     entorno: [
@@ -102,7 +131,7 @@ export const PRODUCCION: Record<string, DescripcionProduccion> = {
     escrituras: [
       { donde: "SGDEA", que: "Radica la tutela y su trazabilidad", en_este_visor: SIMULADA },
       { donde: "Buzón (Graph)", que: "Responde o mueve el correo a radicación exitosa o revisión manual", en_este_visor: SIMULADA },
-      { donde: "Postgres y Redis", que: "Registro y deduplicación", en_este_visor: "dobles en memoria (modo prueba)" },
+      { donde: "Postgres y Redis", que: "Registro y deduplicación", en_este_visor: "con la compuerta apagada se leen en solo lectura (si hay credenciales) y las escrituras de Redis quedan retenidas" },
     ],
     despliegue: "Pipeline del repositorio ms-radicacion-ia-tutelas; nunca desde este visor.",
     verificado_en_job: "ms-radicacion-ia-tutelas (us-east1)",

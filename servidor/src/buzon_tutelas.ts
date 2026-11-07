@@ -3,6 +3,10 @@ import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { config } from "./config.ts";
+import { enmascarar, enmascararTexto, variantes } from "./enmascarar.ts";
+
+/** El entorno del flujo tutelas (TUTELAS-MICROSOFT-*) y sus valores secretos, para enmascararlos. Lo fija el servidor. */
+export const enlace = { entorno: (): Record<string, string> => ({}), secretos: (): string[] => [] };
 
 /**
  * El buzón de producción de TUTELAS, solo lectura, a través de `puente/buzon_tutelas.py`.
@@ -52,8 +56,9 @@ interface Traidos {
 
 function correrPython(args: string[], tope = 180_000): Promise<unknown> {
   return new Promise((resolver, rechazar) => {
+    const mascaras = variantes(enlace.secretos());
     const p = spawn(config.python, [script, ...args], {
-      env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUNBUFFERED: "1", RUTA_TRABAJO: join(config.datos, "trabajo") },
+      env: { ...process.env, ...enlace.entorno(), PYTHONIOENCODING: "utf-8", PYTHONUNBUFFERED: "1", RUTA_TRABAJO: join(config.datos, "trabajo") },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let salida = "";
@@ -66,9 +71,9 @@ function correrPython(args: string[], tope = 180_000): Promise<unknown> {
       // El progreso del motor va a stderr; la respuesta es la última línea JSON.
       const linea = salida.trim().split("\n").filter((l) => l.trim().startsWith("{")).pop() ?? "";
       try {
-        resolver(JSON.parse(linea));
+        resolver(enmascarar(JSON.parse(linea) as unknown, mascaras));
       } catch {
-        rechazar(new Error(errores.trim().split("\n").pop() || "el buzón de tutelas no respondió"));
+        rechazar(new Error(enmascararTexto(errores.trim().split("\n").pop() || "el buzón de tutelas no respondió", mascaras)));
       }
     });
   });

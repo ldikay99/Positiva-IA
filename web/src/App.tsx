@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
-import { guardarLocal, leerLocal, usar, type Vista } from "./estado.ts";
+import { guardarLocal, leerLocal, pedir, usar, type Vista } from "./estado.ts";
 import { Icono, type NombreIcono } from "./iconos.tsx";
 import { Bandeja } from "./componentes/Bandeja.tsx";
 import { Lienzo } from "./componentes/Lienzo.tsx";
@@ -13,7 +13,7 @@ import { VistaConfiguracion, VistaCorridas, VistaHerramientas, VistaLogs, VistaP
 import { VistaTablero, pedirAlAsistente } from "./componentes/Tablero.tsx";
 import { Chat } from "./componentes/Chat.tsx";
 import { VistaConexiones } from "./componentes/Conexiones.tsx";
-import { PanelEntorno, type SeccionEntorno } from "./componentes/Entorno.tsx";
+import { PanelEntorno, type EstadoCompuerta, type SeccionEntorno } from "./componentes/Entorno.tsx";
 import { DialogoNuevoFlujo } from "./componentes/Dialogos.tsx";
 
 const NAVEGACION: { id: Vista; nombre: string; icono: NombreIcono; pista: string; principal: boolean }[] = [
@@ -109,7 +109,37 @@ function Avisos() {
   );
 }
 
-function BarraSuperior({ alternarBandeja, bandejaVisible, abrirEntorno, nuevoFlujo }: { alternarBandeja: () => void; bandejaVisible: boolean; abrirEntorno: () => void; nuevoFlujo: () => void }) {
+/** «Radicación real: apagada (simulación)» o encendida, para los flujos de código. Abre «Ejecución». */
+function PastillaCompuerta({ flujo, abrir }: { flujo: string; abrir: () => void }) {
+  const [c, setC] = useState<EstadoCompuerta | null>(null);
+  useEffect(() => {
+    let vivo = true;
+    setC(null);
+    pedir<EstadoCompuerta>(`/api/flujos/${encodeURIComponent(flujo)}/compuerta`).then((r) => vivo && setC(r)).catch(() => undefined);
+    const oir = (e: Event) => {
+      const d = (e as CustomEvent<EstadoCompuerta & { flujo: string }>).detail;
+      if (d?.flujo === flujo) setC(d);
+    };
+    window.addEventListener("positiva:compuerta", oir);
+    return () => {
+      vivo = false;
+      window.removeEventListener("positiva:compuerta", oir);
+    };
+  }, [flujo]);
+  const real = Boolean(c && (c.radicacion_real_efectiva ?? (c.radicacion_real && c.permitido_en_despliegue)));
+  return (
+    <button
+      className={`pastilla boton-pastilla ${real ? "rojo" : ""}`}
+      onClick={abrir}
+      title={real ? "Las corridas de este flujo escriben de verdad en SGDEA y el buzón, como el job" : "Corre completo en simulación: lo que se radicaría o movería queda registrado aquí, sin enviarse"}
+    >
+      <Icono n={real ? "alerta" : "candado"} tam={11} />
+      {real ? "Radicación real: encendida" : "Radicación real: apagada (simulación)"}
+    </button>
+  );
+}
+
+function BarraSuperior({ alternarBandeja, bandejaVisible, abrirEntorno, nuevoFlujo }: { alternarBandeja: () => void; bandejaVisible: boolean; abrirEntorno: (seccion?: SeccionEntorno) => void; nuevoFlujo: () => void }) {
   const motor = usar((s) => s.motor);
   const configuracion = usar((s) => s.configuracion);
   const irA = usar((s) => s.irA);
@@ -162,7 +192,7 @@ function BarraSuperior({ alternarBandeja, bandejaVisible, abrirEntorno, nuevoFlu
       )}
       <span className="espacio" />
       {vista === "flujo" && (
-        <button className="boton chico boton-entorno" onClick={abrirEntorno} title="Variables, secretos, conexiones y manifiesto de este flujo">
+        <button className="boton chico boton-entorno" onClick={() => abrirEntorno()} title="Variables, secretos, conexiones y manifiesto de este flujo">
           <Icono n="llave" tam={14} /><span className="etq">Entorno</span>
         </button>
       )}
@@ -177,7 +207,11 @@ function BarraSuperior({ alternarBandeja, bandejaVisible, abrirEntorno, nuevoFlu
           <span className="pastilla verde" title={`Corre hasta ${listos} correos a la vez`}><span className="punto" />Listo para correr</span>
         )}
         {enCola > 0 && <span className="pastilla azul" title="Correos que esperan turno">{enCola} en espera</span>}
-        <span className="pastilla solo-ancho" title="Nada se escribe en SGDEA ni en el buzón real: lo que se radicaría o movería queda registrado aquí, sin enviarse"><Icono n="candado" tam={11} />Solo lectura</span>
+        {flujoActual?.tipo === "codigo" ? (
+          <PastillaCompuerta flujo={flujo} abrir={() => abrirEntorno("ejecucion")} />
+        ) : (
+          <span className="pastilla solo-ancho" title="Nada se escribe en SGDEA ni en el buzón real: lo que se radicaría o movería queda registrado aquí, sin enviarse"><Icono n="candado" tam={11} />Solo lectura</span>
+        )}
         <button className="pastilla boton-pastilla solo-ancho" onClick={() => irA("configuracion")} title="Modelo de IA en uso. Cámbialo en Ajustes"><Icono n="chispa" tam={12} />{nombreModelo(configuracion?.ia.modelo)}</button>
         {ajustes + reglas > 0 && <button className="pastilla ambar boton-pastilla solo-ancho" onClick={() => irA("configuracion")} title="Cambios propios sobre el código de producción. Revísalos en Ajustes">{ajustes + reglas} cambio{ajustes + reglas === 1 ? "" : "s"} propio{ajustes + reglas === 1 ? "" : "s"}</button>}
       </div>
@@ -411,7 +445,7 @@ export default function App() {
     <div className="app">
       <Riel movil={ancho <= 760} />
       <div className="marco">
-        <BarraSuperior alternarBandeja={alternar} bandejaVisible={bandeja} abrirEntorno={() => setEntorno({ abierto: true, seccion: "variables" })} nuevoFlujo={() => setNuevo(true)} />
+        <BarraSuperior alternarBandeja={alternar} bandejaVisible={bandeja} abrirEntorno={(seccion) => setEntorno({ abierto: true, seccion: seccion ?? "variables" })} nuevoFlujo={() => setNuevo(true)} />
         <main className="contenido">
           <AnimatePresence mode="wait" initial={false}>
             <motion.div key={vista} className="contenido-vista" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.16, ease: "easeOut" }}>

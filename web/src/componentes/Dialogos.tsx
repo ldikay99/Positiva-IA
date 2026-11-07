@@ -367,6 +367,8 @@ export function DialogoNuevoFlujo({ abierto, cerrar }: { abierto: boolean; cerra
         nombre: n,
         descripcion: descripcion.trim(),
         modelo: "gemini-2.5-flash",
+        // Los flujos nuevos usan la IA global de la plataforma (se cambia en «IA del flujo»).
+        ia: { usar: "global" },
         nodos: [
           { id: "inicio", tipo: disparador, nombre: td?.nombre ?? "Correo recibido", config: td ? configInicial(td) : {} },
           { id: "fin", tipo: "salida", nombre: "Revisión manual", config: { ...(ts ? valoresIniciales(ts.config) : {}), desenlace: "manual" } },

@@ -87,7 +87,8 @@ SISTEMA = IDENTIDAD + f"""
 Cómo trabajas:
 1. Antes de crear o cambiar un flujo, entiende qué necesita la persona; si falta algo esencial, pregunta una sola cosa concreta.
 2. Para crear o cambiar un flujo declarativo: arma la definición completa, validar_flujo, corrige hasta que no haya problemas, guardar_flujo y enfocar_flujo.
-3. Después de guardar, pruébalo con probar_flujo sobre un correo real que encaje (listar_correos) y revisa el resultado. Si algo sale mal, corrígelo y vuelve a probar.
+   Usa EXACTAMENTE los nombres que diga la persona (ids de flujo, campos de entrada, tablas, variables, categorías): si pide «un campo 'texto'», el campo se llama texto, no texto_entrada.
+3. Después de guardar, pruébalo: si la persona dio un ejemplo de entrada, córrelo con ESA entrada tal cual (correr_flujo con esperar=true); si no, con probar_flujo sobre un correo real que encaje (listar_correos) y revisa el resultado. Si algo sale mal, corrígelo y vuelve a probar.
 4. Conoces cada nodo por su ficha: antes de configurar un tipo que no hayas usado en esta conversación, llama a ayuda_nodo; para saber qué hay, tipos_de_nodo; para las reglas generales (plantillas, rama de error, reintentos), reglas_de_flujos. Si te preguntan cómo funciona un nodo, responde desde su ficha, con un ejemplo.
    Para cambios puntuales usa editar_nodo, agregar_nodo, eliminar_nodo y editar_aristas: cada una valida y guarda una versión nueva.
 5. Los flujos de código (pqrd, tutelas) tienen la estructura fija del código: puedes leerlos (listar_nodos, ver_nodo) y ajustar sus parámetros (ajustar_parametro_pqrd), no rehacerlos.
@@ -429,7 +430,9 @@ def ejecutar(nombre: str, a: Dict[str, Any]) -> Any:
             faltan = [c.get("nombre") for c in campos if c.get("obligatorio", True) and c.get("nombre") not in entrada]
             sobran = [k for k in entrada if k not in {c.get("nombre") for c in campos}]
             if faltan or (sobran and campos):
-                return {"error": "la entrada no coincide con lo que pide el flujo; corrígela y vuelve a correrlo sin preguntar",
+                return {"error": "la entrada no coincide con lo que pide el flujo. Si los nombres de la entrada son los que dijo la persona, el que está mal es el FLUJO: "
+                                 "corrige sus campos con editar_nodo (en el disparador entrada_manual y donde se usen) para que se llamen así, y vuelve a correrlo. "
+                                 "Si no, corrige la entrada. Hazlo sin preguntar.",
                         "campos_esperados": [{k: c.get(k) for k in ("nombre", "tipo", "obligatorio", "descripcion") if c.get(k) is not None} for c in campos],
                         "faltan": faltan, "sobran": sobran}
         if disparador and disparador.get("tipo") == "entrada_correo" and not cuerpo.get("caso"):

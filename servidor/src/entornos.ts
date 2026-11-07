@@ -15,12 +15,59 @@ import { cifrar, descifrar } from "./credenciales.ts";
  *   valores llegan solo a la corrida y las secretas salen enmascaradas). Los flujos
  *   de código arrancan sus trabajadores con su entorno encima del de la plataforma.
  * - Nunca se aceptan nombres protegidos (los que ponen en modo prueba al motor,
- *   las credenciales de los jobs, las rutas o los límites de la plataforma).
+ *   la compuerta de radicación, las rutas o los límites de la plataforma).
+ * - Los flujos de código (pqrd, tutelas) aceptan además EXACTAMENTE los nombres de
+ *   su job (`NOMBRES_DEL_JOB`), aunque choquen con la lista protegida: así su
+ *   entorno es el mismo del job. Solo los de tutelas llevan guiones (TUTELAS-…),
+ *   como en el job; ningún otro nombre puede llevarlos.
  */
 
 export const NOMBRE = /^[A-Z][A-Z0-9_]{0,63}$/;
 /** Lo que un flujo nunca puede poner en su entorno: lo maneja la plataforma. */
-export const PROTEGIDAS = /^(MODO_TEST|DEDUP_EN_PRUEBAS|SUPABASE_\w*|MICROSOFT_\w*|OUTLOOK_\w*|SGDEA_\w*|REDIS_\w*|PQRD_\w*|TUTELAS_\w*|GOOGLE_\w*|GCP_\w*|PROYECTO_SECRETOS|PATH|HOME|USER|SHELL|PYTHON\w*|NODE_\w*|NPM_\w*|LD_\w*|RUTA_\w*|CLAVE_CREDENCIALES|HTTP_HOSTS_PERMITIDOS|HTTPS?_PROXY|NO_PROXY|PUERTO|HOST|TRABAJADORES_MAX|TESSDATA_PREFIX|API_INTERNA|NIVEL_LOG|SSL_\w*|REQUESTS_CA_BUNDLE|CURL_\w*)$/;
+export const PROTEGIDAS = /^(MODO_TEST|DEDUP_EN_PRUEBAS|SUPABASE_\w*|MICROSOFT_\w*|OUTLOOK_\w*|SGDEA_\w*|REDIS_\w*|PQRD_\w*|TUTELAS_\w*|GOOGLE_\w*|GCP_\w*|PROYECTO_SECRETOS|PATH|HOME|USER|SHELL|PYTHON\w*|NODE_\w*|NPM_\w*|LD_\w*|RUTA_\w*|CLAVE_CREDENCIALES|HTTP_HOSTS_PERMITIDOS|HTTPS?_PROXY|NO_PROXY|PUERTO|HOST|TRABAJADORES_MAX|TESSDATA_PREFIX|API_INTERNA|NIVEL_LOG|SSL_\w*|REQUESTS_CA_BUNDLE|CURL_\w*|DATABASE_\w*)$/;
+/**
+ * Lo que NINGÚN flujo puede poner, ni siquiera un flujo de código con los nombres de
+ * su job: el modo prueba, la compuerta y su segunda llave, y lo interno de la plataforma.
+ */
+export const PROHIBIDAS_SIEMPRE = /^(MODO_TEST|MODO_UAT|DEDUP_EN_PRUEBAS|RADICACION_REAL|PERMITIR_RADICACION_REAL|SECRETOS_DEL_FLUJO|PROYECTO_SECRETOS|PATH|HOME|USER|SHELL|PYTHON\w*|NODE_\w*|NPM_\w*|LD_\w*|RUTA_\w*|CLAVE_CREDENCIALES|HTTP_HOSTS_PERMITIDOS|HTTPS?_PROXY|NO_PROXY|PUERTO|HOST|TRABAJADORES_MAX|TESSDATA_PREFIX|API_INTERNA|NIVEL_LOG|SSL_\w*|REQUESTS_CA_BUNDLE|CURL_\w*|GOOGLE_APPLICATION_CREDENTIALS|TEST_OUTPUT_DIR)$/;
+
+/**
+ * Los nombres de cada job, verificados en su configuración (`gcloud run jobs describe`,
+ * solo nombres) y en el código de su motor (`motor/config/settings.py`,
+ * `motores/tutelas/Tutelas/config.py`). Es la lista de `produccion.ts`, desplegada.
+ */
+export const NOMBRES_DEL_JOB: Record<string, ReadonlySet<string>> = {
+  pqrd: new Set([
+    "MICROSOFT_TENANT_ID", "MICROSOFT_CLIENT_ID", "MICROSOFT_CLIENT_SECRET",
+    "OUTLOOK_FOLDER_ID", "OUTLOOK_REFRESH_TOKEN", "OUTLOOK_USER_EMAIL",
+    "OUTLOOK_FOLDER_DUPLICADOS", "OUTLOOK_FOLDER_ERROR_RADICAR", "OUTLOOK_FOLDER_RADICACION_EXITOSA",
+    "OUTLOOK_FOLDER_REENVIADO_OTRA_AREA", "OUTLOOK_FOLDER_REVISAR_MANUAL",
+    "REDIS_PASSWORD", "REDIS_HOST", "REDIS_PORT",
+    "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY",
+    "SGDEA_CLIENT_SECRET", "SGDEA_PASSWORD", "SGDEA_TOKEN_URL", "SGDEA_CLIENT_ID", "SGDEA_USERNAME",
+    "OPENAI_API_KEY", "GOOGLE_API_KEY", "GCP_PROJECT", "GCP_LOCATION", "CORREO_DE_AVISOS",
+  ]),
+  tutelas: new Set([
+    "TUTELAS-MICROSOFT-TENANT", "TUTELAS-MICROSOFT-CLIENT-ID", "TUTELAS-MICROSOFT-CLIENT-SECRET",
+    "TUTELAS-MICROSOFT-USERNAME", "TUTELAS-MICROSOFT-PASSWORD", "TUTELAS-MICROSOFT-GRAPH-URL",
+    "TUTELAS-OUTLOOK-FOLDER-ENTRADA", "TUTELAS-OUTLOOK-FOLDER-REVISION-MANUAL", "TUTELAS-OUTLOOK-FOLDER-RADICACION-EXITOSA",
+    "TUTELAS-REDIS-HOST", "TUTELAS-REDIS-PORT", "TUTELAS-REDIS-USERNAME", "TUTELAS-REDIS-PASSWORD",
+    "TUTELAS-SGDEA-TOKEN-URL", "TUTELAS-SGDEA-API-URL", "TUTELAS-SGDEA-CLIENT-ID", "TUTELAS-SGDEA-USERNAME",
+    "TUTELAS-SGDEA-CLIENT-SECRET", "TUTELAS-SGDEA-PASSWORD",
+    "DATABASE_HOST", "DATABASE_PORT", "DATABASE_PASSWORD", "TUTELAS-DB-NAME", "TUTELAS-DB-USER", "TUTELAS-DATABASE-PASSWORD",
+    "TUTELAS-GCP-PROJECT", "TUTELAS-GCP-LOCATION", "TUTELAS-GEMINI-MODEL", "TUTELAS-RADICAR-ENLACE-CON-ADJUNTOS",
+  ]),
+};
+
+/** Por qué un nombre no vale en el entorno de ese flujo, o null si vale. */
+export function problemaDeNombre(flujo: string, nombre: string): string | null {
+  if (PROHIBIDAS_SIEMPRE.test(nombre)) return `${nombre} es una variable que maneja la plataforma: ningún flujo la puede cambiar`;
+  if (NOMBRES_DEL_JOB[flujo]?.has(nombre)) return null;
+  if (!NOMBRE.test(nombre)) return "nombre inválido: MAYÚSCULAS, números y _ (empieza por letra, hasta 64)";
+  if (PROTEGIDAS.test(nombre)) return `${nombre} es una variable que maneja la plataforma: un flujo no la puede cambiar`;
+  return null;
+}
+export const nombreValido = (flujo: string, nombre: string) => problemaDeNombre(flujo, nombre) === null;
 
 interface Guardada {
   secreto: boolean;
@@ -95,8 +142,8 @@ export async function nombres(flujo: string): Promise<string[]> {
 export type Resultado = { ok: true; variable: Vista } | { ok: false; error: string; codigo: number };
 
 export async function poner(flujo: string, nombre: string, cuerpo: unknown, confirmado: boolean): Promise<Resultado> {
-  if (!NOMBRE.test(nombre)) return { ok: false, codigo: 400, error: "nombre inválido: MAYÚSCULAS, números y _ (empieza por letra, hasta 64)" };
-  if (PROTEGIDAS.test(nombre)) return { ok: false, codigo: 400, error: `${nombre} es una variable que maneja la plataforma: un flujo no la puede cambiar` };
+  const problema = problemaDeNombre(flujo, nombre);
+  if (problema) return { ok: false, codigo: 400, error: problema };
   const b = (cuerpo ?? {}) as { valor?: unknown; secreto?: unknown; descripcion?: unknown };
   if (b.valor === undefined || b.valor === null || (typeof b.valor !== "string" && typeof b.valor !== "number" && typeof b.valor !== "boolean"))
     return { ok: false, codigo: 400, error: "falta valor (texto)" };
@@ -108,6 +155,9 @@ export async function poner(flujo: string, nombre: string, cuerpo: unknown, conf
   // Un secreto (o volver pública una que era secreta) solo lo pone una persona.
   if ((secreto || previo?.secreto) && !confirmado)
     return { ok: false, codigo: 403, error: "crear o cambiar una variable secreta requiere la confirmación de una persona (X-Confirmado-Por-Persona: si)" };
+  // Las variables del job (aunque no sean secretas) deciden a dónde lee y escribe el flujo: también las pone una persona.
+  if (NOMBRES_DEL_JOB[flujo]?.has(nombre) && !confirmado)
+    return { ok: false, codigo: 403, error: `${nombre} es una variable del job: la pone una persona con confirmación (X-Confirmado-Por-Persona: si)` };
   const g: Guardada = {
     secreto, descripcion: typeof b.descripcion === "string" ? b.descripcion.slice(0, 300) : (previo?.descripcion ?? ""), actualizado: Date.now(),
     ...(secreto ? { cifrado: cifrar(valor) } : { valor }),
@@ -119,7 +169,7 @@ export async function poner(flujo: string, nombre: string, cuerpo: unknown, conf
 
 /** Declara una variable secreta SIN valor (definido: false), p. ej. en la copia de un flujo: el valor lo pone una persona. */
 export async function declararSecreto(flujo: string, nombre: string, descripcion = ""): Promise<void> {
-  if (!NOMBRE.test(nombre) || PROTEGIDAS.test(nombre)) return;
+  if (!nombreValido(flujo, nombre)) return;
   const a = await leer(flujo);
   if (a.variables[nombre]) return;
   a.variables[nombre] = { secreto: true, descripcion: descripcion.slice(0, 300), actualizado: Date.now() };
@@ -145,7 +195,7 @@ export function paraCorrida(flujo: string): { valores: Record<string, string>; s
   const valores: Record<string, string> = {};
   const secretos: string[] = [];
   for (const [n, g] of Object.entries(a.variables)) {
-    if (PROTEGIDAS.test(n)) continue;
+    if (!nombreValido(flujo, n)) continue;
     if (g.secreto) {
       if (!g.cifrado) continue;
       valores[n] = descifrar(g.cifrado);
@@ -155,11 +205,21 @@ export function paraCorrida(flujo: string): { valores: Record<string, string>; s
   return { valores, secretos };
 }
 
-/** El entorno con que arrancan los trabajadores de un flujo de código (sin nombres protegidos). */
+/**
+ * El entorno con que arrancan los trabajadores de un flujo de código: sus variables
+ * válidas (los nombres del job incluidos) y, en SECRETOS_DEL_FLUJO, los NOMBRES de
+ * las secretas (nunca sus valores), para que el trabajador también las enmascare.
+ */
 export function paraProceso(flujo: string): Record<string, string> {
-  const r = paraCorrida(flujo).valores;
-  for (const k of Object.keys(r)) if (!NOMBRE.test(k)) delete r[k];
-  return r;
+  const { valores, secretos } = paraCorrida(flujo);
+  for (const k of Object.keys(valores)) if (!nombreValido(flujo, k)) delete valores[k];
+  return { ...valores, SECRETOS_DEL_FLUJO: secretos.join(",") };
+}
+
+/** Los VALORES secretos de un flujo, para enmascararlos en todo lo que el servidor reenvía o guarda. */
+export function valoresSecretos(flujo: string): string[] {
+  const { valores, secretos } = paraCorrida(flujo);
+  return secretos.map((n) => valores[n] ?? "").filter((v) => v.length > 0);
 }
 
 /** Los nombres desde la caché (síncrono). */
@@ -184,7 +244,7 @@ export async function migrarDesdeConfiguracion(flujo: string, global: Record<str
   if (a.migrado_desde_configuracion) return 0;
   let n = 0;
   for (const [k, v] of Object.entries(global)) {
-    if (!NOMBRE.test(k) || PROTEGIDAS.test(k) || a.variables[k]) continue;
+    if (!NOMBRE.test(k) || PROTEGIDAS.test(k) || PROHIBIDAS_SIEMPRE.test(k) || a.variables[k]) continue;
     a.variables[k] = { secreto: false, valor: v, descripcion: "migrada desde la configuración global", actualizado: Date.now() };
     n++;
   }

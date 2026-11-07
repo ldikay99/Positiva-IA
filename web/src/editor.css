@@ -408,3 +408,8 @@ ul.f-error { padding-left: 26px; }
 .man-frases { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; line-height: 1.5; color: var(--texto-2); }
 .c-oculto { -webkit-text-security: disc; }
 .c-secreto textarea { flex: 1; }
+/* IA del flujo y de cada nodo (IA.tsx) */
+.en-pop.ia-pop { width: min(420px, calc(100vw - 24px)); max-height: min(78vh, 640px); overflow: auto; }
+.ia-selector { gap: 10px; }
+.ia-selector .fichas { margin-top: 6px; }
+.en-ia-boton .etq { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -19,6 +19,19 @@ Nunca escribe en un sistema real:
   - Juzgados: la tabla del repositorio (juzgados_actualizada.csv), con la misma
     búsqueda que hace la consulta SQL, en solo lectura.
 La IA es la real: el AIExtractor del motor sobre Vertex.
+
+Con las credenciales reales en el entorno del flujo (los nombres TUTELAS-… del job),
+con la compuerta de radicación APAGADA lee de verdad sin escribir:
+  - Redis: si el radicado ya fue reclamado (GET de la llave, `RedisSoloLectura`);
+    reclamar, liberar y marcar procesado siguen retenidos.
+  - Postgres: la tabla juzgados, con una sesión de solo lectura; si no conecta,
+    la tabla del repositorio.
+SGDEA sigue simulado: su única lectura en el job es sobre el número que devuelve la
+radicación. Cada corrida dice en el evento «fuentes» qué fue real y qué un doble.
+
+Con la compuerta ENCENDIDA (RADICACION_REAL=si y PERMITIR_RADICACION_REAL=si) corre
+como el job: MODO_TEST=false, OutlookService, RedisService (con el cerrojo del buzón),
+JuzgadosService y SGDEAService reales. Solo atiende hilos traídos del buzón real.
 """
 from __future__ import annotations
 
@@ -41,13 +54,22 @@ MOTOR = Path(os.environ.get("RUTA_MOTOR_TUTELAS", RAIZ / "motores" / "tutelas"))
 BANDEJA = Path(os.environ.get("RUTA_BANDEJA", RAIZ / "datos" / "bandeja"))
 VIVO = Path(os.environ.get("RUTA_VIVO", RAIZ / "datos" / "vivo"))
 
-# Antes de importar el motor: su configuración se lee al importarse y exige
-# estos secretos aunque esté en prueba. Aquí no se usa ninguno.
-os.environ["MODO_TEST"] = "true"
+import solo_lectura  # noqa: E402  (junto a este archivo)
+
+# La compuerta se decide UNA vez, al arrancar: el servidor reemplaza al trabajador si cambia.
+REAL = solo_lectura.radicacion_real()
+_mascara = solo_lectura.Mascara().recordar()  # antes de tocar el entorno
+_SECRETOS = ("TUTELAS-MICROSOFT-CLIENT-SECRET", "TUTELAS-REDIS-PASSWORD", "TUTELAS-SGDEA-CLIENT-SECRET",
+             "TUTELAS-SGDEA-PASSWORD", "TUTELAS-DATABASE-PASSWORD")
+FALTANTES = solo_lectura.faltantes(_SECRETOS)
+
+# Antes de importar el motor: su configuración se lee al importarse y exige estos
+# secretos aunque esté en prueba. Los que trae el entorno del flujo se conservan.
+os.environ["MODO_TEST"] = "false" if REAL else "true"
 os.environ.pop("MODO_UAT", None)
-for _s in ("TUTELAS-MICROSOFT-CLIENT-SECRET", "TUTELAS-REDIS-PASSWORD", "TUTELAS-SGDEA-CLIENT-SECRET",
-           "TUTELAS-SGDEA-PASSWORD", "TUTELAS-DATABASE-PASSWORD"):
-    os.environ[_s] = "no-se-usa"
+for _s in _SECRETOS:
+    if not solo_lectura.definida(_s):
+        os.environ[_s] = "no-se-usa"
 os.environ.setdefault("TUTELAS-GCP-PROJECT", os.environ.get("GCP_PROJECT", "positiva-sgda-prd-416417"))
 # El Cloud Run Job de producción define TUTELAS-RADICAR-ENLACE-CON-ADJUNTOS=true
 # (gcloud run jobs describe ms-radicacion-ia-tutelas): con enlace y PDF anexo, radica.
@@ -70,7 +92,7 @@ NODO_DEL_MENSAJE = {"Codigo de juzgado": "radicado", "Afectado identificado": "r
 
 
 def evento(tipo: str, **datos: Any) -> None:
-    linea = json.dumps({"tipo": tipo, "corrida": _corrida.get(), "t": time.time(), **datos}, ensure_ascii=False, default=str)
+    linea = _mascara(json.dumps({"tipo": tipo, "corrida": _corrida.get(), "t": time.time(), **datos}, ensure_ascii=False, default=str))
     with _cerrojo:
         _salida.write(MARCA + linea + "\n")
         _salida.flush()
@@ -295,7 +317,13 @@ class OutlookDeDisco:
         return _anotar
 
 
-def _redis_en_memoria():
+def _redis_en_memoria(cliente=None):
+    """
+    El Redis del hilo con la compuerta apagada. Con `cliente` (un `RedisSoloLectura`
+    con las credenciales del job) consulta de verdad si la llave ya existe, que es lo
+    que decide el SET NX del job; el reclamo en sí queda retenido, en memoria.
+    """
+    from Tutelas.config import REDIS_CONFIG
     from Tutelas.services.redis_service import RedisService
 
     class RedisEnMemoria(RedisService):
@@ -303,10 +331,27 @@ def _redis_en_memoria():
 
         def __init__(self) -> None:
             self.reclamados: set = set()
+            self.config = REDIS_CONFIG
+
+        def _ya_reclamado_en_redis(self, h: str) -> bool:
+            if cliente is None or not h:
+                return False
+            t = time.time()
+            try:
+                existe = cliente.get(f"{self.config['prefix']}{h}") is not None
+            except Exception as e:
+                evento("lectura_real", sistema="redis", operacion="get", ok=False, ms=int((time.time() - t) * 1000),
+                       error=_mascara(f"{type(e).__name__}: {e}"[:300]), detalle="sin respuesta: se sigue como si no estuviera")
+                return False
+            evento("lectura_real", sistema="redis", operacion="get", ok=True, ms=int((time.time() - t) * 1000),
+                   resultado="ya reclamado (duplicado)" if existe else "no reclamado")
+            return existe
 
         def reclamar(self, texto, ttl_segundos: int = 2592000):
             h = self.generar_hash(texto)
-            nuevo = h not in self.reclamados
+            if not h:
+                return h, True
+            nuevo = h not in self.reclamados and not self._ya_reclamado_en_redis(h)
             self.reclamados.add(h)
             evento("escritura", sistema="redis", operacion="reclamar", bloqueada=True, detalle=[str(texto)[:160]], nuevo=nuevo)
             return h, nuevo
@@ -451,6 +496,100 @@ def _juzgados_del_csv():
     return JuzgadosDelCsv()
 
 
+def _cliente_redis_solo_lectura():
+    """El Redis del job (TUTELAS-REDIS-*) con un cliente que solo lee, o None si no hay clave."""
+    if not solo_lectura.definida("TUTELAS-REDIS-PASSWORD"):
+        _fuentes["redis"] = {"real": False, "detalle": "sin TUTELAS-REDIS-PASSWORD en el entorno del flujo: memoria vacía en cada corrida"}
+        return None
+    import redis
+    from Tutelas.config import REDIS_CONFIG
+
+    c = REDIS_CONFIG
+    real = redis.Redis(host=c["host"], port=c["port"], username=c["username"], password=c["password"],
+                       decode_responses=True, socket_timeout=10, socket_connect_timeout=10)
+    _fuentes["redis"] = {"real": True, "detalle": "consulta (GET) si el radicado ya fue reclamado; reclamar y marcar quedan retenidos"}
+    return solo_lectura.RedisSoloLectura(real)
+
+
+def _juzgados():
+    """La tabla juzgados de Postgres en solo lectura, o la del repositorio si no hay clave o no conecta."""
+    if not solo_lectura.definida("TUTELAS-DATABASE-PASSWORD"):
+        _fuentes["postgres"] = {"real": False, "detalle": "sin TUTELAS-DATABASE-PASSWORD en el entorno del flujo: tabla juzgados_actualizada.csv del repositorio"}
+        return _juzgados_del_csv()
+    from Tutelas.services.juzgados_service import JuzgadosService
+
+    class JuzgadosSoloLectura(JuzgadosService):
+        """El JuzgadosService del job sobre una sesión donde ninguna transacción escribe."""
+
+        def _conectar(self):
+            try:
+                self._conn = solo_lectura.conectar_postgres_solo_lectura(self.db_config)
+            except Exception as e:
+                self.error = _mascara(f"{type(e).__name__}: {e}"[:300])
+                self._conn = None
+
+    j = JuzgadosSoloLectura()
+    if j._conn is None:
+        _fuentes["postgres"] = {"real": False, "detalle": f"la base no respondió desde aquí ({getattr(j, 'error', '')}): tabla del repositorio"}
+        return _juzgados_del_csv()
+    _fuentes["postgres"] = {"real": True, "detalle": "tabla juzgados con sesión de solo lectura"}
+    for nombre in ("buscar_por_codigo", "buscar_por_nombre"):
+        original = getattr(j, nombre)
+
+        def envolver(f, n):
+            def envoltorio(*a, **k):
+                t = time.time()
+                r = f(*a, **k)
+                evento("proveedor", proveedor="juzgados", operacion=n, ok=True, encontrado=bool(r), documento=str(a[0] if a else ""),
+                       nombre=getattr(r, "nombre", "") if r else "", ms=int((time.time() - t) * 1000), real=True)
+                return r
+            return envoltorio
+        setattr(j, nombre, envolver(original, nombre))
+    return j
+
+
+class OutlookQueEscribe:
+    """Solo con la compuerta encendida: el OutlookService del job, con cada escritura anunciada."""
+
+    def __init__(self, real, principal: str) -> None:
+        if not solo_lectura.radicacion_real():
+            raise PermissionError("el buzón que escribe solo existe con la compuerta de radicación encendida")
+        self._real, self.principal = real, principal
+
+    def __getattr__(self, nombre: str):
+        import buzon_tutelas
+
+        f = getattr(self._real, nombre)
+        if nombre in buzon_tutelas.LECTURA or not callable(f):
+            return f
+
+        def _escribir(*a, **k):
+            _estado.get().escrituras.append(nombre)
+            r = f(*a, **k)
+            evento("escritura", sistema="buzon", operacion=nombre, bloqueada=False, ok=bool(r),
+                   detalle=[str(x)[:120] for x in a][:3], propio=bool(a) and str(a[0]) == self.principal)
+            return r
+        return _escribir
+
+
+_fuentes: Dict[str, Any] = {}
+
+
+def _anunciar_fuentes() -> None:
+    evento("compuerta", radicacion_real=REAL, texto=solo_lectura.ROTULO_ENCENDIDA if REAL else solo_lectura.ROTULO_APAGADA)
+    if REAL:
+        lecturas = [{"sistema": s, "real": True, "detalle": "como el job: lee y escribe"} for s in ("Microsoft Graph", "Redis", "Postgres", "SGDEA")]
+    else:
+        lecturas = [
+            {"sistema": "Microsoft Graph", "real": True, "detalle": "el hilo y sus adjuntos se leyeron del buzón real al traerlos (solo GET); etiquetar, responder y mover quedan retenidos"},
+            {"sistema": "Redis", **_fuentes.get("redis", {"real": False, "detalle": "memoria"})},
+            {"sistema": "Postgres", **_fuentes.get("postgres", {"real": False, "detalle": "tabla del repositorio"})},
+            {"sistema": "SGDEA", "real": False, "detalle": "radicar y trazabilidad quedan retenidas (sesión de prueba sin red)"},
+        ]
+    lecturas.append({"sistema": "Vertex AI", "real": True, "detalle": "modelo real con el ADC"})
+    evento("fuentes", lecturas=lecturas)
+
+
 def _ia_observada():
     """El AIExtractor real; se anuncian sus tres llamadas al modelo (extraer_todo solo las combina)."""
     from Tutelas.services.ai_extractor import AIExtractor
@@ -521,17 +660,39 @@ def procesar(orden: dict) -> None:
     except Exception as e:
         evento("resultado", caso=caso, accion="error", motivo=f"{type(e).__name__}: {e}"[:400], segundos=0)
         return
+    if REAL and not all(m.get("_vivo") and m.get("_flujo") == "tutelas" for _, m, _ in hilo):
+        # Una copia local no es un hilo de la bandeja del job: radicarla duplicaría.
+        evento("resultado", caso=caso, accion="error", segundos=0,
+               motivo="con la radicación real solo se corren hilos traídos del buzón real de tutelas")
+        return
     if "ia" not in _servicios:
         _servicios["ia"] = _ia_observada()
-        _servicios["juzgados"] = _juzgados_del_csv()
+        if REAL:
+            from Tutelas.services.juzgados_service import JuzgadosService
+            from Tutelas.services.outlook_service import OutlookService
+            from Tutelas.services.redis_service import RedisService
+            from Tutelas.services.sgdea_service import SGDEAService
+
+            _servicios["juzgados"] = JuzgadosService()
+            _servicios["outlook_real"] = OutlookService()
+            _servicios["redis_real"] = RedisService()
+            _servicios["sgdea_real"] = SGDEAService()
+        else:
+            _servicios["juzgados"] = _juzgados()
+            _servicios["redis_lectura"] = _cliente_redis_solo_lectura()
     correos = [c for _, _, c in hilo]
     principal = correos[-1]
     o = OrquestadorRadicacion.__new__(OrquestadorRadicacion)
-    o.outlook = OutlookDeDisco(hilo)
-    o.redis = _redis_en_memoria()
+    if REAL:
+        o.outlook = OutlookQueEscribe(_servicios["outlook_real"], principal.id)
+        o.redis = _servicios["redis_real"]
+        o.sgdea = _servicios["sgdea_real"]
+    else:
+        o.outlook = OutlookDeDisco(hilo)
+        o.redis = _redis_en_memoria(_servicios.get("redis_lectura"))
+        o.sgdea = _sgdea_de_prueba()
     o.ai = _servicios["ia"]
     o.juzgados = _servicios["juzgados"]
-    o.sgdea = _sgdea_de_prueba()
     o.sharepoint = SharePointService()
 
     # El paso 2.5 del job (enlace al expediente) no tiene número: se abre su nodo
@@ -546,11 +707,21 @@ def procesar(orden: dict) -> None:
         return enlace
     o._buscar_enlace_sharepoint = _buscar_enlace
 
-    evento("inicio", caso=caso, asunto=principal.subject, modelo="tutelas", flujo="tutelas",
+    evento("inicio", caso=caso, asunto=principal.subject, modelo="tutelas", flujo="tutelas", radicacion_real=REAL,
            hilo=[{"caso": carpeta.name, "recibido": c.fecha_recibido.isoformat(), "remitente": c.remitente_email} for carpeta, _, c in hilo])
+    _anunciar_fuentes()
     _abrir_nodo("hilo")
     evento("paso", nodo="hilo", titulo="Hilo de conversación", tono="ok",
            detalle=f"{len(correos)} correo(s) con el mismo conversationId; principal: el más reciente ({hilo[-1][0].name})")
+
+    # Como `ejecutar` del job: con escrituras reales, el buzón se reserva para que esta
+    # corrida y el job no se pisen. Si otra ejecución lo tiene, este hilo no se toca.
+    cerrojo = f"positiva-ia-{os.getpid()}-{caso}" if REAL else ""
+    if REAL and not o.redis.tomar_cerrojo(cerrojo):
+        _cerrar_nodo()
+        evento("resultado", caso=caso, accion="error", segundos=round(time.time() - t, 1),
+               motivo=f"otra ejecución tiene reservado el buzón ({o.redis.titular_cerrojo()}): el hilo no se toca")
+        return
 
     ok, error = False, None
     try:
@@ -564,6 +735,12 @@ def procesar(orden: dict) -> None:
             o._mover_hilo_fallido(correos, "ERROR-INESPERADO")
         except Exception as e2:
             op.fallo("Cerrar hilo con error", f"{type(e2).__name__}: {e2}")
+    finally:
+        if REAL:
+            try:
+                o.redis.soltar_cerrojo(cerrojo)
+            except Exception as e3:
+                op.fallo("Soltar el cerrojo del buzón", f"{type(e3).__name__}: {e3}")
     _cerrar_nodo()
 
     try:
@@ -590,8 +767,18 @@ async def principal() -> None:
     sys.stdout = _Consola()
     try:
         _estado.set(Estado())
+        from Tutelas import config as conf_tutelas
+
+        if REAL:
+            # Como el job: sin MODO_TEST y con todos sus secretos; si falta uno, no arranca.
+            if conf_tutelas.MODO_TEST or conf_tutelas.MODO_UAT:
+                raise RuntimeError("la compuerta está encendida pero el motor de tutelas quedó en modo prueba")
+            if FALTANTES:
+                raise RuntimeError("la compuerta está encendida pero faltan en el entorno del flujo: " + ", ".join(FALTANTES))
+        elif not conf_tutelas.MODO_TEST:
+            raise RuntimeError("el motor de tutelas no quedó en MODO_TEST: el visor no arranca")
         instalar_operaciones()
-        evento("listo", pid=os.getpid(), motor=str(MOTOR))
+        evento("listo", pid=os.getpid(), motor=str(MOTOR), radicacion_real=REAL)
     except Exception as e:
         evento("fallo_inicio", error=f"{type(e).__name__}: {e}", traza=traceback.format_exc()[-2500:])
         return
@@ -605,6 +792,15 @@ async def principal() -> None:
             continue
         if orden.get("cmd") in ("procesar", "procesar_lote"):
             items = [{"corrida": orden["corrida"], "caso": orden["caso"]}] if orden["cmd"] == "procesar" else orden["corridas"]
+            # La orden dice con qué compuerta la mandó el servidor: si no es la de este proceso, no se corre.
+            if bool(orden.get("radicacion_real", False)) != REAL:
+                for item in items:
+                    _corrida.set(item["corrida"])
+                    evento("resultado", caso=item["caso"], accion="error", segundos=0,
+                           motivo="la compuerta de radicación cambió: el trabajador se reinicia y no corre esta orden")
+                _corrida.set(None)
+                evento("libre")
+                return
             for item in items:
                 _corrida.set(item["corrida"])
                 await asyncio.to_thread(contextvars.copy_context().run, procesar, {**orden, **item})

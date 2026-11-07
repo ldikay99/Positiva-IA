@@ -6,9 +6,18 @@ y anuncia cada paso como evento. No modifica el motor: lo observa por los
 ganchos que ya tiene (cronómetro de etapas, `emitir`, el modelo, `invocar` de
 las herramientas y el grabador de MODO_TEST).
 
-Nunca escribe en un sistema real: MODO_TEST corta el envío a SGDEA, el buzón
-es de disco y las credenciales de Graph, SGDEA, Redis y Supabase son falsas.
-Sí consulta Vertex y el registro de personas, que son lecturas.
+Con la compuerta de radicación APAGADA (siempre, salvo que una persona la encienda
+y el despliegue tenga PERMITIR_RADICACION_REAL=si) nunca escribe en un sistema real:
+MODO_TEST corta el envío a SGDEA y las trazas, el buzón real va con un cliente que
+solo hace GET y lo que el job escribiría queda como escritura retenida. Con las
+credenciales reales en el entorno del flujo LEE de verdad: Graph (buzón, hilo,
+radicados) y Supabase (con `solo_lectura.ConsultaSupabase`, solo GET). Sin ellas,
+los dobles de siempre, y lo dice en el evento «fuentes». Vertex y el registro de
+personas son lecturas reales siempre.
+
+Con la compuerta ENCENDIDA (RADICACION_REAL=si y PERMITIR_RADICACION_REAL=si) corre
+como el job: MODO_TEST=false, OutlookService, RadicacionService y SupabaseService
+reales, escrituras reales. Solo atiende correos traídos del buzón real.
 
 Protocolo: una orden JSON por línea en stdin; eventos por stdout, cada uno en
 una línea que empieza con MARCA. Lo demás que imprima el motor sale como
@@ -37,14 +46,25 @@ MOTOR = Path(os.environ.get("RUTA_MOTOR", RAIZ / "motor"))
 BANDEJA = Path(os.environ.get("RUTA_BANDEJA", RAIZ / "datos" / "bandeja"))
 TRABAJO = Path(os.environ.get("RUTA_TRABAJO", RAIZ / "datos" / "trabajo"))
 
+import solo_lectura  # noqa: E402  (junto a este archivo)
+
+# La compuerta se decide UNA vez, al arrancar: el servidor reemplaza al trabajador si cambia.
+REAL = solo_lectura.radicacion_real()
+_mascara = solo_lectura.Mascara().recordar()  # antes de tocar el entorno
+_SECRETOS_DEL_JOB = ("MICROSOFT_CLIENT_ID", "MICROSOFT_CLIENT_SECRET", "MICROSOFT_TENANT_ID",
+                     "OUTLOOK_REFRESH_TOKEN", "OUTLOOK_FOLDER_ID", "SUPABASE_URL",
+                     "SUPABASE_SERVICE_ROLE_KEY", "SGDEA_CLIENT_SECRET", "SGDEA_PASSWORD")
+# Lo que la configuración del motor exige al importarse y no vino en el entorno del flujo.
+FALTANTES = solo_lectura.faltantes(_SECRETOS_DEL_JOB)
+
 # Antes de importar el motor: su configuración se lee al importarse.
-os.environ["MODO_TEST"] = "true"
+os.environ["MODO_TEST"] = "false" if REAL else "true"
 os.environ["DEDUP_EN_PRUEBAS"] = "false"
-for _var in ("MICROSOFT_CLIENT_ID", "MICROSOFT_CLIENT_SECRET", "MICROSOFT_TENANT_ID",
-             "OUTLOOK_REFRESH_TOKEN", "OUTLOOK_FOLDER_ID", "REDIS_PASSWORD",
-             "SUPABASE_SERVICE_ROLE_KEY", "SGDEA_CLIENT_SECRET", "SGDEA_PASSWORD"):
-    os.environ[_var] = "x"
-os.environ["SUPABASE_URL"] = "http://127.0.0.1:9"
+for _var in _SECRETOS_DEL_JOB + ("REDIS_PASSWORD",):
+    if not solo_lectura.definida(_var):  # lo real del entorno del flujo se conserva
+        os.environ[_var] = "x"
+if not solo_lectura.definida("SUPABASE_URL"):
+    os.environ["SUPABASE_URL"] = "http://127.0.0.1:9"
 os.environ.setdefault("TEST_OUTPUT_DIR", str(TRABAJO / "grabador"))
 os.environ.setdefault("RUTA_LOGS", str(TRABAJO / "logs"))
 os.chdir(MOTOR)  # el motor no carga ningún .env: no hay uno en su carpeta
@@ -98,8 +118,8 @@ _buzon_de_la_tarea: contextvars.ContextVar = contextvars.ContextVar("buzon_del_v
 
 
 def evento(tipo: str, **datos: Any) -> None:
-    linea = json.dumps({"tipo": tipo, "corrida": _actual["corrida"], "t": time.time(), **datos},
-                       ensure_ascii=False, default=str)
+    linea = _mascara(json.dumps({"tipo": tipo, "corrida": _actual["corrida"], "t": time.time(), **datos},
+                                ensure_ascii=False, default=str))
     with _cerrojo:
         _salida.write(MARCA + linea + "\n")
         _salida.flush()
@@ -234,7 +254,13 @@ def _reemplazar_en_modulos(original, nuevo) -> None:
 def instalar_ganchos() -> None:
     from config import settings
 
-    if not settings.MODO_TEST:
+    if REAL:
+        # Como el job: sin MODO_TEST y con todos sus secretos; si falta uno, no arranca.
+        if settings.MODO_TEST:
+            raise RuntimeError("la compuerta está encendida pero el motor quedó en MODO_TEST")
+        if FALTANTES:
+            raise RuntimeError("la compuerta está encendida pero faltan en el entorno del flujo: " + ", ".join(FALTANTES))
+    elif not settings.MODO_TEST:
         raise RuntimeError("el motor no quedó en MODO_TEST: el visor no arranca")
 
     from pipeline import agente, orquestador, radicador, revisor, salida  # noqa: F401  cargados antes de reemplazar
@@ -910,7 +936,7 @@ def aplicar_configuracion(parametros: Dict[str, Any], entorno: Dict[str, str]) -
             os.environ.pop(var, None)
         else:
             os.environ[var] = str(valor)
-    os.environ["MODO_TEST"] = "true"
+    os.environ["MODO_TEST"] = "false" if REAL else "true"
     os.environ["DEDUP_EN_PRUEBAS"] = "false"
     return fallidas
 
@@ -998,10 +1024,59 @@ def _correo(caso: str):
 
 def _buzon_para(carpeta: Path, crudo: dict, vivo: bool):
     if not vivo:
+        if REAL:
+            # Una copia local no es un correo de la bandeja del job: radicarla duplicaría.
+            raise PermissionError("con la radicación real solo se corren correos traídos del buzón real")
         return buzon_vivo.BuzonLocal(carpeta, crudo, evento)
     if _vivo["servicio"] is None:
-        _vivo["servicio"] = buzon_vivo.servicio()
+        _vivo["servicio"] = buzon_vivo.servicio(escribir=REAL)
+    if REAL:
+        return buzon_vivo.BuzonQueEscribe(_vivo["servicio"], carpeta, crudo, evento)
     return buzon_vivo.BuzonVivo(_vivo["servicio"], carpeta, crudo, evento)
+
+
+_fuentes: Dict[str, Any] = {}
+
+
+def _auditoria():
+    """
+    La capa de remitente y asunto (Supabase), como `correr._auditoria` del job.
+
+    Compuerta apagada: con SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY reales, el
+    SupabaseService del motor sobre `ConsultaSupabase` (solo GET); sus escrituras
+    siguen yendo al grabador de MODO_TEST. Sin ellas, la capa queda apagada.
+    Compuerta encendida: el SupabaseService real, como el job.
+    """
+    from config import settings
+    from services.supabase_client import SupabaseService
+
+    if REAL:
+        _fuentes["supabase"] = {"real": True, "detalle": "SupabaseService del job: lee y escribe"}
+        return SupabaseService()
+    if not (solo_lectura.definida("SUPABASE_URL") and solo_lectura.definida("SUPABASE_SERVICE_ROLE_KEY")):
+        _fuentes["supabase"] = {"real": False, "detalle": "sin SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY en el entorno del flujo: la capa de auditoría queda apagada"}
+        return None
+    s = SupabaseService()  # en MODO_TEST no crea cliente
+    s._client = solo_lectura.ConsultaSupabase(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY, evento, _mascara)
+    _fuentes["supabase"] = {"real": True, "detalle": "consulta radicados_pqrd con GET (solo select); las trazas quedan retenidas"}
+    return s
+
+
+def _anunciar_fuentes(vivo: bool) -> None:
+    """Qué se lee de verdad y qué es un doble en esta corrida, y en qué estado está la compuerta."""
+    evento("compuerta", radicacion_real=REAL, texto=solo_lectura.ROTULO_ENCENDIDA if REAL else solo_lectura.ROTULO_APAGADA)
+    graph = ({"real": True, "detalle": f"buzón real ({buzon_vivo.origen_credenciales() or 'credenciales de Graph'}); "
+              + ("escribe como el job" if REAL else "solo GET: las escrituras quedan retenidas")}
+             if vivo else {"real": False, "detalle": "correo de la carpeta local: las consultas del buzón no encuentran nada"})
+    lecturas = [
+        {"sistema": "Microsoft Graph", **graph},
+        {"sistema": "Supabase", **_fuentes.get("supabase", {"real": False, "detalle": "sin configurar"})},
+        {"sistema": "Redis", "real": False, "detalle": "el job no usa la caché de hashes (correr.py no se la pasa al orquestador)"},
+        {"sistema": "SGDEA", "real": REAL, "detalle": "radica de verdad" if REAL else "radicar, asignar y trazabilidad quedan retenidas (MODO_TEST)"},
+        {"sistema": "Registro de personas", "real": True, "detalle": "consulta (GET) real"},
+        {"sistema": "Vertex AI", "real": True, "detalle": "modelo real con el ADC"},
+    ]
+    evento("fuentes", lecturas=lecturas)
 
 
 def _orquestador(orden: Dict[str, Any], base: str):
@@ -1020,7 +1095,8 @@ def _orquestador(orden: Dict[str, Any], base: str):
         _registro = ConsultaDePersonas(url_base=settings.MS_SGDEA_BETA_URL)
     servicio = RadicacionService(timeout=45)
     orq = Orquestador(modelo=modelo, outlook=BuzonDelLote(), radicador=Radicador(servicio=servicio),
-                      base_workspace=str(TRABAJO / "ws" / base), sgdea=RegistroObservado(_registro))
+                      base_workspace=str(TRABAJO / "ws" / base), sgdea=RegistroObservado(_registro),
+                      auditoria=_auditoria())
     return orq, servicio, modelo
 
 
@@ -1048,8 +1124,9 @@ async def _atender(orq, modelo, corrida: str, caso: str, tope_s: float, lote: st
     _actual["umbral"] = _umbral_vigente()
     adjuntos.iniciar(corrida, TRABAJO)
     evento("inicio", caso=caso, asunto=crudo.get("subject", ""), modelo=modelo.nombre,
-           buzon="real" if vivo else "local", lote=lote,
+           buzon="real" if vivo else "local", lote=lote, radicacion_real=REAL,
            categorias=list(crudo.get("categories") or []) if vivo else [])
+    _anunciar_fuentes(vivo)
     try:
         r = await asyncio.wait_for(orq.procesar(email), tope_s)
         evento("resultado", caso=caso, accion=r.accion, motivo=r.motivo_manual,
@@ -1122,6 +1199,16 @@ async def principal() -> None:
         if orden.get("cmd") in ("procesar", "procesar_lote"):
             primera = orden["corrida"] if orden["cmd"] == "procesar" else orden["corridas"][0]["corrida"]
             _actual.nuevo(corrida=primera)
+            # La orden dice con qué compuerta la mandó el servidor: si no es la de este proceso, no se corre.
+            if bool(orden.get("radicacion_real", False)) != REAL:
+                items = [{"corrida": orden["corrida"], "caso": orden["caso"]}] if orden["cmd"] == "procesar" else orden["corridas"]
+                for item in items:
+                    _actual.nuevo(corrida=item["corrida"])
+                    evento("resultado", caso=item["caso"], accion="error", segundos=0,
+                           motivo="la compuerta de radicación cambió: el trabajador se reinicia y no corre esta orden")
+                _actual.nuevo(corrida=None)
+                evento("libre", lote=orden.get("lote", ""))
+                return
             fallidas = aplicar_configuracion(orden.get("parametros", {}), orden.get("entorno", {}))
             _reglas[:] = [r for r in orden.get("reglas", []) if isinstance(r, dict) and r.get("activa", True)]
             if fallidas:

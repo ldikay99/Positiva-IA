@@ -53,6 +53,7 @@ import {
 import { segundos } from "../progreso.ts";
 import { MenuContextual, type Opcion } from "./MenuContextual.tsx";
 import { DialogoCorrer, DialogoNombre } from "./Dialogos.tsx";
+import { PanelIaFlujo, rotuloIaFlujo } from "./IA.tsx";
 
 /**
  * El editor de un flujo declarativo: paleta de nodos, lienzo donde se
@@ -454,14 +455,15 @@ function BarraEditor({ abrirPaleta, paletaAbierta, abrirCorrer, ordenar }: { abr
   const avisar = usar((x) => x.avisar);
   const cambiarFlujo = usar((x) => x.cambiarFlujo);
   const irA = usar((x) => x.irA);
-  const [pop, setPop] = useState<"versiones" | "mas" | "borrar" | null>(null);
+  const [pop, setPop] = useState<"versiones" | "mas" | "borrar" | "ia" | null>(null);
   const [duplicar, setDuplicar] = useState(false);
   const [borrando, setBorrando] = useState(false);
   const caja = useRef<HTMLDivElement>(null);
   const malos = s.problemas.length;
   useEffect(() => {
     if (!pop) return;
-    const fuera = (e: PointerEvent) => !caja.current?.contains(e.target as globalThis.Node) && setPop(null);
+    // Las listas de los selectores se abren en una capa propia (fuera de la barra): elegir en ellas no cierra el panel.
+    const fuera = (e: PointerEvent) => !caja.current?.contains(e.target as globalThis.Node) && !(e.target as Element | null)?.closest?.(".selector-lista") && setPop(null);
     const tecla = (e: KeyboardEvent) => e.key === "Escape" && setPop(null);
     window.addEventListener("pointerdown", fuera, true);
     window.addEventListener("keydown", tecla);
@@ -491,10 +493,12 @@ function BarraEditor({ abrirPaleta, paletaAbierta, abrirCorrer, ordenar }: { abr
         <button className="boton-mini" disabled={!s.futuro.length} onClick={s.rehacer} aria-label="Rehacer" title="Rehacer (Ctrl+Shift+Z)"><Icono n="rehacer" tam={15} /></button>
       </div>
       <div className="en-pop-ancla">
+        <button className={`boton chico en-ia-boton ${pop === "ia" ? "activo" : ""}`} aria-expanded={pop === "ia"} title="IA del flujo: la global o una propia" onClick={() => setPop(pop === "ia" ? null : "ia")}><Icono n="chispa" tam={14} /><span className="etq">{rotuloIaFlujo(s.definicion.ia, s.definicion.modelo)}</span></button>
         <button className={`boton chico solo-ancho-editor ${pop === "versiones" ? "activo" : ""}`} aria-expanded={pop === "versiones"} onClick={() => setPop(pop === "versiones" ? null : "versiones")}><Icono n="historial" tam={14} />Versiones</button>
         <button className={`boton-mini ${pop === "mas" || pop === "borrar" ? "activo" : ""}`} aria-label="Más acciones" aria-expanded={pop === "mas"} title="Más acciones" onClick={() => setPop(pop ? null : "mas")}><Icono n="menu" tam={15} /></button>
         <AnimatePresence>
           {pop === "versiones" && <PanelVersiones key="v" cerrar={() => setPop(null)} />}
+          {pop === "ia" && <PanelIaFlujo key="ia" cerrar={() => setPop(null)} />}
           {pop === "mas" && (
             <motion.div key="m" className="en-pop menu" role="menu" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}>
               <button role="menuitem" className="menu-opcion solo-movil-editor" onClick={() => setPop("versiones")}><span className="menu-icono"><Icono n="historial" tam={14} /></span>Versiones</button>

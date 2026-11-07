@@ -8,7 +8,10 @@ import { config } from "./config.ts";
 import { ajustables, catalogo as catalogoDePqrd, type Catalogo } from "./catalogo.ts";
 import * as credenciales from "./credenciales.ts";
 import * as entornos from "./entornos.ts";
-import { PRODUCCION } from "./produccion.ts";
+import * as ia from "./ia.ts";
+import { PRODUCCION, LECTURAS_EN_SIMULACION } from "./produccion.ts";
+import * as compuerta from "./compuerta.ts";
+import { programacionDe, estado as estadoDelProgramador } from "./programador.ts";
 import type { Corrida } from "./motor.ts";
 
 /**
@@ -93,9 +96,69 @@ const CORCHETES = String.raw`\[\s*(?:"[^"]*"|'[^']*'|\d+|[A-Za-z_][A-Za-z0-9_]*\
 const RUTA = new RegExp(String.raw`^\s*(?:[A-Za-z0-9_]+|${CORCHETES})(?:\.[A-Za-z0-9_]+|${CORCHETES})*\s*$`);
 const ENCABEZADOS_SECRETOS = ["authorization", "proxy-authorization", "cookie", "x-api-key", "api-key", "apikey", "x-auth-token"];
 const METODOS_HTTP = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
-const OPERADOR = z.enum(["contiene", "coincide", "no_coincide", "igual", "vacio", "no_vacio"], { error: "operador: contiene, coincide, no_coincide, igual, vacio o no_vacio" });
-const filtroConf = conf({ campo: textoReq("campo"), operador: OPERADOR.optional(), valor: z.unknown().optional() });
-const OPS = ["plantilla", "asignar", "mayusculas", "minusculas", "titulo", "limpiar", "solo_digitos", "regex_extraer", "regex_reemplazar", "concatenar", "defecto"] as const;
+// Búsqueda robusta (igual que puente/conectores/busqueda.py): operadores de texto, números, fechas y longitud;
+// por defecto sin distinguir mayúsculas, tildes ni espacios de más.
+const OPERADORES = ["contiene", "no_contiene", "igual", "distinto", "empieza_con", "termina_con", "palabra", "contiene_alguna", "contiene_todas",
+  "en_lista", "no_en_lista", "parecido", "coincide", "no_coincide", "vacio", "no_vacio", "mayor", "menor", "mayor_igual", "menor_igual", "entre",
+  "antes_de", "despues_de", "entre_fechas", "longitud_igual", "longitud_mayor", "longitud_menor", "longitud_entre"] as const;
+const OPERADOR = z.enum(OPERADORES, { error: `operador: ${OPERADORES.join(", ")}` });
+const OPS_CON_VALOR = new Set<string>(["no_contiene", "igual", "distinto", "empieza_con", "termina_con", "palabra", "parecido", "coincide", "no_coincide",
+  "mayor", "menor", "mayor_igual", "menor_igual", "antes_de", "despues_de", "longitud_igual", "longitud_mayor", "longitud_menor"]);
+const OPS_CON_LISTA = new Set<string>(["contiene_alguna", "contiene_todas", "en_lista", "no_en_lista"]);
+const OPS_CON_RANGO = new Set<string>(["entre", "entre_fechas", "longitud_entre"]);
+const CONTAR = z.enum(["caracteres", "digitos", "letras", "palabras"], { error: "contar: caracteres, digitos, letras o palabras" });
+const opcionesBusqueda = {
+  comparacion: z.enum(["flexible", "exacta", "parecida"], { error: "comparacion: flexible, exacta o parecida" }).optional(),
+  umbral: z.number({ error: "umbral tiene que ser un número entre 0 y 1" }).min(0, "umbral entre 0 y 1").max(1, "umbral entre 0 y 1").optional(),
+  distinguir_mayusculas: booleano.optional(), distinguir_tildes: booleano.optional(), distinguir_espacios: booleano.optional(),
+};
+const longitudCampo = {
+  longitud: z.number().int().min(0, "longitud: entero de 0 en adelante").optional(),
+  longitud_min: z.number().int().min(0, "longitud_min: entero de 0 en adelante").optional(),
+  longitud_max: z.number().int().min(0, "longitud_max: entero de 0 en adelante").optional(),
+  contar: CONTAR.optional(), solo_digitos: booleano.optional(),
+};
+const minMaxOk = (c: { longitud_min?: number; longitud_max?: number }) => c.longitud_min === undefined || c.longitud_max === undefined || c.longitud_min <= c.longitud_max;
+const vacio = (x: unknown) => x === undefined || x === null || (typeof x === "string" && !x.trim()) || (Array.isArray(x) && !x.length);
+const partir = (x: unknown) => (Array.isArray(x) ? x : typeof x === "string" ? x.split(/\s*[|;\n]\s*/).filter((s) => s.trim()) : vacio(x) ? [] : [x]);
+const formaCondicion = {
+  campo: z.string({ error: "campo tiene que ser un nombre" }).trim().min(1, "falta campo").optional(),
+  campos: z.array(z.string().trim().min(1), { error: "campos tiene que ser una lista de nombres" }).min(1, "campos está vacío").optional(),
+  operador: OPERADOR.optional(), valor: z.unknown().optional(), valores: z.array(z.unknown(), { error: "valores tiene que ser una lista" }).optional(),
+  hasta: z.unknown().optional(), contar: CONTAR.optional(), ...opcionesBusqueda,
+};
+type Condicion = { campo?: string; campos?: string[]; operador?: string; valor?: unknown; valores?: unknown[]; hasta?: unknown };
+/** Lo que el motor exige a una condición (los números y fechas los revisa el motor). */
+function revisarCondicion(c: Condicion, ctx: z.RefinementCtx, exigirCampo: boolean) {
+  const mal = (path: string, message: string) => ctx.addIssue({ code: "custom", path: [path], message });
+  const op = c.operador ?? "contiene";
+  if (exigirCampo && !c.campo && !c.campos?.length) mal("campo", "falta campo (o campos)");
+  if (OPS_CON_VALOR.has(op) && vacio(c.valor)) mal("valor", `el operador «${op}» necesita valor`);
+  else if ((op === "coincide" || op === "no_coincide") && !regex("valor").safeParse(String(c.valor)).success) mal("valor", "patrón inválido");
+  if (OPS_CON_LISTA.has(op) && !partir(vacio(c.valores) ? c.valor : c.valores).length) mal("valores", `«${op}» necesita valores (una lista, o un texto con | o ;)`);
+  if (OPS_CON_RANGO.has(op)) {
+    const v = c.valor;
+    const dos = (Array.isArray(v) && v.length === 2) || (!vacio(v) && !vacio(c.hasta)) || (typeof v === "string" && partir(v).length === 2);
+    if (!dos) mal("valor", `«${op}» necesita dos límites: valor [mínimo, máximo] o valor y hasta`);
+  }
+}
+const condicionBusqueda = z.looseObject(formaCondicion, { error: "cada condición tiene que ser un objeto {campo, operador, valor}" })
+  .superRefine((c, ctx) => revisarCondicion(c, ctx, true));
+const listaCondiciones = (que: string) => z.array(condicionBusqueda, { error: `${que} tiene que ser una lista [{campo, operador, valor}]` }).min(1, `${que}: hace falta al menos una condición`);
+const MODO_BUSQUEDA = z.enum(["todas", "alguna"], { error: "modo: todas o alguna" });
+// Una sola condición en la config (campo, operador, valor) o varias en «condiciones» con modo todas/alguna; no las dos.
+const filtroConf = conf({ ...formaCondicion, condiciones: listaCondiciones("condiciones").optional(), modo: MODO_BUSQUEDA.optional() })
+  .superRefine((c, ctx) => {
+    if (c.condiciones) {
+      const mezcla = ["campo", "campos", "operador", "valor", "valores", "hasta"].filter((k) => (c as Record<string, unknown>)[k] !== undefined);
+      if (mezcla.length) ctx.addIssue({ code: "custom", path: ["condiciones"], message: `usa ${mezcla.join(", ")} o condiciones, no las dos formas a la vez` });
+      return;
+    }
+    if (!c.campo && !c.campos?.length) return void ctx.addIssue({ code: "custom", path: ["campo"], message: "falta campo (o condiciones)" });
+    revisarCondicion(c, ctx, false);
+  });
+const OPS = ["plantilla", "asignar", "mayusculas", "minusculas", "titulo", "limpiar", "solo_digitos", "sin_tildes", "regex_extraer", "regex_reemplazar",
+  "concatenar", "defecto", "recortar", "rellenar"] as const;
 const operacion = z.looseObject({
   op: z.enum(OPS, { error: `op: ${OPS.join(", ")}` }),
   salida: variable,
@@ -105,6 +168,15 @@ const operacion = z.looseObject({
   reemplazo: z.string().optional(),
   separador: z.string().optional(),
   grupo: z.number().int().min(0).optional(),
+  largo: z.number({ error: "largo: entero entre 1 y 100000" }).int("largo: entero entre 1 y 100000").min(1, "largo: entero entre 1 y 100000").max(100000, "largo: entero entre 1 y 100000").optional(),
+  lado: z.enum(["izquierda", "derecha"], { error: "lado: izquierda o derecha" }).optional(),
+  caracter: z.string().length(1, "caracter: un solo carácter (p. ej. «0»)").optional(),
+  sufijo: z.string().optional(),
+  ...longitudCampo, distinguir_mayusculas: booleano.optional(), distinguir_tildes: booleano.optional(),
+}).superRefine((o, ctx) => {
+  if ((o.op === "recortar" || o.op === "rellenar") && o.largo === undefined) ctx.addIssue({ code: "custom", path: ["largo"], message: `${o.op} necesita largo` });
+  if (o.op === "recortar" && o.contar && !["caracteres", "palabras"].includes(o.contar)) ctx.addIssue({ code: "custom", path: ["contar"], message: "recortar: contar es caracteres o palabras" });
+  if (!minMaxOk(o)) ctx.addIssue({ code: "custom", path: ["longitud_min"], message: "longitud_min es mayor que longitud_max" });
 });
 const DESENLACES_DECL = ["radicar", "manual", "reenviar", "descartar", "responder", "duplicado"] as const;
 
@@ -230,7 +302,13 @@ export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
     de: z.string().optional(), modo: z.enum(["reemplazar", "combinar", "insertar"], { error: "modo: reemplazar, combinar o insertar" }).optional(), ambito: AMBITO.optional(),
   }).refine((c) => (c.datos && Object.keys(c.datos).length) || c.de, { message: "tabla_guardar necesita datos ({campo: plantilla}) o de (una variable)", path: ["datos"] }),
   tabla_consultar: conf({
-    tabla: nombreTabla, clave: z.string().optional(), filtro: mapaPlantillas("filtro").optional(), limite: entre("limite", 1, 500).optional(),
+    tabla: nombreTabla, clave: z.string().optional(),
+    // {campo: valor} (iguales, sin distinguir mayúsculas ni tildes) o una lista de condiciones con operadores
+    filtro: z.unknown().superRefine((v, ctx) => {
+      const r = (Array.isArray(v) ? listaCondiciones("filtro") : mapaPlantillas("filtro")).safeParse(v);
+      if (!r.success) for (const i of r.error.issues) ctx.addIssue({ code: "custom", path: i.path.map((p) => (typeof p === "symbol" ? String(p) : p)), message: i.message });
+    }).optional(),
+    condiciones: listaCondiciones("condiciones").optional(), modo: MODO_BUSQUEDA.optional(), limite: entre("limite", 1, 500).optional(),
     orden: z.enum(["-creada", "creada", "-actualizada", "actualizada", "clave", "-clave"], { error: "orden: creada, actualizada o clave (con - para descendente)" }).optional(), ambito: AMBITO.optional(),
   }),
   para_cada: conf({
@@ -263,7 +341,7 @@ export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
   leer_adjuntos: conf({
     ocr: booleano.optional(), vision: booleano.optional(),
     tipos: z.array(z.string().regex(/^(pdf|imagen|docx|xlsx|texto|p7m|\.[a-z0-9]{1,6})$/i, "tipo: pdf, imagen, docx, xlsx, texto, p7m o una extensión como .pdf")).min(1).optional(),
-    nombre_patron: regex("nombre_patron").optional(),
+    nombre_patron: regex("nombre_patron").optional(), // sin distinguir mayúsculas ni tildes
     max_paginas: z.number().int().min(1, "max_paginas entre 1 y 60").max(60, "max_paginas entre 1 y 60").optional(),
     max_caracteres: z.number().int().positive().optional(),
   }),
@@ -286,7 +364,12 @@ export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
   }),
   extraer_regex: conf({
     de: z.string().optional(), patron: regex("patron").optional(),
-    campos: z.array(z.looseObject({ nombre: variable, patron: regex("patron"), grupo: z.number().int().min(0).optional(), todos: z.boolean().optional(), obligatorio: z.boolean().optional() })).min(1).optional(),
+    // sin distinguir mayúsculas ni tildes (salvo distinguir_*); longitud y solo_digitos saltan los candidatos que no cumplen
+    campos: z.array(z.looseObject({
+      nombre: variable, patron: regex("patron"), grupo: z.number().int().min(0).optional(), todos: z.boolean().optional(), obligatorio: z.boolean().optional(),
+      ...longitudCampo, distinguir_mayusculas: booleano.optional(), distinguir_tildes: booleano.optional(),
+    }).refine(minMaxOk, { message: "longitud_min es mayor que longitud_max", path: ["longitud_min"] })).min(1).optional(),
+    ...longitudCampo, distinguir_mayusculas: booleano.optional(), distinguir_tildes: booleano.optional(),
   }).refine((c) => c.campos || (c.patron && c.salida), { message: "faltan campos: [{nombre, patron}] (o patron y salida)", path: ["campos"] }),
   validar: conf({
     reglas: z.array(z.looseObject({
@@ -366,6 +449,7 @@ const nodo = z.object({
   if (c.deshabilitado === true && NO_DESHABILITABLES.has(n.tipo)) problema("deshabilitado", `un nodo ${n.tipo} no se puede deshabilitar`);
   if (c.continuar_si_falla === true && TERMINALES.has(n.tipo)) problema("continuar_si_falla", `un nodo ${n.tipo} no puede continuar si falla: no tiene por dónde seguir`);
   if (c.reintentos !== undefined && !TIPOS_CON_REINTENTOS.has(n.tipo)) problema("reintentos", "reintentos solo aplica a los nodos de IA, conectores, llamar_flujo, enviar, notificar y http");
+  ia.revisarNodo(n.tipo, c, problema);  // proveedor, modelo y credencial de IA del nodo (forma; lo demás lo revisa el motor)
 });
 
 export const definicion = z.object({
@@ -373,6 +457,8 @@ export const definicion = z.object({
   nombre: z.string().min(2).max(80),
   descripcion: z.string().max(800).nullish().transform((v) => v ?? ""),
   modelo: z.string().default("gemini-2.5-flash"),
+  /** La IA del flujo: {usar: "global"} o {proveedor, modelo, credencial?, temperatura?}. Sin ella (flujos de antes): Vertex con «modelo». */
+  ia: ia.iaFlujo.optional(),
   nodos: z.array(nodo).min(2).max(100),
   aristas: z.array(z.object({ desde: z.string(), hacia: z.string(), cuando: z.string().optional() })).max(300),
   /** Posición de cada nodo en el editor: {id_nodo: {x, y}}. No afecta la ejecución. */
@@ -475,7 +561,7 @@ export function validar(entrada: unknown, nombresExtra: string[] = []): Promise<
         resolver({ ok: false, problemas: ["no se pudo validar el flujo"], definicion: r.data });
       }
     });
-    p.stdin.end(JSON.stringify({ definicion: r.data, entorno: nombres }));
+    p.stdin.end(JSON.stringify({ definicion: r.data, entorno: nombres, credenciales: ia.metadatosCredenciales(), ia_global: ia.obtenerGlobal() }));
   });
 }
 
@@ -498,7 +584,7 @@ const rutaVersion = (id: string, v: number) => join(carpetaDeclarativos(), "vers
 export async function guardar(entrada: unknown, nota?: string, nombresExtra: string[] = []): Promise<{ ok: boolean; problemas: string[]; flujo?: Flujo }> {
   const id = (entrada as { id?: unknown })?.id;
   const previo = typeof id === "string" ? declarativos.get(id) : undefined;
-  const v = await validar(conSecretos(entrada, previo?.definicion), nombresExtra);
+  const v = await validar(conSecretos(ia.conIaPorDefecto(entrada, !previo), previo?.definicion), nombresExtra);
   if (!v.ok || !v.definicion) return { ok: false, problemas: v.problemas };
   if (esDeCodigo(v.definicion.id)) return { ok: false, problemas: [`«${v.definicion.id}» es un flujo de código: elige otro id`] };
   const version = (previo?.version ?? 0) + 1;
@@ -626,7 +712,7 @@ const ENV_VIEJA = /^[A-Z][A-Z0-9_]{2,63}$/;
 
 /** Las credenciales guardadas que nombra una definición (la forma vieja de http, una variable de entorno, no cuenta). */
 export function credencialesUsadas(d: Definicion): string[] {
-  return [...new Set(d.nodos.map((n) => (n.config as { credencial?: unknown }).credencial).filter((x): x is string => typeof x === "string" && !ENV_VIEJA.test(x)))];
+  return [...new Set([...d.nodos.map((n) => (n.config as { credencial?: unknown }).credencial).filter((x): x is string => typeof x === "string" && !ENV_VIEJA.test(x)), ...ia.credencialesDeIa(d)])];
 }
 
 function subflujosDe(d: Definicion, pila: string[], acumulado: Record<string, unknown> = {}): Record<string, unknown> {
@@ -660,7 +746,7 @@ export function ordenPara(id: string, corrida: Corrida): Record<string, unknown>
   const ent = entornos.paraCorrida(id);
   return {
     definicion: f.definicion, flujo: id, entrada: corrida.entrada ?? {}, origen: corrida.origen ?? "bandeja",
-    credenciales: credenciales.paraCorrida(id, credencialesUsadas(f.definicion)), entorno: ent.valores, entorno_secretos: ent.secretos,
+    credenciales: credenciales.paraCorrida(id, credencialesUsadas(f.definicion)), entorno: ent.valores, entorno_secretos: ent.secretos, ia_global: ia.obtenerGlobal(),
     subflujos: subflujosDe(f.definicion, [id]),
   };
 }
@@ -723,15 +809,28 @@ export async function manifiesto(id: string): Promise<Record<string, unknown> | 
   const base = { manifiesto: 1, generado: new Date().toISOString(), flujo: { id: f.id, nombre: f.nombre, descripcion: f.descripcion, tipo: f.tipo, version: f.version ?? null, actualizado: f.actualizado ?? null } };
   if (f.tipo === "codigo" || !f.definicion) {
     const prod = PRODUCCION[f.id];
+    const c = compuerta.obtener(f.id);
+    const real = compuerta.radicacionReal(f.id);
+    const p = programacionDe(f.id);
     return {
       ...base,
       disparador: prod?.disparador ?? { tipo: "buzon_real", descripcion: "lo corre el job o el visor sobre el buzón de solo lectura de la plataforma" },
+      // La compuerta de radicación: apagada, todo se simula; encendida (con la segunda llave del despliegue), escribe como el job.
+      compuerta: {
+        radicacion_real: real, encendida_en_la_plataforma: c.radicacion_real, permitido_en_despliegue: c.permitido_en_despliegue,
+        estado: compuerta.rotulo(f.id), ...(c.cambiado_por ? { cambiado_por: c.cambiado_por } : {}), ...(c.cambiado ? { cambiado: c.cambiado } : {}),
+        como_se_enciende: "Una persona la enciende en la web con confirmación explícita (X-Confirmado-Por-Persona: si) y solo si el contenedor tiene PERMITIR_RADICACION_REAL=si.",
+      },
+      ...(p ? { programacion: { ...p, como_el_job: true, tope_por_corrida_s: 3600, sin_solapes: true, ultima_ejecucion: estadoDelProgramador()[`j:${f.id}`] ?? null } } : {}),
+      lecturas_con_la_compuerta_apagada: LECTURAS_EN_SIMULACION[f.id] ?? [],
+      ...(prod?.ia ? { ia: prod.ia } : {}),
       ejecucion: prod?.ejecucion,
       // Las variables propias del flujo en esta plataforma y las que usa el job en producción (sin valores).
       entorno: variables,
       entorno_produccion: prod?.entorno ?? [],
       conexiones: prod?.conexiones ?? [],
-      escrituras: prod?.escrituras ?? [{ donde: "SGDEA", que: "Radicación", en_este_visor: "simulada (MODO_TEST)" }],
+      escrituras: (prod?.escrituras ?? [{ donde: "SGDEA", que: "Radicación", en_este_visor: "simulada (MODO_TEST)" }])
+        .map((x) => (real ? { ...x, en_este_visor: "ESCRIBE DE VERDAD: la compuerta de radicación está encendida" } : x)),
       despliegue: prod?.despliegue,
       verificado_en_job: prod?.verificado_en_job,
       observaciones: prod?.observaciones ?? [],
@@ -772,6 +871,7 @@ export async function manifiesto(id: string): Promise<Record<string, unknown> | 
     },
     nodos: d.nodos.map((n) => ({ id: n.id, tipo: n.tipo, nombre: n.nombre, escritura: TIPOS_ESCRITURA.has(n.tipo), ...((n.config as { credencial?: unknown }).credencial ? { credencial: (n.config as { credencial?: unknown }).credencial } : {}) })),
     conexiones,
+    ia: ia.manifiestoIa(d),
     hosts_http: hosts,
     entorno: variables.map((v) => ({ ...v, usado: usadasEntorno.includes(v.nombre) })),
     entorno_sin_definir: usadasEntorno.filter((n) => !variables.some((v) => v.nombre === n)),
@@ -819,6 +919,30 @@ const valorDe = (x: unknown, clave = "valor") => (typeof x === "object" && x ? S
 const lista = (x: unknown) => (Array.isArray(x) ? (x as unknown[]) : []);
 const corto = (x: unknown, n = 160) => { const t = typeof x === "string" ? x : JSON.stringify(x ?? ""); return t.length > n ? `${t.slice(0, n)}…` : t; };
 
+/** «asunto o cuerpo contiene_alguna «tutela | desacato»» con la forma de comparar si no es la flexible. */
+function describirCondicion(x: Record<string, unknown>): string {
+  const campos = Array.isArray(x.campos) ? (x.campos as unknown[]).map(String) : [];
+  if (typeof x.campo === "string" && x.campo) campos.unshift(x.campo);
+  const op = String(x.operador ?? "contiene");
+  const t = (v: unknown) => (typeof v === "string" ? v : JSON.stringify(v));
+  const valor = op === "vacio" || op === "no_vacio" ? ""
+    : OPS_CON_LISTA.has(op) ? ` «${partir(vacio(x.valores) ? x.valor : x.valores).map(t).join(" | ")}»`
+      : OPS_CON_RANGO.has(op) ? (Array.isArray(x.valor) ? ` «${t(x.valor[0])}» y «${t(x.valor[1])}»` : ` «${t(x.valor)}» y «${t(x.hasta)}»`)
+        : ` «${t(x.valor ?? "")}»`;
+  const comp = x.comparacion === "exacta" ? " (exacta)" : x.comparacion === "parecida" || op === "parecido" ? ` (parecida ≥ ${String(x.umbral ?? 0.85)})` : "";
+  return `${campos.length ? campos.join(" o ") : "texto"} ${op}${valor}${comp}${x.contar && op.startsWith("longitud") ? ` (${String(x.contar)})` : ""}`;
+}
+
+/** « · solo dígitos, entre 6 y 10 caracteres» para un campo con longitud. */
+function describirLongitud(f: Record<string, unknown>): string {
+  const u = String(f.contar ?? "caracteres").replace("digitos", "dígitos");
+  const partes = [f.solo_digitos === true ? "solo dígitos" : "",
+    f.longitud !== undefined ? `exactamente ${String(f.longitud)} ${u}`
+      : f.longitud_min !== undefined && f.longitud_max !== undefined ? `entre ${String(f.longitud_min)} y ${String(f.longitud_max)} ${u}`
+        : f.longitud_min !== undefined ? `al menos ${String(f.longitud_min)} ${u}` : f.longitud_max !== undefined ? `como mucho ${String(f.longitud_max)} ${u}` : ""].filter(Boolean);
+  return partes.length ? ` · ${partes.join(", ")}` : "";
+}
+
 function describirConfig(n: Definicion["nodos"][number], aristas: Definicion["aristas"] = []): { id: string; descripcion: string }[] {
   const c = n.config as Record<string, unknown>;
   const r: { id: string; descripcion: string }[] = [];
@@ -837,9 +961,13 @@ function describirConfig(n: Definicion["nodos"][number], aristas: Definicion["ar
       add("Sale por «ok» o «sin_adjuntos»");
       break;
     case "filtro":
-    case "condicion":
-      add(`${String(c.campo)} ${String(c.operador ?? "contiene")} «${String(c.valor ?? "")}»: sale por «si» o «no»`);
+    case "condicion": {
+      const conds = Array.isArray(c.condiciones) ? (c.condiciones as Record<string, unknown>[]) : [c];
+      if (conds.length > 1) add(c.modo === "alguna" ? "Basta que se cumpla una de estas condiciones:" : "Se tienen que cumplir todas estas condiciones:");
+      for (const x of conds) add(describirCondicion(x));
+      add("Sale por «si» o «no»");
       break;
+    }
     case "ia_clasificar":
       add(`Categorías: ${lista(c.categorias).map((x) => valorDe(x)).join(", ")} → variable «${String(c.salida ?? c.variable ?? n.id)}»`);
       break;
@@ -852,7 +980,8 @@ function describirConfig(n: Definicion["nodos"][number], aristas: Definicion["ar
     case "extraer_regex":
       if (n.tipo === "extraer_regex") add(`Busca en: ${String(c.de ?? "asunto, cuerpo y adjuntos")}`);
       for (const f of lista(c.campos) as { nombre: string; descripcion?: string; obligatorio?: boolean; patron?: string }[])
-        add(`Campo «${f.nombre}»${f.obligatorio ? " (obligatorio)" : ""}: ${f.patron ? `/${f.patron}/` : (f.descripcion ?? "")}`);
+        add(`Campo «${f.nombre}»${f.obligatorio ? " (obligatorio)" : ""}: ${f.patron ? `/${f.patron}/` : (f.descripcion ?? "")}${describirLongitud(f as Record<string, unknown>)}`);
+      if (n.tipo === "extraer_regex") add("Sin distinguir mayúsculas ni tildes (salvo que se pida); deja el texto tal como aparece");
       if (n.tipo === "extraer_regex" && c.patron) add(`«${String(c.salida)}»: /${String(c.patron)}/`);
       if (n.tipo === "ia_extraer" && c.salida) add(`Además deja todos los campos juntos en «${String(c.salida)}»`);
       break;
@@ -862,7 +991,7 @@ function describirConfig(n: Definicion["nodos"][number], aristas: Definicion["ar
       break;
     case "transformar":
       for (const o of (Array.isArray(c.operaciones) ? c.operaciones : [c]) as Record<string, unknown>[])
-        add(`«${String(o.salida)}» ← ${String(o.op)}${o.de ? ` de ${corto(o.de)}` : ""}${o.plantilla ? ` «${corto(o.plantilla)}»` : ""}${o.patron ? ` /${String(o.patron)}/` : ""}${o.valor !== undefined ? ` = ${corto(o.valor)}` : ""}`);
+        add(`«${String(o.salida)}» ← ${String(o.op)}${o.de ? ` de ${corto(o.de)}` : ""}${o.plantilla ? ` «${corto(o.plantilla)}»` : ""}${o.patron ? ` /${String(o.patron)}/` : ""}${o.valor !== undefined ? ` = ${corto(o.valor)}` : ""}${o.largo !== undefined ? ` a ${String(o.largo)} ${o.contar === "palabras" ? "palabras" : "caracteres"}` : ""}${describirLongitud(o)}`);
       break;
     case "buscar_en_tabla":
       add(`Busca ${String(c.buscar)} en la columna «${String(c.columna)}» de ${c.archivo ? String(c.archivo) : `una tabla de ${lista(c.tabla).length} filas`} (${String(c.modo ?? "igual")})`);
@@ -942,7 +1071,14 @@ function describirConfig(n: Definicion["nodos"][number], aristas: Definicion["ar
       break;
     case "tabla_guardar":
     case "tabla_consultar":
-      add(`Tabla integrada «${String(c.tabla)}» (${String(c.ambito ?? "flujo")})${c.clave ? ` · clave ${String(c.clave)}` : ""}${c.modo ? ` · ${String(c.modo)}` : ""}`);
+      add(`Tabla integrada «${String(c.tabla)}» (${String(c.ambito ?? "flujo")})${c.clave ? ` · clave ${String(c.clave)}` : ""}${c.modo && n.tipo === "tabla_guardar" ? ` · ${String(c.modo)}` : ""}`);
+      if (n.tipo === "tabla_consultar") {
+        const f = c.filtro;
+        const conds = [...(Array.isArray(f) ? (f as Record<string, unknown>[]) : f && typeof f === "object" ? Object.entries(f).map(([campo, valor]) => ({ campo, operador: "igual", valor })) : []),
+          ...(Array.isArray(c.condiciones) ? (c.condiciones as Record<string, unknown>[]) : [])];
+        if (conds.length > 1) add(c.modo === "alguna" ? "Filas que cumplen alguna de:" : "Filas que cumplen todas:");
+        for (const x of conds) add(describirCondicion(x));
+      }
       break;
     case "archivo_leer":
     case "archivo_guardar":
@@ -1011,7 +1147,7 @@ export function catalogoDeclarativo(d: Definicion): Catalogo & { fases: { id: st
       reglas: describirConfig(n, d.aristas), parametros: [],
     })) as Catalogo["nodos"],
     aristas: d.aristas.map((a) => ({ desde: a.desde, hacia: a.hacia, etiqueta: a.cuando && a.cuando !== "*" ? a.cuando : undefined })),
-    herramientas_agente: [], proveedores: [{ id: "vertex", nombre: `Vertex AI (${d.modelo})`, tipo: "ia" }],
+    herramientas_agente: [], proveedores: [(({ proveedor, modelo }) => ({ id: proveedor, nombre: `${proveedor} · ${modelo}`, tipo: "ia" }))(ia.iaDelFlujo(d))],
     desenlaces: [...new Set(d.nodos.filter((n) => n.tipo === "salida").map((n) => String((n.config as { desenlace?: string }).desenlace)))].map((a) => ({ accion: a, descripcion: a })),
     variables_entorno: [], fases,
   };

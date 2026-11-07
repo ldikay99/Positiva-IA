@@ -3,6 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { config } from "./config.ts";
+import { TIPOS_CREDENCIAL_IA } from "./ia_credenciales.ts";
 
 /**
  * Las credenciales de los conectores (buzones, bases de datos, Drive, APIs).
@@ -66,6 +67,8 @@ export const TIPOS_CREDENCIAL: TipoDeCredencial[] = [
     campos: [{ nombre: "token", titulo: "Token", tipo: "texto", secreto: true, obligatorio: true }, hosts] },
   { tipo: "http_basico", nombre: "API con usuario y clave", descripcion: "Autenticación básica para el nodo http.", ayuda: "Solo se manda a los hosts que digas aquí.",
     campos: [usuario(), clave(), hosts] },
+  // Proveedores de IA (ia_<proveedor>): ver ia_credenciales.ts.
+  ...TIPOS_CREDENCIAL_IA,
 ];
 
 const NOMBRE = /^[a-z0-9][a-z0-9_.-]{0,62}$/;
@@ -74,7 +77,7 @@ const ID_FLUJO = /^[a-z][a-z0-9-]{1,40}$/;
 const VETADO = (h: string) => /(^|\.)positiva\.gov\.co$/i.test(h) || /sgdea/i.test(h) || /^(localhost|metadata(\.google\.internal)?)$/i.test(h) || /\.internal$/i.test(h);
 const CORREO_VETADO = (d: string) => /@([\w-]+\.)*positiva\.gov\.co$/i.test(d.trim());
 /** Campos que se pueden mostrar en el manifiesto de un flujo (dónde se conecta), nunca secretos. */
-const CAMPOS_DE_DESTINO = ["host", "puerto", "base", "buzon", "hosts", "ruta", "tenant", "remitente", "usuario"];
+const CAMPOS_DE_DESTINO = ["host", "puerto", "base", "buzon", "hosts", "ruta", "tenant", "remitente", "usuario", "base_url", "endpoint", "url"];
 
 interface Cifrado { iv: string; tag: string; datos: string }
 interface Guardada {

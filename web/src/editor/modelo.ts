@@ -58,11 +58,17 @@ export interface AristaDef {
 
 export type Posicion = { x: number; y: number };
 
+/** Una IA elegida: proveedor, modelo y (si el proveedor la pide) el nombre de su credencial. */
+export interface IaElegida { proveedor: string; modelo: string; credencial?: string; temperatura?: number }
+export type IaDelFlujo = { usar: "global" } | IaElegida;
+
 export interface Definicion {
   id: string;
   nombre: string;
   descripcion?: string;
   modelo?: string;
+  /** La IA del flujo: {usar: "global"} o una propia. Sin ella (flujos de antes): Vertex con «modelo». */
+  ia?: IaDelFlujo;
   nodos: NodoDef[];
   aristas: AristaDef[];
   /** Dónde está cada nodo en el lienzo: {nodo_id: {x, y}}. */

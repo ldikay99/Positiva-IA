@@ -77,12 +77,14 @@ from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from conectores import archivos as c_archivos  # noqa: E402
+from conectores import busqueda as c_busqueda  # noqa: E402
 from conectores import correo as c_correo  # noqa: E402
 from conectores import drive as c_drive  # noqa: E402
 from conectores import expresion as c_expresion  # noqa: E402
 from conectores import hojas as c_hojas  # noqa: E402
 from conectores import sql as c_sql  # noqa: E402
 from conectores import tablas as c_tablas  # noqa: E402
+import proveedores as ia_proveedores  # noqa: E402  (la capa de proveedores de IA: Vertex, Gemini, OpenAI, Claude…)
 from conectores.base import (HOSTS_METADATOS, ErrorDeNegocio, ErrorTransitorio, destino_seguro, direccion_vetada,  # noqa: E402,F401
                              host_vetado, ip_bloqueada, ruta_estado, timeout_de)
 from conectores.base import IPS_PERMITIDAS_PRUEBAS as _IPS_PERMITIDAS_PRUEBAS  # noqa: E402
@@ -147,13 +149,16 @@ FALLO_CAMPOS = {"nodo", "nombre", "tipo", "motivo", "error"}
 DESENLACES = {"radicar": "radicado", "manual": "manual", "reenviar": "reenviado", "descartar": "descartado",
               "responder": "respondido", "duplicado": "duplicado"}
 MAX_PASOS = 60
-OPERADORES = {"contiene", "coincide", "no_coincide", "igual", "vacio", "no_vacio"}
+OPERADORES = set(c_busqueda.OPERADORES)  # texto, números, fechas y longitud (ver conectores/busqueda.py)
+# Lo que dice cómo se busca en filtro y condición, en su forma de una sola condición.
+CLAVES_CONDICION = ("campo", "campos", "operador", "valor", "valores", "hasta")
 REGLAS_VALIDAR = {"obligatorio", "patron", "en_lista", "longitud"}
 TIPOS_CAMPO = {"texto", "numero", "fecha", "lista", "booleano"}
 TIPOS_ARCHIVO = {"pdf", "imagen", "docx", "xlsx", "texto", "p7m"}
 OPS_TRANSFORMAR = {"plantilla", "asignar", "mayusculas", "minusculas", "titulo", "limpiar", "solo_digitos",
-                   "regex_extraer", "regex_reemplazar", "concatenar", "defecto"}
-OPS_CON_DE = {"mayusculas", "minusculas", "titulo", "limpiar", "solo_digitos", "regex_extraer", "regex_reemplazar", "defecto"}
+                   "regex_extraer", "regex_reemplazar", "concatenar", "defecto", "recortar", "rellenar", "sin_tildes"}
+OPS_CON_DE = {"mayusculas", "minusculas", "titulo", "limpiar", "solo_digitos", "regex_extraer", "regex_reemplazar", "defecto",
+              "recortar", "rellenar", "sin_tildes"}
 
 # Lo que siempre existe: los datos del correo y de sus adjuntos.
 INTEGRADAS = {"correo": {"asunto", "cuerpo", "remitente", "remitente_correo", "remitente_nombre", "recibido"},
@@ -413,8 +418,20 @@ def _campos_regex(c: dict) -> List[dict]:
         return [f for f in c["campos"] if isinstance(f, dict)]
     if c.get("patron"):
         return [{"nombre": c.get("salida") or "coincidencia", "patron": c["patron"], "grupo": c.get("grupo"),
-                 "todos": c.get("todos", False), "obligatorio": c.get("obligatorio", False)}]
+                 "todos": c.get("todos", False), "obligatorio": c.get("obligatorio", False),
+                 **{k: c[k] for k in _CLAVES_CANDIDATO if k in c}}]
     return []
+
+
+# Lo que afina una búsqueda por regex: longitud del candidato, solo dígitos y si distingue mayúsculas o tildes.
+_CLAVES_CANDIDATO = ("longitud", "longitud_min", "longitud_max", "contar", "solo_digitos", "distinguir_mayusculas", "distinguir_tildes")
+
+
+def _condiciones(c: dict) -> Tuple[List[dict], str]:
+    """Las condiciones de un filtro o condición: la lista «condiciones» o la forma de una sola {campo, operador, valor}."""
+    if isinstance(c.get("condiciones"), list):
+        return [x for x in c["condiciones"] if isinstance(x, dict)], (c.get("modo") or "todas")
+    return [c], "todas"
 
 
 def produce(n: dict) -> Set[str]:
@@ -525,7 +542,9 @@ def referencias(n: dict) -> List[Tuple[str, Set[str]]]:
         if isinstance(e, str):
             refs.append((_ref_limpia(e), set()))
     if t in ("filtro", "condicion"):
-        refs += [(r, set()) for r in _ref_de_fuente(c.get("campo"))]
+        for x in _condiciones(c)[0]:
+            for campo in c_busqueda.campos_de(x, ""):
+                refs += [(r, set()) for r in _ref_de_fuente(campo)]
     elif t == "validar":
         refs += [(str(x.get("campo")), set()) for x in c.get("reglas") or [] if isinstance(x, dict) and x.get("campo")]
     elif t == "buscar_en_tabla":
@@ -911,7 +930,21 @@ def _validar_nuevos(t: str, c: dict, q) -> None:
             c_tablas.revisar_tabla(c.get("tabla"))
         except ErrorDeNegocio as e:
             q(str(e))
-        _validar_mapa_plantillas(c, "filtro", q)
+        if isinstance(c.get("filtro"), list) or "condiciones" in c:
+            conds = (c["filtro"] if isinstance(c.get("filtro"), list) else []) + (c.get("condiciones") if isinstance(c.get("condiciones"), list) else [])
+            if "condiciones" in c and not (isinstance(c["condiciones"], list) and c["condiciones"]):
+                q("condiciones tiene que ser una lista [{campo, operador, valor}] con al menos una")
+            if isinstance(c.get("filtro"), list) and not c["filtro"]:
+                q("filtro: la lista de condiciones está vacía")
+            for i, x in enumerate(conds, 1):
+                for m in c_busqueda.problemas_condicion(x, f"condición {i}"):
+                    q(m)
+                for campo in c_busqueda.campos_de(x, "") if isinstance(x, dict) else []:
+                    if not c_tablas.campo_valido(campo):
+                        q(f"condición {i}: campo «{campo}» inválido (letras, números y _, con punto para entrar en un objeto)")
+        if "filtro" in c and not isinstance(c["filtro"], list):
+            _validar_mapa_plantillas(c, "filtro", q)
+        opcion("modo", list(c_busqueda.MODOS))
         entero_en("limite", 1, 500)
         opcion("orden", ["-creada", "creada", "-actualizada", "actualizada", "clave", "-clave"])
         opcion("ambito", ["flujo", "compartida"])
@@ -988,15 +1021,24 @@ def _validar_config(n: dict) -> List[str]:
         if c.get("nombre_patron") and _regex_ok(c["nombre_patron"]):
             q(f"nombre_patron inválido: {_regex_ok(c['nombre_patron'])}")
     elif t in ("filtro", "condicion"):
-        if not c.get("campo"):
-            q(f"{t} necesita campo (asunto, cuerpo, remitente, adjuntos, texto o una variable)")
-        op = c.get("operador", "contiene")
-        if op not in OPERADORES:
-            q(f"operador «{op}» desconocido (válidos: {', '.join(sorted(OPERADORES))})")
-        if op in ("coincide", "no_coincide") and _regex_ok(c.get("valor") or ""):
-            q(f"patrón inválido: {_regex_ok(c.get('valor') or '')}")
-        if op in ("coincide", "no_coincide", "igual") and c.get("valor") in (None, ""):
-            q(f"el operador «{op}» necesita valor")
+        if "condiciones" in c:
+            mezcla = [k for k in CLAVES_CONDICION if k in c]
+            if mezcla:
+                q(f"usa {', '.join(mezcla)} o condiciones, no las dos formas a la vez")
+            conds = c["condiciones"]
+            if not (isinstance(conds, list) and conds):
+                q("condiciones tiene que ser una lista [{campo, operador, valor}] con al menos una")
+            else:
+                for i, x in enumerate(conds, 1):
+                    for m in c_busqueda.problemas_condicion(x, f"condición {i}"):
+                        q(m)
+            if "modo" in c and c["modo"] not in c_busqueda.MODOS:
+                q("modo tiene que ser todas o alguna")
+        else:
+            if not c_busqueda.campos_de(c, ""):
+                q(f"{t} necesita campo (asunto, cuerpo, remitente, adjuntos, texto o una variable) o condiciones")
+            for m in c_busqueda.problemas_condicion(c, exigir_campo=False):
+                q(m)
     elif t == "ia_clasificar":
         cats = c.get("categorias")
         if not (isinstance(cats, list) and cats):
@@ -1038,6 +1080,10 @@ def _validar_config(n: dict) -> List[str]:
                     q(f"campo {nom}: tipo «{f.get('tipo')}» (válidos: {', '.join(sorted(TIPOS_CAMPO))})")
             if len(set(nombres)) != len(nombres):
                 q("hay campos con el mismo nombre")
+            for f in campos:
+                if isinstance(f, dict):
+                    for m in c_busqueda.problemas_longitud(f, f"campo {f.get('nombre')}"):
+                        q(m)
     elif t == "extraer_regex":
         campos = _campos_regex(c)
         if not campos:
@@ -1051,6 +1097,8 @@ def _validar_config(n: dict) -> List[str]:
                 q(f"campo {f.get('nombre')}: patrón inválido: {_regex_ok(f['patron'])}")
             elif f.get("grupo") not in (None, "") and (not isinstance(f["grupo"], int) or f["grupo"] > re.compile(f["patron"]).groups):
                 q(f"campo {f.get('nombre')}: el patrón no tiene el grupo {f['grupo']}")
+            for m in c_busqueda.problemas_longitud(f, f"campo {f.get('nombre')}") + c_busqueda.problemas_opciones(f, f"campo {f.get('nombre')}: "):
+                q(m)
     elif t == "validar":
         reglas = c.get("reglas")
         if not (isinstance(reglas, list) and reglas):
@@ -1066,8 +1114,11 @@ def _validar_config(n: dict) -> List[str]:
                 q(f"regla patron de {r['campo']}: patrón inválido o vacío")
             elif regla == "en_lista" and not isinstance(r.get("valor"), list):
                 q(f"regla en_lista de {r['campo']}: valor tiene que ser una lista")
-            elif regla == "longitud" and not (isinstance(r.get("valor"), list) and len(r["valor"]) == 2 and all(isinstance(x, int) for x in r["valor"])):
-                q(f"regla longitud de {r['campo']}: valor tiene que ser [mínimo, máximo]")
+            elif regla == "longitud" and not (_entero(r.get("valor"), 0, 10**9) or (isinstance(r.get("valor"), list) and len(r["valor"]) == 2
+                                                                                   and all(_entero(x, 0, 10**9) for x in r["valor"]) and r["valor"][0] <= r["valor"][1])):
+                q(f"regla longitud de {r['campo']}: valor tiene que ser [mínimo, máximo] o un entero (longitud exacta)")
+            for m in c_busqueda.problemas_opciones(r, f"regla {regla} de {r['campo']}: "):
+                q(m)
     elif t == "transformar":
         ops = _operaciones(c)
         if not ops:
@@ -1088,6 +1139,17 @@ def _validar_config(n: dict) -> List[str]:
             if op in ("regex_extraer", "regex_reemplazar"):
                 if not o.get("patron") or _regex_ok(o.get("patron")):
                     q(f"operación {i} ({op}): patrón inválido o vacío")
+                for m in c_busqueda.problemas_longitud(o, f"operación {i} ({op})") + c_busqueda.problemas_opciones(o, f"operación {i} ({op}): "):
+                    q(m)
+            if op in ("recortar", "rellenar"):
+                if not _entero(o.get("largo"), 1, 100000):
+                    q(f"operación {i} ({op}): largo tiene que ser un entero entre 1 y 100000")
+                if op == "recortar" and o.get("contar", "caracteres") not in ("caracteres", "palabras"):
+                    q(f"operación {i} (recortar): contar tiene que ser caracteres o palabras")
+                if op == "rellenar" and o.get("lado", "izquierda") not in ("izquierda", "derecha"):
+                    q(f"operación {i} (rellenar): lado tiene que ser izquierda o derecha")
+                if op == "rellenar" and "caracter" in o and not (isinstance(o["caracter"], str) and len(o["caracter"]) == 1):
+                    q(f"operación {i} (rellenar): caracter tiene que ser un solo carácter (p. ej. «0»)")
             if op == "concatenar" and not (isinstance(o.get("de"), list) and o["de"]):
                 q(f"operación {i}: concatenar necesita de: [variables o plantillas]")
             if op == "defecto" and "valor" not in o:
@@ -1099,6 +1161,8 @@ def _validar_config(n: dict) -> List[str]:
             q("buscar_en_tabla necesita columna (dónde buscar)")
         if c.get("modo", "igual") not in ("igual", "contiene"):
             q("modo tiene que ser igual o contiene")
+        for m in c_busqueda.problemas_opciones(c):
+            q(m)
         filas = None
         if isinstance(c.get("tabla"), list):
             if not c["tabla"] or not all(isinstance(f, dict) for f in c["tabla"]):
@@ -1143,6 +1207,8 @@ def _validar_config(n: dict) -> List[str]:
                 q("hay casos repetidos")
             if any(_norm(v) == "otro" for v in vals):
                 q("«otro» es la salida de lo que no coincide: no lo pongas como caso")
+        for m in c_busqueda.problemas_opciones(c):
+            q(m)
     elif t in ("ia_generar",):
         if not (isinstance(c.get("instrucciones"), str) and c["instrucciones"].strip()):
             q("ia_generar necesita instrucciones")
@@ -1231,16 +1297,19 @@ def _cuerpos(nodos: List[dict], aristas: List[dict]) -> Set[str]:
     return dentro
 
 
-def validar(defi: Dict[str, Any], al_ejecutar: bool = False, entorno: Optional[Iterable[str]] = None) -> List[str]:
+def validar(defi: Dict[str, Any], al_ejecutar: bool = False, entorno: Optional[Iterable[str]] = None,
+            credenciales: Optional[Dict[str, dict]] = None, ia_global: Optional[dict] = None) -> List[str]:
     """Los problemas de una definición; vacío si se puede ejecutar.
 
     Con `al_ejecutar` se pasan por alto los que no impiden correr un flujo ya
     guardado (aristas de más que nunca se toman): así los flujos de antes siguen
     corriendo, aunque para guardarlos de nuevo haya que corregirlos.
     `entorno` son los nombres de las variables de entorno del flujo: con ellos
-    se marcan los {{entorno.X}} que no existen (sin ellos no se revisan)."""
+    se marcan los {{entorno.X}} que no existen (sin ellos no se revisan).
+    `credenciales` ({nombre: {tipo, alcance}}) e `ia_global` permiten revisar la IA
+    del flujo y de sus nodos (proveedor, credencial y lo que acepta el modelo)."""
     nombres_entorno = set(entorno) if entorno is not None else None
-    problemas: List[str] = []
+    problemas: List[str] = _problemas_ia(defi, credenciales, ia_global)
     tolerables: List[str] = []
     if not isinstance(defi, dict):
         return ["la definición tiene que ser un objeto"]
@@ -1407,18 +1476,31 @@ def _genai():
 
 
 def _llamar_modelo(modelo: str, sistema: str, tarea: str, esquema: Optional[dict], temperatura: float,
-                   json_libre: bool = False) -> Tuple[str, dict]:
-    """La llamada de verdad a Gemini. Las pruebas la reemplazan por un modelo falso."""
-    from google.genai import types
+                   json_libre: bool = False, proveedor: str = "vertex", credencial: Optional[dict] = None, flujo: str = "",
+                   por_minuto: Optional[float] = None, nodo: str = "", partes: Any = None) -> Tuple[str, dict]:
+    """La llamada de verdad, por la capa de proveedores (Vertex por defecto). Las pruebas la reemplazan por un modelo falso.
 
-    config = types.GenerateContentConfig(temperature=temperatura, system_instruction=sistema)
-    if esquema or json_libre:
-        config.response_mime_type = "application/json"
-    if esquema:
-        config.response_schema = esquema
-    r = _genai().models.generate_content(model=modelo, contents=tarea, config=config)
-    uso = getattr(r, "usage_metadata", None)
-    return r.text or "", {"entrada": getattr(uso, "prompt_token_count", 0) or 0, "salida": getattr(uso, "candidates_token_count", 0) or 0}
+    Devuelve (texto, {entrada, salida, costo_estimado_usd, costo_conocido, proveedor, modelo, json, reparado})."""
+    def aviso(tipo: str, **d: Any) -> None:
+        if tipo == "reintento":
+            _paso(nodo or "ia", f"{proveedor}: reintento {d.get('intento')}", "aviso",
+                  f"{d.get('error', '')} · nuevo intento en {d.get('espera_s')} s", espera_ms=int(float(d.get("espera_s") or 0) * 1000))
+
+    r = ia_proveedores.generar(proveedor or "vertex", modelo, sistema, tarea=tarea, esquema_json=esquema, temperatura=temperatura,
+                               partes=partes, credencial=credencial, json_libre=json_libre, flujo=flujo, por_minuto=por_minuto, aviso=aviso)
+    return r["texto"], {"entrada": r["tokens_entrada"], "salida": r["tokens_salida"], "costo_estimado_usd": r["costo_estimado_usd"],
+                        "costo_conocido": r["costo_conocido"], "proveedor": r["proveedor"], "modelo": r["modelo"], "json": r["json"],
+                        "reparado": r["reparado"]}
+
+
+def _problemas_ia(defi: Any, credenciales: Optional[Dict[str, dict]], ia_global: Optional[dict]) -> List[str]:
+    """La IA del flujo y de sus nodos: proveedor conocido, credencial que exista con su tipo y alcance, y que el modelo acepte lo que se le pide."""
+    if not isinstance(defi, dict) or not isinstance(defi.get("nodos"), list):
+        return []
+    try:
+        return ia_proveedores.problemas_ia(defi, credenciales, ia_global)
+    except Exception as e:  # una config rara no tumba la validación
+        return [f"ia: configuración inválida ({type(e).__name__}: {e})"]
 
 
 def _json_de(texto: str) -> Any:
@@ -1437,36 +1519,56 @@ def _json_de(texto: str) -> Any:
 
 
 def preguntar(modelo: str, nodo: str, sistema: str, tarea: str, esquema: Optional[dict] = None,
-              temperatura: float = 0.1, json_libre: bool = False) -> Tuple[Any, dict]:
-    """Una llamada al modelo; con esquema (o json_libre) devuelve JSON. Se anuncia como las del agente de PQRD."""
+              temperatura: float = 0.1, json_libre: bool = False, ia: Optional[dict] = None) -> Tuple[Any, dict]:
+    """Una llamada al modelo; con esquema (o json_libre) devuelve JSON. Se anuncia como las del agente de PQRD.
+
+    `ia`: {proveedor, credencial (valores), flujo, por_minuto, partes}; sin ella, Vertex como siempre.
+    `modelo_fin` lleva proveedor, modelo, tokens y costo estimado; los tokens devueltos también."""
+    ia = {k: v for k, v in (ia or {}).items() if v is not None}
+    proveedor = ia.get("proveedor") or "vertex"
     _vueltas[nodo] = _vueltas.get(nodo, 0) + 1
-    evento("modelo_inicio", vuelta=_vueltas[nodo], quien=nodo, modelo=modelo, temperatura=temperatura,
+    evento("modelo_inicio", vuelta=_vueltas[nodo], quien=nodo, modelo=modelo, proveedor=proveedor, temperatura=temperatura,
            sistema=sistema[:6000], ultimo=tarea[:1500], con_esquema=bool(esquema), json=bool(esquema or json_libre))
     t = time.time()
     try:
-        texto, tokens = _llamar_modelo(modelo, sistema, tarea, esquema, temperatura, json_libre)
+        texto, tokens = _llamar_modelo(modelo, sistema, tarea, esquema, temperatura, json_libre, nodo=nodo, **ia)
     except Exception as e:
-        evento("modelo_fin", vuelta=_vueltas[nodo], quien=nodo, ms=int((time.time() - t) * 1000), ok=False, error=f"{type(e).__name__}: {e}"[:400])
+        evento("modelo_fin", vuelta=_vueltas[nodo], quien=nodo, modelo=modelo, proveedor=proveedor, ms=int((time.time() - t) * 1000), ok=False,
+               error=f"{type(e).__name__}: {e}"[:400])
         raise
-    evento("modelo_fin", vuelta=_vueltas[nodo], quien=nodo, ms=int((time.time() - t) * 1000), ok=True,
-           tokens_entrada=tokens.get("entrada", 0), tokens_salida=tokens.get("salida", 0), texto=texto[:3000],
-           respuesta=texto[:3000], llamadas=[])
+    tokens = {"proveedor": proveedor, "modelo": modelo, **(tokens or {})}
+    if "costo_estimado_usd" not in tokens:
+        c = ia_proveedores.catalogo.costo(proveedor, modelo, int(tokens.get("entrada", 0)), int(tokens.get("salida", 0)))
+        tokens["costo_estimado_usd"], tokens["costo_conocido"] = (c or 0.0), c is not None
+    evento("modelo_fin", vuelta=_vueltas[nodo], quien=nodo, ms=int((time.time() - t) * 1000), ok=True, proveedor=proveedor, modelo=modelo,
+           tokens_entrada=tokens.get("entrada", 0), tokens_salida=tokens.get("salida", 0), costo_estimado_usd=tokens.get("costo_estimado_usd", 0),
+           costo_conocido=tokens.get("costo_conocido", False), texto=texto[:3000], respuesta=texto[:3000], llamadas=[],
+           **({"reparado": True} if tokens.get("reparado") else {}))
     if esquema or json_libre:
-        return _json_de(texto), tokens
+        return (tokens["json"] if tokens.get("json") is not None else _json_de(texto)), tokens
     return texto, tokens
 
 
-def _transcriptor():
-    if "vision" not in _cliente:
-        try:
-            import google.auth
-            from pipeline.modelo import ModeloVertex
+def _transcriptor(ia: Optional[dict] = None, al_terminar: Any = None):
+    """La función que transcribe una hoja floja (JPEG) con visión, por la capa de proveedores.
 
-            cred, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-            _cliente["vision"] = ModeloVertex(proyecto=PROYECTO, ubicacion="global", credenciales=cred, endpoint_global=True).transcribir_imagen
-        except Exception:
-            _cliente["vision"] = None
-    return _cliente["vision"]
+    `ia`: {proveedor, modelo, credencial (valores), flujo}; sin ella, Vertex con gemini-2.5-flash (lo de PQRD).
+    `al_terminar(resultado)` recibe cada llamada para sumar su consumo. None si no se puede (sin modelo)."""
+    try:
+        from pipeline.modelo import INSTRUCCION_DE_TRANSCRIPCION
+    except Exception:
+        return None
+    ia = dict(ia or {})
+    proveedor, modelo = ia.get("proveedor") or "vertex", ia.get("modelo") or "gemini-2.5-flash"
+
+    def transcribir(jpeg: bytes) -> str:
+        r = ia_proveedores.generar(proveedor, modelo, "", tarea=INSTRUCCION_DE_TRANSCRIPCION, temperatura=0.0,
+                                   partes=[{"tipo": "imagen", "datos": jpeg, "mime": "image/jpeg"}], credencial=ia.get("credencial"),
+                                   flujo=ia.get("flujo") or "", sin_razonamiento=True, timeout=90)
+        if al_terminar:
+            al_terminar(r)
+        return r["texto"]
+    return transcribir
 
 
 _TIPOS_ESQUEMA = {"object", "array", "string", "number", "integer", "boolean"}
@@ -1642,9 +1744,15 @@ _paginas = threading.Lock()
 class Ejecucion:
     def __init__(self, defi: dict, caso: str, modelo: str, entrada: Any = None, credenciales: Optional[Dict[str, dict]] = None,
                  entorno: Optional[Dict[str, str]] = None, subflujos: Optional[Dict[str, dict]] = None,
-                 pila: Optional[List[str]] = None, flujo: str = "") -> None:
+                 pila: Optional[List[str]] = None, flujo: str = "", ia_global: Optional[dict] = None) -> None:
         self.defi, self.caso, self.modelo = defi, caso, modelo
         self.flujo = flujo or str(defi.get("id") or "")
+        # La IA del flujo (nodo → flujo → global): {proveedor, modelo, credencial?, temperatura?, origen}.
+        self.ia_global = ia_global
+        self.ia = ia_proveedores.ia_del_flujo(defi, ia_global, modelo)
+        self.modelo = self.ia.get("modelo") or modelo
+        self.consumo: Dict[str, Any] = {"tokens_entrada": 0, "tokens_salida": 0, "costo_estimado_usd": 0.0, "llamadas": 0, "por_proveedor": {}}
+        self._cerrojo_consumo = threading.Lock()
         self.entrada = entrada if entrada is not None else {}
         self.creds: Dict[str, dict] = credenciales or {}
         self.entorno: Dict[str, str] = entorno or {}
@@ -1760,12 +1868,85 @@ class Ejecucion:
 
     def _ia(self, n: dict, sistema: str, esquema: Optional[dict] = None, temperatura: float = 0.1, json_libre: bool = False) -> Any:
         c = n.get("config") or {}
-        temp = c.get("temperatura", temperatura)
-        modelo, tarea = c.get("modelo") or self.modelo, self.tarea(c)
-        r, tok = self._con_reintentos(n, lambda: preguntar(modelo, n["id"], sistema, tarea, esquema, float(temp), json_libre), f"el modelo {modelo}")
-        self.tokens["entrada"] += tok.get("entrada", 0)
-        self.tokens["salida"] += tok.get("salida", 0)
+        ia = self.ia_de(c)
+        temp = ia.get("temperatura", temperatura)
+        modelo, tarea = ia.get("modelo") or self.modelo, self.tarea(c)
+        pedido = self.pedido_ia(ia)
+        r, tok = self._con_reintentos(n, lambda: preguntar(modelo, n["id"], sistema, tarea, esquema, float(temp), json_libre, ia=pedido),
+                                      f"el modelo {modelo} ({ia.get('proveedor')})")
+        self.sumar_consumo(tok)
         return r
+
+    # ------------------------------------------------------------- la IA
+    def ia_de(self, c: dict) -> dict:
+        """La IA efectiva de un nodo: la suya, la del flujo o la global."""
+        return ia_proveedores.ia_del_nodo(c or {}, self.ia)
+
+    def pedido_ia(self, ia: dict) -> dict:
+        """Lo que la capa de proveedores necesita: proveedor, valores de la credencial (si hace falta), flujo y límite de tasa."""
+        a = ia_proveedores.obtener(ia.get("proveedor") or "vertex")
+        valores = None
+        if a.tipo_credencial:
+            if not ia.get("credencial"):
+                raise ErrorDeNegocio(f"{a.nombre} necesita una credencial de tipo {a.tipo_credencial}")
+            valores = self.cred(ia["credencial"], (a.tipo_credencial,))["valores"]
+        return {"proveedor": a.id, "credencial": valores, "flujo": self.flujo, "por_minuto": ia.get("por_minuto")}
+
+    def sumar_consumo(self, tok: dict) -> None:
+        """Suma una llamada al consumo de la corrida (tokens, costo estimado, por proveedor)."""
+        ent, sal = int(tok.get("entrada", tok.get("tokens_entrada", 0)) or 0), int(tok.get("salida", tok.get("tokens_salida", 0)) or 0)
+        costo = float(tok.get("costo_estimado_usd") or 0)
+        prov, modelo = str(tok.get("proveedor") or "vertex"), str(tok.get("modelo") or "")
+        with self._cerrojo_consumo:
+            self.tokens["entrada"] += ent
+            self.tokens["salida"] += sal
+            c = self.consumo
+            c["tokens_entrada"] += ent
+            c["tokens_salida"] += sal
+            c["costo_estimado_usd"] = round(c["costo_estimado_usd"] + costo, 6)
+            c["llamadas"] += 1
+            p = c["por_proveedor"].setdefault(prov, {"tokens_entrada": 0, "tokens_salida": 0, "costo_estimado_usd": 0.0, "llamadas": 0, "modelos": {}})
+            p["tokens_entrada"] += ent
+            p["tokens_salida"] += sal
+            p["costo_estimado_usd"] = round(p["costo_estimado_usd"] + costo, 6)
+            p["llamadas"] += 1
+            if modelo:
+                p["modelos"][modelo] = p["modelos"].get(modelo, 0) + 1
+
+    def juntar_consumo(self, otro: dict) -> None:
+        """Agrega el consumo de un flujo llamado."""
+        with self._cerrojo_consumo:
+            c = self.consumo
+            for k in ("tokens_entrada", "tokens_salida", "llamadas"):
+                c[k] += int(otro.get(k) or 0)
+            c["costo_estimado_usd"] = round(c["costo_estimado_usd"] + float(otro.get("costo_estimado_usd") or 0), 6)
+            for prov, v in (otro.get("por_proveedor") or {}).items():
+                p = c["por_proveedor"].setdefault(prov, {"tokens_entrada": 0, "tokens_salida": 0, "costo_estimado_usd": 0.0, "llamadas": 0, "modelos": {}})
+                for k in ("tokens_entrada", "tokens_salida", "llamadas"):
+                    p[k] += int(v.get(k) or 0)
+                p["costo_estimado_usd"] = round(p["costo_estimado_usd"] + float(v.get("costo_estimado_usd") or 0), 6)
+                for m, x in (v.get("modelos") or {}).items():
+                    p["modelos"][m] = p["modelos"].get(m, 0) + int(x)
+
+    def transcriptor_de(self, nodo: str, c: dict):
+        """El transcriptor de visión para leer adjuntos con la IA del nodo (o la del flujo); None si el modelo no acepta imágenes."""
+        ia = self.ia_de(c)
+        if ia_proveedores.catalogo.acepta(ia.get("proveedor") or "vertex", ia.get("modelo") or "", "imagenes") is False:
+            self.avisos.append(f"{nodo}: el modelo {ia.get('modelo')} ({ia.get('proveedor')}) no acepta imágenes: las hojas flojas quedan solo con OCR")
+            return None
+        if ia.get("proveedor") == "vertex" and not ia.get("credencial"):
+            pedido: Dict[str, Any] = {"proveedor": "vertex", "modelo": "gemini-2.5-flash" if ia.get("origen") == "legado" else ia.get("modelo"), "flujo": self.flujo}
+        else:
+            pedido = {**self.pedido_ia(ia), "modelo": ia.get("modelo")}
+
+        def al_terminar(r: dict) -> None:
+            self.sumar_consumo(r)
+            evento("modelo_fin", quien=nodo, ok=True, proveedor=r["proveedor"], modelo=r["modelo"], ms=r["ms"], tokens_entrada=r["tokens_entrada"],
+                   tokens_salida=r["tokens_salida"], costo_estimado_usd=r["costo_estimado_usd"], costo_conocido=r["costo_conocido"], vision=True)
+        try:
+            return _transcriptor(pedido, al_terminar)
+        except TypeError:  # un transcriptor de prueba sin argumentos
+            return _transcriptor()
 
     def _con_reintentos(self, n: dict, fn, que: str = "la llamada") -> Any:
         """Corre fn; si falla por algo pasajero y el nodo pide reintentos, espera (backoff con jitter) y repite."""
@@ -1817,7 +1998,8 @@ class Ejecucion:
 
         # Las hojas que tesseract lee flojo las transcribe el modelo con
         # visión, igual que en PQRD (mismo umbral, mismo tope por correo).
-        conversion.TRANSCRIPTOR_IA = _transcriptor() if (ocr and vision) else None
+        conf_nodo = next((x.get("config") or {} for x in self.defi.get("nodos") or [] if x.get("id") == nodo), {})
+        conversion.TRANSCRIPTOR_IA = self.transcriptor_de(nodo, conf_nodo) if (ocr and vision) else None
         presupuesto = conversion.PresupuestoDeOcr()
         if not ocr:
             presupuesto.total_s, presupuesto.imagenes_ia = 0.0, 0
@@ -1825,11 +2007,13 @@ class Ejecucion:
             presupuesto.imagenes_ia = 0
         quiero = {x.lower() for x in tipos or []}
         textos, leidos = [], []
+        # el nombre se busca sin distinguir mayúsculas ni tildes («incapacidad» encuentra «INCAPACIDÁD.pdf»)
+        patron_nombre = c_busqueda.Patron(nombre_patron) if nombre_patron else None
         for a in self.msg.get("_adjuntos", []):
             nombre = a.get("name") or a.get("archivo") or ""
             if a.get("isInline") or not a.get("archivo"):
                 continue
-            if nombre_patron and not re.search(nombre_patron, nombre, re.I):
+            if patron_nombre and not patron_nombre.search(nombre):
                 _paso(nodo, f"{nombre}: se omite", "info", f"el nombre no coincide con «{nombre_patron}»")
                 continue
             datos = (self.carpeta / "adj" / a["archivo"]).read_bytes()
@@ -1883,23 +2067,18 @@ class Ejecucion:
               f"{total:,} caracteres" + (" · sin OCR" if c.get("ocr") is False else ""), leidos=len(textos))
         return "ok" if textos else "sin_adjuntos"
 
+    def _valor_campo(self, campo: str) -> Any:
+        """Lo que se compara: «texto» es todo el correo; si no, el valor de la variable o la plantilla (con su tipo)."""
+        if _ref_limpia(campo) == "texto":
+            return self.contexto()
+        return self.valor_de(campo)
+
     def filtro(self, n: dict) -> str:
         c = n.get("config") or {}
-        texto = self.texto_de(c.get("campo", "texto"))
-        op, patron = c.get("operador", "contiene"), c.get("valor") or ""
-        if op == "vacio":
-            si = not texto.strip()
-        elif op == "no_vacio":
-            si = bool(texto.strip())
-        elif op == "igual":
-            si = _norm(texto) == _norm(patron)
-        elif op in ("coincide", "no_coincide"):
-            m = re.search(patron, texto, re.I)
-            si = bool(m) if op == "coincide" else not m
-        else:
-            si = _norm(patron) in _norm(texto)
-        _paso(n["id"], f"{n.get('nombre', n['id'])}: {'sí' if si else 'no'}", "ok" if si else "info",
-              f"{c.get('campo')} {op} «{patron}» · valor: «{texto[:160]}»" if c.get("campo") != "texto" else f"texto {op} «{patron}»")
+        condiciones, modo = _condiciones(c)
+        si, lineas = c_busqueda.evaluar(condiciones, modo, self._valor_campo, self.render_profundo)
+        cabeza = "" if len(lineas) < 2 else ("Se cumple alguna:\n" if modo == "alguna" else "Se cumplen todas:\n")
+        _paso(n["id"], f"{n.get('nombre', n['id'])}: {'sí' if si else 'no'}", "ok" if si else "info", (cabeza + "\n".join(lineas))[:1200])
         return "si" if si else "no"
 
     condicion = filtro
@@ -1958,7 +2137,9 @@ class Ejecucion:
         for f in campos:
             props[f["nombre"]] = {"type": "object", "properties": {"valor": {"type": "string"}, "confianza": {"type": "number"},
                                                                     "evidencia": {"type": "string"}}}
-            desc.append(f"- {f['nombre']} ({f.get('tipo', 'texto')}{', obligatorio' if f.get('obligatorio') else ''}): {f.get('descripcion', '')}")
+            forma = c_busqueda.describir_longitud(f)
+            desc.append(f"- {f['nombre']} ({f.get('tipo', 'texto')}{', obligatorio' if f.get('obligatorio') else ''}{', ' + forma if forma else ''}): "
+                        f"{f.get('descripcion', '')}")
         sistema = (self.render(c.get("instrucciones") or "Extrae los datos pedidos del correo y sus adjuntos.") +
                    "\n\nCampos:\n" + "\n".join(desc) +
                    "\n\nPara cada campo devuelve el valor tal como aparece, tu confianza (0 a 1) y la frase exacta de donde lo sacaste. "
@@ -1971,6 +2152,12 @@ class Ejecucion:
             if not isinstance(x, dict):
                 x = {"valor": _a_texto(x)}
             valor = _a_texto(x.get("valor")).strip()
+            if valor and f.get("solo_digitos") is True:
+                valor = c_busqueda.solo_digitos(valor)
+            if valor and not c_busqueda.cumple_longitud(valor, f):
+                self.avisos.append(f"{n['id']}: «{f['nombre']}» = «{valor[:60]}» no cumple lo pedido ({c_busqueda.describir_longitud(f)}): se descarta")
+                _paso(n["id"], f"{f['nombre']}: se descarta «{valor[:60]}»", "aviso", f"no cumple: {c_busqueda.describir_longitud(f)}")
+                valor = ""
             encontrados += bool(valor)
             self.vars[f["nombre"]] = valor
             junto[f["nombre"]] = valor
@@ -1992,20 +2179,16 @@ class Ejecucion:
         texto = self.texto_de(fuente)
         faltan = []
         for f in _campos_regex(c):
-            rx = re.compile(f["patron"], re.I | re.M)
-            grupo = f.get("grupo") if isinstance(f.get("grupo"), int) else (1 if rx.groups else 0)
-            if f.get("todos"):
-                vals = list(dict.fromkeys(m.group(grupo).strip() for m in rx.finditer(texto) if m.group(grupo)))
-                valor: Any = vals
-                m = rx.search(texto)
-            else:
-                m = rx.search(texto)
-                valor = (m.group(grupo) or "").strip() if m else ""
+            # sin distinguir mayúsculas ni tildes (salvo que se pida); lo encontrado es el texto original.
+            # Los candidatos que no cumplen la longitud (o solo_digitos) se saltan y se prueba el siguiente.
+            rx = c_busqueda.Patron.de(f["patron"], f)
+            valor, m = c_busqueda.extraer(rx, texto, f.get("grupo"), f, bool(f.get("todos")))
             hay = bool(valor)
             self.vars[f["nombre"]] = valor
             evidencia = texto[max(0, m.start() - 60): m.end() + 60].replace("\n", " ") if m else ""
             self.hallazgos[f["nombre"]] = {"valor": _a_texto(valor), "metodo": "regex" if hay else "", "confianza": 1 if hay else 0, "evidencia": evidencia}
-            evento("busqueda", funcion=n["id"], que=f.get("descripcion") or f"patrón {f['patron']}", campo=f["nombre"], encontrado=hay,
+            forma = c_busqueda.describir_longitud(f)
+            evento("busqueda", funcion=n["id"], que=f.get("descripcion") or f"patrón {f['patron']}" + (f" ({forma})" if forma else ""), campo=f["nombre"], encontrado=hay,
                    valor=_a_texto(valor), confianza=1 if hay else 0, metodo="regex", evidencia=evidencia[:260], aceptado=hay)
             if f.get("obligatorio") and not hay:
                 faltan.append(f["nombre"])
@@ -2021,11 +2204,13 @@ class Ejecucion:
         for r in c.get("reglas") or []:
             campo, regla = r.get("campo"), r.get("regla", "obligatorio")
             texto = _a_texto(self.resolver(campo)).strip()
-            lim = r.get("valor") or [0, 999]
+            lim = r.get("valor") if r.get("valor") is not None else [0, 999]
+            medida = {"contar": r.get("contar", "caracteres"), "comparacion": r.get("comparacion", "flexible"),
+                      **({"longitud": lim} if isinstance(lim, int) else {"longitud_min": lim[0], "longitud_max": lim[1]})} if regla == "longitud" else {}
             mal = ((regla == "obligatorio" and not texto)
                    or (regla == "patron" and texto and not re.fullmatch(r.get("valor") or ".*", texto))
-                   or (regla == "en_lista" and texto and _norm(texto) not in {_norm(x) for x in (r.get("valor") or [])})
-                   or (regla == "longitud" and texto and not (int(lim[0]) <= len(texto) <= int(lim[1]))))
+                   or (regla == "en_lista" and texto and not c_busqueda.evaluar_valor("en_lista", texto, {**r, "valores": r.get("valor") or []}))
+                   or (regla == "longitud" and texto and not c_busqueda.cumple_longitud(texto, medida)))
             if mal:
                 reparos.append({"campo": campo, "codigo": r.get("codigo") or regla.upper(), "detalle": self.render(r.get("mensaje")) or f"{campo} no cumple {regla}", "bloqueante": True})
         _paso(n["id"], "Todo en regla" if not reparos else f"{len(reparos)} reparo(s)", "ok" if not reparos else "error",
@@ -2062,12 +2247,25 @@ class Ejecucion:
                 elif op == "solo_digitos":
                     v = re.sub(r"\D", "", s)
                 elif op == "regex_extraer":
-                    rx = re.compile(o["patron"], re.I | re.M)
-                    m = rx.search(s)
-                    g = o.get("grupo") if isinstance(o.get("grupo"), int) else (1 if rx.groups else 0)
-                    v = (m.group(g) or "").strip() if m else self.render(o.get("defecto", ""))
+                    # sin distinguir mayúsculas ni tildes; devuelve el texto original y respeta longitud y solo_digitos
+                    v, m = c_busqueda.extraer(c_busqueda.Patron.de(o["patron"], o), s, o.get("grupo"), o)
+                    if not m:
+                        v = self.render(o.get("defecto", ""))
                 elif op == "regex_reemplazar":
-                    v = re.sub(o["patron"], o.get("reemplazo", ""), s, flags=re.I | re.M)
+                    # se busca sin tildes y se reemplaza sobre el texto original
+                    v = c_busqueda.Patron.de(o["patron"], o).sub(o.get("reemplazo", ""), s)
+                elif op == "sin_tildes":
+                    v = unicodedata.normalize("NFC", c_busqueda.quitar_tildes(s))
+                elif op == "recortar":
+                    largo = int(o["largo"])
+                    if o.get("contar") == "palabras":
+                        palabras = s.split()
+                        v = " ".join(palabras[:largo]) + (o.get("sufijo", "") if len(palabras) > largo else "")
+                    else:
+                        v = s[:largo] + (o.get("sufijo", "") if len(s) > largo else "")
+                elif op == "rellenar":
+                    caracter, largo = o.get("caracter") or "0", int(o["largo"])
+                    v = s.strip().ljust(largo, caracter) if o.get("lado") == "derecha" else s.strip().rjust(largo, caracter)
                 else:  # defecto
                     v = s if s.strip() else (self.render(o["valor"]) if isinstance(o.get("valor"), str) else o.get("valor"))
             self.vars[o["salida"]] = v
@@ -2088,14 +2286,24 @@ class Ejecucion:
         buscado = self.texto_de(c.get("buscar"))
         filas = self._filas(c)
         col, modo = c["columna"], c.get("modo", "igual")
-        clave = _norm(buscado)
+        o = c_busqueda.opciones_de(c)
+        clave = c_busqueda.normalizar(buscado, o)
         fila = None
-        if clave:
-            for f in filas:
-                v = _norm(f.get(col))
-                if (v == clave) if modo == "igual" else (clave in v or (v and v in clave)):
-                    fila = f
-                    break
+        if clave.strip():
+            if o.comparacion == "parecida":  # la fila más parecida que llegue al umbral
+                mejor = 0.0
+                for f in filas:
+                    v = c_busqueda.normalizar(f.get(col), o)
+                    r = (c_busqueda.similitud(c_busqueda.para_parecido(v), c_busqueda.para_parecido(clave)) if modo == "igual"
+                         else max(c_busqueda.parecido_en(v, clave, o.umbral), c_busqueda.parecido_en(clave, v, o.umbral) if v else 0.0))
+                    if r >= o.umbral and r > mejor:
+                        fila, mejor = f, r
+            else:
+                for f in filas:
+                    v = c_busqueda.normalizar(f.get(col), o)
+                    if (v == clave) if modo == "igual" else (clave in v or (v and v in clave)):
+                        fila = f
+                        break
         salida = c.get("salida") or n["id"]
         traer = c.get("traer") or (list(fila.keys()) if fila else [])
         self.vars[salida] = {k: fila.get(k) for k in traer} if fila else {}
@@ -2112,7 +2320,14 @@ class Ejecucion:
         c = n.get("config") or {}
         valor = self.texto_de(c.get("variable"))
         casos = _lista_valores(c.get("casos"))
-        elegido = next((x for x in casos if _norm(x) == _norm(valor)), "otro")
+        o = c_busqueda.opciones_de(c)
+        if o.comparacion == "parecida":  # el caso más parecido que llegue al umbral
+            puntos = [(c_busqueda.similitud(c_busqueda.para_parecido(c_busqueda.normalizar(x, o)), c_busqueda.para_parecido(c_busqueda.normalizar(valor, o))), x)
+                      for x in casos]
+            mejor = max(puntos, default=(0.0, "otro"))
+            elegido = mejor[1] if mejor[0] >= o.umbral else "otro"
+        else:
+            elegido = next((x for x in casos if c_busqueda.normalizar(x, o) == c_busqueda.normalizar(valor, o)), "otro")
         _paso(n["id"], f"{c.get('variable')} = «{valor[:80]}» → {elegido}", "ok" if elegido != "otro" else "info",
               f"casos: {', '.join(casos)}", rama=elegido)
         return elegido
@@ -2561,7 +2776,8 @@ class Ejecucion:
         origen = c.get("origen")
         if origen == "adjunto":
             patron = c.get("adjunto") or r"\.(csv|tsv|xlsx|xlsm)$"
-            adj = next((a for a in self.msg.get("_adjuntos", []) if a.get("archivo") and re.search(patron, a.get("name") or "", re.I)), None)
+            rx = c_busqueda.Patron(patron)
+            adj = next((a for a in self.msg.get("_adjuntos", []) if a.get("archivo") and rx.search(a.get("name") or "")), None)
             if not adj or not self.carpeta:
                 raise ErrorDeNegocio(f"no hay un adjunto que coincida con «{patron}»")
             nombre, datos = adj.get("name") or "", (self.carpeta / "adj" / adj["archivo"]).read_bytes()
@@ -2641,9 +2857,11 @@ class Ejecucion:
 
     def tabla_consultar(self, n: dict) -> str:
         c = n.get("config") or {}
-        filtro = {k: self.render_profundo(v) for k, v in (c.get("filtro") or {}).items()}
+        # filtro {campo: valor} (iguales) y/o condiciones con operadores; todo sin distinguir mayúsculas, tildes ni espacios
+        condiciones = c_busqueda.condiciones_de_filtro(c.get("filtro")) + [x for x in c.get("condiciones") or [] if isinstance(x, dict)]
+        filtro = [c_busqueda.resolver_valores(x, self.render_profundo) for x in condiciones]
         filas = c_tablas.consultar(self._ambito(c), c["tabla"], self.render(c.get("clave") or "").strip() or None, filtro,
-                                   int(c.get("limite") or 100), c.get("orden") or "-creada")
+                                   int(c.get("limite") or 100), c.get("orden") or "-creada", c.get("modo") or "todas")
         self.vars[c.get("salida") or n["id"]] = filas
         _paso(n["id"], f"{len(filas)} fila(s) de {c['tabla']}", "ok" if filas else "info", _a_texto(filas[:5])[:600], total=len(filas))
         return "encontrado" if filas else "vacio"
@@ -2764,8 +2982,8 @@ class Ejecucion:
         if problemas:
             raise ErrorDeNegocio(f"el flujo «{fid}» no es válido: {problemas[0]}")
         entrada = {k: self.render_profundo(v) for k, v in (c.get("entrada") or {}).items()}
-        hijo = Ejecucion(defi, self.caso, defi.get("modelo") or self.modelo, entrada=entrada, credenciales=sub.get("credenciales") or {},
-                         entorno=sub.get("entorno") or {}, subflujos=self.subflujos, pila=self.pila + [fid], flujo=fid)
+        hijo = Ejecucion(defi, self.caso, defi.get("modelo") or ia_proveedores.GLOBAL_DEFECTO["modelo"], entrada=entrada, credenciales=sub.get("credenciales") or {},
+                         entorno=sub.get("entorno") or {}, subflujos=self.subflujos, pila=self.pila + [fid], flujo=fid, ia_global=self.ia_global)
         marca = _callar.set(True)
         try:
             r = hijo.correr()
@@ -2773,6 +2991,7 @@ class Ejecucion:
             _callar.reset(marca)
             self.tokens["entrada"] += hijo.tokens["entrada"]
             self.tokens["salida"] += hijo.tokens["salida"]
+            self.juntar_consumo(hijo.consumo)
             self.escrituras += hijo.escrituras
             self.mensajes += hijo.mensajes
             self.peticiones += hijo.peticiones
@@ -3085,16 +3304,20 @@ async def procesar(orden: dict) -> None:
     modelo = (orden.get("ia") or {}).get("modelo") or defi.get("modelo") or "gemini-2.5-flash"
     entorno = {str(k): ("" if v is None else str(v)) for k, v in (orden.get("entorno") or {}).items()}
     preparar_secretos(orden)
-    problemas = validar(defi, al_ejecutar=True, entorno=entorno.keys() if "entorno" in orden else None)
+    # Las credenciales que llegaron son las que este flujo puede usar: con su tipo basta para revisar la IA.
+    creds_ia = {k: {"tipo": (v or {}).get("tipo")} for k, v in (orden.get("credenciales") or {}).items()} if "credenciales" in orden else None
+    problemas = validar(defi, al_ejecutar=True, entorno=entorno.keys() if "entorno" in orden else None, credenciales=creds_ia,
+                        ia_global=orden.get("ia_global"))
     t = time.time()
     if problemas:
         evento("resultado", caso=caso, accion="error", motivo="el flujo no es válido", avisos=problemas, segundos=0)
         return
     _vueltas.clear()
     e = Ejecucion(defi, caso, modelo, entrada=orden.get("entrada"), credenciales=orden.get("credenciales") or {}, entorno=entorno,
-                  subflujos=orden.get("subflujos") or {}, flujo=str(orden.get("flujo") or defi.get("id") or ""))
+                  subflujos=orden.get("subflujos") or {}, flujo=str(orden.get("flujo") or defi.get("id") or ""), ia_global=orden.get("ia_global"))
+    modelo = e.modelo
     e.avisos += [f"flujo: {x}" for x in validar(defi) if x not in problemas]
-    evento("inicio", caso=caso, asunto="", modelo=modelo, flujo=defi.get("id"), origen=orden.get("origen") or "",
+    evento("inicio", caso=caso, asunto="", modelo=modelo, proveedor=e.ia.get("proveedor"), ia_origen=e.ia.get("origen"), flujo=defi.get("id"), origen=orden.get("origen") or "",
            disparador=next((n["tipo"] for n in defi.get("nodos") or [] if n.get("tipo") in DISPARADORES), ""))
     try:
         r = await asyncio.to_thread(e.correr)
@@ -3104,10 +3327,12 @@ async def procesar(orden: dict) -> None:
                respuesta=r.get("respuesta", ""), mensajes=e.mensajes, peticiones=[_corto(x) for x in e.peticiones],
                escrituras=[_corto(x) for x in e.escrituras], respuesta_webhook=e.respuesta_gancho,
                variables={k: _corto(v) for k, v in e.vars.items() if not k.startswith("_")},
-               avisos=e.avisos, tokens_entrada=e.tokens["entrada"], tokens_salida=e.tokens["salida"],
+               avisos=e.avisos, tokens_entrada=e.tokens["entrada"], tokens_salida=e.tokens["salida"], consumo=e.consumo,
+               ia={k: v for k, v in e.ia.items() if k in ("proveedor", "modelo", "origen")},
                vueltas=sum(_vueltas.values()), segundos=round(time.time() - t, 1), radicado="SIMULADO" if r["accion"] == "radicado" else "")
     except Exception as ex:
         evento("resultado", caso=caso, accion="error", motivo=f"{type(ex).__name__}: {ex}"[:500], escrituras=[_corto(x) for x in e.escrituras],
+               consumo=e.consumo, tokens_entrada=e.tokens["entrada"], tokens_salida=e.tokens["salida"],
                respuesta_webhook=e.respuesta_gancho, traza=traceback.format_exc()[-2500:], segundos=round(time.time() - t, 1))
     finally:
         _secretos_activos.clear()
@@ -3202,7 +3427,7 @@ async def principal() -> None:
 
 def _validar_cli(entrada: Any) -> List[str]:
     if isinstance(entrada, dict) and "definicion" in entrada and "nodos" not in entrada:
-        return validar(entrada["definicion"], entorno=entrada.get("entorno"))
+        return validar(entrada["definicion"], entorno=entrada.get("entorno"), credenciales=entrada.get("credenciales"), ia_global=entrada.get("ia_global"))
     return validar(entrada)
 
 

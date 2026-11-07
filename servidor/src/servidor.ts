@@ -18,6 +18,9 @@ import * as credenciales from "./credenciales.ts";
 import * as entornos from "./entornos.ts";
 import * as programador from "./programador.ts";
 import * as ganchos from "./ganchos.ts";
+import * as compuerta from "./compuerta.ts";
+import * as rutasIa from "./rutas_ia.ts";
+import { consumoDe } from "./ia.ts";
 import { EventEmitter } from "node:events";
 
 const app = Fastify({ logger: { level: process.env.NIVEL_LOG ?? "info" }, bodyLimit: 4 * 1024 * 1024 });
@@ -53,7 +56,12 @@ function motorDe(id: string, arrancar = true): Motor | null {
   // Cada corrida lleva lo suyo: definición, entrada, credenciales y entorno del flujo (declarativos)
   // o el entorno propio del flujo (de código). Los de código arrancan sus trabajadores con su entorno.
   const m = new Motor(f.id, f.trabajador, (c) => flujos.ordenPara(f.id, c));
-  if (f.tipo === "codigo") m.entornoDeProceso = () => entornos.paraProceso(f.id);
+  if (f.tipo === "codigo") {
+    m.entornoDeProceso = () => entornos.paraProceso(f.id);
+    // Lo que sale de sus trabajadores (eventos, consola, resultados) va sin los valores secretos de su entorno.
+    m.secretosDeProceso = () => entornos.valoresSecretos(f.id);
+    m.radicacionReal = () => compuerta.radicacionReal(f.id);
+  }
   m.on("evento", (e: Evento) => bus.emit("evento", e));
   motores.set(id, m);
   void m.cargarHistorial();
@@ -111,7 +119,7 @@ app.get("/api/tablero", async () =>
     segundos.sort((a, b) => a - b);
     return {
       id: f.id, nombre: f.nombre, tipo: f.tipo, corridas: lista.length, desenlaces,
-      segundosMediana: segundos.length ? segundos[Math.floor(segundos.length / 2)]! : 0, tokens,
+      segundosMediana: segundos.length ? segundos[Math.floor(segundos.length / 2)]! : 0, tokens, consumo: consumoDe(lista.map((c) => c.resultado)),
       enCurso: lista.filter((c) => !c.resultado).length,
       ultimas: lista.slice(0, 6).map((c) => ({ id: c.id, caso: c.caso, accion: String(c.resultado?.accion ?? c.estado), motivo: String(c.resultado?.motivo ?? ""), t: c.creada })),
       porDia: [...porDia.entries()].sort().slice(-14).map(([dia, v]) => ({ dia, ...v })),
@@ -255,6 +263,49 @@ app.delete<{ Params: { id: string; nombre: string } }>("/api/flujos/:id/entorno/
   return { ok: true };
 });
 
+// ------------------------------------------- compuerta de radicación (flujos de código)
+
+const avisarCompuerta = (id: string) =>
+  bus.emit("evento", { tipo: "compuerta", corrida: null, t: Date.now() / 1000, flujo: id, ...compuerta.obtener(id), radicacion_real_efectiva: compuerta.radicacionReal(id), texto: compuerta.rotulo(id) });
+
+app.get<{ Params: { id: string } }>("/api/flujos/:id/compuerta", async (req, res) => {
+  if (!flujos.esDeCodigo(req.params.id)) return res.code(404).send({ error: "solo los flujos de código (pqrd, tutelas) tienen compuerta de radicación" });
+  return { ...compuerta.obtener(req.params.id), radicacion_real_efectiva: compuerta.radicacionReal(req.params.id), texto: compuerta.rotulo(req.params.id) };
+});
+
+/**
+ * Encender exige las DOS llaves: la confirmación de una persona (la web la manda tras
+ * la confirmación explícita; Vera nunca) y PERMITIR_RADICACION_REAL=si en el contenedor.
+ * Apagar nunca pide nada. Al cambiar, los trabajadores del flujo se reemplazan al quedar
+ * libres: ninguna corrida nueva arranca con la compuerta anterior.
+ */
+app.put<{ Params: { id: string } }>("/api/flujos/:id/compuerta", async (req, res) => {
+  const r = await compuerta.cambiar(req.params.id, req.body, confirmadoPorPersona(req));
+  if (!r.ok) return res.code(r.codigo).send({ error: r.error });
+  if (r.cambio) {
+    motores.get(req.params.id)?.reiniciarTrabajadores();
+    app.log.warn({ flujo: req.params.id, radicacion_real: r.compuerta.radicacion_real }, "cambió la compuerta de radicación");
+  }
+  avisarCompuerta(req.params.id);
+  return { ...r.compuerta, radicacion_real_efectiva: compuerta.radicacionReal(req.params.id), texto: compuerta.rotulo(req.params.id) };
+});
+
+// ------------------------------------------- programación como el job (flujos de código)
+
+app.get<{ Params: { id: string } }>("/api/flujos/:id/programacion", async (req, res) => {
+  const p = programador.programacionDe(req.params.id);
+  if (!p || !flujos.esDeCodigo(req.params.id)) return res.code(404).send({ error: "solo los flujos de código (pqrd, tutelas) tienen programación como el job" });
+  return { ...p, del_job: programador.PROGRAMACION_DEL_JOB[req.params.id], tope_por_corrida_s: programador.TOPE_DE_CORRIDA_S, en_curso: programador.corridaProgramada(req.params.id), ultima_ejecucion: programador.estado()[`j:${req.params.id}`] ?? null, compuerta: compuerta.rotulo(req.params.id) };
+});
+
+app.put<{ Params: { id: string } }>("/api/flujos/:id/programacion", async (req, res) => {
+  if (!flujos.esDeCodigo(req.params.id)) return res.code(404).send({ error: "solo los flujos de código (pqrd, tutelas) tienen programación como el job" });
+  const r = await programador.ponerProgramacion(req.params.id, req.body, flujos.problemaCron);
+  if (!r.ok) return res.code(r.codigo).send({ error: r.error });
+  bus.emit("evento", { tipo: "programacion", corrida: null, t: Date.now() / 1000, flujo: req.params.id, ...r.programacion });
+  return r.programacion;
+});
+
 // ------------------------------------------------------- credenciales
 
 app.get<{ Querystring: { flujo?: string } }>("/api/credenciales", async (req) => credenciales.listar(req.query.flujo || undefined));
@@ -282,6 +333,8 @@ app.delete<{ Params: { nombre: string } }>("/api/credenciales/:nombre", async (r
   (await credenciales.borrar(req.params.nombre)) ? { ok: true } : res.code(404).send({ error: "esa credencial no existe" }));
 
 // ---------------------------------------------------------- webhooks
+
+await rutasIa.registrar(app);  // IA: proveedores, modelos, probar, global y Vera (rutas_ia.ts)
 
 await ganchos.registrar(app, {
   obtener: (id) => flujos.obtener(id),
@@ -688,38 +741,46 @@ const pedidoDelBuzon = z.object({
  * Corre ahora lo que tomaría el job: trae del buzón real (solo lectura) los
  * correos de AUTOMATIZACION en su orden y los corre juntos con un orquestador.
  */
+type CorridaDelBuzon = { lote: string | null; corridas: { id: string; caso: string }[] } | { vacio: string };
+
+/**
+ * Lo que hace el job en cada corrida: toma del buzón real (solo lectura) el siguiente
+ * lote en su orden, lo baja y lo corre. Lo usan /api/buzon/correr y la programación.
+ */
+async function correrBuzon(flujo: string, pedidoDe: { n?: number; ids?: string[]; concurrencia?: number }, origen?: string): Promise<CorridaDelBuzon> {
+  const conf = configuracion.obtener();
+  const extra = origen ? { origen } : {};
+  if (flujo === "tutelas") {
+    // El job de tutelas toma el hilo como unidad: se pide el correo principal de cada hilo.
+    const ids = pedidoDe.ids?.length ? pedidoDe.ids : (await buzonTutelas.listar(pedidoDe.n ?? 10, true)).correos.filter((c) => c.principal).map((c) => c.id);
+    if (!ids.length) return { vacio: "la carpeta del job de tutelas está vacía" };
+    const casos = await buzonTutelas.traer(ids);
+    bandeja.olvidar();
+    const m = motorDe("tutelas")!;
+    const corridas = casos.map((caso) => m.encolar(caso, conf, extra));
+    return { lote: null, corridas: corridas.map((c) => ({ id: c.id, caso: c.caso })) };
+  }
+  const ids = pedidoDe.ids?.length ? pedidoDe.ids : (await buzon.listar(pedidoDe.n ?? 10, true)).correos.map((c) => c.id);
+  if (!ids.length) return { vacio: "la carpeta del job está vacía" };
+  const casos = await buzon.traer(ids);
+  bandeja.olvidar();
+  if (casos.length === 1) {
+    const c = motor.encolar(casos[0]!, conf, extra);
+    return { lote: null, corridas: [{ id: c.id, caso: c.caso }] };
+  }
+  const { lote, corridas } = motor.encolarLote(casos, conf, pedidoDe.concurrencia ?? 0, origen);
+  return { lote, corridas: corridas.map((c) => ({ id: c.id, caso: c.caso })) };
+}
+
 app.post<{ Querystring: { flujo?: string } }>("/api/buzon/correr", async (req, res) => {
   const r = pedidoDelBuzon.safeParse(req.body ?? {});
   if (!r.success) return res.code(400).send({ error: "pedido inválido" });
   const flujo = flujoDe(req.query.flujo);
-  if (flujo === "tutelas") {
-    try {
-      // El job de tutelas toma el hilo como unidad: se pide el correo principal de cada hilo.
-      const ids = r.data.ids?.length ? r.data.ids : (await buzonTutelas.listar(r.data.n ?? 10, true)).correos.filter((c) => c.principal).map((c) => c.id);
-      if (!ids.length) return res.code(404).send({ error: "la carpeta del job de tutelas está vacía" });
-      const casos = await buzonTutelas.traer(ids);
-      bandeja.olvidar();
-      const m = motorDe("tutelas")!;
-      const conf = configuracion.obtener();
-      const corridas = casos.map((caso) => m.encolar(caso, conf));
-      return { lote: null, corridas: corridas.map((c) => ({ id: c.id, caso: c.caso })) };
-    } catch (e) {
-      return res.code(502).send({ error: e instanceof Error ? e.message : String(e) });
-    }
-  }
-  if (flujo !== "pqrd") return res.code(404).send({ error: "este flujo no tiene buzón real" });
+  if (flujo !== "tutelas" && flujo !== "pqrd") return res.code(404).send({ error: "este flujo no tiene buzón real" });
   try {
-    const ids = r.data.ids?.length ? r.data.ids : (await buzon.listar(r.data.n ?? 10, true)).correos.map((c) => c.id);
-    if (!ids.length) return res.code(404).send({ error: "la carpeta del job está vacía" });
-    const casos = await buzon.traer(ids);
-    bandeja.olvidar();
-    const conf = configuracion.obtener();
-    if (casos.length === 1) {
-      const c = motor.encolar(casos[0]!, conf);
-      return { lote: null, corridas: [{ id: c.id, caso: c.caso }] };
-    }
-    const { lote, corridas } = motor.encolarLote(casos, conf, r.data.concurrencia ?? 0);
-    return { lote, corridas: corridas.map((c) => ({ id: c.id, caso: c.caso })) };
+    const x = await correrBuzon(flujo, r.data);
+    if ("vacio" in x) return res.code(404).send({ error: x.vacio });
+    return x;
   } catch (e) {
     return res.code(502).send({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -781,6 +842,13 @@ if (existsSync(config.web)) {
 await configuracion.cargar();
 await credenciales.cargar();
 await entornos.precargar();
+await compuerta.cargar();
+// Los scripts del buzón real leen con las credenciales del entorno de su flujo (si las tiene) y nada secreto vuelve sin máscara.
+buzon.enlace.entorno = () => entornos.paraProceso("pqrd");
+buzon.enlace.secretos = () => entornos.valoresSecretos("pqrd");
+buzonTutelas.enlace.entorno = () => entornos.paraProceso("tutelas");
+buzonTutelas.enlace.secretos = () => entornos.valoresSecretos("tutelas");
+for (const id of compuerta.FLUJOS_CON_COMPUERTA) app.log.info({ flujo: id }, compuerta.rotulo(id));
 // Una sola vez: el entorno global de antes pasa a ser el entorno propio de pqrd (sigue llegando igual a sus órdenes).
 const migradas = await entornos.migrarDesdeConfiguracion("pqrd", configuracion.obtener().entorno);
 if (migradas) app.log.info({ migradas }, "entorno global migrado al flujo pqrd");
@@ -793,7 +861,17 @@ await programador.iniciar({
   enCurso: (id, origen) => motores.get(id)?.enCurso(origen) ?? 0,
   disparar: (id, origen, datos) => void dispararFlujo(id, origen, datos),
   ordenDeSondeo: (id) => flujos.ordenDeSondeo(id),
-  aviso: (msg, datos) => app.log.warn(datos ?? {}, msg),
+  aviso: (msg, datos) => {
+    app.log.warn(datos ?? {}, msg);
+    if (typeof datos?.flujo === "string") bus.emit("evento", { tipo: "aviso_programador", corrida: null, t: Date.now() / 1000, flujo: datos.flujo, mensaje: msg, ...(datos.error ? { error: String(datos.error) } : {}) });
+  },
+  // Flujos de código: cada toque toma el siguiente lote del buzón real, como el job (simulado con la compuerta apagada).
+  correrBuzon: async (id, n) => {
+    const x = await correrBuzon(id, { n }, "programado");
+    return "vacio" in x ? [] : x.corridas.map((c) => c.id);
+  },
+  cortar: (id, ids, motivo) => void motores.get(id)?.cortar(ids, motivo),
+  vivas: (id, ids) => ids.filter((x) => { const c = motores.get(id)?.corridas.get(x); return c && (c.estado === "en_cola" || c.estado === "procesando"); }).length,
 });
 
 for (const senal of ["SIGINT", "SIGTERM"] as const) {

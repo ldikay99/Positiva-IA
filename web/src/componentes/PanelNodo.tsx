@@ -10,6 +10,7 @@ import { Codigo, Deslizador, EditorJson, Interruptor } from "./Editores.tsx";
 import { Campo, CampoNumero, CamposObjeto, CampoPlantilla, type Contexto } from "./Formulario.tsx";
 import { Selector } from "./Selector.tsx";
 import { UrlGancho, urlDeGancho } from "./Dialogos.tsx";
+import { OpcionesIaNodo } from "./IA.tsx";
 
 /**
  * El panel de un nodo de un flujo declarativo: su configuración (un
@@ -19,7 +20,7 @@ import { UrlGancho, urlDeGancho } from "./Dialogos.tsx";
 
 type Seccion = "configurar" | "opciones" | "ayuda" | "datos";
 const SECCIONES: Seccion[] = ["configurar", "opciones", "ayuda", "datos"];
-const COMUNES = ["deshabilitado", "continuar_si_falla", "reintentos", "entradas", "salida", "modelo", "temperatura"];
+const COMUNES = ["deshabilitado", "continuar_si_falla", "reintentos", "entradas", "salida", "proveedor", "modelo", "credencial", "temperatura"];
 
 function Pestanas({ valor, cambiar, opciones }: { valor: Seccion; cambiar: (s: Seccion) => void; opciones: { id: Seccion; nombre: string; n?: number; alerta?: boolean }[] }) {
   return (
@@ -118,9 +119,10 @@ function Opciones({ n, tipo, poner, ctx }: { n: NodoDef; tipo: TipoNodo | undefi
           <p className="f-ayuda">El nombre de la variable que los nodos siguientes leen como {`{{${typeof c.salida === "string" && c.salida ? c.salida : n.id}}}`}.</p>
         </div>
       )}
+      {(esIA || n.tipo === "leer_adjuntos") && permite("proveedor", true) && <OpcionesIaNodo n={n} poner={poner} />}
       {esIA && (
         <>
-          {permite("modelo", true) && !enEsquema.has("modelo") && (
+          {!permite("proveedor", true) && permite("modelo", true) && !enEsquema.has("modelo") && (
             <div className="f-campo">
               <span className="f-etiqueta"><span>Modelo</span></span>
               <Selector etiqueta="Modelo" valor={typeof c.modelo === "string" ? c.modelo : ""} opciones={[{ valor: "", etiqueta: `El del flujo (${def.modelo ?? "gemini-2.5-flash"})` }, ...modelos.map((m) => ({ valor: m, etiqueta: m }))]} alCambiar={(v) => poner("modelo", v || undefined)} />

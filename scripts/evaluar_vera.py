@@ -89,6 +89,7 @@ def main():
     a = argparse.ArgumentParser()
     a.add_argument("--solo", type=int)
     a.add_argument("--modelo", default="gemini-3-flash-preview")
+    a.add_argument("--conservar", action="store_true", help="no borrar lo creado (para revisarlo)")
     x = a.parse_args()
     filas = []
     for i, caso in enumerate(CASOS):
@@ -115,8 +116,10 @@ def main():
                 else:
                     cor = correr(caso["flujo"], caso["entrada"])
                     ok = bool(cor) and cor.get("estado") == "terminada" and caso["espera"](cor)
-                    detalle = f"corrida {cor.get('estado') if cor else 'sin corrida'}: {texto_de(cor)[:110]}"
-            api("DELETE", f"/api/flujos/{caso['flujo']}")
+                    fallos = [e.get("fallo") for e in (cor or {}).get("eventos", []) if e.get("fallo")]
+                    detalle = f"corrida {cor.get('estado') if cor else 'sin corrida'}: " + (("fallo: " + "; ".join(map(str, fallos))[:300]) if fallos else texto_de(cor)[:300])
+            if not x.conservar:
+                api("DELETE", f"/api/flujos/{caso['flujo']}")
         elif caso.get("espera_texto"):
             ok = caso["espera_texto"](texto)
             detalle = texto[:110]

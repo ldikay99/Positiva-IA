@@ -7,7 +7,7 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,6 +18,9 @@ const credenciales = await import("./credenciales.ts");
 const entornos = await import("./entornos.ts");
 const flujos = await import("./flujos.ts");
 const programador = await import("./programador.ts");
+const compuerta = await import("./compuerta.ts");
+const { Motor } = await import("./motor.ts");
+const { enmascarar, variantes } = await import("./enmascarar.ts");
 
 const CLAVE = "clave-MUY-secreta-123";
 const TOKEN = "token-ULTRA-secreto-456";
@@ -31,8 +34,10 @@ test("credenciales: cifradas, sin valores en la API y la escritura se apaga al r
   assert.ok(!JSON.stringify(credenciales.listar()).includes(CLAVE));
   assert.deepEqual(credenciales.listar().find((c) => c.nombre === "buzon")?.campos, ["host", "puerto", "usuario", "clave", "tls"]);
   assert.equal((await credenciales.permitirEscritura("buzon", true)).ok, true);
-  // reemplazar sin la clave la conserva, pero apaga la escritura
+  // reemplazar sin la clave la conserva; la escritura solo se apaga si cambia algún valor
   await credenciales.guardar("buzon", { tipo: "imap", valores: { host: "imap.ejemplo.test", usuario: "ops@ejemplo.test" } });
+  assert.equal(credenciales.listar().find((c) => c.nombre === "buzon")?.permitir_escritura, true);
+  await credenciales.guardar("buzon", { tipo: "imap", valores: { host: "imap.ejemplo.test", usuario: "otra@ejemplo.test" } });
   assert.equal(credenciales.listar().find((c) => c.nombre === "buzon")?.permitir_escritura, false);
   assert.equal(credenciales.paraCorrida("x", ["buzon"]).buzon?.valores.clave, CLAVE);
   assert.deepEqual(credenciales.paraCorrida("x", ["buzon"]).buzon?.secretos, ["clave"]);
@@ -79,7 +84,7 @@ test("entorno por flujo: secretos cifrados, confirmación de persona y nombres p
 
 test("migración del entorno global a pqrd: una sola vez y sin pisar", async () => {
   assert.equal(await entornos.migrarDesdeConfiguracion("pqrd", { MAX_VUELTAS_AGENTE: "7", MODO_TEST: "false" }), 1);
-  assert.deepEqual(entornos.paraProceso("pqrd"), { MAX_VUELTAS_AGENTE: "7" });  // la protegida no pasa
+  assert.deepEqual(entornos.paraProceso("pqrd"), { MAX_VUELTAS_AGENTE: "7", SECRETOS_DEL_FLUJO: "" });  // la protegida no pasa
   assert.equal(await entornos.migrarDesdeConfiguracion("pqrd", { MAX_VUELTAS_AGENTE: "9" }), 0);
   assert.equal(entornos.paraProceso("pqrd").MAX_VUELTAS_AGENTE, "7");
 });
@@ -151,4 +156,196 @@ test("manifiesto y orden de corrida: conexiones, escrituras, entorno y webhook s
   const ren = await flujos.renombrar("flujo-copia", { nombre: "Copia renombrada" });
   assert.equal(ren.ok && ren.flujo.nombre, "Copia renombrada");
   assert.equal(await flujos.borrar("flujo-copia"), true);
+});
+
+// ------------------------------------------------ como el job: entorno, máscara, compuerta, programación
+
+const SECRETO_JOB = "secreto-DEL-job-0123456789";
+
+test("entorno de los flujos de código: los nombres exactos de su job (con guiones solo en tutelas)", async () => {
+  // pqrd acepta los nombres de su job, que un flujo declarativo no puede usar
+  for (const n of ["MICROSOFT_CLIENT_SECRET", "SUPABASE_SERVICE_ROLE_KEY", "REDIS_PASSWORD", "OUTLOOK_FOLDER_ID", "SGDEA_PASSWORD", "GOOGLE_API_KEY", "GCP_PROJECT"]) {
+    assert.equal(entornos.problemaDeNombre("pqrd", n), null, n);
+    assert.notEqual(entornos.problemaDeNombre("flujo-a", n), null, `declarativo: ${n}`);
+  }
+  for (const n of ["OPENAI_API_KEY", "CORREO_DE_AVISOS", "OUTLOOK_USER_EMAIL", "SGDEA_TOKEN_URL"]) assert.equal(entornos.problemaDeNombre("pqrd", n), null, n);
+  // tutelas: con guiones, exactamente los del job; DATABASE_* también
+  for (const n of ["TUTELAS-MICROSOFT-CLIENT-SECRET", "TUTELAS-REDIS-PASSWORD", "TUTELAS-DATABASE-PASSWORD", "TUTELAS-RADICAR-ENLACE-CON-ADJUNTOS", "DATABASE_HOST", "DATABASE_PORT", "DATABASE_PASSWORD"]) {
+    assert.equal(entornos.problemaDeNombre("tutelas", n), null, n);
+  }
+  // un guion fuera de la lista del job no vale en ningún flujo
+  for (const [f, n] of [["tutelas", "TUTELAS-INVENTADA"], ["pqrd", "TUTELAS-REDIS-PASSWORD"], ["flujo-a", "TUTELAS-REDIS-PASSWORD"], ["flujo-a", "MI-VARIABLE"], ["pqrd", "MICROSOFT-CLIENT-SECRET"]] as const) {
+    assert.notEqual(entornos.problemaDeNombre(f, n), null, `${f}: ${n}`);
+  }
+  // lo que nunca se acepta, ni en un flujo de código
+  for (const f of ["pqrd", "tutelas", "flujo-a"]) {
+    for (const n of ["MODO_TEST", "MODO_UAT", "DEDUP_EN_PRUEBAS", "RADICACION_REAL", "PERMITIR_RADICACION_REAL", "SECRETOS_DEL_FLUJO", "PATH", "RUTA_DATOS", "CLAVE_CREDENCIALES", "PYTHONPATH", "HTTP_HOSTS_PERMITIDOS"]) {
+      assert.equal((await entornos.poner(f, n, { valor: "x" }, true)).ok, false, `${f}: ${n}`);
+    }
+  }
+  // se guardan cifrados y llegan al proceso con su nombre de guiones; SECRETOS_DEL_FLUJO lleva solo nombres
+  assert.equal((await entornos.poner("tutelas", "TUTELAS-REDIS-PASSWORD", { valor: SECRETO_JOB, secreto: true }, false)).ok, false);  // sin persona no
+  assert.equal((await entornos.poner("tutelas", "TUTELAS-REDIS-PASSWORD", { valor: SECRETO_JOB, secreto: true }, true)).ok, true);
+  // una variable del job, aunque no sea secreta, también la confirma una persona (Vera no la puede poner)
+  assert.equal((await entornos.poner("tutelas", "DATABASE_HOST", { valor: "10.0.0.5" }, false)).ok, false);
+  assert.equal((await entornos.poner("tutelas", "DATABASE_HOST", { valor: "10.0.0.5" }, true)).ok, true);
+  const p = entornos.paraProceso("tutelas");
+  assert.equal(p["TUTELAS-REDIS-PASSWORD"], SECRETO_JOB);
+  assert.equal(p.DATABASE_HOST, "10.0.0.5");
+  assert.equal(p.SECRETOS_DEL_FLUJO, "TUTELAS-REDIS-PASSWORD");
+  assert.deepEqual(entornos.valoresSecretos("tutelas"), [SECRETO_JOB]);
+  assert.ok(!JSON.stringify(await entornos.listar("tutelas")).includes(SECRETO_JOB));
+  assert.ok(!readFileSync(join(process.env.RUTA_DATOS!, "entornos", "tutelas.json"), "utf8").includes(SECRETO_JOB));
+  // el manifiesto de un flujo de código no lleva valores secretos
+  assert.ok(!JSON.stringify(await flujos.manifiesto("tutelas")).includes(SECRETO_JOB));
+});
+
+test("máscara: el valor, su forma JSON y su forma URL, a cualquier profundidad", () => {
+  const raro = 'cl"ave/con&raros+123';
+  const v = variantes([raro, "x"]);  // lo de menos de 4 caracteres no se busca
+  const e = enmascarar({ linea: `token=${encodeURIComponent(raro)}`, json: JSON.stringify({ k: raro }), [raro]: [raro, 1] }, v);
+  const texto = JSON.stringify(e);
+  assert.ok(!texto.includes(raro) && !texto.includes(encodeURIComponent(raro)) && !texto.includes(JSON.stringify(raro).slice(1, -1)));
+  assert.ok(texto.includes("••••"));
+  assert.equal(enmascarar("x marca x", v), "x marca x");
+});
+
+test("trabajador de un flujo de código: sus secretos salen enmascarados en eventos, consola y resultados; arranca con la compuerta apagada", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "positiva-trabajador-"));
+  const script = join(dir, "trabajador_falso.py");
+  // Un trabajador que imprime sus secretos por todas partes (lo que nunca debe llegar a la web).
+  writeFileSync(script, [
+    "import json, os, sys",
+    "M = '\\x1eEVT '",
+    "s = os.environ.get('CLAVE_DEL_JOB', '')",
+    "def ev(**d): print(M + json.dumps(d), flush=True)",
+    "ev(tipo='listo')",
+    "for linea in sys.stdin:",
+    "    o = json.loads(linea)",
+    "    ev(tipo='inicio', corrida=o['corrida'], compuerta=os.environ.get('RADICACION_REAL'), orden_real=o.get('radicacion_real'), secretos=os.environ.get('SECRETOS_DEL_FLUJO'))",
+    "    print('consola con ' + s, flush=True)",
+    "    sys.stderr.write('traza: ' + s[:7]); sys.stderr.flush()",
+    "    sys.stderr.write(s[7:] + ' fin\\n'); sys.stderr.flush()",
+    "    ev(tipo='paso', corrida=o['corrida'], titulo='usa ' + json.dumps({'k': s}), detalle={'anidado': [s]})",
+    "    ev(tipo='resultado', corrida=o['corrida'], caso=o['caso'], accion='manual', motivo='Bearer ' + s)",
+    "    ev(tipo='libre')",
+  ].join("\n"), "utf8");
+  const m = new Motor("pqrd", script);
+  m.entornoDeProceso = () => ({ CLAVE_DEL_JOB: SECRETO_JOB, SECRETOS_DEL_FLUJO: "CLAVE_DEL_JOB" });
+  m.secretosDeProceso = () => [SECRETO_JOB];
+  const vistos: unknown[] = [];
+  const fin = new Promise<void>((ok) => m.on("evento", (e: { tipo: string }) => { vistos.push(e); if (e.tipo === "resultado") setTimeout(ok, 300); }));
+  m.ajustar(1);
+  const conf = { parametros: {}, entorno: {}, ia: { modelo: "x" }, topeSegundos: 60, reglas: [] } as unknown as Parameters<typeof m.encolar>[1];
+  const c = m.encolar("caso-1", conf);
+  await fin;
+  m.detener();
+  const texto = JSON.stringify(vistos) + JSON.stringify(c.eventos) + JSON.stringify(m.recientes);
+  assert.ok(!texto.includes(SECRETO_JOB), "ningún secreto en lo que se reenvía o guarda");
+  assert.ok(texto.includes("consola con ••••") && texto.includes("traza: •••• fin") && texto.includes("Bearer ••••"), texto.slice(0, 2000));
+  const inicio = c.eventos.find((e) => e.tipo === "inicio")!;
+  assert.equal(inicio.compuerta, "no");  // el servidor la pone apagada
+  assert.equal(inicio.orden_real, false);
+  assert.equal(inicio.secretos, "CLAVE_DEL_JOB");  // nombres, nunca valores
+  assert.equal(c.resultado?.motivo, "Bearer ••••");
+});
+
+test("compuerta: no se enciende sin las dos llaves; apagar nunca pide nada; apagada todo es simulación", async () => {
+  assert.equal(process.env.PERMITIR_RADICACION_REAL, undefined, "las pruebas nunca ponen la segunda llave");
+  await compuerta.cargar();
+  assert.deepEqual(compuerta.obtener("pqrd"), { radicacion_real: false, permitido_en_despliegue: false });
+  // la regla de las dos llaves, sin tocar el entorno
+  assert.equal(compuerta.puedeCambiar(true, true, false).ok, false);   // confirmada, sin segunda llave
+  assert.equal(compuerta.puedeCambiar(true, false, true).ok, false);   // segunda llave, sin persona
+  assert.equal(compuerta.puedeCambiar(true, false, false).ok, false);
+  assert.equal(compuerta.puedeCambiar(true, true, true).ok, true);
+  assert.equal(compuerta.puedeCambiar(false, false, false).ok, true);  // apagar
+  // de verdad: con la confirmación de una persona y sin la segunda llave, no se enciende
+  for (const f of ["pqrd", "tutelas"]) {
+    const r = await compuerta.cambiar(f, { radicacion_real: true }, true);
+    assert.equal(r.ok ? 0 : r.codigo, 403, f);
+    assert.equal(compuerta.radicacionReal(f), false);
+    const apagar = await compuerta.cambiar(f, { radicacion_real: false }, false);
+    assert.equal(apagar.ok && apagar.compuerta.radicacion_real, false);
+  }
+  assert.equal((await compuerta.cambiar("flujo-a", { radicacion_real: false }, true)).ok, false);  // solo los de código
+  assert.equal((await compuerta.cambiar("pqrd", { radicacion_real: "si" }, true)).ok, false);
+  // aunque el archivo dijera «encendida», sin la segunda llave no escribe
+  writeFileSync(join(process.env.RUTA_DATOS!, "compuertas.json"), JSON.stringify({ pqrd: { radicacion_real: true } }), "utf8");
+  await compuerta.cargar();
+  assert.equal(compuerta.obtener("pqrd").radicacion_real, true);
+  assert.equal(compuerta.radicacionReal("pqrd"), false);
+  const man = (await flujos.manifiesto("pqrd"))!;
+  const cm = man.compuerta as { radicacion_real: boolean; estado: string; permitido_en_despliegue: boolean };
+  assert.equal(cm.radicacion_real, false);
+  assert.equal(cm.permitido_en_despliegue, false);
+  assert.match(cm.estado, /apagada \(simulación\)/);
+  // apagada: todas las escrituras del manifiesto siguen simuladas
+  assert.ok((man.escrituras as { en_este_visor: string }[]).every((x) => !x.en_este_visor.includes("ESCRIBE DE VERDAD")));
+  assert.ok(Array.isArray(man.lecturas_con_la_compuerta_apagada) && (man.lecturas_con_la_compuerta_apagada as unknown[]).length > 0);
+  await compuerta.cambiar("pqrd", { radicacion_real: false }, false);
+});
+
+test("programación como el job: valores del Cloud Scheduler, apagada por defecto y sin solapes", async () => {
+  await programador.cargarProgramaciones();
+  assert.deepEqual(programador.programacionDe("pqrd"), { cron: "*/30 * * * *", zona: "America/Bogota", activo: false, n: 50 });
+  assert.deepEqual(programador.programacionDe("tutelas"), { cron: "5,25,45 6-17 * * *", zona: "America/Bogota", activo: false, n: 50 });
+  assert.equal(programador.programacionDe("flujo-a"), null);
+  assert.equal((await programador.ponerProgramacion("pqrd", { cron: "61 * * * *" }, flujos.problemaCron)).ok, false);
+  assert.equal((await programador.ponerProgramacion("pqrd", { zona: "Marte/Olimpo" }, flujos.problemaCron)).ok, false);
+  assert.equal((await programador.ponerProgramacion("flujo-a", { activo: true }, flujos.problemaCron)).ok, false);
+
+  let pedidos = 0;
+  let vivas = 1;
+  const avisos: string[] = [];
+  const cortes: string[][] = [];
+  const deps = {
+    flujos: () => [{ id: "pqrd", tipo: "codigo" }, { id: "tutelas", tipo: "codigo" }] as unknown as ReturnType<typeof flujos.listar>,
+    enCurso: () => 0,
+    disparar: () => assert.fail("un flujo de código no se dispara como declarativo"),
+    ordenDeSondeo: () => null,
+    aviso: (msg: string) => void avisos.push(msg),
+    correrBuzon: async (f: string) => { pedidos++; return [`${f}-corrida-${pedidos}`]; },
+    vivas: () => vivas,
+    cortar: (_f: string, ids: string[]) => void cortes.push(ids),
+  };
+  const esperar = () => new Promise((ok) => setImmediate(ok));
+  // apagada: no corre aunque toque
+  programador.tic(deps, new Date("2026-11-09T12:30:00Z"));
+  await esperar();
+  assert.equal(pedidos, 0);
+  // encendida: corre al toque del cron (07:30 en Bogotá)
+  assert.equal((await programador.ponerProgramacion("pqrd", { activo: true }, flujos.problemaCron)).ok, true);
+  programador.tic(deps, new Date("2026-11-09T12:31:00Z"));  // 07:31 no toca
+  await esperar();
+  assert.equal(pedidos, 0);
+  programador.tic(deps, new Date("2026-11-09T13:00:00Z"));
+  await esperar();
+  assert.equal(pedidos, 1);
+  assert.equal(programador.corridaProgramada("pqrd")?.corridas, 1);
+  // el mismo minuto no se repite y, mientras la anterior siga, la siguiente se salta
+  programador.tic(deps, new Date("2026-11-09T13:00:20Z"));
+  programador.tic(deps, new Date("2026-11-09T13:30:00Z"));
+  await esperar();
+  assert.equal(pedidos, 1);
+  assert.ok(avisos.some((a) => a.includes("sigue")));
+  // terminó: el toque siguiente sí corre
+  vivas = 0;
+  programador.tic(deps, new Date("2026-11-09T14:00:00Z"));
+  await esperar();
+  assert.equal(pedidos, 2);
+  // tutelas apagada por defecto; encendida, toca a las 07:05 y no a las 18:05
+  vivas = 0;
+  assert.equal((await programador.ponerProgramacion("tutelas", { activo: true }, flujos.problemaCron)).ok, true);
+  programador.tic(deps, new Date("2026-11-09T23:05:00Z"));
+  await esperar();
+  assert.equal(pedidos, 2);
+  programador.tic(deps, new Date("2026-11-09T12:05:00Z"));
+  await esperar();
+  assert.equal(pedidos, 3);
+  assert.equal(programador.TOPE_DE_CORRIDA_S, 3600);
+  assert.equal(cortes.length, 0);
+  programador.reiniciarCodigo();
+  await programador.ponerProgramacion("pqrd", { activo: false }, flujos.problemaCron);
+  await programador.ponerProgramacion("tutelas", { activo: false }, flujos.problemaCron);
 });

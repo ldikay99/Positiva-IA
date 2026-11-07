@@ -61,8 +61,17 @@ _credenciales: Dict[str, str] = {}
 
 
 def credenciales() -> Dict[str, str]:
-    """El secreto de la aplicación de Graph, leído una vez de Secret Manager con el ADC."""
+    """
+    El secreto de la aplicación de Graph: el del entorno del flujo tutelas si lo tiene
+    (TUTELAS-MICROSOFT-CLIENT-SECRET, el nombre del job), o si no, leído una vez de
+    Secret Manager con el ADC.
+    """
     if _credenciales:
+        return _credenciales
+    from solo_lectura import definida
+
+    if all(definida(v) for v in SECRETOS.values()):
+        _credenciales.update({clave: os.environ[v].strip() for clave, v in SECRETOS.items()})
         return _credenciales
     import google.auth
     import google.auth.transport.requests
@@ -150,11 +159,16 @@ def _arrancar_motor() -> None:
     """Lo mismo que hace el trabajador de tutelas antes de importar el motor."""
     raiz = Path(__file__).resolve().parent.parent
     motor = Path(os.environ.get("RUTA_MOTOR_TUTELAS", raiz / "motores" / "tutelas"))
+    sys.path.insert(0, str(raiz / "puente"))
+    from solo_lectura import definida
+
+    # Este script solo lista y baja correos: siempre en modo prueba, con su cliente de solo lectura.
     os.environ["MODO_TEST"] = "true"
     os.environ.pop("MODO_UAT", None)
     for var in ("TUTELAS-MICROSOFT-CLIENT-SECRET", "TUTELAS-REDIS-PASSWORD", "TUTELAS-SGDEA-CLIENT-SECRET",
                 "TUTELAS-SGDEA-PASSWORD", "TUTELAS-DATABASE-PASSWORD"):
-        os.environ[var] = "no-se-usa"
+        if not definida(var):  # lo que trae el entorno del flujo se conserva
+            os.environ[var] = "no-se-usa"
     os.environ.setdefault("TEST_OUTPUT_DIR", str(Path(os.environ.get("RUTA_TRABAJO", "/tmp")) / "tutelas"))
     os.chdir(motor)
     sys.path.insert(0, str(motor))
