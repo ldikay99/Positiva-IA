@@ -29,6 +29,10 @@ export interface Corrida {
   inicio?: number;
   fin?: number;
   configuracion: Configuracion;
+  /** Lo que disparó la corrida: bandeja, manual, programado, webhook, correo_nuevo. */
+  origen?: string;
+  /** La entrada de una corrida sin correo (entrada_manual, programado, webhook). */
+  entrada?: unknown;
   eventos: Evento[];
   resultado?: Evento;
 }
@@ -39,6 +43,8 @@ interface Trabajador {
   listo: boolean;
   /** Lo que está atendiendo: un correo, o todos los de un lote a la vez. */
   activas: Map<string, Corrida>;
+  /** Se retira apenas quede libre (cambió el entorno del flujo): no recibe más trabajo. */
+  retirar?: boolean;
 }
 
 /** Lo que espera trabajador: un correo suelto o un lote entero, que va a un solo trabajador. */
@@ -57,10 +63,12 @@ export class Motor extends EventEmitter {
 
   readonly flujo: string;
   private readonly trabajador: string;
-  /** Lo que el flujo agrega a cada orden (la definición de un flujo declarativo). */
-  private readonly ordenExtra: () => Record<string, unknown>;
+  /** Lo que el flujo agrega a cada orden (la definición, la entrada, las credenciales y el entorno de la corrida). */
+  private readonly ordenExtra: (corrida: Corrida) => Record<string, unknown>;
+  /** El entorno propio del flujo con que arrancan sus trabajadores (encima del de la plataforma). */
+  entornoDeProceso: () => Record<string, string> = () => ({});
 
-  constructor(flujo = "pqrd", trabajador: string = config.trabajador, ordenExtra: () => Record<string, unknown> = () => ({})) {
+  constructor(flujo = "pqrd", trabajador: string = config.trabajador, ordenExtra: (corrida: Corrida) => Record<string, unknown> = () => ({})) {
     super();
     this.flujo = flujo;
     this.trabajador = trabajador;
@@ -86,24 +94,26 @@ export class Motor extends EventEmitter {
     };
   }
 
-  private nueva(caso: string, configuracion: Configuracion, lote?: string): Corrida {
+  private nueva(caso: string, configuracion: Configuracion, lote?: string, extra: { entrada?: unknown; origen?: string } = {}): Corrida {
     const corrida: Corrida = {
       id: `${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "")}-${randomUUID().slice(0, 6)}`,
       flujo: this.flujo,
       caso,
       ...(lote ? { lote } : {}),
+      ...(extra.origen ? { origen: extra.origen } : {}),
+      ...(extra.entrada !== undefined ? { entrada: extra.entrada } : {}),
       estado: "en_cola",
       creada: Date.now(),
       configuracion,
       eventos: [],
     };
     this.corridas.set(corrida.id, corrida);
-    this.publicar({ tipo: "en_cola", corrida: corrida.id, t: Date.now() / 1000, caso, ...(lote ? { lote } : {}) });
+    this.publicar({ tipo: "en_cola", corrida: corrida.id, t: Date.now() / 1000, caso, ...(lote ? { lote } : {}), ...(extra.origen ? { origen: extra.origen } : {}) });
     return corrida;
   }
 
-  encolar(caso: string, configuracion: Configuracion): Corrida {
-    const corrida = this.nueva(caso, configuracion);
+  encolar(caso: string, configuracion: Configuracion, extra: { entrada?: unknown; origen?: string } = {}): Corrida {
+    const corrida = this.nueva(caso, configuracion, undefined, extra);
     this.cola.push({ tipo: "uno", corrida });
     this.repartir();
     return corrida;
@@ -121,6 +131,22 @@ export class Motor extends EventEmitter {
     return { lote, corridas };
   }
 
+  /** Cuántas corridas de este flujo esperan o están en curso (de un origen, si se da). */
+  enCurso(origen?: string): number {
+    let n = 0;
+    for (const c of this.corridas.values()) if ((c.estado === "en_cola" || c.estado === "procesando") && (!origen || c.origen === origen)) n++;
+    return n;
+  }
+
+  /**
+   * El entorno del flujo cambió: cada trabajador se retira apenas quede libre (no se
+   * corta ninguna corrida) y en su lugar arranca uno nuevo con el entorno nuevo.
+   */
+  reiniciarTrabajadores(): void {
+    for (const t of this.trabajadores) t.retirar = true;
+    this.repartir();
+  }
+
   cancelarCola(): number {
     const pendientes = this.cola.splice(0).flatMap((p) => (p.tipo === "uno" ? [p.corrida] : p.corridas));
     for (const c of pendientes) {
@@ -132,7 +158,7 @@ export class Motor extends EventEmitter {
 
   private lanzar(): void {
     const proceso = spawn(config.python, [this.trabajador], {
-      env: { ...process.env, PYTHONUNBUFFERED: "1", PYTHONIOENCODING: "utf-8", RUTA_BANDEJA: config.bandeja, RUTA_VIVO: config.vivo, RUTA_TRABAJO: join(config.datos, "trabajo") },
+      env: { ...process.env, ...this.entornoDeProceso(), PYTHONUNBUFFERED: "1", PYTHONIOENCODING: "utf-8", RUTA_BANDEJA: config.bandeja, RUTA_VIVO: config.vivo, RUTA_TRABAJO: join(config.datos, "trabajo") },
       stdio: ["pipe", "pipe", "pipe"],
     });
     const t: Trabajador = { id: this.siguienteId++, proceso, listo: false, activas: new Map() };
@@ -215,7 +241,7 @@ export class Motor extends EventEmitter {
   private repartir(): void {
     for (const t of [...this.trabajadores]) {
       if (!t.listo || t.activas.size) continue;
-      if (this.trabajadores.length > this.deseados) {
+      if (t.retirar || this.trabajadores.length > this.deseados) {
         t.listo = false;
         t.proceso.stdin.end();
         continue;
@@ -229,7 +255,7 @@ export class Motor extends EventEmitter {
         corrida.inicio = Date.now();
       }
       const c = corridas[0]!.configuracion;
-      const comun = { parametros: c.parametros, entorno: c.entorno, ia: c.ia, tope_s: c.topeSegundos, reglas: c.reglas.filter((r) => r.activa), ...this.ordenExtra() };
+      const comun = { parametros: c.parametros, entorno: c.entorno, ia: c.ia, tope_s: c.topeSegundos, reglas: c.reglas.filter((r) => r.activa), ...this.ordenExtra(corridas[0]!) };
       const orden =
         pedido.tipo === "uno"
           ? { cmd: "procesar", corrida: pedido.corrida.id, caso: pedido.corrida.caso, ...comun }

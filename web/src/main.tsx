@@ -4,6 +4,7 @@ import "./index.css";
 import App from "./App.tsx";
 import "./diseno.css";
 import "./plataforma.css";
+import "./editor.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

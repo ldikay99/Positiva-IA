@@ -12,8 +12,12 @@ import * as buzon from "./buzon.ts";
 import * as chats from "./chats.ts";
 import * as buzonTutelas from "./buzon_tutelas.ts";
 import * as configuracion from "./configuracion.ts";
-import { Motor, type Evento } from "./motor.ts";
+import { Motor, type Corrida, type Evento } from "./motor.ts";
 import * as flujos from "./flujos.ts";
+import * as credenciales from "./credenciales.ts";
+import * as entornos from "./entornos.ts";
+import * as programador from "./programador.ts";
+import * as ganchos from "./ganchos.ts";
 import { EventEmitter } from "node:events";
 
 const app = Fastify({ logger: { level: process.env.NIVEL_LOG ?? "info" }, bodyLimit: 4 * 1024 * 1024 });
@@ -46,7 +50,10 @@ function motorDe(id: string, arrancar = true): Motor | null {
   }
   const f = flujos.obtener(id);
   if (!f) return null;
-  const m = new Motor(f.id, f.trabajador, () => (f.tipo === "declarativo" ? { definicion: flujos.obtener(f.id)?.definicion } : {}));
+  // Cada corrida lleva lo suyo: definición, entrada, credenciales y entorno del flujo (declarativos)
+  // o el entorno propio del flujo (de código). Los de código arrancan sus trabajadores con su entorno.
+  const m = new Motor(f.id, f.trabajador, (c) => flujos.ordenPara(f.id, c));
+  if (f.tipo === "codigo") m.entornoDeProceso = () => entornos.paraProceso(f.id);
   m.on("evento", (e: Evento) => bus.emit("evento", e));
   motores.set(id, m);
   void m.cargarHistorial();
@@ -121,7 +128,7 @@ app.post("/api/flujos/validar", async (req) => flujos.validar((req.body as { def
 
 app.put<{ Params: { id: string } }>("/api/flujos/:id", async (req, res) => {
   const def = ((req.body as { definicion?: unknown })?.definicion ?? req.body) as Record<string, unknown>;
-  const r = await flujos.guardar({ ...def, id: req.params.id });
+  const r = await flujos.guardar({ ...def, id: req.params.id }, (req.body as { nota?: string })?.nota);
   if (!r.ok) return res.code(400).send({ error: "el flujo no es válido", problemas: r.problemas });
   bus.emit("evento", { tipo: "flujo_guardado", corrida: null, t: Date.now() / 1000, flujo: r.flujo!.id, version: r.flujo!.version });
   return { flujo: { ...r.flujo, trabajador: undefined } };
@@ -134,6 +141,154 @@ app.delete<{ Params: { id: string } }>("/api/flujos/:id", async (req, res) => {
   motores.delete(req.params.id);
   bus.emit("evento", { tipo: "flujo_borrado", corrida: null, t: Date.now() / 1000, flujo: req.params.id });
   return { ok: true };
+});
+
+// =====================================================================
+// Plataforma de automatización (motor declarativo): tipos de nodo, correr,
+// versiones, entorno por flujo, credenciales, manifiesto, webhooks y programador.
+// =====================================================================
+
+/** Lo confirma la web después de que una persona acepta explícitamente; Vera nunca lo manda. */
+const confirmadoPorPersona = (req: { headers: Record<string, unknown> }) => String(req.headers["x-confirmado-por-persona"] ?? "").trim().toLowerCase() === "si";
+const sello = () => new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "");
+const avisarFlujo = (id: string, extra: Record<string, unknown> = {}) => bus.emit("evento", { tipo: "flujo_guardado", corrida: null, t: Date.now() / 1000, flujo: id, ...extra });
+const MAX_EN_ESPERA = 50;
+
+/** Encola una corrida de un flujo declarativo sin correo (o con el caso de un correo_nuevo). */
+function dispararFlujo(id: string, origen: string, datos: { entrada?: unknown; caso?: string }): Corrida | null {
+  const f = flujos.obtener(id);
+  const m = f?.tipo === "declarativo" ? motorDe(id) : null;
+  if (!m || m.enCurso() >= MAX_EN_ESPERA) return null;
+  return m.encolar(datos.caso ?? `${origen}-${sello()}`, configuracion.obtener(), { origen, entrada: datos.entrada ?? {} });
+}
+
+app.get("/api/nodos/tipos", async (_req, res) => {
+  try {
+    return await flujos.tiposDeNodo();
+  } catch (e) {
+    return res.code(500).send({ error: e instanceof Error ? e.message : String(e) });
+  }
+});
+
+const pedidoDeCorrer = z.object({ entrada: z.record(z.string(), z.unknown()).optional(), caso: z.string().regex(/^[\w.-]{1,200}$/).optional() });
+
+/** Corre un flujo declarativo: con caso (entrada_correo, correo_nuevo) o con una entrada (los demás disparadores). */
+app.post<{ Params: { id: string } }>("/api/flujos/:id/correr", async (req, res) => {
+  const f = flujos.obtener(req.params.id);
+  if (!f) return res.code(404).send({ error: "ese flujo no existe" });
+  if (f.tipo !== "declarativo" || !f.definicion) return res.code(400).send({ error: "los flujos de código se corren con /api/corridas o desde el buzón" });
+  const r = pedidoDeCorrer.safeParse(req.body ?? {});
+  if (!r.success) return res.code(400).send({ error: "pedido inválido: {entrada?: objeto, caso?: texto}" });
+  const disp = flujos.disparadorDe(f.definicion);
+  const m = motorDe(f.id)!;
+  if (m.enCurso() >= MAX_EN_ESPERA) return res.code(429).send({ error: "hay demasiadas corridas en espera para este flujo" });
+  if (disp?.tipo === "entrada_correo" || disp?.tipo === "correo_nuevo") {
+    if (!r.data.caso || !bandeja.casoValido(r.data.caso)) return res.code(400).send({ error: `este flujo empieza con ${disp.tipo}: manda caso (un correo de la bandeja)` });
+    const c = m.encolar(r.data.caso, configuracion.obtener(), { origen: "manual", entrada: r.data.entrada ?? {} });
+    return { id: c.id, caso: c.caso };
+  }
+  const c = m.encolar(r.data.caso ?? `manual-${sello()}`, configuracion.obtener(), { origen: "manual", entrada: r.data.entrada ?? {} });
+  return { id: c.id, caso: c.caso };
+});
+
+app.get<{ Params: { id: string } }>("/api/flujos/:id/versiones", async (req, res) => {
+  if (flujos.esDeCodigo(req.params.id)) return [];
+  return (await flujos.versiones(req.params.id)) ?? res.code(404).send({ error: "ese flujo no existe" });
+});
+
+app.post<{ Params: { id: string } }>("/api/flujos/:id/restaurar", async (req, res) => {
+  const r = await flujos.restaurar(req.params.id, Number((req.body as { version?: unknown })?.version));
+  if (!r.ok) return res.code(r.codigo).send({ error: r.error, problemas: r.problemas });
+  avisarFlujo(r.flujo.id, { version: r.flujo.version });
+  return { flujo: { ...r.flujo, trabajador: undefined } };
+});
+
+app.post<{ Params: { id: string } }>("/api/flujos/:id/duplicar", async (req, res) => {
+  const b = (req.body ?? {}) as { id_nuevo?: unknown; nombre?: unknown };
+  const r = await flujos.duplicar(req.params.id, b.id_nuevo, b.nombre);
+  if (!r.ok) return res.code(r.codigo).send({ error: r.error, problemas: r.problemas });
+  motorDe(r.flujo.id, false);
+  avisarFlujo(r.flujo.id, { version: r.flujo.version });
+  return { flujo: { ...r.flujo, trabajador: undefined } };
+});
+
+app.patch<{ Params: { id: string } }>("/api/flujos/:id", async (req, res) => {
+  const r = await flujos.renombrar(req.params.id, (req.body ?? {}) as { nombre?: unknown; descripcion?: unknown });
+  if (!r.ok) return res.code(r.codigo).send({ error: r.error, problemas: r.problemas });
+  avisarFlujo(r.flujo.id, { version: r.flujo.version });
+  return { flujo: { ...r.flujo, trabajador: undefined } };
+});
+
+app.get<{ Params: { id: string } }>("/api/flujos/:id/manifiesto", async (req, res) => {
+  const m = await flujos.manifiesto(req.params.id);
+  if (!m) return res.code(404).send({ error: "ese flujo no existe" });
+  return { ...m, programador: { ultima: programador.estado()[`p:${req.params.id}`] ?? null } };
+});
+
+// ------------------------------------------------- entorno por flujo
+
+// Se puede preparar el entorno de un flujo antes de crearlo (sus {{entorno.X}} tienen que existir para guardarlo).
+const idDeFlujoValido = (id: string) => /^[a-z][a-z0-9-]{1,40}$/.test(id);
+
+app.get<{ Params: { id: string } }>("/api/flujos/:id/entorno", async (req, res) =>
+  idDeFlujoValido(req.params.id) ? entornos.listar(req.params.id) : res.code(404).send({ error: "ese flujo no existe" }));
+
+/** Si cambia el entorno de un flujo de código, sus trabajadores se reinician al quedar libres (ninguna corrida se corta). */
+const reiniciarSiEsDeCodigo = (id: string) => {
+  if (flujos.esDeCodigo(id)) motores.get(id)?.reiniciarTrabajadores();
+};
+
+app.put<{ Params: { id: string; nombre: string } }>("/api/flujos/:id/entorno/:nombre", async (req, res) => {
+  if (!idDeFlujoValido(req.params.id)) return res.code(400).send({ error: "id de flujo inválido" });
+  const r = await entornos.poner(req.params.id, req.params.nombre, req.body, confirmadoPorPersona(req));
+  if (!r.ok) return res.code(r.codigo).send({ error: r.error });
+  reiniciarSiEsDeCodigo(req.params.id);
+  avisarFlujo(req.params.id, { entorno: r.variable.nombre });
+  return r.variable;
+});
+
+app.delete<{ Params: { id: string; nombre: string } }>("/api/flujos/:id/entorno/:nombre", async (req, res) => {
+  if (!idDeFlujoValido(req.params.id)) return res.code(400).send({ error: "id de flujo inválido" });
+  if (!(await entornos.borrar(req.params.id, req.params.nombre))) return res.code(404).send({ error: "esa variable no existe" });
+  reiniciarSiEsDeCodigo(req.params.id);
+  return { ok: true };
+});
+
+// ------------------------------------------------------- credenciales
+
+app.get<{ Querystring: { flujo?: string } }>("/api/credenciales", async (req) => credenciales.listar(req.query.flujo || undefined));
+
+app.get("/api/credenciales/tipos", async () => credenciales.tipos());
+
+app.put<{ Params: { nombre: string } }>("/api/credenciales/:nombre", async (req, res) => {
+  const alcance = (req.body as { alcance?: unknown })?.alcance;
+  if (typeof alcance === "string" && alcance !== "global" && !flujos.obtener(alcance)) return res.code(400).send({ error: `alcance: no existe el flujo «${alcance}»` });
+  const r = await credenciales.guardar(req.params.nombre, req.body);
+  return r.ok ? r.credencial : res.code(r.codigo ?? 400).send({ error: r.error });
+});
+
+app.patch<{ Params: { nombre: string } }>("/api/credenciales/:nombre", async (req, res) => {
+  if (!confirmadoPorPersona(req)) return res.code(403).send({ error: "habilitar o quitar la escritura de una credencial solo lo hace una persona desde la web (X-Confirmado-Por-Persona: si)" });
+  const permitir = (req.body as { permitir_escritura?: unknown })?.permitir_escritura;
+  if (typeof permitir !== "boolean") return res.code(400).send({ error: "manda {permitir_escritura: true|false}" });
+  const r = await credenciales.permitirEscritura(req.params.nombre, permitir);
+  if (!r.ok) return res.code(r.codigo ?? 400).send({ error: r.error });
+  app.log.warn({ credencial: req.params.nombre, permitir_escritura: permitir }, "cambió el permiso de escritura de una credencial");
+  return r.credencial;
+});
+
+app.delete<{ Params: { nombre: string } }>("/api/credenciales/:nombre", async (req, res) =>
+  (await credenciales.borrar(req.params.nombre)) ? { ok: true } : res.code(404).send({ error: "esa credencial no existe" }));
+
+// ---------------------------------------------------------- webhooks
+
+await ganchos.registrar(app, {
+  obtener: (id) => flujos.obtener(id),
+  disparar: (id, entrada) => dispararFlujo(id, "webhook", { entrada }),
+  escuchar: (f) => {
+    bus.on("evento", f);
+    return () => bus.off("evento", f);
+  },
 });
 
 // ------------------------------------------------------------------- bandeja
@@ -623,13 +778,26 @@ if (existsSync(config.web)) {
 }
 
 await configuracion.cargar();
+await credenciales.cargar();
+await entornos.precargar();
+// Una sola vez: el entorno global de antes pasa a ser el entorno propio de pqrd (sigue llegando igual a sus órdenes).
+const migradas = await entornos.migrarDesdeConfiguracion("pqrd", configuracion.obtener().entorno);
+if (migradas) app.log.info({ migradas }, "entorno global migrado al flujo pqrd");
 await flujos.cargar();
 catalogo();
 const motor = motorDe("pqrd")!;
 for (const f of flujos.listar()) motorDe(f.id, f.tipo === "codigo");
+await programador.iniciar({
+  flujos: () => flujos.listar(),
+  enCurso: (id, origen) => motores.get(id)?.enCurso(origen) ?? 0,
+  disparar: (id, origen, datos) => void dispararFlujo(id, origen, datos),
+  ordenDeSondeo: (id) => flujos.ordenDeSondeo(id),
+  aviso: (msg, datos) => app.log.warn(datos ?? {}, msg),
+});
 
 for (const senal of ["SIGINT", "SIGTERM"] as const) {
   process.on(senal, () => {
+    programador.detener();
     for (const m of motores.values()) m.detener();
     void app.close().then(() => process.exit(0));
   });

@@ -101,6 +101,11 @@ function TarjetaFlujo({ f, i }: { f: TableroFlujo; i: number }) {
   );
 }
 
+/** Abre el diálogo de flujo nuevo (lo escucha App). */
+function nuevoFlujo(): void {
+  window.dispatchEvent(new CustomEvent("positiva:control", { detail: { accion: "nuevo_flujo" } }));
+}
+
 export function VistaTablero() {
   const tablero = usar((s) => s.tablero);
   const cargar = usar((s) => s.cargarTablero);
@@ -123,16 +128,21 @@ export function VistaTablero() {
             ? <>Entre tus {flujos.length} flujos se han corrido <b>{total.toLocaleString("es-CO")} correos</b> y <b>{radicados.toLocaleString("es-CO")}</b> quedaron radicados. Abre un flujo para correr correos nuevos o revisar los anteriores.</>
             : <>Tienes {flujos.length} flujo{flujos.length === 1 ? "" : "s"}. Abre uno para elegir correos y correrlos.</>}
         </p>
-        <button className="boton primario tab-crear" onClick={() => pedirAlAsistente("Quiero crear un flujo nuevo. Pregúntame lo necesario y ármalo.")}>
-          <Icono n="chispa" tam={15} />Crear un flujo con IA
-        </button>
+        <div className="tab-acciones">
+          <button className="boton tab-crear secundario" onClick={nuevoFlujo}>
+            <Icono n="mas" tam={15} />Nuevo flujo
+          </button>
+          <button className="boton primario tab-crear" onClick={() => pedirAlAsistente("Quiero crear un flujo nuevo. Pregúntame lo necesario y ármalo.")}>
+            <Icono n="chispa" tam={15} />Crear con IA
+          </button>
+        </div>
       </section>
       <div className="tab-rejilla">
         {tablero.map((f, i) => <TarjetaFlujo key={f.id} f={f} i={i} />)}
-        <motion.button className="tab-nuevo" onClick={() => pedirAlAsistente("Quiero crear un flujo nuevo. Pregúntame lo necesario y ármalo.")} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }}>
+        <motion.button className="tab-nuevo" onClick={nuevoFlujo} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }}>
           <span><Icono n="mas" tam={22} /></span>
           <b>Nuevo flujo</b>
-          <small>Descríbelo en el chat: la IA lo arma, lo valida y lo prueba con correos reales.</small>
+          <small>Elige con qué arranca y ármalo paso a paso en el lienzo. O pídeselo a Vera con «Crear con IA».</small>
         </motion.button>
       </div>
     </div>

@@ -12,6 +12,9 @@ import { VistaAdjuntos } from "./componentes/Adjuntos.tsx";
 import { VistaConfiguracion, VistaCorridas, VistaHerramientas, VistaLogs, VistaProveedores } from "./componentes/Vistas.tsx";
 import { VistaTablero, pedirAlAsistente } from "./componentes/Tablero.tsx";
 import { Chat } from "./componentes/Chat.tsx";
+import { VistaConexiones } from "./componentes/Conexiones.tsx";
+import { PanelEntorno, type SeccionEntorno } from "./componentes/Entorno.tsx";
+import { DialogoNuevoFlujo } from "./componentes/Dialogos.tsx";
 
 const NAVEGACION: { id: Vista; nombre: string; icono: NombreIcono; pista: string; principal: boolean }[] = [
   { id: "tablero", nombre: "Tablero", icono: "corridas", pista: "Todos los flujos y cómo les va", principal: true },
@@ -20,6 +23,7 @@ const NAVEGACION: { id: Vista; nombre: string; icono: NombreIcono; pista: string
   { id: "adjuntos", nombre: "Adjuntos", icono: "documento", pista: "Cada adjunto hoja por hoja", principal: true },
   { id: "logs", nombre: "Logs", icono: "logs", pista: "Todo lo que hace el motor, en vivo", principal: false },
   { id: "herramientas", nombre: "Herramientas", icono: "herramientas", pista: "Con qué busca datos la IA", principal: false },
+  { id: "conexiones", nombre: "Conexiones", icono: "llave", pista: "Credenciales con que los nodos hablan con otros sistemas", principal: false },
   { id: "proveedores", nombre: "Sistemas", icono: "proveedores", pista: "Sistemas que consulta el flujo", principal: false },
   { id: "configuracion", nombre: "Ajustes", icono: "ajustes", pista: "Modelo de IA, capacidad y reglas", principal: false },
 ];
@@ -105,7 +109,7 @@ function Avisos() {
   );
 }
 
-function BarraSuperior({ alternarBandeja, bandejaVisible }: { alternarBandeja: () => void; bandejaVisible: boolean }) {
+function BarraSuperior({ alternarBandeja, bandejaVisible, abrirEntorno, nuevoFlujo }: { alternarBandeja: () => void; bandejaVisible: boolean; abrirEntorno: () => void; nuevoFlujo: () => void }) {
   const motor = usar((s) => s.motor);
   const configuracion = usar((s) => s.configuracion);
   const irA = usar((s) => s.irA);
@@ -143,6 +147,7 @@ function BarraSuperior({ alternarBandeja, bandejaVisible }: { alternarBandeja: (
               { titulo: "Flujos" },
               ...flujos.map((f) => ({ etiqueta: f.nombre, icono: (f.tipo === "codigo" ? "terminal" : "flujo") as NombreIcono, marcado: f.id === flujo, pista: f.tipo === "codigo" ? "Motor de producción" : `Creado aquí, versión ${f.version ?? 1}`, alHacer: () => void cambiarFlujo(f.id) })),
               { separador: true },
+              { etiqueta: "Nuevo flujo", icono: "mas", alHacer: nuevoFlujo },
               { etiqueta: "Crear un flujo con IA", icono: "chispa", alHacer: () => pedirAlAsistente("Quiero crear un flujo nuevo. Pregúntame lo necesario y ármalo.") },
             ],
           });
@@ -156,6 +161,11 @@ function BarraSuperior({ alternarBandeja, bandejaVisible }: { alternarBandeja: (
       </button>
       )}
       <span className="espacio" />
+      {vista === "flujo" && (
+        <button className="boton chico boton-entorno" onClick={abrirEntorno} title="Variables, secretos, conexiones y manifiesto de este flujo">
+          <Icono n="llave" tam={14} /><span className="etq">Entorno</span>
+        </button>
+      )}
       <div className="estado-barra">
         {motor?.errorInicio ? (
           <span className="pastilla rojo" title={motor.errorInicio}><span className="punto" />El motor no arrancó</span>
@@ -369,16 +379,26 @@ export default function App() {
 
   // El asistente muestra u oculta la correspondencia y cierra el inspector.
   const enfocar = usar((s) => s.enfocar);
+  const irA = usar((s) => s.irA);
+  const [entorno, setEntorno] = useState<{ abierto: boolean; seccion: SeccionEntorno }>({ abierto: false, seccion: "variables" });
+  const [nuevo, setNuevo] = useState(false);
   useEffect(() => {
     const oir = (e: Event) => {
-      const d = (e as CustomEvent<{ accion?: string; panel?: string; abierto?: boolean }>).detail;
-      if (d?.accion === "correspondencia" || d?.accion === "filtrar_correos") setBandeja(true);
+      const d = (e as CustomEvent<{ accion?: string; panel?: string; abierto?: boolean; flujo?: string }>).detail;
+      if (d?.accion === "vista_conexiones") irA("conexiones");
+      else if (d?.accion === "entorno" || d?.accion === "manifiesto") {
+        const abrir = () => setEntorno({ abierto: true, seccion: d.accion === "manifiesto" ? "manifiesto" : "variables" });
+        const s = usar.getState();
+        if (d.flujo && d.flujo !== s.flujo) void s.cambiarFlujo(d.flujo).then(abrir);
+        else abrir();
+      } else if (d?.accion === "nuevo_flujo") setNuevo(true);
+      else if (d?.accion === "correspondencia" || d?.accion === "filtrar_correos") setBandeja(true);
       else if (d?.accion === "panel" && d.panel === "correspondencia") setBandeja(Boolean(d.abierto));
       else if (d?.accion === "panel" && d.panel === "inspector" && !d.abierto) enfocar(null);
     };
     window.addEventListener("positiva:control", oir);
     return () => window.removeEventListener("positiva:control", oir);
-  }, [enfocar]);
+  }, [enfocar, irA]);
 
   const alternar = () =>
     setBandeja((v) => {
@@ -391,7 +411,7 @@ export default function App() {
     <div className="app">
       <Riel movil={ancho <= 760} />
       <div className="marco">
-        <BarraSuperior alternarBandeja={alternar} bandejaVisible={bandeja} />
+        <BarraSuperior alternarBandeja={alternar} bandejaVisible={bandeja} abrirEntorno={() => setEntorno({ abierto: true, seccion: "variables" })} nuevoFlujo={() => setNuevo(true)} />
         <main className="contenido">
           <AnimatePresence mode="wait" initial={false}>
             <motion.div key={vista} className="contenido-vista" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.16, ease: "easeOut" }}>
@@ -401,6 +421,7 @@ export default function App() {
               {vista === "corridas" && <VistaCorridas />}
               {vista === "logs" && <VistaLogs />}
               {vista === "herramientas" && <VistaHerramientas />}
+              {vista === "conexiones" && <VistaConexiones />}
               {vista === "proveedores" && <VistaProveedores />}
               {vista === "configuracion" && <VistaConfiguracion />}
             </motion.div>
@@ -408,6 +429,8 @@ export default function App() {
         </main>
       </div>
       <Avisos />
+      <PanelEntorno abierto={entorno.abierto} seccion={entorno.seccion} cambiarSeccion={(seccion) => setEntorno({ abierto: true, seccion })} cerrar={() => setEntorno((x) => ({ ...x, abierto: false }))} />
+      <DialogoNuevoFlujo abierto={nuevo} cerrar={() => setNuevo(false)} />
       <Chat />
     </div>
     </MotionConfig>

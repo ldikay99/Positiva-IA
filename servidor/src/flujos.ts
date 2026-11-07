@@ -1,10 +1,14 @@
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod";
 import { config } from "./config.ts";
-import { catalogo as catalogoDePqrd, type Catalogo } from "./catalogo.ts";
+import { ajustables, catalogo as catalogoDePqrd, type Catalogo } from "./catalogo.ts";
+import * as credenciales from "./credenciales.ts";
+import * as entornos from "./entornos.ts";
+import type { Corrida } from "./motor.ts";
 
 /**
  * Los flujos de la plataforma.
@@ -20,15 +24,29 @@ import { catalogo as catalogoDePqrd, type Catalogo } from "./catalogo.ts";
 
 /** Los tipos de nodo; su documentación está en `puente/nodos_declarativos.py`. */
 export const TIPOS_DE_NODO = [
-  "entrada_correo", "leer_adjuntos", "filtro", "condicion", "ia_clasificar", "ia_decidir", "ia_extraer", "extraer_regex", "validar",
-  "transformar", "buscar_en_tabla", "bifurcar_por_valor", "ia_generar", "resumir", "ia_redactar", "notificar", "enviar", "http", "salida",
+  // disparadores (exactamente uno por flujo)
+  "entrada_correo", "entrada_manual", "programado", "webhook", "correo_nuevo",
+  // lectura, lógica, IA y datos
+  "leer_adjuntos", "filtro", "condicion", "ia_clasificar", "ia_decidir", "ia_extraer", "extraer_regex", "validar",
+  "transformar", "buscar_en_tabla", "bifurcar_por_valor", "ia_generar", "resumir", "ia_redactar",
+  "para_cada", "fin_ciclo", "paralelo", "unir", "esperar", "expresion", "json", "fecha", "llamar_flujo",
+  "tabla_guardar", "tabla_consultar", "archivo_leer", "archivo_guardar",
+  // conectores
+  "correo_leer", "correo_enviar", "drive_listar", "drive_leer", "drive_subir", "hoja_leer", "sql_consulta", "sql_ejecutar",
+  // integración y fin
+  "notificar", "enviar", "http", "respuesta_webhook", "salida",
 ] as const;
 export type TipoDeNodo = (typeof TIPOS_DE_NODO)[number];
+export const DISPARADORES = new Set<string>(["entrada_correo", "entrada_manual", "programado", "webhook", "correo_nuevo"]);
+const CONECTORES = ["correo_leer", "correo_enviar", "drive_listar", "drive_leer", "drive_subir", "hoja_leer", "sql_consulta", "sql_ejecutar"];
 const TIPOS_IA = new Set<string>(["ia_clasificar", "ia_decidir", "ia_extraer", "ia_generar", "resumir", "ia_redactar"]);
 /** Los que hablan con algo de afuera y por eso aceptan reintentos. */
-const TIPOS_CON_REINTENTOS = new Set<string>([...TIPOS_IA, "notificar", "enviar", "http"]);
-/** Ni la entrada ni las salidas se pueden saltar. */
-const NO_DESHABILITABLES = new Set<string>(["entrada_correo", "salida"]);
+const TIPOS_CON_REINTENTOS = new Set<string>([...TIPOS_IA, "notificar", "enviar", "http", "llamar_flujo", ...CONECTORES]);
+/** Los que escriben afuera: solo con una credencial cuya escritura habilitó una persona (notificar y enviar nunca). */
+export const TIPOS_ESCRITURA = new Set<string>(["correo_enviar", "drive_subir", "sql_ejecutar", "http", "enviar", "notificar"]);
+/** Ni los disparadores, ni las salidas, ni la estructura de bucles y ramas se pueden saltar. */
+const NO_DESHABILITABLES = new Set<string>([...DISPARADORES, "salida", "fin_ciclo", "para_cada", "paralelo", "unir"]);
+const TERMINALES = new Set<string>(["salida", "fin_ciclo"]);
 /** La rama que toma cualquier nodo cuando falla. */
 const RAMA_ERROR = "error";
 
@@ -37,7 +55,7 @@ const RAMA_ERROR = "error";
 // La forma de la config. Lo semántico (variables que existan antes, aristas por
 // cada salida, ciclos) lo valida el motor en Python, que es quien ejecuta.
 
-const RESERVADAS = ["correo", "adjuntos", "asunto", "cuerpo", "remitente", "texto", "fallo"];
+const RESERVADAS = ["correo", "adjuntos", "asunto", "cuerpo", "remitente", "texto", "fallo", "entorno"];
 const variable = z.string({ error: "tiene que ser un nombre de variable" })
   .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "nombre de variable: letras, números y guion bajo, sin espacios")
   .refine((x) => !RESERVADAS.includes(x), `nombre reservado (${RESERVADAS.join(", ")})`);
@@ -89,8 +107,158 @@ const operacion = z.looseObject({
 });
 const DESENLACES_DECL = ["radicar", "manual", "reenviar", "descartar", "responder", "duplicado"] as const;
 
+// ---------------------------------------------- piezas de los tipos nuevos
+
+const entre = (que: string, min: number, max: number, entero = true) => {
+  const m = `${que} tiene que ser ${entero ? "un entero" : "un número"} entre ${min} y ${max}`;
+  const n = z.number({ error: m }).min(min, m).max(max, m);
+  return entero ? n.int(m) : n;
+};
+/** El NOMBRE de una credencial guardada (igual que en el motor). */
+const CREDENCIAL_GUARDADA = /^[a-z0-9][a-z0-9_.-]{0,62}$/;
+const credencialRef = z.string({ error: "falta credencial (el NOMBRE de una credencial guardada)" })
+  .regex(CREDENCIAL_GUARDADA, "credencial es el NOMBRE de una credencial guardada (minúsculas, números, - _ .), nunca un valor ni una clave");
+const timeoutS = entre("timeout_s", 1, 60, false).optional();
+const opcional = booleano.optional();
+const mapaPlantillas = (que: string) => z.record(z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, `${que}: nombres de letras, números y _`),
+  z.union([z.string(), z.number(), z.boolean(), z.null()]), { error: `${que} tiene que ser un objeto {nombre: plantilla o valor}` });
+const filtroCorreo = z.looseObject({ remitente: z.string().optional(), asunto: z.string().optional(), texto: z.string().optional(), no_leidos: opcional },
+  { error: "filtro tiene que ser un objeto {remitente, asunto, texto, no_leidos}" });
+const rutaRelativa = z.string({ error: "falta ruta" }).trim().min(1, "falta ruta").refine((r) => {
+  if (r.includes("{{")) return true;
+  const x = r.replace(/\\/g, "/");
+  return !x.startsWith("/") && !/^[A-Za-z]:/.test(x) && !x.startsWith("~") && !x.includes("\0") && !x.split("/").includes("..");
+}, "la ruta tiene que ser relativa al espacio de archivos (/datos/archivos), sin «..» ni rutas absolutas");
+const nombreTabla = z.string({ error: "falta tabla" }).regex(/^[a-z][a-z0-9_]{0,40}$/, "nombre de tabla: minúsculas, números y _, empieza por letra");
+const AMBITO = z.enum(["flujo", "compartida"], { error: "ambito: flujo o compartida" });
+const RANGOS_CRON: [number, number][] = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 7]];
+/** Por qué un cron de 5 campos no vale, o null (igual que problema_cron del motor). */
+export function problemaCron(expr: string): string | null {
+  const campos = expr.trim().split(/\s+/);
+  if (campos.length !== 5) return "cron tiene que tener 5 campos: minuto hora día mes día_semana (p. ej. «0 7 * * 1-5»)";
+  for (let i = 0; i < 5; i++) {
+    const [lo, hi] = RANGOS_CRON[i]!;
+    for (const parte of campos[i]!.split(",")) {
+      const m = /^(\*|(\d+)(?:-(\d+))?)(?:\/(\d+))?$/.exec(parte);
+      if (!m) return `cron: «${parte}» no se entiende`;
+      if (m[4] !== undefined && !(Number(m[4]) >= 1 && Number(m[4]) <= hi)) return `cron: paso «/${m[4]}» inválido`;
+      for (const x of [m[2], m[3]]) if (x !== undefined && !(Number(x) >= lo && Number(x) <= hi)) return `cron: ${x} está fuera de ${lo}..${hi}`;
+      if (m[2] !== undefined && m[3] !== undefined && Number(m[2]) > Number(m[3])) return `cron: el rango ${m[2]}-${m[3]} está al revés`;
+    }
+  }
+  return null;
+}
+const zonaValida = (z_: string) => {
+  try {
+    new Intl.DateTimeFormat("es-CO", { timeZone: z_ });
+    return true;
+  } catch {
+    return false;
+  }
+};
+const zona = z.string().refine(zonaValida, "zona no es una zona horaria (p. ej. America/Bogota)");
+/** Quita textos y comentarios de un SQL para revisar su forma (el motor hace la revisión completa). */
+function esqueletoSql(sql: string): string {
+  return sql.replace(/--[^\n]*|\/\*[\s\S]*?\*\/|'(?:[^']|'')*'|"(?:[^"]|"")*"|`[^`]*`/g, " ");
+}
+const sqlTexto = (que: string) => z.string({ error: `falta ${que}` }).trim().min(1, `falta ${que}`).max(20000, `${que} pasa de 20.000 caracteres`)
+  .refine((s) => !s.includes("{{"), `${que}: no pegues valores con {{…}} en el SQL (inyección); usa :nombre y parametros`)
+  .refine((s) => !esqueletoSql(s).trim().replace(/;\s*$/, "").includes(";"), `${que}: solo se permite UNA sentencia SQL`);
+const expresionTexto = z.string({ error: "falta expresion" }).trim().min(1, "falta expresion").max(2000, "la expresión pasa de 2000 caracteres")
+  .refine((s) => !/(^|[^A-Za-z0-9_])_/.test(s), "expresion: nada que empiece por _ (ni __import__, ni __class__…)")
+  .refine((s) => !/\blambda\b|\bfor\b.+\bin\b|:=|\bf['"]/.test(s), "expresion: sin lambdas, comprensiones, := ni f-strings");
+const CAMPO_ENTRADA = z.looseObject({
+  nombre: variable, tipo: z.enum(["texto", "numero", "booleano", "fecha", "lista", "objeto"], { error: "tipo: texto, numero, booleano, fecha, lista u objeto" }).optional(),
+  obligatorio: opcional, descripcion: z.string().optional(),
+});
+const unicos = (xs: string[]) => new Set(xs.map((x) => x.trim().toLowerCase())).size === xs.length;
+
 export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
   entrada_correo: conf({ leer_adjuntos: booleano.optional(), ocr: booleano.optional() }),
+  entrada_manual: conf({ campos: z.array(CAMPO_ENTRADA, { error: "campos tiene que ser una lista [{nombre, tipo, obligatorio, descripcion}]" }).optional() })
+    .refine((c) => !c.campos || unicos(c.campos.map((x) => x.nombre)), { message: "hay campos con el mismo nombre", path: ["campos"] }),
+  programado: conf({
+    cron: z.string().optional().superRefine((x, ctx) => { const p = x ? problemaCron(x) : null; if (p) ctx.addIssue({ code: "custom", message: p }); }),
+    cada_minutos: entre("cada_minutos", 1, 10080).optional(), zona: zona.optional(), activo: opcional,
+  }).refine((c) => Number(!!c.cron) + Number(c.cada_minutos !== undefined) === 1, { message: "programado necesita cron o cada_minutos (uno de los dos)", path: ["cron"] }),
+  webhook: conf({
+    secreto: z.string().regex(/^[A-Za-z0-9_-]{16,128}$/, "secreto: entre 16 y 128 letras, números, - o _ (se genera solo al guardar)").optional(),
+    metodo: z.enum(["POST"], { error: "metodo: POST" }).optional(), responder: opcional, esperar_ms: entre("esperar_ms", 0, 30000).optional(),
+  }),
+  correo_nuevo: conf({
+    credencial: credencialRef, carpeta: z.string().optional(), cada_minutos: entre("cada_minutos", 1, 1440).optional(), activo: opcional,
+    filtro: filtroCorreo.optional(), max_por_sondeo: entre("max_por_sondeo", 1, 50).optional(), procesar_existentes: opcional, leer_adjuntos: opcional, ocr: opcional,
+  }),
+  correo_leer: conf({
+    credencial: credencialRef, carpeta: z.string().optional(), filtro: filtroCorreo.optional(), desde_fecha: z.string().optional(),
+    max: entre("max", 1, 100).optional(), incluir_adjuntos: opcional, timeout_s: timeoutS,
+  }),
+  correo_enviar: conf({
+    credencial: credencialRef, para: textoReq("para"), cc: z.string().optional(), cco: z.string().optional(), asunto: textoReq("asunto"),
+    cuerpo: textoReq("cuerpo"), html: z.string().optional(), timeout_s: timeoutS,
+  }),
+  drive_listar: conf({ credencial: credencialRef, carpeta: z.string().optional(), nombre: z.string().optional(), tipo_mime: z.string().optional(), max: entre("max", 1, 200).optional(), timeout_s: timeoutS }),
+  drive_leer: conf({ credencial: credencialRef, archivo: textoReq("archivo"), ocr: opcional, max_caracteres: entre("max_caracteres", 1, 500000).optional(), timeout_s: timeoutS }),
+  drive_subir: conf({
+    credencial: credencialRef, carpeta: z.string().optional(), nombre: textoReq("nombre"), contenido: z.string().optional(), de: z.string().optional(),
+    formato: z.enum(["texto", "json", "csv"], { error: "formato: texto, json o csv" }).optional(), timeout_s: timeoutS,
+  }).refine((c) => c.contenido || c.de, { message: "drive_subir necesita contenido (plantilla) o de (variable)", path: ["contenido"] }),
+  hoja_leer: conf({
+    origen: z.enum(["adjunto", "drive", "archivo", "url"], { error: "origen: adjunto, drive, archivo o url" }), adjunto: regex("adjunto").optional(),
+    credencial: credencialRef.optional(), archivo: z.string().optional(), url: z.string().optional(), hoja: z.string().optional(), encabezados: opcional,
+    max_filas: entre("max_filas", 1, 5000).optional(), timeout_s: timeoutS,
+  }).superRefine((c, ctx) => {
+    const falta = (k: string, m: string) => ctx.addIssue({ code: "custom", path: [k], message: m });
+    if (c.origen === "drive" && !c.credencial) falta("credencial", "con origen drive hace falta credencial (google_servicio)");
+    if ((c.origen === "drive" || c.origen === "archivo") && !c.archivo?.trim()) falta("archivo", "falta archivo (id de Drive o ruta)");
+    if (c.origen === "archivo" && c.archivo && !rutaRelativa.safeParse(c.archivo).success) falta("archivo", "la ruta tiene que ser relativa al espacio de archivos, sin «..»");
+    if (c.origen === "url" && !c.url?.trim()) falta("url", "falta url");
+  }),
+  sql_consulta: conf({ credencial: credencialRef, consulta: sqlTexto("consulta"), parametros: mapaPlantillas("parametros").optional(), max_filas: entre("max_filas", 1, 5000).optional(), timeout_s: timeoutS }),
+  sql_ejecutar: conf({ credencial: credencialRef, sentencia: sqlTexto("sentencia"), parametros: mapaPlantillas("parametros").optional(), permitir_sin_where: opcional, timeout_s: timeoutS }),
+  archivo_leer: conf({
+    ruta: rutaRelativa, formato: z.enum(["auto", "texto", "json", "filas"], { error: "formato: auto, texto, json o filas" }).optional(), hoja: z.string().optional(),
+    max_caracteres: entre("max_caracteres", 1, 500000).optional(), max_filas: entre("max_filas", 1, 5000).optional(),
+  }),
+  archivo_guardar: conf({
+    ruta: rutaRelativa, contenido: z.string().optional(), de: z.string().optional(),
+    formato: z.enum(["texto", "json", "csv"], { error: "formato: texto, json o csv" }).optional(), modo: z.enum(["crear", "reemplazar", "anexar"], { error: "modo: crear, reemplazar o anexar" }).optional(),
+  }).refine((c) => c.contenido !== undefined || c.de, { message: "archivo_guardar necesita contenido (plantilla) o de (variable)", path: ["contenido"] }),
+  tabla_guardar: conf({
+    tabla: nombreTabla, clave: z.string().optional(), datos: z.record(z.string(), z.unknown(), { error: "datos tiene que ser un objeto {campo: plantilla o valor}" }).optional(),
+    de: z.string().optional(), modo: z.enum(["reemplazar", "combinar", "insertar"], { error: "modo: reemplazar, combinar o insertar" }).optional(), ambito: AMBITO.optional(),
+  }).refine((c) => (c.datos && Object.keys(c.datos).length) || c.de, { message: "tabla_guardar necesita datos ({campo: plantilla}) o de (una variable)", path: ["datos"] }),
+  tabla_consultar: conf({
+    tabla: nombreTabla, clave: z.string().optional(), filtro: mapaPlantillas("filtro").optional(), limite: entre("limite", 1, 500).optional(),
+    orden: z.enum(["-creada", "creada", "-actualizada", "actualizada", "clave", "-clave"], { error: "orden: creada, actualizada o clave (con - para descendente)" }).optional(), ambito: AMBITO.optional(),
+  }),
+  para_cada: conf({
+    lista: textoReq("lista"), variable: variable.optional(), indice: variable.optional(), recoger: z.string().optional(),
+    max_iteraciones: entre("max_iteraciones", 1, 1000).optional(), al_fallar: z.enum(["detener", "continuar"], { error: "al_fallar: detener o continuar" }).optional(),
+  }),
+  fin_ciclo: conf({}),
+  paralelo: conf({
+    ramas: z.array(z.string().trim().min(1), { error: "faltan ramas: [nombres]" }).min(1, "faltan ramas").max(10, "hasta 10 ramas")
+      .refine(unicos, "hay ramas repetidas").refine((xs) => !xs.some((x) => ["error", "listo"].includes(x.trim().toLowerCase())), "«error» y «listo» no pueden ser nombres de rama"),
+  }),
+  unir: conf({}),
+  esperar: conf({ segundos: entre("segundos", 0, 60, false) }),
+  expresion: conf({ expresion: expresionTexto, como_condicion: opcional }),
+  json: conf({
+    op: z.enum(["parsear", "serializar", "seleccionar"], { error: "op: parsear, serializar o seleccionar" }), de: textoReq("de"),
+    ruta: z.string().regex(RUTA, "ruta inválida (p. ej. «items.0.id»)").optional(), indentar: opcional, defecto: z.unknown().optional(),
+  }).refine((c) => c.op !== "seleccionar" || c.ruta, { message: "seleccionar necesita ruta", path: ["ruta"] }),
+  fecha: conf({
+    op: z.enum(["ahora", "parsear", "formatear", "sumar", "diferencia"], { error: "op: ahora, parsear, formatear, sumar o diferencia" }),
+    valor: z.union([z.string(), z.number()]).optional(), formato: z.string().includes("%", { message: "formato es un patrón strftime, p. ej. «%d/%m/%Y»" }).optional(),
+    cantidad: z.union([z.number(), z.string()]).optional(), unidad: z.enum(["minutos", "horas", "dias", "semanas"], { error: "unidad: minutos, horas, dias o semanas" }).optional(),
+    hasta: z.string().optional(), zona: zona.optional(),
+  }).refine((c) => c.op !== "sumar" || c.cantidad !== undefined, { message: "sumar necesita cantidad", path: ["cantidad"] }),
+  llamar_flujo: conf({ flujo: z.string({ error: "falta flujo" }).regex(/^[a-z][a-z0-9-]{1,40}$/, "flujo: el id de otro flujo declarativo"), entrada: mapaPlantillas("entrada").optional() }),
+  respuesta_webhook: conf({
+    estado: entre("estado", 100, 599).optional(), cuerpo: z.unknown().optional(),
+    tipo_contenido: z.enum(["application/json", "text/plain"], { error: "tipo_contenido: application/json o text/plain" }).optional(),
+  }),
   leer_adjuntos: conf({
     ocr: booleano.optional(), vision: booleano.optional(),
     tipos: z.array(z.string().regex(/^(pdf|imagen|docx|xlsx|texto|p7m|\.[a-z0-9]{1,6})$/i, "tipo: pdf, imagen, docx, xlsx, texto, p7m o una extensión como .pdf")).min(1).optional(),
@@ -164,7 +332,8 @@ export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
       .refine((e) => !Object.keys(e).some((k) => ENCABEZADOS_SECRETOS.includes(k.trim().toLowerCase())), "encabezados: Authorization y las claves no van en el flujo; usa credencial con el nombre de la variable de entorno")
       .optional(),
     cuerpo: z.union([z.string(), z.record(z.string(), z.unknown()), z.array(z.unknown())], { error: "cuerpo tiene que ser texto (plantilla) o un objeto JSON con plantillas" }).optional(),
-    credencial: z.string().regex(/^[A-Z][A-Z0-9_]{2,63}$/, "credencial es el NOMBRE de una variable de entorno (p. ej. HTTP_TOKEN_X), nunca el valor").optional(),
+    credencial: z.string().refine((x) => /^[A-Z][A-Z0-9_]{2,63}$/.test(x) || CREDENCIAL_GUARDADA.test(x),
+      "credencial es el NOMBRE de una credencial guardada (http_bearer o http_basico) o de una variable de entorno (p. ej. HTTP_TOKEN_X), nunca el valor").optional(),
     timeout_ms: z.number({ error: "timeout_ms tiene que ser un entero entre 100 y 60000" }).int().min(100, "timeout_ms entre 100 y 60000").max(60000, "timeout_ms entre 100 y 60000").optional(),
     mapeo: z.array(z.looseObject({
       variable, ruta: z.string({ error: "falta ruta" }).regex(RUTA, "ruta inválida (p. ej. «items.0.id», «items[estado=activo].id», «[\"a.b\"]»)"),
@@ -194,8 +363,8 @@ const nodo = z.object({
   const c = n.config as Record<string, unknown>;
   const problema = (clave: string, m: string) => ctx.addIssue({ code: "custom", path: ["config", clave], message: `${n.id} (${n.tipo}): ${m}` });
   if (c.deshabilitado === true && NO_DESHABILITABLES.has(n.tipo)) problema("deshabilitado", `un nodo ${n.tipo} no se puede deshabilitar`);
-  if (c.continuar_si_falla === true && n.tipo === "salida") problema("continuar_si_falla", "una salida no puede continuar si falla: no tiene por dónde seguir");
-  if (c.reintentos !== undefined && !TIPOS_CON_REINTENTOS.has(n.tipo)) problema("reintentos", "reintentos solo aplica a los nodos de IA, enviar, notificar y http");
+  if (c.continuar_si_falla === true && TERMINALES.has(n.tipo)) problema("continuar_si_falla", `un nodo ${n.tipo} no puede continuar si falla: no tiene por dónde seguir`);
+  if (c.reintentos !== undefined && !TIPOS_CON_REINTENTOS.has(n.tipo)) problema("reintentos", "reintentos solo aplica a los nodos de IA, conectores, llamar_flujo, enviar, notificar y http");
 });
 
 export const definicion = z.object({
@@ -203,8 +372,10 @@ export const definicion = z.object({
   nombre: z.string().min(2).max(80),
   descripcion: z.string().max(800).nullish().transform((v) => v ?? ""),
   modelo: z.string().default("gemini-2.5-flash"),
-  nodos: z.array(nodo).min(2).max(60),
-  aristas: z.array(z.object({ desde: z.string(), hacia: z.string(), cuando: z.string().optional() })).max(200),
+  nodos: z.array(nodo).min(2).max(100),
+  aristas: z.array(z.object({ desde: z.string(), hacia: z.string(), cuando: z.string().optional() })).max(300),
+  /** Posición de cada nodo en el editor: {id_nodo: {x, y}}. No afecta la ejecución. */
+  disenio: z.record(z.string(), z.object({ x: z.number().finite(), y: z.number().finite() })).optional(),
 });
 export type Definicion = z.infer<typeof definicion>;
 
@@ -222,6 +393,8 @@ export interface Flujo {
   version?: number;
   actualizado?: number;
   definicion?: Definicion;
+  /** La nota de la versión actual (restaurada, copia, renombrado…). */
+  nota?: string;
 }
 
 const raiz = config.raiz;
@@ -242,23 +415,30 @@ const DE_CODIGO: Flujo[] = [
 
 const declarativos = new Map<string, Flujo>();
 
+interface Guardado {
+  definicion: unknown;
+  version: number;
+  actualizado: number;
+  nota?: string;
+}
+
 export async function cargar(): Promise<void> {
   await mkdir(carpetaDeclarativos(), { recursive: true });
   for (const a of (await readdir(carpetaDeclarativos())).filter((x) => x.endsWith(".json"))) {
     try {
-      const guardado = JSON.parse(await readFile(join(carpetaDeclarativos(), a), "utf8")) as { definicion: unknown; version: number; actualizado: number };
+      const guardado = JSON.parse(await readFile(join(carpetaDeclarativos(), a), "utf8")) as Guardado;
       const d = definicion.parse(guardado.definicion);
-      declarativos.set(d.id, aFlujo(d, guardado.version, guardado.actualizado));
+      declarativos.set(d.id, aFlujo(d, guardado.version, guardado.actualizado, guardado.nota));
     } catch {
       /* archivo dañado: se ignora */
     }
   }
 }
 
-function aFlujo(d: Definicion, version: number, actualizado: number): Flujo {
+function aFlujo(d: Definicion, version: number, actualizado: number, nota?: string): Flujo {
   return {
     id: d.id, nombre: d.nombre, descripcion: d.descripcion, tipo: "declarativo", buzonReal: false, lote: false,
-    trabajador: resolve(raiz, "puente", "flujo_declarativo.py"), version, actualizado, definicion: d,
+    trabajador: resolve(raiz, "puente", "flujo_declarativo.py"), version, actualizado, definicion: d, ...(nota ? { nota } : {}),
   };
 }
 
@@ -270,10 +450,18 @@ export function obtener(id: string): Flujo | undefined {
   return listar().find((f) => f.id === id);
 }
 
-/** Los problemas de una definición, con el mismo validador que la ejecuta. */
-export function validar(entrada: unknown): Promise<{ ok: boolean; problemas: string[]; definicion?: Definicion }> {
+export const esDeCodigo = (id: string) => DE_CODIGO.some((f) => f.id === id);
+
+/** El disparador de una definición (el único nodo de tipo disparador). */
+export function disparadorDe(d: Definicion): Definicion["nodos"][number] | undefined {
+  return d.nodos.find((n) => DISPARADORES.has(n.tipo));
+}
+
+/** Los problemas de una definición, con el mismo validador que la ejecuta (y los nombres del entorno de ese flujo). */
+export function validar(entrada: unknown, nombresExtra: string[] = []): Promise<{ ok: boolean; problemas: string[]; definicion?: Definicion }> {
   const r = definicion.safeParse(entrada);
   if (!r.success) return Promise.resolve({ ok: false, problemas: r.error.issues.map((i) => `${i.path.join(".") || "flujo"}: ${i.message}`) });
+  const nombres = [...new Set([...entornos.nombresDeCache(r.data.id), ...nombresExtra])];
   return new Promise((resolver) => {
     const p = spawn(config.python, [resolve(raiz, "puente", "flujo_declarativo.py"), "validar"], { stdio: ["pipe", "pipe", "pipe"], env: { ...process.env, PYTHONIOENCODING: "utf-8" } });
     let salida = "";
@@ -286,22 +474,42 @@ export function validar(entrada: unknown): Promise<{ ok: boolean; problemas: str
         resolver({ ok: false, problemas: ["no se pudo validar el flujo"], definicion: r.data });
       }
     });
-    p.stdin.end(JSON.stringify(r.data));
+    p.stdin.end(JSON.stringify({ definicion: r.data, entorno: nombres }));
   });
 }
 
-/** Guarda una definición válida (crea o reemplaza) y deja la versión anterior. */
-export async function guardar(entrada: unknown): Promise<{ ok: boolean; problemas: string[]; flujo?: Flujo }> {
-  const v = await validar(entrada);
+/** Un webhook sin secreto recibe uno (o conserva el que ya tenía su versión anterior). */
+function conSecretos(entrada: unknown, previo?: Definicion): unknown {
+  if (!entrada || typeof entrada !== "object" || !Array.isArray((entrada as { nodos?: unknown }).nodos)) return entrada;
+  const anterior = previo?.nodos.find((n) => n.tipo === "webhook")?.config as { secreto?: string } | undefined;
+  const e = structuredClone(entrada) as { nodos: { tipo?: string; config?: Record<string, unknown> | null }[] };
+  for (const n of e.nodos) {
+    if (n?.tipo !== "webhook") continue;
+    n.config ??= {};
+    if (typeof n.config.secreto !== "string" || !n.config.secreto) n.config.secreto = anterior?.secreto ?? randomBytes(24).toString("base64url");
+  }
+  return e;
+}
+
+const rutaVersion = (id: string, v: number) => join(carpetaDeclarativos(), "versiones", `${id}.v${v}.json`);
+
+/** Guarda una definición válida (crea o reemplaza) y deja la versión anterior (con su nota). */
+export async function guardar(entrada: unknown, nota?: string, nombresExtra: string[] = []): Promise<{ ok: boolean; problemas: string[]; flujo?: Flujo }> {
+  const id = (entrada as { id?: unknown })?.id;
+  const previo = typeof id === "string" ? declarativos.get(id) : undefined;
+  const v = await validar(conSecretos(entrada, previo?.definicion), nombresExtra);
   if (!v.ok || !v.definicion) return { ok: false, problemas: v.problemas };
-  if (DE_CODIGO.some((f) => f.id === v.definicion!.id)) return { ok: false, problemas: [`«${v.definicion.id}» es un flujo de código: elige otro id`] };
-  const previo = declarativos.get(v.definicion.id);
+  if (esDeCodigo(v.definicion.id)) return { ok: false, problemas: [`«${v.definicion.id}» es un flujo de código: elige otro id`] };
   const version = (previo?.version ?? 0) + 1;
   const actualizado = Date.now();
   await mkdir(join(carpetaDeclarativos(), "versiones"), { recursive: true });
-  if (previo?.definicion) await writeFile(join(carpetaDeclarativos(), "versiones", `${previo.id}.v${previo.version}.json`), JSON.stringify(previo.definicion, null, 2), "utf8");
-  await writeFile(join(carpetaDeclarativos(), `${v.definicion.id}.json`), JSON.stringify({ definicion: v.definicion, version, actualizado }, null, 2), "utf8");
-  const f = aFlujo(v.definicion, version, actualizado);
+  if (previo?.definicion) {
+    const anterior: Guardado = { definicion: previo.definicion, version: previo.version ?? 0, actualizado: previo.actualizado ?? 0, ...(previo.nota ? { nota: previo.nota } : {}) };
+    await writeFile(rutaVersion(previo.id, previo.version ?? 0), JSON.stringify(anterior, null, 2), "utf8");
+  }
+  const notaLimpia = typeof nota === "string" && nota.trim() ? nota.trim().slice(0, 300) : undefined;
+  await writeFile(join(carpetaDeclarativos(), `${v.definicion.id}.json`), JSON.stringify({ definicion: v.definicion, version, actualizado, ...(notaLimpia ? { nota: notaLimpia } : {}) }, null, 2), "utf8");
+  const f = aFlujo(v.definicion, version, actualizado, notaLimpia);
   declarativos.set(f.id, f);
   return { ok: true, problemas: [], flujo: f };
 }
@@ -310,7 +518,263 @@ export async function borrar(id: string): Promise<boolean> {
   if (!declarativos.has(id)) return false;
   declarativos.delete(id);
   await unlink(join(carpetaDeclarativos(), `${id}.json`)).catch(() => undefined);
+  // sus versiones tampoco: un flujo nuevo con el mismo id empieza su propia historia
+  for (const n of await readdir(join(carpetaDeclarativos(), "versiones")).catch(() => [] as string[]))
+    if (n.startsWith(`${id}.v`) && /^\d+\.json$/.test(n.slice(id.length + 2))) await unlink(join(carpetaDeclarativos(), "versiones", n)).catch(() => undefined);
+  await entornos.borrarTodo(id);  // los secretos de un flujo borrado no se quedan
   return true;
+}
+
+// ------------------------------------------------------- versiones y copias
+
+export interface Version {
+  version: number;
+  actualizado: number;
+  nota?: string;
+  actual?: boolean;
+}
+
+async function leerVersion(id: string, v: number): Promise<{ definicion: unknown; actualizado: number; nota?: string } | null> {
+  try {
+    const crudo = JSON.parse(await readFile(rutaVersion(id, v), "utf8")) as Record<string, unknown>;
+    // Las versiones de antes guardaban la definición sola.
+    if (crudo && typeof crudo === "object" && "definicion" in crudo && "version" in crudo) return crudo as unknown as Guardado;
+    return { definicion: crudo, actualizado: statSync(rutaVersion(id, v)).mtimeMs };
+  } catch {
+    return null;
+  }
+}
+
+export async function versiones(id: string): Promise<Version[] | null> {
+  const f = declarativos.get(id);
+  if (!f) return null;
+  const nombres = await readdir(join(carpetaDeclarativos(), "versiones")).catch(() => [] as string[]);
+  const r: Version[] = [];
+  for (const n of nombres) {
+    const m = new RegExp(`^${id}\\.v(\\d+)\\.json$`).exec(n);
+    if (!m) continue;
+    const x = await leerVersion(id, Number(m[1]));
+    if (x && Number(m[1]) !== f.version) r.push({ version: Number(m[1]), actualizado: x.actualizado, ...(x.nota ? { nota: x.nota } : {}) });
+  }
+  r.push({ version: f.version ?? 1, actualizado: f.actualizado ?? 0, ...(f.nota ? { nota: f.nota } : {}), actual: true });
+  return r.sort((a, b) => b.version - a.version);
+}
+
+type Operacion = { ok: true; flujo: Flujo } | { ok: false; codigo: number; error: string; problemas?: string[] };
+
+/** Vuelve a una versión anterior: la guarda como versión nueva (no se pierde la historia). */
+export async function restaurar(id: string, version: number): Promise<Operacion> {
+  const f = declarativos.get(id);
+  if (!f) return { ok: false, codigo: 404, error: esDeCodigo(id) ? "los flujos de código no tienen versiones" : "ese flujo no existe" };
+  if (!Number.isInteger(version) || version < 1) return { ok: false, codigo: 400, error: "version tiene que ser un entero" };
+  if (version === f.version) return { ok: true, flujo: f };
+  const x = await leerVersion(id, version);
+  if (!x) return { ok: false, codigo: 404, error: `no existe la versión ${version}` };
+  const r = await guardar({ ...(x.definicion as object), id }, `restaurada la versión ${version}`);
+  return r.ok ? { ok: true, flujo: r.flujo! } : { ok: false, codigo: 400, error: "esa versión ya no es válida", problemas: r.problemas };
+}
+
+/** Copia un flujo con otro id y nombre. La copia nace apagada (programado/correo_nuevo) y con un webhook nuevo. */
+export async function duplicar(id: string, idNuevo: unknown, nombre: unknown): Promise<Operacion> {
+  const f = declarativos.get(id);
+  if (!f?.definicion) return { ok: false, codigo: esDeCodigo(id) ? 400 : 404, error: esDeCodigo(id) ? "los flujos de código no se duplican" : "ese flujo no existe" };
+  if (typeof idNuevo !== "string" || !/^[a-z][a-z0-9-]{1,40}$/.test(idNuevo)) return { ok: false, codigo: 400, error: "id_nuevo: minúsculas con guiones" };
+  if (obtener(idNuevo)) return { ok: false, codigo: 409, error: `ya existe un flujo «${idNuevo}»` };
+  const d = structuredClone(f.definicion);
+  d.id = idNuevo;
+  d.nombre = typeof nombre === "string" && nombre.trim() ? nombre.trim().slice(0, 80) : `${f.nombre} (copia)`;
+  for (const n of d.nodos) {
+    const c = n.config as Record<string, unknown>;
+    if (n.tipo === "webhook") delete c.secreto;
+    if (n.tipo === "programado" || n.tipo === "correo_nuevo") c.activo = false;
+  }
+  // Las variables de entorno no secretas se copian; las secretas no (las vuelve a poner una persona en la copia).
+  const original = await entornos.listar(id);
+  const r = await guardar(d, `copia de ${id} v${f.version}`, original.map((v) => v.nombre));
+  if (r.ok) {
+    for (const v of original) {
+      if (v.secreto) await entornos.declararSecreto(idNuevo, v.nombre, v.descripcion);
+      else await entornos.poner(idNuevo, v.nombre, { valor: v.valor ?? "", descripcion: v.descripcion }, false);
+    }
+  }
+  return r.ok ? { ok: true, flujo: r.flujo! } : { ok: false, codigo: 400, error: "la copia no es válida", problemas: r.problemas };
+}
+
+/** Cambia nombre o descripción sin mandar toda la definición. */
+export async function renombrar(id: string, cambios: { nombre?: unknown; descripcion?: unknown }): Promise<Operacion> {
+  if (esDeCodigo(id)) return { ok: false, codigo: 400, error: "el nombre y la descripción de un flujo de código no se editan" };
+  const f = declarativos.get(id);
+  if (!f?.definicion) return { ok: false, codigo: 404, error: "ese flujo no existe" };
+  const d = structuredClone(f.definicion);
+  if (cambios.nombre !== undefined) {
+    if (typeof cambios.nombre !== "string" || cambios.nombre.trim().length < 2) return { ok: false, codigo: 400, error: "nombre: entre 2 y 80 caracteres" };
+    d.nombre = cambios.nombre.trim().slice(0, 80);
+  }
+  if (cambios.descripcion !== undefined) {
+    if (typeof cambios.descripcion !== "string") return { ok: false, codigo: 400, error: "descripcion tiene que ser texto" };
+    d.descripcion = cambios.descripcion.slice(0, 800);
+  }
+  if (cambios.nombre === undefined && cambios.descripcion === undefined) return { ok: false, codigo: 400, error: "manda nombre o descripcion" };
+  const r = await guardar(d, "nombre o descripción cambiados");
+  return r.ok ? { ok: true, flujo: r.flujo! } : { ok: false, codigo: 400, error: "el flujo no es válido", problemas: r.problemas };
+}
+
+// --------------------------------------------------- lo que recibe una corrida
+
+const ENV_VIEJA = /^[A-Z][A-Z0-9_]{2,63}$/;
+
+/** Las credenciales guardadas que nombra una definición (la forma vieja de http, una variable de entorno, no cuenta). */
+export function credencialesUsadas(d: Definicion): string[] {
+  return [...new Set(d.nodos.map((n) => (n.config as { credencial?: unknown }).credencial).filter((x): x is string => typeof x === "string" && !ENV_VIEJA.test(x)))];
+}
+
+function subflujosDe(d: Definicion, pila: string[], acumulado: Record<string, unknown> = {}): Record<string, unknown> {
+  if (pila.length > 4) return acumulado;
+  for (const n of d.nodos) {
+    if (n.tipo !== "llamar_flujo") continue;
+    const id = String((n.config as { flujo?: unknown }).flujo ?? "");
+    const sub = declarativos.get(id);
+    if (!sub?.definicion || id in acumulado || pila.includes(id)) continue;
+    const ent = entornos.paraCorrida(id);
+    acumulado[id] = { definicion: sub.definicion, credenciales: credenciales.paraCorrida(id, credencialesUsadas(sub.definicion)), entorno: ent.valores, entorno_secretos: ent.secretos };
+    subflujosDe(sub.definicion, [...pila, id], acumulado);
+  }
+  return acumulado;
+}
+
+/**
+ * Lo que se agrega a la orden de cada corrida. Declarativos: definición, entrada,
+ * credenciales (solo las que usa y puede usar), entorno del flujo y flujos que llama.
+ * De código: su entorno propio, de las variables que el trabajador acepta en caliente.
+ */
+export function ordenPara(id: string, corrida: Corrida): Record<string, unknown> {
+  const f = obtener(id);
+  if (!f) return {};
+  if (f.tipo === "codigo") {
+    const permitidas = id === "pqrd" ? ajustables().entorno : new Set<string>();
+    const propias = Object.fromEntries(Object.entries(entornos.paraCorrida(id).valores).filter(([k]) => permitidas.has(k)));
+    return { entorno: { ...(id === "pqrd" ? corrida.configuracion.entorno : {}), ...propias } };
+  }
+  if (!f.definicion) return {};
+  const ent = entornos.paraCorrida(id);
+  return {
+    definicion: f.definicion, flujo: id, entrada: corrida.entrada ?? {}, origen: corrida.origen ?? "bandeja",
+    credenciales: credenciales.paraCorrida(id, credencialesUsadas(f.definicion)), entorno: ent.valores, entorno_secretos: ent.secretos,
+    subflujos: subflujosDe(f.definicion, [id]),
+  };
+}
+
+/** Para el sondeo de correo_nuevo: la definición y las credenciales que necesita. */
+export function ordenDeSondeo(id: string): Record<string, unknown> | null {
+  const f = declarativos.get(id);
+  if (!f?.definicion) return null;
+  return { flujo: id, definicion: f.definicion, credenciales: credenciales.paraCorrida(id, credencialesUsadas(f.definicion)) };
+}
+
+// ------------------------------------------------------ catálogo de tipos
+
+let tiposCache: { mtime: number; tipos: unknown[] } | null = null;
+
+/** GET /api/nodos/tipos: lo arma la biblioteca de nodos de Python (la única fuente) y se guarda en memoria. */
+export async function tiposDeNodo(): Promise<unknown[]> {
+  const archivo = resolve(raiz, "puente", "nodos_declarativos.py");
+  const mtime = existsSync(archivo) ? statSync(archivo).mtimeMs : 0;
+  if (tiposCache && tiposCache.mtime === mtime) return tiposCache.tipos;
+  const tipos = await new Promise<unknown[]>((resolver, rechazar) => {
+    const p = spawn(config.python, [archivo, "tipos"], { env: { ...process.env, PYTHONIOENCODING: "utf-8" } });
+    let salida = "";
+    let errores = "";
+    p.stdout.setEncoding("utf8").on("data", (t: string) => (salida += t));
+    p.stderr.setEncoding("utf8").on("data", (t: string) => (errores += t));
+    p.on("exit", (codigo) => {
+      try {
+        resolver(JSON.parse(salida) as unknown[]);
+      } catch {
+        rechazar(new Error(`no se pudo leer la biblioteca de nodos (código ${codigo}): ${errores.slice(-300)}`));
+      }
+    });
+  });
+  tiposCache = { mtime, tipos };
+  return tipos;
+}
+
+// ------------------------------------------------------------ manifiesto
+
+const hostDe = (url: unknown): string | null => {
+  if (typeof url !== "string" || url.trim().startsWith("{{")) return null;
+  try {
+    return new URL(url.replace(/\{\{[^}]*\}\}/g, "x")).hostname || null;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * El documento que se revisa antes de llevar un flujo a producción: disparador,
+ * nodos, conexiones (credenciales con su tipo, alcance y destino; nunca secretos),
+ * hosts, variables de entorno (las secretas marcadas, sin valores), escrituras y si
+ * están habilitadas, programación y ruta del webhook.
+ */
+export async function manifiesto(id: string): Promise<Record<string, unknown> | null> {
+  const f = obtener(id);
+  if (!f) return null;
+  const variables = (await entornos.listar(id)).map((v) => ({ nombre: v.nombre, secreto: v.secreto, definido: v.definido, descripcion: v.descripcion }));
+  const base = { manifiesto: 1, generado: new Date().toISOString(), flujo: { id: f.id, nombre: f.nombre, descripcion: f.descripcion, tipo: f.tipo, version: f.version ?? null, actualizado: f.actualizado ?? null } };
+  if (f.tipo === "codigo" || !f.definicion) {
+    return {
+      ...base, disparador: { tipo: "buzon_real", descripcion: "lo corre el job o el visor sobre el buzón de solo lectura de la plataforma" },
+      entorno: variables, conexiones: [], escrituras: [{ descripcion: "Radicación en SGDEA: la hace el job de producción; desde este visor siempre queda simulada (MODO_TEST)" }],
+    };
+  }
+  const d = f.definicion;
+  const disp = disparadorDe(d);
+  const cd = (disp?.config ?? {}) as Record<string, unknown>;
+  const texto = JSON.stringify(d);
+  const usadasEntorno = [...new Set([...texto.matchAll(/\{\{\s*entorno\.([A-Z][A-Z0-9_]*)/g)].map((m) => m[1]!))];
+  const porNodo = (pred: (c: Record<string, unknown>, t: string) => boolean) => d.nodos.filter((n) => pred(n.config as Record<string, unknown>, n.tipo)).map((n) => n.id);
+  const conexiones = credencialesUsadas(d).map((nombre) => {
+    const x = credenciales.destino(nombre, id);
+    const nodos = porNodo((c) => c.credencial === nombre);
+    return { credencial: nombre, ...x, nodos, escribe: d.nodos.some((n) => nodos.includes(n.id) && TIPOS_ESCRITURA.has(n.tipo) && (n.tipo !== "http" || String((n.config as { metodo?: string }).metodo ?? "GET") !== "GET")) };
+  });
+  const hosts = d.nodos.flatMap((n) => {
+    const c = n.config as Record<string, unknown>;
+    if (n.tipo !== "http" && !(n.tipo === "hoja_leer" && c.origen === "url")) return [];
+    return [{ nodo: n.id, metodo: String(c.metodo ?? "GET"), host: hostDe(c.url) ?? "(dinámico: sale de una plantilla)", credencial: c.credencial ?? null }];
+  });
+  const escrituras = d.nodos.filter((n) => TIPOS_ESCRITURA.has(n.tipo)).flatMap((n) => {
+    const c = n.config as Record<string, unknown>;
+    if (n.tipo === "http" && String(c.metodo ?? "GET") === "GET") return [];
+    const cred = typeof c.credencial === "string" && !ENV_VIEJA.test(c.credencial) ? credenciales.destino(c.credencial, id) : null;
+    const habilitada = n.tipo === "notificar" || n.tipo === "enviar" ? false : !!(cred?.usable && cred.permitir_escritura);
+    return [{ nodo: n.id, tipo: n.tipo, credencial: c.credencial ?? null, habilitada,
+      descripcion: n.tipo === "notificar" || n.tipo === "enviar" ? "siempre simulada (nunca envía)" : habilitada ? "ESCRIBE DE VERDAD: una persona habilitó la escritura de la credencial" : "bloqueada: se arma y se anota, no sale" }];
+  });
+  return {
+    ...base,
+    disparador: {
+      tipo: disp?.tipo ?? null,
+      ...(disp?.tipo === "programado" ? { programacion: { cron: cd.cron ?? null, cada_minutos: cd.cada_minutos ?? null, zona: cd.zona ?? "America/Bogota", activo: cd.activo === true } } : {}),
+      ...(disp?.tipo === "webhook" ? { webhook: { ruta: `/api/ganchos/${id}/<secreto>`, metodo: "POST", secreto_definido: typeof cd.secreto === "string", responder: cd.responder === true, esperar_ms: cd.esperar_ms ?? 10000 } } : {}),
+      ...(disp?.tipo === "correo_nuevo" ? { correo_nuevo: { credencial: cd.credencial, carpeta: cd.carpeta ?? "INBOX", cada_minutos: cd.cada_minutos ?? 5, activo: cd.activo === true, solo_lectura: true } } : {}),
+      ...(disp?.tipo === "entrada_manual" ? { campos: cd.campos ?? [] } : {}),
+    },
+    nodos: d.nodos.map((n) => ({ id: n.id, tipo: n.tipo, nombre: n.nombre, escritura: TIPOS_ESCRITURA.has(n.tipo), ...((n.config as { credencial?: unknown }).credencial ? { credencial: (n.config as { credencial?: unknown }).credencial } : {}) })),
+    conexiones,
+    hosts_http: hosts,
+    entorno: variables.map((v) => ({ ...v, usado: usadasEntorno.includes(v.nombre) })),
+    entorno_sin_definir: usadasEntorno.filter((n) => !variables.some((v) => v.nombre === n)),
+    escrituras,
+    flujos_llamados: [...new Set(d.nodos.filter((n) => n.tipo === "llamar_flujo").map((n) => String((n.config as { flujo?: unknown }).flujo)))],
+    archivos: d.nodos.filter((n) => n.tipo === "archivo_leer" || n.tipo === "archivo_guardar").map((n) => ({ nodo: n.id, tipo: n.tipo, ruta: (n.config as { ruta?: unknown }).ruta })),
+    tablas: d.nodos.filter((n) => n.tipo === "tabla_guardar" || n.tipo === "tabla_consultar").map((n) => ({ nodo: n.id, tabla: (n.config as { tabla?: unknown }).tabla, ambito: (n.config as { ambito?: unknown }).ambito ?? "flujo" })),
+    limites: [
+      "Las escrituras afuera solo salen si una persona habilitó la escritura de la credencial (X-Confirmado-Por-Persona).",
+      "Bloqueo duro: hosts de positiva.gov.co, SGDEA, metadatos, IP privadas y de loopback; buzones de PQRD y tutelas.",
+      "Archivos solo dentro de /datos/archivos; SQL de una sola sentencia, solo lectura en sql_consulta, 20 s y 500 filas por defecto.",
+      "Secretos (credenciales y entorno secreto) solo llegan a la corrida y salen enmascarados en eventos, resultados y consola.",
+    ],
+  };
 }
 
 // ------------------------------------------------------------------ catálogos
@@ -320,6 +784,11 @@ const CATEGORIA: Record<TipoDeNodo, string> = {
   ia_extraer: "ia", extraer_regex: "busqueda", validar: "validacion", transformar: "datos", buscar_en_tabla: "datos",
   bifurcar_por_valor: "ruta", ia_generar: "ia", resumir: "ia", ia_redactar: "ia", notificar: "integracion", enviar: "integracion",
   http: "integracion", salida: "salida",
+  entrada_manual: "entrada", programado: "entrada", webhook: "entrada", correo_nuevo: "entrada",
+  para_cada: "logica", fin_ciclo: "logica", paralelo: "logica", unir: "logica", esperar: "logica", llamar_flujo: "logica",
+  expresion: "datos", json: "datos", fecha: "datos", tabla_guardar: "datos", tabla_consultar: "datos", archivo_leer: "datos", archivo_guardar: "datos",
+  correo_leer: "conector", correo_enviar: "conector", drive_listar: "conector", drive_leer: "conector", drive_subir: "conector", hoja_leer: "conector",
+  sql_consulta: "conector", sql_ejecutar: "conector", respuesta_webhook: "integracion",
 };
 const NOMBRE_TIPO: Record<TipoDeNodo, string> = {
   entrada_correo: "Entrada de correo", leer_adjuntos: "Leer adjuntos", filtro: "Filtro", condicion: "Condición",
@@ -327,6 +796,12 @@ const NOMBRE_TIPO: Record<TipoDeNodo, string> = {
   validar: "Validación", transformar: "Transformar", buscar_en_tabla: "Buscar en tabla", bifurcar_por_valor: "Bifurcar por valor",
   ia_generar: "IA · generar", resumir: "IA · resumir", ia_redactar: "IA · redactar", notificar: "Notificar (simulado)",
   enviar: "Enviar respuesta (simulado)", http: "Petición HTTP", salida: "Salida",
+  entrada_manual: "Entrada manual", programado: "Programado", webhook: "Webhook", correo_nuevo: "Correo nuevo",
+  para_cada: "Para cada", fin_ciclo: "Fin del ciclo", paralelo: "Ramas", unir: "Unir ramas", esperar: "Esperar", llamar_flujo: "Llamar flujo",
+  expresion: "Expresión", json: "JSON", fecha: "Fecha", tabla_guardar: "Guardar en tabla", tabla_consultar: "Consultar tabla",
+  archivo_leer: "Leer archivo", archivo_guardar: "Guardar archivo", correo_leer: "Leer correos", correo_enviar: "Enviar correo",
+  drive_listar: "Drive · listar", drive_leer: "Drive · leer", drive_subir: "Drive · subir", hoja_leer: "Leer hoja de cálculo",
+  sql_consulta: "SQL · consultar", sql_ejecutar: "SQL · ejecutar", respuesta_webhook: "Responder al webhook",
 };
 
 const valorDe = (x: unknown, clave = "valor") => (typeof x === "object" && x ? String((x as Record<string, unknown>)[clave] ?? "") : String(x));
@@ -415,6 +890,69 @@ function describirConfig(n: Definicion["nodos"][number], aristas: Definicion["ar
       add(`Deja la respuesta en «${String(c.salida ?? n.id)}» · sale por «ok» o «error_http» (status ≥ 400)`);
       break;
     }
+    case "entrada_manual":
+      add(`Se corre a mano o desde otro flujo con una entrada${lista(c.campos).length ? `: ${lista(c.campos).map((x) => `${valorDe(x, "nombre")}${(x as { obligatorio?: boolean }).obligatorio ? " (obligatorio)" : ""}`).join(", ")}` : ""}`);
+      break;
+    case "programado":
+      add(`${c.cron ? `Cron «${String(c.cron)}»` : `Cada ${String(c.cada_minutos)} minuto(s)`} en ${String(c.zona ?? "America/Bogota")} · ${c.activo === true ? "ENCENDIDO" : "apagado"}`);
+      add("Sin corridas solapadas; no recupera las perdidas");
+      break;
+    case "webhook":
+      add(`POST /api/ganchos/<flujo>/<secreto>${c.responder === true ? ` · responde lo que arme respuesta_webhook (espera hasta ${String(c.esperar_ms ?? 10000)} ms)` : " · responde {corrida}"}`);
+      break;
+    case "correo_nuevo":
+      add(`Revisa el buzón de la credencial «${String(c.credencial)}» (${String(c.carpeta ?? "INBOX")}) cada ${String(c.cada_minutos ?? 5)} min, solo lectura · ${c.activo === true ? "ENCENDIDO" : "apagado"}`);
+      break;
+    case "para_cada":
+      add(`Por cada elemento de ${String(c.lista)} («${String(c.variable ?? "elemento")}», «${String(c.indice ?? "indice")}») corre el cuerpo («cada»); al terminar sigue por «listo»`);
+      add(`Hasta ${String(c.max_iteraciones ?? 100)} vueltas · si una falla: ${String(c.al_fallar ?? "detener")} · deja la lista en «${String(c.salida ?? n.id)}»`);
+      break;
+    case "fin_ciclo":
+      add("Termina la vuelta actual");
+      break;
+    case "paralelo":
+      add(`Ramas (una tras otra): ${lista(c.ramas).map((x) => String(x)).join(", ")}`);
+      break;
+    case "unir":
+      add(`Junta lo de cada rama en «${String(c.salida ?? n.id)}»`);
+      break;
+    case "esperar":
+      add(`Espera ${String(c.segundos)} s`);
+      break;
+    case "expresion":
+      add(`${c.como_condicion === true ? "Condición" : `«${String(c.salida ?? n.id)}» =`} ${String(c.expresion)}`);
+      break;
+    case "json":
+    case "fecha":
+      add(`${String(c.op)}${c.de ? ` de ${String(c.de)}` : ""}${c.ruta ? ` · ruta ${String(c.ruta)}` : ""}${c.valor ? ` · ${String(c.valor)}` : ""} → «${String(c.salida ?? n.id)}»`);
+      break;
+    case "llamar_flujo":
+      add(`Corre el flujo «${String(c.flujo)}» y deja su resultado en «${String(c.salida ?? n.id)}»`);
+      break;
+    case "tabla_guardar":
+    case "tabla_consultar":
+      add(`Tabla integrada «${String(c.tabla)}» (${String(c.ambito ?? "flujo")})${c.clave ? ` · clave ${String(c.clave)}` : ""}${c.modo ? ` · ${String(c.modo)}` : ""}`);
+      break;
+    case "archivo_leer":
+    case "archivo_guardar":
+      add(`${n.tipo === "archivo_leer" ? "Lee" : "Guarda"} /datos/archivos/${String(c.ruta)} (${String(c.formato ?? (n.tipo === "archivo_leer" ? "auto" : "texto"))})`);
+      break;
+    case "correo_leer":
+    case "drive_listar":
+    case "drive_leer":
+    case "hoja_leer":
+    case "sql_consulta":
+      add(`Con la credencial «${String(c.credencial ?? "—")}»${c.consulta ? `: ${corto(c.consulta, 300)}` : ""}${c.origen ? ` · origen ${String(c.origen)}` : ""} · solo lectura`);
+      break;
+    case "correo_enviar":
+    case "drive_subir":
+    case "sql_ejecutar":
+      add(`Con la credencial «${String(c.credencial)}»${c.sentencia ? `: ${corto(c.sentencia, 300)}` : ""}${c.para ? ` · para ${String(c.para)}` : ""}`);
+      add("ESCRIBE AFUERA: solo sale si una persona habilitó la escritura de la credencial; si no, queda como escritura bloqueada");
+      break;
+    case "respuesta_webhook":
+      add(`Responde ${String(c.estado ?? 200)}: ${corto(c.cuerpo, 300)}`);
+      break;
     case "salida":
       add(`Desenlace: ${String(c.desenlace)}${c.motivo ? ` · motivo ${String(c.motivo)}` : ""}${c.destino ? ` · destino ${String(c.destino)}` : ""}`);
       if (c.campos) add(`Entrega: ${Array.isArray(c.campos) ? (c.campos as string[]).join(", ") : Object.keys(c.campos as object).join(", ")}`);
@@ -437,7 +975,7 @@ function describirConfig(n: Definicion["nodos"][number], aristas: Definicion["ar
 /** El catálogo con que el lienzo dibuja un flujo declarativo: nodos, aristas y fases por profundidad. */
 export function catalogoDeclarativo(d: Definicion): Catalogo & { fases: { id: string; nombre: string; nodos: string[] }[] } {
   const profundidad = new Map<string, number>();
-  const entrada = d.nodos.find((n) => n.tipo === "entrada_correo")?.id ?? d.nodos[0]!.id;
+  const entrada = disparadorDe(d)?.id ?? d.nodos[0]!.id;
   const cola: [string, number][] = [[entrada, 0]];
   while (cola.length) {
     const [id, p] = cola.shift()!;

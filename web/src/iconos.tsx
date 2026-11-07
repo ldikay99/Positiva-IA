@@ -64,6 +64,16 @@ const RUTAS = {
   micMudo: "M3 3l18 18M9 9v3a3 3 0 0 0 5 2.2M15 10V6a3 3 0 0 0-5.7-1.3M5 11a7 7 0 0 0 11.5 5.4M19 11a7 7 0 0 1-.6 2.8M12 18v3",
   altavoz: "M4 9h4l5-4v14l-5-4H4zM16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11",
   altavozMudo: "M4 9h4l5-4v14l-5-4H4zM17 9l5 6M22 9l-5 6",
+  llave: "M8 15a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM11 11h10M17 11v3M20 11v4",
+  rehacer: "M15 14l5-5-5-5M20 9H10a6 6 0 0 0 0 12h3",
+  guardar: "M5 4h11l3 3v13H5zM8 4v5h7V4M8 20v-6h8v6",
+  enlace: "M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1",
+  calendario: "M4 6h16v14H4zM4 10h16M8 3v5M16 3v5",
+  arriba: "M6 15l6-6 6 6",
+  asa: "M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01",
+  mas_circulo: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 8v8M8 12h8",
+  gancho: "M18 16a4 4 0 1 1-4-6.9M6 16h7M9 7a3 3 0 1 1 5.6 1.5L11 15",
+  datos: "M5 6c0-1.7 3.1-3 7-3s7 1.3 7 3-3.1 3-7 3-7-1.3-7-3zM5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6M9 19h6M12 15v4",
 } as const;
 
 export type NombreIcono = keyof typeof RUTAS;

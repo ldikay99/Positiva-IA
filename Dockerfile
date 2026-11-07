@@ -62,7 +62,9 @@ COPY --from=servidor /src/servidor/node_modules servidor/node_modules
 COPY --from=servidor /src/servidor/dist servidor/dist
 COPY --from=web /src/web/dist web/dist
 
-RUN useradd -m -u 1001 app && mkdir -p /datos/estado /datos/bandeja && chown -R app /datos
+# /datos/archivos: el espacio de archivos de los flujos (archivo_leer/guardar, SQLite).
+# Para que sobreviva a una reconstrucción, móntalo como volumen.
+RUN useradd -m -u 1001 app && mkdir -p /datos/estado /datos/bandeja /datos/archivos && chown -R app /datos
 USER app
 
 ENV PYTHON=python \
@@ -70,6 +72,7 @@ ENV PYTHON=python \
     PYTHONDONTWRITEBYTECODE=1 \
     RUTA_DATOS=/datos/estado \
     RUTA_BANDEJA=/datos/bandeja \
+    RUTA_ARCHIVOS=/datos/archivos \
     GOOGLE_APPLICATION_CREDENTIALS=/secretos/adc.json \
     PUERTO=8080
 

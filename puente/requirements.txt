@@ -2,3 +2,9 @@
 # Renderiza cada hoja de un PDF en baja resolución para mostrarla en la web
 # (PDFium, Apache-2.0 / BSD-3-Clause). No interviene en lo que lee el motor.
 pypdfium2==4.30.0
+# Conectores de los flujos declarativos (puente/conectores/):
+# PostgreSQL en Python puro (BSD-3-Clause) y MySQL/MariaDB en Python puro (MIT).
+pg8000==1.31.5
+PyMySQL==1.1.2
+# openpyxl (MIT), google-auth y requests (Apache-2.0) ya vienen con motor/requirements.txt:
+# Hojas XLSX y Google Drive por REST con la cuenta de servicio, sin google-api-python-client.

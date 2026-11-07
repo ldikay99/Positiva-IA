@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import os
 import struct
 import sys
@@ -234,6 +235,8 @@ async def llamada(sesion: Any, types: Any, cid: str, flujo: str) -> None:
         if t.vacio():
             return
         texto = t.dicho.strip()
+        if not re.search(r"\w", texto):  # ruido como «-» o «...» no es una respuesta
+            texto = ""
         if t.escrito:
             texto = (texto + "\n\n" if texto else "") + "\n\n".join(t.escrito)
         cuerpo = {

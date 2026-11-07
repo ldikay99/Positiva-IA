@@ -208,6 +208,8 @@
 @media (max-width: 760px) {
   .chat-burbuja { right: 14px; bottom: 80px; width: 52px; height: 52px; }
   .chat-burbuja.abierta { display: none; }
+  /* Con un diálogo abierto, la burbuja no tapa sus botones. */
+  body:has(.dlg) .chat-burbuja { display: none; }
   .chat-panel { right: 0; bottom: 0; width: 100vw; height: 100dvh; border-radius: 0; }
 }
 @media (prefers-reduced-motion: reduce) {

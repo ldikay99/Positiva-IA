@@ -264,7 +264,7 @@ class Validacion(Base):
         d = cadena()
         d["aristas"].append({"desde": "fin", "hacia": "correo"})
         self.assertProblema(d, "es una salida y no puede tener aristas")
-        self.assertProblema(flujo([nodo("fin", "salida", desenlace="manual")], []), "exactamente un nodo entrada_correo")
+        self.assertProblema(flujo([nodo("fin", "salida", desenlace="manual")], []), "exactamente un disparador")
         self.assertProblema(cadena(nodo("z", "teletransportar")), "tipo desconocido")
 
     def test_tabla_csv(self):
@@ -631,7 +631,7 @@ class Fallos(Base):
         self.assertIn("roto", fin["fallo"])
 
     def test_validacion_de_la_rama_de_error(self):
-        for t in fd.TIPOS - {"salida"}:
+        for t in fd.TIPOS - fd.TERMINALES:
             self.assertIn("error", fd.salidas_posibles({"tipo": t, "config": {}})[1], t)
         self.assertNotIn("error", fd.salidas_posibles({"tipo": "salida", "config": {}})[1])
         # {{fallo.*}} solo existe tras la rama de error
@@ -930,7 +930,7 @@ class Http(Base):
         self.assertEqual(p(**nd.TIPOS["http"]["ejemplo"]["config"]), [])
         casos = [({}, "necesita url"), ({"url": "ftp://x"}, "http:// o https://"), ({"url": "https://x", "metodo": "TRACE"}, "metodo"),
                  ({"url": "https://x", "encabezados": {"Authorization": "Bearer abc"}}, "usa credencial"),
-                 ({"url": "https://x", "credencial": "Bearer abc123"}, "NOMBRE de una variable"),
+                 ({"url": "https://x", "credencial": "Bearer abc123"}, "NOMBRE de una"),
                  ({"url": "https://x", "timeout_ms": 120000}, "timeout_ms"), ({"url": "https://x", "cuerpo": 5}, "cuerpo"),
                  ({"url": "https://x", "mapeo": [{"variable": "a", "ruta": "x["}]}, "ruta"),
                  ({"url": "https://x", "mapeo": [{"variable": "correo", "ruta": "x"}]}, "variable «correo»"),
@@ -978,7 +978,7 @@ class Documentacion(unittest.TestCase):
         self.assertEqual(set(e["tipos"]), fd.TIPOS)
         for t, spec in e["tipos"].items():
             self.assertTrue({"nombre", "categoria", "descripcion", "config", "salidas", "ejemplo"} <= set(spec), t)
-        for t in fd.TIPOS - {"salida"}:  # lo que la doc dice que sale coincide con el motor
+        for t in fd.TIPOS - fd.TERMINALES:  # lo que la doc dice que sale coincide con el motor
             oblig, _ = fd.salidas_posibles(nd.TIPOS[t]["ejemplo"])
             self.assertTrue(oblig, t)
         self.assertEqual(e["version"], nd.VERSION)
@@ -997,6 +997,833 @@ class Documentacion(unittest.TestCase):
                 self.assertTrue(all(isinstance(x, str) and x.strip() for x in spec["consejos"]))
                 for conf in spec["ejemplos"]:  # cada ejemplo se puede copiar tal cual
                     self.assertEqual(fd._validar_config({"id": "n", "tipo": t, "config": conf}), [], conf)
+
+    def test_contrato_de_tipos(self):
+        """GET /api/nodos/tipos: la forma que esperan el editor y Vera, con JSON Schema del subconjunto acordado."""
+        formatos = {"plantilla", "credencial", "variable", "expresion", "texto-largo", "cron"}
+        claves = {"type", "properties", "required", "enum", "items", "description", "default", "minimum", "maximum", "title", "format",
+                  "x-credencial-tipos", "x-comun", "x-largo", "additionalProperties", "minItems"}
+
+        def revisar(esq, donde):
+            self.assertTrue(set(esq) <= claves, f"{donde}: {set(esq) - claves}")
+            if "format" in esq:
+                self.assertIn(esq["format"], formatos, donde)
+            if esq.get("format") == "credencial":
+                self.assertTrue(set(esq["x-credencial-tipos"]) <= set(nd.TIPOS_CREDENCIAL), donde)
+            for k, v in (esq.get("properties") or {}).items():
+                revisar(v, f"{donde}.{k}")
+            if isinstance(esq.get("items"), dict):
+                revisar(esq["items"], f"{donde}[]")
+            if isinstance(esq.get("additionalProperties"), dict):
+                revisar(esq["additionalProperties"], f"{donde}{{}}")
+
+        tipos = json.loads(json.dumps(nd.tipos_contrato(), ensure_ascii=False))
+        self.assertEqual({t["tipo"] for t in tipos}, fd.TIPOS)
+        for t in tipos:
+            with self.subTest(tipo=t["tipo"]):
+                self.assertTrue({"tipo", "nombre", "categoria", "descripcion", "disparador", "escritura", "salidas", "config", "ejemplos", "consejos"} <= set(t))
+                self.assertEqual(t["config"]["type"], "object")
+                revisar(t["config"], t["tipo"])
+                self.assertEqual(t["disparador"], t["tipo"] in fd.DISPARADORES)
+                self.assertEqual(t["escritura"], t["tipo"] in fd.TIPOS_ESCRITURA)
+                self.assertTrue(t["salidas"] == "dinamicas" or isinstance(t["salidas"], list))
+                for k in t["config"].get("required") or []:
+                    self.assertIn(k, t["config"]["properties"])
+        dinamicas = {t["tipo"] for t in tipos if t["salidas"] == "dinamicas"}
+        self.assertEqual(dinamicas, {"ia_clasificar", "ia_decidir", "bifurcar_por_valor", "paralelo"})
+        r = subprocess.run([sys.executable, str(AQUI / "nodos_declarativos.py"), "tipos"], capture_output=True, timeout=60)
+        self.assertEqual(len(json.loads(r.stdout.decode("utf-8"))), len(fd.TIPOS))
+
+
+# =====================================================================
+#   Plataforma de automatización: disparadores, conectores, bucles,
+#   expresiones, credenciales, entorno por flujo y límites.
+# =====================================================================
+
+def manual(*nodos, campos=None, aristas=None, fin=None):
+    """Un flujo con entrada_manual; lineal salvo que se den las aristas."""
+    fin = fin or nodo("fin", "salida", desenlace="manual")
+    ns = [nodo("inicio", "entrada_manual", campos=campos or [])] + list(nodos) + [fin]
+    return flujo(ns, aristas if aristas is not None else [{"desde": a["id"], "hacia": b["id"]} for a, b in zip(ns, ns[1:])])
+
+
+def cred(tipo, permitir=False, secretos=(), **valores):
+    return {"tipo": tipo, "valores": valores, "secretos": list(secretos), "permitir_escritura": permitir}
+
+
+CLAVE_SQL = "clave-sql-SUPERSECRETA-987"
+TOKEN = "tok-API-ULTRA-SECRETO-555"
+
+
+class Plataforma(Base):
+    def setUp(self):
+        super().setUp()
+        raiz = Path(self.tmp.name)
+        self.archivos = raiz / "archivos"
+        self.estado = raiz / "estado"
+        self.archivos.mkdir()
+        self.estado.mkdir()
+        self._env = {k: os.environ.get(k) for k in ("RUTA_ARCHIVOS", "RUTA_DATOS")}
+        os.environ["RUTA_ARCHIVOS"], os.environ["RUTA_DATOS"] = str(self.archivos), str(self.estado)
+        self._recibidos = fd.RECIBIDOS
+        fd.RECIBIDOS = self.estado / "recibidos"
+        import sqlite3
+        con = sqlite3.connect(str(self.archivos / "base.db"))
+        con.execute("CREATE TABLE casos (id INTEGER PRIMARY KEY, documento TEXT, monto REAL, estado TEXT)")
+        con.executemany("INSERT INTO casos (documento, monto, estado) VALUES (?, ?, ?)",
+                        [("111", 100.0, "pendiente"), ("222", 250.0, "pendiente"), ("333", 80.0, "cerrado")])
+        con.commit()
+        con.close()
+        self.creds = {"base": cred("sqlite", ruta="base.db"), "base-escribe": cred("sqlite", True, ruta="base.db")}
+
+    def tearDown(self):
+        fd.RECIBIDOS = self._recibidos
+        for k, v in self._env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        super().tearDown()
+
+    def correr_orden(self, defi, exigir_ok=True, **orden):
+        self.salida.seek(0)
+        self.salida.truncate()
+        orden.setdefault("credenciales", self.creds)
+        asyncio.run(fd.procesar({"cmd": "procesar", "corrida": "x", "caso": orden.pop("caso", "manual-prueba"), "definicion": defi, **orden}))
+        eventos = [json.loads(linea[len(fd.MARCA):]) for linea in self.salida.getvalue().split(SALTO) if linea.startswith(fd.MARCA)]
+        r = next(e for e in eventos if e["tipo"] == "resultado")
+        if exigir_ok:
+            self.assertNotEqual(r["accion"], "error", f"{r.get('motivo')}\n{r.get('avisos')}\n{r.get('traza', '')}")
+        return r, eventos
+
+    def filas_bd(self, sql="SELECT estado FROM casos ORDER BY id"):
+        import sqlite3
+        con = sqlite3.connect(str(self.archivos / "base.db"))
+        try:
+            return [f[0] for f in con.execute(sql)]
+        finally:
+            con.close()
+
+
+class Disparadores(Plataforma):
+    def test_exactamente_un_disparador(self):
+        d = manual()
+        d["nodos"].append(nodo("otro", "programado", cada_minutos=5))
+        self.assertProblema(d, "exactamente un disparador")
+        self.assertProblema(flujo([nodo("fin", "salida", desenlace="manual")], []), "hay 0")
+
+    def test_entrada_manual_revisa_y_convierte(self):
+        campos = [{"nombre": "documento", "tipo": "texto", "obligatorio": True}, {"nombre": "monto", "tipo": "numero"},
+                  {"nombre": "urgente", "tipo": "booleano"}, {"nombre": "items", "tipo": "lista"}]
+        d = manual(nodo("t", "expresion", expresion="entrada.monto * 2 if entrada.urgente else 0", salida="doble"), campos=campos)
+        self.assertEqual(self.problemas(d), [])
+        r, ev = self.correr_orden(d, entrada={"documento": "123", "monto": "1.234,5", "urgente": "sí", "items": "[1, 2]"})
+        self.assertEqual(r["variables"]["entrada"], {"documento": "123", "monto": 1234.5, "urgente": True, "items": [1, 2]})
+        self.assertEqual(r["variables"]["doble"], 2469.0)
+        r, _ = self.correr_orden(d, exigir_ok=False, entrada={"monto": 3})
+        self.assertEqual(r["accion"], "error")
+        self.assertIn("faltan en la entrada: documento", r["motivo"])
+        r, _ = self.correr_orden(d, exigir_ok=False, entrada={"documento": "1", "monto": "mucho"})
+        self.assertIn("tiene que ser numero", r["motivo"])
+
+    def test_programado_y_webhook(self):
+        self.assertEqual(fd._validar_config(nodo("p", "programado", cron="0 7 * * 1-5", zona="America/Bogota", activo=True)), [])
+        for conf, texto in [({}, "cron o cada_minutos"), ({"cron": "0 7 * *"}, "5 campos"), ({"cron": "61 * * * *"}, "fuera de"),
+                            ({"cron": "* * * * *", "cada_minutos": 5}, "uno de los dos"), ({"cada_minutos": 0}, "entre 1"),
+                            ({"cada_minutos": 5, "zona": "Marte/Olimpo"}, "zona"), ({"cada_minutos": 5, "activo": "si"}, "true o false")]:
+            with self.subTest(conf=conf):
+                p = fd._validar_config(nodo("p", "programado", **conf))
+                self.assertTrue(any(texto in x for x in p), p)
+        d = flujo([nodo("p", "programado", cada_minutos=1), nodo("fin", "salida", desenlace="manual", motivo="{{entrada.hora}}")],
+                  [{"desde": "p", "hacia": "fin"}])
+        r, _ = self.correr_orden(d, entrada={"programado": True, "hora": "2026-11-06T07:00:00-05:00"}, origen="programado")
+        self.assertEqual(r["motivo"], "2026-11-06T07:00:00-05:00")
+        w = flujo([nodo("w", "webhook", responder=True), nodo("j", "json", op="seleccionar", de="entrada.cuerpo", ruta="pedido.id", salida="id"),
+                   nodo("resp", "respuesta_webhook", estado=201, cuerpo={"recibido": "{{id}}", "ok": True}), nodo("fin", "salida", desenlace="manual")],
+                  [{"desde": "w", "hacia": "j"}, {"desde": "j", "hacia": "resp"}, {"desde": "resp", "hacia": "fin"}])
+        self.assertEqual(self.problemas(w), [])
+        r, ev = self.correr_orden(w, entrada={"cuerpo": {"pedido": {"id": 77}}, "consulta": {}, "encabezados": {}})
+        self.assertEqual(r["respuesta_webhook"], {"estado": 201, "cuerpo": {"recibido": 77, "ok": True}, "tipo_contenido": "application/json"})
+        self.assertTrue(any(e["tipo"] == "respuesta_webhook" and e["estado"] == 201 for e in ev))
+        self.assertTrue(any("secreto" in x for x in fd._validar_config(nodo("w", "webhook", secreto="corto"))))
+
+    def test_correo_nuevo_sondea_sin_repetir_y_corre_el_caso(self):
+        imap = ImapFalso([correo_mime("1", "Factura 1", "uno@ejemplo.test"), correo_mime("2", "Factura 2", "dos@ejemplo.test", adjunto=("f.csv", b"a;b\n1;2\n"))])
+        c_correo = fd.c_correo
+        previo = c_correo.fabrica_imap
+        c_correo.fabrica_imap = lambda *a: imap
+        try:
+            d = flujo([nodo("llega", "correo_nuevo", credencial="buzon", activo=True),
+                       nodo("h", "hoja_leer", origen="adjunto", salida="filas"),
+                       nodo("fin", "salida", desenlace="manual", motivo="{{correo.asunto}} · {{filas.0.b}}"),
+                       nodo("sin", "salida", desenlace="descartar", motivo="{{correo.asunto}}")],
+                      [{"desde": "llega", "hacia": "h"}, {"desde": "h", "hacia": "fin", "cuando": "ok"}, {"desde": "h", "hacia": "sin", "cuando": "vacio"},
+                       {"desde": "h", "hacia": "sin", "cuando": "error"}])
+            d["id"] = "facturas"
+            self.assertEqual(self.problemas(d), [])
+            orden = {"flujo": "facturas", "definicion": d, "credenciales": {"buzon": cred("imap", host="127.0.0.1", usuario="u@ejemplo.test", clave="x")}}
+            primera = fd.sondear(orden)
+            self.assertTrue(primera["ok"], primera)
+            self.assertEqual((primera["casos"], primera["primera"]), ([], True))  # la primera vez solo memoriza
+            imap.correos.append(correo_mime("3", "Factura 3", "tres@ejemplo.test", adjunto=("f.csv", b"a;b\n5;6\n")))
+            segunda = fd.sondear(orden)
+            self.assertEqual([c["asunto"] for c in segunda["casos"]], ["Factura 3"])
+            self.assertEqual(fd.sondear(orden)["casos"], [])  # no se repite
+            self.assertTrue(all(x[0] in ("login", "select", "search", "fetch", "logout") for x in imap.llamadas))
+            self.assertTrue(all(x[1] is True for x in imap.llamadas if x[0] == "select"))  # EXAMINE: solo lectura
+            self.assertTrue(all("PEEK" in x[1] for x in imap.llamadas if x[0] == "fetch"))  # no marca como leído
+            r, _ = self.correr_orden(d, caso=segunda["casos"][0]["caso"], entrada={"id": "3"})
+            self.assertEqual(r["motivo"], "Factura 3 · 6")
+        finally:
+            c_correo.fabrica_imap = previo
+
+
+# ------------------------------------------------------------- dobles
+
+def correo_mime(uid, asunto, de, adjunto=None):
+    from email.message import EmailMessage
+    m = EmailMessage()
+    m["From"], m["To"], m["Subject"], m["Message-ID"] = f"Remitente {uid} <{de}>", "buzon@ejemplo.test", asunto, f"<m{uid}@ejemplo.test>"
+    m["Date"] = "Fri, 06 Nov 2026 10:00:00 -0500"
+    m.set_content(f"Cuerpo del correo {uid}")
+    if adjunto:
+        m.add_attachment(adjunto[1], maintype="text", subtype="csv", filename=adjunto[0])
+    return (uid, m.as_bytes())
+
+
+class ImapFalso:
+    def __init__(self, correos):
+        self.correos = list(correos)
+        self.llamadas = []
+
+    def login(self, u, c):
+        self.llamadas.append(("login", u))
+
+    def select(self, carpeta, readonly=False):
+        self.llamadas.append(("select", readonly))
+        return "OK", [b"3"]
+
+    def uid(self, cmd, *args):
+        if cmd == "SEARCH":
+            self.llamadas.append(("search", args))
+            return "OK", [" ".join(u for u, _ in self.correos).encode()]
+        self.llamadas.append(("fetch", args[1]))
+        crudo = next(c for u, c in self.correos if u == args[0])
+        return "OK", [(b"1 (BODY[] {%d}" % len(crudo), crudo), b")"]
+
+    def logout(self):
+        self.llamadas.append(("logout", None))
+
+
+class SmtpFalso:
+    enviados = []
+
+    def login(self, u, c):
+        pass
+
+    def send_message(self, m, from_addr=None, to_addrs=None):
+        SmtpFalso.enviados.append({"de": from_addr, "para": to_addrs, "asunto": m["Subject"], "cuerpo": m.get_content()})
+
+    def quit(self):
+        pass
+
+
+class DriveFalso:
+    def __init__(self):
+        self.subidos = []
+        self.archivos = {"1AAAAAAAAAAAAA": {"id": "1AAAAAAAAAAAAA", "name": "notas.txt", "mimeType": "text/plain", "datos": b"hola desde drive"},
+                         "1HOJAHOJAHOJA1": {"id": "1HOJAHOJAHOJA1", "name": "Planilla", "mimeType": "application/vnd.google-apps.spreadsheet",
+                                            "datos": b"doc,monto\n111,10\n222,20\n"}}
+        self.consultas = []
+
+    def listar(self, q, maximo):
+        self.consultas.append(q)
+        return [{k: v for k, v in f.items() if k != "datos"} for f in self.archivos.values()][:maximo]
+
+    def metadatos(self, id_):
+        f = self.archivos.get(id_)
+        if not f:
+            raise fd.ErrorDeNegocio("Drive respondió 404: no existe")
+        return {k: v for k, v in f.items() if k != "datos"}
+
+    def exportar(self, id_, tipo):
+        return self.archivos[id_]["datos"]
+
+    def bajar(self, id_):
+        return self.archivos[id_]["datos"]
+
+    def subir(self, nombre, carpeta, datos, tipo):
+        self.subidos.append((nombre, carpeta, datos, tipo))
+        return {"id": "1NUEVONUEVONUE", "name": nombre}
+
+
+# ------------------------------------------------------------- SQL
+
+class Sql(Plataforma):
+    def test_revisar_sentencias(self):
+        r = fd.c_sql.revisar
+        self.assertEqual(r("SELECT 1;", "lectura")[0], "SELECT 1")
+        self.assertEqual(r("SELECT ';' AS x, 'a--b' AS y /* ; */", "lectura")[1], [])
+        self.assertEqual(r("SELECT id::int FROM t WHERE d = :doc AND e = :doc", "lectura")[1], ["doc"])
+        for sql, texto in [("SELECT 1; DROP TABLE casos", "UNA sentencia"), ("SELECT 1;\nSELECT 2", "UNA sentencia"),
+                           ("DELETE FROM casos", "solo acepta SELECT"), ("WITH x AS (DELETE FROM t RETURNING *) SELECT * FROM x", "solo lectura"),
+                           ("SELECT * INTO nueva FROM casos", "INTO"), ("SELECT pg_read_file('/etc/passwd')", "PG_READ_FILE"),
+                           ("SELECT load_extension('x')", "LOAD_EXTENSION"), ("SELECT 1 /* sin cerrar", "sin cerrar"),
+                           ("SELECT 'abierto", "sin cerrar"), ("PRAGMA writable_schema = 1", "solo acepta SELECT"),
+                           ("SELECT nextval('s')", "NEXTVAL"), ("SELECT * FROM t FOR UPDATE", "UPDATE")]:
+            with self.subTest(sql=sql):
+                with self.assertRaises(fd.ErrorDeNegocio) as e:
+                    r(sql, "lectura")
+                self.assertIn(texto, str(e.exception))
+        for sql, texto in [("UPDATE casos SET estado = 'x'", "sin WHERE"), ("DELETE FROM casos", "sin WHERE"), ("DROP TABLE casos", "solo acepta INSERT"),
+                           ("INSERT INTO t VALUES (1); DROP TABLE t", "UNA sentencia"), ("SELECT 1", "solo acepta INSERT")]:
+            with self.subTest(sql=sql):
+                with self.assertRaises(fd.ErrorDeNegocio) as e:
+                    r(sql, "escritura")
+                self.assertIn(texto, str(e.exception))
+        self.assertEqual(r("UPDATE casos SET estado = 'x'", "escritura", permitir_sin_where=True)[1], [])
+        # MySQL: los comentarios ejecutables /*! … */ se quitan y los % se escapan para PyMySQL
+        self.assertNotIn("DROP", r("SELECT 1 /*! ; DROP TABLE t */", "lectura", "mysql")[0])
+        self.assertEqual(fd.c_sql._a_pymysql("SELECT '50%' AS p, x % 2 FROM t WHERE id = :id", ["id"]),
+                         "SELECT '50%%' AS p, x %% 2 FROM t WHERE id = %(id)s")
+
+    def test_consulta_parametros_y_topes(self):
+        d = manual(nodo("q", "sql_consulta", credencial="base", consulta="SELECT id, documento, monto FROM casos WHERE estado = :estado ORDER BY id",
+                        parametros={"estado": "{{entrada.estado}}"}, salida="filas"),
+                   campos=[{"nombre": "estado", "obligatorio": True}],
+                   aristas=[{"desde": "inicio", "hacia": "q"}, {"desde": "q", "hacia": "fin"}])
+        self.assertEqual(self.problemas(d), [])
+        r, ev = self.correr_orden(d, entrada={"estado": "pendiente"})
+        self.assertEqual(r["variables"]["filas"], [{"id": 1, "documento": "111", "monto": 100.0}, {"id": 2, "documento": "222", "monto": 250.0}])
+        # inyección: el valor va como parámetro, nunca como SQL
+        r, _ = self.correr_orden(d, entrada={"estado": "x' OR '1'='1"})
+        self.assertEqual(r["variables"]["filas"], [])
+        d["nodos"][1]["config"]["max_filas"] = 1
+        r, _ = self.correr_orden(d, entrada={"estado": "pendiente"})
+        self.assertEqual(len(r["variables"]["filas"]), 1)
+        self.assertTrue(any("se cortó" in a for a in r["avisos"]))
+        # validación: plantillas en el SQL, parámetros que faltan, varias sentencias
+        for conf, texto in [({"consulta": "SELECT * FROM casos WHERE documento = '{{entrada.doc}}'"}, "inyección"),
+                            ({"consulta": "SELECT * FROM casos WHERE id = :id"}, "no está en parametros"),
+                            ({"consulta": "SELECT 1; SELECT 2"}, "UNA sentencia"), ({"consulta": "SELECT 1", "credencial": "Clave Secreta"}, "NOMBRE")]:
+            with self.subTest(conf=conf):
+                p = fd._validar_config(nodo("q", "sql_consulta", **{"credencial": "base", **conf}))
+                self.assertTrue(any(texto in x for x in p), p)
+
+    def test_solo_lectura_aunque_se_cuele(self):
+        # aunque el revisor fallara, SQLite abre en modo lectura y su autorizador niega lo demás
+        with self.assertRaises(fd.ErrorDeNegocio):
+            fd.c_sql._sqlite({"ruta": "base.db"}, "DELETE FROM casos", {}, "lectura", 10, 5)
+        with self.assertRaises(fd.ErrorDeNegocio):
+            fd.c_sql._sqlite({"ruta": "base.db"}, "ATTACH DATABASE 'otra.db' AS o", {}, "lectura", 10, 5)
+        self.assertEqual(self.filas_bd(), ["pendiente", "pendiente", "cerrado"])
+        with self.assertRaises(fd.ErrorDeNegocio):
+            fd.c_sql.ejecutar("sqlite", {"ruta": "../fuera.db"}, "SELECT 1", {}, "lectura", 10, 5)
+        # tiempo agotado: una consulta eterna se corta
+        with self.assertRaises(TimeoutError):
+            fd.c_sql.ejecutar("sqlite", {"ruta": "base.db"}, "WITH RECURSIVE r(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM r) SELECT max(x) FROM r",
+                              {}, "lectura", 10, 1)
+
+    def test_ejecutar_bloqueado_sin_permiso_y_real_con_permiso(self):
+        def d(credencial):
+            return manual(nodo("u", "sql_ejecutar", credencial=credencial, sentencia="UPDATE casos SET estado = :e WHERE id = :id",
+                               parametros={"e": "atendido", "id": "1"}, salida="res"))
+        r, ev = self.correr_orden(d("base"))
+        self.assertEqual(self.filas_bd(), ["pendiente", "pendiente", "cerrado"])  # no cambió nada
+        esc = next(e for e in ev if e["tipo"] == "escritura")
+        self.assertTrue(esc["bloqueada"] and esc["simulada"])
+        self.assertIn("no tiene la escritura habilitada", esc["motivo"])
+        self.assertTrue(r["variables"]["res"]["bloqueado"])
+        self.assertTrue(r["escrituras"][0]["bloqueado"])
+        r, ev = self.correr_orden(d("base-escribe"))
+        self.assertEqual(self.filas_bd(), ["atendido", "pendiente", "cerrado"])
+        self.assertEqual(r["variables"]["res"]["afectadas"], 1)
+        self.assertFalse(next(e for e in ev if e["tipo"] == "escritura")["bloqueada"])
+        # tipo de credencial equivocado y credencial que no existe (o de otro flujo: el servidor no la manda)
+        r, _ = self.correr_orden(d("buzon"), exigir_ok=False, credenciales={"buzon": cred("imap")})
+        self.assertIn("es de tipo imap", r["motivo"])
+        r, _ = self.correr_orden(d("ajena"), exigir_ok=False)
+        self.assertIn("no existe o este flujo no la puede usar", r["motivo"])
+
+
+# ------------------------------------------------------- bucles y lógica
+
+class Bucles(Plataforma):
+    def flujo_bucle(self, **conf_bucle):
+        """entrada_manual → sql_consulta → para_cada (expresion → tabla_guardar) → salida."""
+        nodos = [nodo("inicio", "entrada_manual"),
+                 nodo("q", "sql_consulta", credencial="base", consulta="SELECT id, monto FROM casos ORDER BY id", salida="filas"),
+                 nodo("cada", "para_cada", **{"lista": "filas", "variable": "fila", "salida": "resultados", **conf_bucle}),
+                 nodo("total", "expresion", expresion="round(fila.monto * 1.19, 2)", salida="total"),
+                 nodo("anotar", "tabla_guardar", tabla="totales", clave="{{fila.id}}", datos={"total": "{{total}}", "fila": "{{fila}}"}),
+                 nodo("fin", "salida", desenlace="manual", motivo="{{resultados}}"), nodo("vacio", "salida", desenlace="descartar")]
+        aristas = [{"desde": "inicio", "hacia": "q"}, {"desde": "q", "hacia": "cada", "cuando": "ok"}, {"desde": "q", "hacia": "vacio", "cuando": "vacio"},
+                   {"desde": "cada", "hacia": "total", "cuando": "cada"}, {"desde": "total", "hacia": "anotar"}, {"desde": "cada", "hacia": "fin", "cuando": "listo"}]
+        return flujo(nodos, aristas)
+
+    def test_para_cada_con_expresion_y_tabla(self):
+        d = self.flujo_bucle()
+        self.assertEqual(self.problemas(d), [])
+        r, ev = self.correr_orden(d)
+        res = r["variables"]["resultados"]
+        self.assertEqual([x["total"] for x in res], [119.0, 297.5, 95.2])
+        filas = fd.c_tablas.consultar("flujo-prueba", "totales", orden="clave")
+        self.assertEqual([(f["clave"], f["total"]) for f in filas], [("1", 119.0), ("2", 297.5), ("3", 95.2)])
+        self.assertEqual(filas[0]["fila"], {"id": 1, "monto": 100.0})  # {{fila}} conserva el objeto
+        # recoger y la tabla en modo insertar (sale por «existente» la segunda vez)
+        d = self.flujo_bucle(recoger="{{fila.id}}")
+        d["nodos"][4]["config"]["modo"] = "insertar"
+        d["nodos"].append(nodo("ya", "fin_ciclo"))
+        d["aristas"] += [{"desde": "anotar", "hacia": "ya", "cuando": "existente"}]
+        self.assertEqual(self.problemas(d), [])
+        r, ev = self.correr_orden(d)
+        self.assertEqual(r["variables"]["resultados"], [1, 2, 3])
+        self.assertTrue(all(e["salida"] == "existente" for e in ev if e["tipo"] == "etapa_fin" and e["etapa"] == "anotar"))
+
+    def test_topes_de_vueltas_y_eventos_acotados(self):
+        lista = list(range(10))
+        d = manual(nodo("cada", "para_cada", lista="entrada.items", variable="x", salida="dobles"),
+                   nodo("doble", "expresion", expresion="x * 2", salida="y"), campos=[{"nombre": "items", "tipo": "lista"}],
+                   aristas=[{"desde": "inicio", "hacia": "cada"}, {"desde": "cada", "hacia": "doble", "cuando": "cada"}, {"desde": "cada", "hacia": "fin", "cuando": "listo"}])
+        self.assertEqual(self.problemas(d), [])
+        r, ev = self.correr_orden(d, entrada={"items": lista})
+        self.assertEqual([v["y"] for v in r["variables"]["dobles"]], [x * 2 for x in lista])
+        visibles = [e for e in ev if e["tipo"] == "etapa_inicio" and e["etapa"] == "doble"]
+        self.assertEqual(len(visibles), fd.VUELTAS_VISIBLES + 1)  # las primeras y la última
+        # tope de vueltas: por defecto 100, tope duro 1000
+        r, _ = self.correr_orden(d, exigir_ok=False, entrada={"items": list(range(101))})
+        self.assertIn("tope de vueltas es 100", r["motivo"])
+        self.assertTrue(any("entre 1 y 1000" in x for x in fd._validar_config(nodo("c", "para_cada", lista="x", max_iteraciones=5000))))
+        d["nodos"][1]["config"]["max_iteraciones"] = 1000
+        r, _ = self.correr_orden(d, exigir_ok=False, entrada={"items": list(range(1001))})
+        self.assertIn("tope de vueltas es 1000", r["motivo"])
+
+    def test_cuerpo_con_ramas_fin_ciclo_fallos_y_salida(self):
+        nodos = [nodo("cada", "para_cada", lista="entrada.items", variable="x", salida="res", al_fallar="continuar"),
+                 nodo("es_par", "expresion", expresion="x % 2 == 0", como_condicion=True),
+                 nodo("div", "expresion", expresion="10 / (x - 4)", salida="cociente"),
+                 nodo("salta", "fin_ciclo")]
+        aristas = [{"desde": "inicio", "hacia": "cada"}, {"desde": "cada", "hacia": "es_par", "cuando": "cada"},
+                   {"desde": "es_par", "hacia": "div", "cuando": "si"}, {"desde": "es_par", "hacia": "salta", "cuando": "no"},
+                   {"desde": "cada", "hacia": "fin", "cuando": "listo"}]
+        d = manual(*nodos, aristas=aristas, campos=[{"nombre": "items", "tipo": "lista"}])
+        self.assertEqual(self.problemas(d), [])  # «div» sin arista termina la vuelta; fin_ciclo dentro del cuerpo
+        r, _ = self.correr_orden(d, entrada={"items": [2, 3, 4, 6]})
+        res = r["variables"]["res"]
+        self.assertEqual(res[0]["cociente"], -5.0)
+        self.assertEqual(res[1], 3)  # impar: fin_ciclo, sin cambios → el elemento
+        self.assertEqual(res[2]["indice"], 2)  # 10 / 0: con al_fallar continuar, la vuelta se anota y sigue
+        self.assertIn("división por cero", res[2]["error"])
+        self.assertEqual(res[3]["cociente"], 5.0)
+        # sin al_fallar continuar, la misma vuelta tumba la corrida
+        d["nodos"][1]["config"]["al_fallar"] = "detener"
+        r, _ = self.correr_orden(d, exigir_ok=False, entrada={"items": [2, 4]})
+        self.assertEqual(r["accion"], "error")
+        # el cuerpo llega a una salida: termina todo el flujo
+        nodos2 = [nodo("cada", "para_cada", lista="entrada.items", variable="x"), nodo("c", "expresion", expresion="x > 1", como_condicion=True),
+                  nodo("corta", "salida", desenlace="descartar", motivo="paró en {{x}}")]
+        a2 = [{"desde": "inicio", "hacia": "cada"}, {"desde": "cada", "hacia": "c", "cuando": "cada"}, {"desde": "c", "hacia": "corta", "cuando": "si"},
+              {"desde": "cada", "hacia": "fin", "cuando": "listo"}]
+        d2 = manual(*nodos2, aristas=a2, campos=[{"nombre": "items", "tipo": "lista"}])
+        self.assertEqual(self.problemas(d2), [])
+        r, _ = self.correr_orden(d2, entrada={"items": [1, 2, 3]})
+        self.assertEqual((r["accion"], r["motivo"]), ("descartado", "paró en 2"))
+        # fin_ciclo fuera de un cuerpo, para_cada sin «listo»
+        mal = manual(nodo("f", "fin_ciclo"))
+        self.assertProblema(mal, "fin_ciclo solo va dentro")
+        mal = manual(nodo("cada", "para_cada", lista="entrada"), aristas=[{"desde": "inicio", "hacia": "cada"}, {"desde": "cada", "hacia": "fin", "cuando": "cada"}])
+        self.assertProblema(mal, "necesita una arista «listo»")
+
+    def test_paralelo_y_unir(self):
+        nodos = [nodo("ramas", "paralelo", ramas=["a", "b"]), nodo("ta", "expresion", expresion="1 + 1", salida="va"),
+                 nodo("tb", "expresion", expresion="'b' * 3", salida="vb"), nodo("junta", "unir", salida="todo"),
+                 nodo("usa", "expresion", expresion="todo.a.va + len(todo.b.vb)", salida="suma")]
+        aristas = [{"desde": "inicio", "hacia": "ramas"}, {"desde": "ramas", "hacia": "ta", "cuando": "a"}, {"desde": "ramas", "hacia": "tb", "cuando": "b"},
+                   {"desde": "ta", "hacia": "junta"}, {"desde": "tb", "hacia": "junta"}, {"desde": "junta", "hacia": "usa"}, {"desde": "usa", "hacia": "fin"}]
+        d = manual(*nodos, aristas=aristas)
+        self.assertEqual(self.problemas(d), [])
+        r, _ = self.correr_orden(d)
+        self.assertEqual(r["variables"]["todo"], {"a": {"va": 2}, "b": {"vb": "bbb"}})
+        self.assertEqual(r["variables"]["suma"], 5)
+        mal = manual(nodo("ramas", "paralelo", ramas=["a", "b"]), nodo("ta", "expresion", expresion="1"),
+                     aristas=[{"desde": "inicio", "hacia": "ramas"}, {"desde": "ramas", "hacia": "ta", "cuando": "a"}, {"desde": "ta", "hacia": "fin"}])
+        self.assertProblema(mal, "falta arista para la rama «b»")
+
+    def test_esperar_json_y_fecha(self):
+        d = manual(nodo("e", "esperar", segundos=2.5), nodo("p", "json", op="parsear", de="entrada.contenido", salida="obj"),
+                   nodo("s", "json", op="serializar", de="obj", salida="txt"), nodo("sel", "json", op="seleccionar", de="obj", ruta="items[estado=ok].id", salida="id"),
+                   nodo("f1", "fecha", op="sumar", valor="2026-11-06", cantidad=15, unidad="dias", formato="%Y-%m-%d", salida="vence"),
+                   nodo("f2", "fecha", op="diferencia", valor="01/11/2026", hasta="2026-11-06", unidad="dias", salida="dias"),
+                   nodo("f3", "fecha", op="ahora", salida="ahora"),
+                   campos=[{"nombre": "contenido"}])
+        self.assertEqual(self.problemas(d), [])
+        r, _ = self.correr_orden(d, entrada={"contenido": '{"items": [{"id": 1, "estado": "no"}, {"id": 2, "estado": "ok"}]}'})
+        v = r["variables"]
+        self.assertEqual(self.esperas, [2.5])  # _dormir de mentira
+        self.assertEqual(v["id"], 2)
+        self.assertEqual(json.loads(v["txt"])["items"][0]["id"], 1)
+        self.assertEqual((v["vence"], v["dias"]), ("2026-11-21", 5.0))
+        self.assertTrue(v["ahora"].endswith("-05:00"))  # America/Bogota
+        self.assertTrue(any("entre 0 y 60" in x for x in fd._validar_config(nodo("e", "esperar", segundos=600))))
+
+    def test_llamar_flujo(self):
+        hijo = manual(nodo("t", "expresion", expresion="entrada.n * 10", salida="por_diez"), campos=[{"nombre": "n", "tipo": "numero", "obligatorio": True}],
+                      fin=nodo("fin", "salida", desenlace="responder", plantilla_respuesta="{{por_diez}}"))
+        hijo["id"] = "hijo"
+        padre = manual(nodo("llama", "llamar_flujo", flujo="hijo", entrada={"n": "{{entrada.n}}"}, salida="r"), campos=[{"nombre": "n"}])
+        padre["id"] = "padre"
+        r, ev = self.correr_orden(padre, entrada={"n": 4}, subflujos={"hijo": {"definicion": hijo}})
+        self.assertEqual((r["variables"]["r"]["accion"], r["variables"]["r"]["respuesta"]), ("respondido", "40"))
+        self.assertFalse(any(e["tipo"] == "etapa_inicio" and e["etapa"] == "t" for e in ev))  # los pasos del hijo no ensucian el lienzo
+        r, _ = self.correr_orden(padre, exigir_ok=False, entrada={"n": 4})
+        self.assertIn("no existe o no es declarativo", r["motivo"])
+        # recursión y profundidad
+        rec = manual(nodo("llama", "llamar_flujo", flujo="padre"))
+        rec["id"] = "padre"
+        r, _ = self.correr_orden(rec, exigir_ok=False, subflujos={"padre": {"definicion": rec}})
+        self.assertIn("ciclo", r["motivo"])
+        cadena_ = {}
+        for i in range(5):
+            f = manual(nodo("llama", "llamar_flujo", flujo=f"f{i + 1}")) if i < 4 else manual()
+            f["id"] = f"f{i}"
+            cadena_[f"f{i}"] = {"definicion": f}
+        r, _ = self.correr_orden(cadena_["f0"]["definicion"], exigir_ok=False, subflujos=cadena_, flujo="f0")
+        self.assertIn("niveles", json.dumps(r, ensure_ascii=False))
+
+
+# ------------------------------------------------------------- expresiones
+
+class Expresiones(unittest.TestCase):
+    def test_lo_permitido(self):
+        ev = fd.c_expresion.evaluar
+        v = {"fila": {"monto": 10, "nombre": " Ana "}, "xs": [3, 1, 2], "t": "a,b"}
+        casos = [("fila.monto * 1.5", 15.0), ("fila['monto'] + 1", 11), ("len(xs) > 2 and max(xs) == 3", True), ("sum(xs) / len(xs)", 2.0),
+                 ("round(10 / 3, 2)", 3.33), ("fila.nombre.strip().upper()", "ANA"), ("t.split(',')", ["a", "b"]), ("'-'.join(xs)", "3-1-2"),
+                 ("'x' if xs[0] > 2 else 'y'", "x"), ("xs[1:]", [1, 2]), ("{'a': 1}.get('a')", 1), ("sorted(xs)", [1, 2, 3]),
+                 ("numero('1.234,5') + 1", 1235.5), ("2 ** 10", 1024), ("not true", False), ("contiene('Hola Mundo', 'mundo')", True),
+                 ("null == None", True), ("3 in xs", True), ("min(1, 2)", 1)]
+        for expr, esperado in casos:
+            with self.subTest(expr=expr):
+                self.assertEqual(ev(expr, v), esperado)
+
+    def test_escapes_del_sandbox(self):
+        ev = fd.c_expresion.evaluar
+        v = {"x": "texto", "d": {}}
+        for expr in ["__import__('os').system('id')", "().__class__.__bases__[0].__subclasses__()", "x.__class__", "x.__len__()",
+                     "d.__class__", "[c for c in x]", "{c: 1 for c in x}", "(c for c in x)", "lambda: 1", "f'{x}'", "open('/etc/passwd')",
+                     "eval('1')", "exec('1')", "getattr(x, 'upper')", "globals()", "__builtins__", "_privada", "x._algo",
+                     "(y := 1)", "'a' * 10**7", "2 ** 10000", "9 ** 9 ** 9", "x.format(1)", "d.update({'a': 1})", "'%s' % x",
+                     "type(x)", "{1, 2}", "*x", "'a'.zfill(10**9)", "x[0:1].__class__", "1/0", "y_no_existe"]:
+            with self.subTest(expr=expr):
+                with self.assertRaises(fd.ErrorDeNegocio):
+                    ev(expr, v)
+        with self.assertRaises(fd.ErrorDeNegocio):
+            ev("1 + " * 400 + "1", {})  # demasiado larga
+        self.assertEqual(fd.c_expresion.nombres("fila.monto > tope and len(xs)"), {"fila", "tope", "xs"})
+
+
+# ----------------------------------------------- archivos, hojas y tablas
+
+class Archivos(Plataforma):
+    def test_guardar_y_leer_dentro_del_espacio(self):
+        filas = [{"doc": "111", "monto": 10}, {"doc": "222", "monto": 20}]
+        d = manual(nodo("g", "archivo_guardar", ruta="reportes/{{entrada.nombre}}.csv", de="entrada.filas", formato="csv"),
+                   nodo("g2", "archivo_guardar", ruta="reportes/{{entrada.nombre}}.csv", de="entrada.filas", formato="csv", modo="anexar"),
+                   nodo("j", "archivo_guardar", ruta="reportes/datos.json", de="entrada.filas", formato="json"),
+                   nodo("l", "archivo_leer", ruta="reportes/{{entrada.nombre}}.csv", salida="leido"),
+                   nodo("lj", "archivo_leer", ruta="reportes/datos.json", salida="json_leido"),
+                   campos=[{"nombre": "nombre"}, {"nombre": "filas", "tipo": "lista"}])
+        self.assertEqual(self.problemas(d), [])
+        r, _ = self.correr_orden(d, entrada={"nombre": "hoy", "filas": filas})
+        self.assertEqual(r["variables"]["leido"]["filas"], [{"doc": "111", "monto": "10"}, {"doc": "222", "monto": "20"}] * 2)
+        self.assertEqual(r["variables"]["json_leido"]["datos"], filas)
+        self.assertTrue((self.archivos / "reportes" / "hoy.csv").exists())
+
+    def test_rutas_que_salen_se_rechazan(self):
+        for ruta in ["../fuera.txt", "/etc/passwd", "a/../../fuera.txt", "C:/Windows/win.ini", "~/x", "reportes/../../x"]:
+            with self.subTest(ruta=ruta):
+                with self.assertRaises(fd.ErrorDeNegocio):
+                    fd.c_archivos.guardar(ruta, "x")
+                with self.assertRaises(fd.ErrorDeNegocio):
+                    fd.c_archivos.leer(ruta)
+                self.assertTrue(fd._validar_config(nodo("g", "archivo_guardar", ruta=ruta, contenido="x")))
+        # con plantilla, en la corrida
+        d = manual(nodo("g", "archivo_guardar", ruta="{{entrada.ruta}}", contenido="x"), campos=[{"nombre": "ruta"}])
+        r, _ = self.correr_orden(d, exigir_ok=False, entrada={"ruta": "../../escape.txt"})
+        self.assertEqual(r["accion"], "error")
+        self.assertIn("espacio de archivos", r["motivo"])
+        self.assertFalse((Path(self.tmp.name) / "escape.txt").exists())
+        # un enlace simbólico que apunta afuera tampoco
+        try:
+            (self.archivos / "enlace").symlink_to(Path(self.tmp.name))
+        except (OSError, NotImplementedError):
+            return
+        with self.assertRaises(fd.ErrorDeNegocio):
+            fd.c_archivos.leer("enlace/estado/x")
+        # no_existe
+        r, _ = self.correr_orden(manual(nodo("l", "archivo_leer", ruta="no/esta.txt")))
+        self.assertEqual(next(e for e in _ if e["tipo"] == "etapa_fin" and e["etapa"] == "l")["salida"], "no_existe")
+
+    def test_hoja_leer_xlsx_csv_y_adjunto(self):
+        import openpyxl
+        libro = openpyxl.Workbook()
+        h = libro.active
+        h.title = "Datos"
+        h.append(["documento", "monto"])
+        h.append(["111", 10])
+        h.append(["222", 20.5])
+        libro.save(str(self.archivos / "planilla.xlsx"))
+        d = manual(nodo("h", "hoja_leer", origen="archivo", archivo="planilla.xlsx", hoja="Datos", salida="filas"))
+        r, _ = self.correr_orden(d)
+        self.assertEqual(r["variables"]["filas"], [{"documento": "111", "monto": 10}, {"documento": "222", "monto": 20.5}])
+        # del adjunto del correo
+        d = cadena(nodo("h", "hoja_leer", origen="adjunto", adjunto="certificado", encabezados=False, salida="filas"))
+        r, _ = self.correr_orden(d, caso=CASO)
+        self.assertEqual(r["variables"]["filas"][0], {"columna_1": "CERTIFICADO DE INCAPACIDAD"})
+        # una URL de un host que no está permitido no se pide
+        d = manual(nodo("h", "hoja_leer", origen="url", url="https://datos.positiva.gov.co/x.csv"))
+        r, _ = self.correr_orden(d, exigir_ok=False)
+        self.assertIn("Positiva", r["motivo"])
+
+    def test_tabla_integrada(self):
+        t = fd.c_tablas
+        t.guardar("flujo-a", "vistos", "k1", {"n": 1, "ok": True})
+        self.assertEqual(t.guardar("flujo-a", "vistos", "k1", {"n": 2}, "insertar")[1], False)
+        t.guardar("flujo-a", "vistos", "k1", {"m": 3}, "combinar")
+        self.assertEqual({k: v for k, v in t.consultar("flujo-a", "vistos", "k1")[0].items() if not k.startswith("_")}, {"clave": "k1", "n": 1, "ok": True, "m": 3})
+        self.assertEqual(len(t.consultar("flujo-a", "vistos", filtro={"ok": True})), 1)
+        self.assertEqual(t.consultar("flujo-b", "vistos"), [])  # cada flujo la suya
+        for malo in ("Mayus", "con espacio", "1a", "a;drop"):
+            with self.assertRaises(fd.ErrorDeNegocio):
+                t.guardar("flujo-a", malo, "k", {})
+        with self.assertRaises(fd.ErrorDeNegocio):
+            t.consultar("flujo-a", "vistos", filtro={"x') OR 1=1 --": 1})
+        with self.assertRaises(fd.ErrorDeNegocio):
+            t.guardar("../etc", "x", "k", {})
+        with self.assertRaises(fd.ErrorDeNegocio):
+            t.guardar("flujo-a", "grande", "k", {"x": "a" * 70000})
+
+
+# ------------------------------------------------------------- correo y Drive
+
+class CorreoYDrive(Plataforma):
+    def setUp(self):
+        super().setUp()
+        self.imap = ImapFalso([correo_mime("1", "Hola", "a@ejemplo.test", adjunto=("datos.csv", b"x,y\n1,2\n")), correo_mime("2", "Otro", "b@ejemplo.test")])
+        self.drive = DriveFalso()
+        SmtpFalso.enviados.clear()
+        self._previos = (fd.c_correo.fabrica_imap, fd.c_correo.fabrica_smtp, fd.c_correo.pedir_https, fd.c_drive.fabrica)
+        fd.c_correo.fabrica_imap = lambda *a: self.imap
+        fd.c_correo.fabrica_smtp = lambda *a: SmtpFalso()
+        fd.c_drive.fabrica = lambda valores, timeout: self.drive
+        self.creds = {**self.creds,
+                      "buzon": cred("imap", secretos=["clave"], host="imap.ejemplo.test", usuario="ops@ejemplo.test", clave=CLAVE_SQL),
+                      "smtp": cred("smtp", secretos=["clave"], host="smtp.ejemplo.test", usuario="ops@ejemplo.test", clave=CLAVE_SQL),
+                      "smtp-ok": cred("smtp", True, secretos=["clave"], host="smtp.ejemplo.test", usuario="ops@ejemplo.test", clave=CLAVE_SQL),
+                      "drive": cred("google_servicio", secretos=["json"], json='{"type": "service_account"}'),
+                      "drive-ok": cred("google_servicio", True, secretos=["json"], json='{"type": "service_account"}'),
+                      "graph-pqrd": cred("microsoft_graph", True, secretos=["client_secret"], tenant="t1", client_id="c", client_secret=TOKEN,
+                                         buzon="servicioalcliente@positiva.gov.co")}
+
+    def tearDown(self):
+        fd.c_correo.fabrica_imap, fd.c_correo.fabrica_smtp, fd.c_correo.pedir_https, fd.c_drive.fabrica = self._previos
+        super().tearDown()
+
+    def test_correo_leer_imap_con_adjuntos_y_para_cada(self):
+        d = manual(nodo("leer", "correo_leer", credencial="buzon", incluir_adjuntos=True, salida="correos"),
+                   nodo("cada", "para_cada", lista="correos", variable="c", recoger="{{c.asunto}}", salida="asuntos"),
+                   aristas=[{"desde": "inicio", "hacia": "leer"}, {"desde": "leer", "hacia": "cada", "cuando": "ok"},
+                            {"desde": "leer", "hacia": "fin", "cuando": "vacio"}, {"desde": "cada", "hacia": "fin", "cuando": "listo"},
+                            {"desde": "cada", "hacia": "nada", "cuando": "cada"}])
+        d["nodos"].insert(3, nodo("nada", "fin_ciclo"))
+        self.assertEqual(self.problemas(d), [])
+        r, _ = self.correr_orden(d)
+        self.assertEqual(r["variables"]["asuntos"], ["Otro", "Hola"])  # los más recientes primero
+        adj = r["variables"]["correos"][1]["adjuntos"][0]
+        self.assertEqual(adj["nombre"], "datos.csv")
+        self.assertIn("x", adj["texto"])
+        self.assertTrue(all(x[1] is True for x in self.imap.llamadas if x[0] == "select"))
+        self.assertNotIn(CLAVE_SQL, self.salida.getvalue())
+
+    def test_buzones_de_positiva_bloqueados_siempre(self):
+        llamadas = []
+        fd.c_correo.pedir_https = lambda *a: llamadas.append(a) or (200, b"{}")
+        r, _ = self.correr_orden(manual(nodo("leer", "correo_leer", credencial="graph-pqrd")), exigir_ok=False)
+        self.assertIn("bloqueado por seguridad", r["motivo"])
+        self.assertEqual(llamadas, [])  # ni siquiera pidió el token
+        os.environ["PQRD_BUZON_EXTRA"] = "otro.buzon@ejemplo.test"
+        try:
+            self.assertIsNotNone(fd.direccion_vetada("otro.buzon@ejemplo.test"))
+        finally:
+            os.environ.pop("PQRD_BUZON_EXTRA")
+        for d in ("notificacionesjudiciales@positiva.gov.co", "Alguien <x@positiva.gov.co>", "y@sub.positiva.gov.co"):
+            self.assertIsNotNone(fd.direccion_vetada(d), d)
+        self.assertIsNone(fd.direccion_vetada("persona@ejemplo.test"))
+        for h in ("positiva.gov.co", "api.positiva.gov.co", "ms-sgdea-prd.proyectos-3t.tech", "sgdea-prod.ejemplo", "metadata.google.internal"):
+            self.assertIsNotNone(fd.host_vetado(h), h)
+
+    def test_correo_enviar_bloqueado_real_y_destinos_vetados(self):
+        d = manual(nodo("env", "correo_enviar", credencial="smtp", para="{{entrada.para}}", asunto="Hola {{entrada.nombre}}", cuerpo="Su total es {{entrada.total}}"),
+                   campos=[{"nombre": "para"}, {"nombre": "nombre"}, {"nombre": "total"}])
+        entrada = {"para": "persona@ejemplo.test", "nombre": "Ana", "total": "10"}
+        r, ev = self.correr_orden(d, entrada=entrada)
+        self.assertEqual(SmtpFalso.enviados, [])
+        self.assertTrue(r["variables"]["env"]["bloqueado"])
+        esc = next(e for e in ev if e["tipo"] == "escritura")
+        self.assertTrue(esc["bloqueada"])
+        self.assertEqual(esc["detalle"]["asunto"], "Hola Ana")
+        d["nodos"][1]["config"]["credencial"] = "smtp-ok"
+        r, ev = self.correr_orden(d, entrada=entrada)
+        self.assertEqual(SmtpFalso.enviados, [{"de": "ops@ejemplo.test", "para": ["persona@ejemplo.test"], "asunto": "Hola Ana", "cuerpo": "Su total es 10\n"}])
+        self.assertFalse(r["variables"]["env"]["bloqueado"])
+        # a Positiva nunca, aunque la credencial permita escribir
+        for para in ("servicioalcliente@positiva.gov.co", "a@ejemplo.test, jefe@positiva.gov.co"):
+            r, _ = self.correr_orden(d, exigir_ok=False, entrada={**entrada, "para": para})
+            self.assertIn("bloqueado por seguridad", r["motivo"])
+        self.assertEqual(len(SmtpFalso.enviados), 1)
+        self.assertNotIn(CLAVE_SQL, self.salida.getvalue())
+
+    def test_drive_listar_leer_subir(self):
+        d = manual(nodo("l", "drive_listar", credencial="drive", carpeta="1CARPETACARPETA", nombre="o'k", salida="archivos"),
+                   nodo("r", "drive_leer", credencial="drive", archivo="1AAAAAAAAAAAAA", salida="notas"),
+                   nodo("h", "hoja_leer", origen="drive", credencial="drive", archivo="1HOJAHOJAHOJA1", salida="filas"),
+                   nodo("s", "drive_subir", credencial="drive", carpeta="1CARPETACARPETA", nombre="r.csv", de="filas", formato="csv", salida="subido"),
+                   aristas=None)
+        d["aristas"] = [{"desde": a, "hacia": b} for a, b in (("inicio", "l"), ("l", "r"), ("r", "h"), ("h", "s"), ("s", "fin"))]
+        self.assertEqual(self.problemas(d), [])
+        r, _ = self.correr_orden(d)
+        v = r["variables"]
+        self.assertEqual(len(v["archivos"]), 2)
+        self.assertIn("name contains 'o\\'k'", self.drive.consultas[0])  # comilla escapada en la consulta
+        self.assertEqual(v["notas"]["texto"], "hola desde drive")
+        self.assertEqual(v["filas"], [{"doc": "111", "monto": "10"}, {"doc": "222", "monto": "20"}])
+        self.assertEqual(self.drive.subidos, [])  # bloqueado
+        self.assertTrue(v["subido"]["bloqueado"])
+        for n in d["nodos"]:
+            if n["config"].get("credencial") == "drive":
+                n["config"]["credencial"] = "drive-ok"
+        r, _ = self.correr_orden(d)
+        self.assertEqual(self.drive.subidos[0][0:2], ("r.csv", "1CARPETACARPETA"))
+        self.assertEqual(r["variables"]["subido"]["id"], "1NUEVONUEVONUE")
+        r, _ = self.correr_orden(manual(nodo("l", "drive_listar", credencial="drive", carpeta="x' or '1'='1")), exigir_ok=False)
+        self.assertIn("no es un id de Drive", r["motivo"])
+
+
+# --------------------------------------------- http con credencial guardada
+
+class HttpConCredencial(Http):
+    def correr_orden(self, defi, creds, exigir_ok=True):
+        self.salida.seek(0)
+        self.salida.truncate()
+        asyncio.run(fd.procesar({"cmd": "procesar", "corrida": "x", "caso": CASO, "definicion": defi, "credenciales": creds}))
+        eventos = [json.loads(linea[len(fd.MARCA):]) for linea in self.salida.getvalue().split(SALTO) if linea.startswith(fd.MARCA)]
+        return next(e for e in eventos if e["tipo"] == "resultado"), eventos
+
+    def test_post_solo_con_escritura_habilitada_y_al_host_de_la_credencial(self):
+        fd._IPS_PERMITIDAS_PRUEBAS.add("127.0.0.1")
+        os.environ["HTTP_HOSTS_PERMITIDOS"] = ""
+        d = self.flujo_http(metodo="POST", cuerpo={"a": "{{correo.asunto}}"}, credencial="api")
+        bloqueada = {"api": cred("http_bearer", secretos=["token"], token=TOKEN, hosts="127.0.0.1")}
+        r, ev = self.correr_orden(d, bloqueada)
+        self.assertEqual(_Servidor.vistas, [])
+        self.assertTrue(r["variables"]["resp"]["simulado"])
+        self.assertIn("no tiene la escritura habilitada", r["variables"]["resp"]["motivo"])
+        habilitada = {"api": cred("http_bearer", True, secretos=["token"], token=TOKEN, hosts="127.0.0.1")}
+        r, ev = self.correr_orden(d, habilitada)
+        self.assertEqual(_Servidor.vistas[0]["auth"], f"Bearer {TOKEN}")
+        self.assertFalse(next(e for e in ev if e["tipo"] == "escritura")["bloqueada"])
+        # GET con credencial: sale al host de la credencial aunque no esté en HTTP_HOSTS_PERMITIDOS
+        r, _ = self.correr_orden(self.flujo_http(credencial="api"), bloqueada)
+        self.assertEqual(r["variables"]["resp"]["status"], 200)
+        # la credencial no se manda a otro host
+        r, _ = self.correr_orden(self.flujo_http(credencial="api"), {"api": cred("http_bearer", True, token=TOKEN, hosts="api.ejemplo.test")})
+        self.assertIn("solo se puede mandar a api.ejemplo.test", r["motivo"])
+        # básica
+        r, _ = self.correr_orden(self.flujo_http(credencial="basica"), {"basica": cred("http_basico", secretos=["clave"], usuario="u", clave=CLAVE_SQL, hosts="127.0.0.1")})
+        self.assertTrue(_Servidor.vistas[-1]["auth"].startswith("Basic "))
+        self.assertNotIn(TOKEN, self.salida.getvalue())
+        self.assertNotIn(CLAVE_SQL, self.salida.getvalue())
+
+    def test_positiva_bloqueado_aunque_este_permitido(self):
+        os.environ["HTTP_HOSTS_PERMITIDOS"] = "api.positiva.gov.co,positiva.gov.co"
+        d = self.flujo_http()
+        d["nodos"][1]["config"]["url"] = "https://api.positiva.gov.co/x"
+        r, _ = self.correr_orden(d, {})
+        self.assertEqual(r["accion"], "descartado")
+        self.assertIn("Positiva", r["motivo"])
+
+
+# ------------------------------------------------- secretos y entorno por flujo
+
+class SecretosYEntorno(Plataforma):
+    def test_ningun_secreto_sale_en_eventos_resultado_ni_consola(self):
+        creds = {**self.creds, "api": cred("http_bearer", secretos=["token"], token=TOKEN, hosts="api.ejemplo.test"),
+                 "base-clave": cred("postgres", secretos=["clave"], host="10.0.0.5", usuario="u", clave=CLAVE_SQL)}
+        d = manual(nodo("t", "transformar", operaciones=[{"op": "plantilla", "plantilla": "token={{entorno.TOKEN_API}} url={{entorno.URL_BASE}}", "salida": "fuga"}]),
+                   nodo("x", "expresion", expresion="entorno.TOKEN_API + '!'", salida="fuga2"),
+                   nodo("n", "notificar", para="a@ejemplo.test", cuerpo="{{fuga}} {{fuga2}}"),
+                   nodo("q", "sql_consulta", credencial="base-clave", consulta="SELECT 1", continuar_si_falla=True))
+        orden = {"entorno": {"TOKEN_API": TOKEN, "URL_BASE": "https://api.ejemplo.test"}, "entorno_secretos": ["TOKEN_API"], "credenciales": creds}
+        r, ev = self.correr_orden(d, **orden)
+        texto = self.salida.getvalue()
+        self.assertNotIn(TOKEN, texto)
+        self.assertNotIn(CLAVE_SQL, texto)
+        self.assertIn("token=••••", r["variables"]["fuga"])
+        self.assertIn("https://api.ejemplo.test", r["variables"]["fuga"])  # lo que no es secreto sí se ve
+        self.assertTrue(any("10.0.0.5" in a for a in r["avisos"]))  # el fallo (IP privada) sí se ve, la clave no
+        # la consola (stderr de bibliotecas y trazas) pasa por la misma máscara
+        fd._secretos_activos.add(TOKEN)
+        buf = io.StringIO()
+        fd._Enmascarado(buf).write(f"Traceback: clave {TOKEN} en la línea")
+        fd._secretos_activos.clear()
+        self.assertEqual(buf.getvalue(), "Traceback: clave •••• en la línea")
+
+    def test_entorno_valida_nombres_y_resuelve(self):
+        d = manual(nodo("g", "expresion", expresion="1", salida="x"),
+                   fin=nodo("fin", "salida", desenlace="manual", motivo="{{entorno.REGION}} {{entorno.NO_ESTA}}"))
+        self.assertTrue(any("no tiene la variable de entorno NO_ESTA" in p for p in fd.validar(d, entorno=["REGION"])))
+        self.assertFalse(any("entorno.REGION" in p for p in fd.validar(d, entorno=["REGION"])))
+        self.assertEqual([p for p in fd.validar(d) if "entorno" in p], [])  # sin nombres no se revisa
+        self.assertTrue(any("MAYÚSCULAS" in p for p in fd.validar(manual(fin=nodo("fin", "salida", desenlace="manual", motivo="{{entorno.minus}}")))))
+        self.assertTrue(any("no es un nombre de variable válido" in p for p in fd.validar(manual(nodo("g", "expresion", expresion="1", salida="entorno")))))
+        r, _ = self.correr_orden(d, exigir_ok=False, entorno={"REGION": "andina"})
+        self.assertEqual(r["accion"], "error")  # en la corrida, una variable de entorno que no existe impide correr
+        r, _ = self.correr_orden(d, entorno={"REGION": "andina", "NO_ESTA": "x"})
+        self.assertEqual(r["motivo"], "andina x")
+        # CLI de validación con los nombres del entorno
+        p = subprocess.run([sys.executable, str(AQUI / "flujo_declarativo.py"), "validar"], input=json.dumps({"definicion": d, "entorno": ["REGION"]}),
+                           capture_output=True, text=True, encoding="utf-8", env={**os.environ, "PYTHONIOENCODING": "utf-8"}, timeout=120)
+        self.assertTrue(any("NO_ESTA" in x for x in json.loads(p.stdout.strip().splitlines()[-1])), p.stdout + p.stderr)
+
+
+# ------------------------------------------------------------- paridad con zod
+
+class ParidadConElServidor(unittest.TestCase):
+    """Los mismos tipos y los mismos ejemplos aceptados por el zod del servidor (si está compilado y hay node)."""
+
+    def test_zod_acepta_los_ejemplos_y_conoce_los_tipos(self):
+        import shutil
+        dist = Path(os.environ.get("RUTA_SERVIDOR_DIST", "/app/servidor/dist")) / "flujos.js"
+        node = shutil.which("node")
+        if not node or not dist.exists():
+            self.skipTest("no hay servidor compilado o node")
+        ejemplos = [{"tipo": t, "config": c} for t, s in nd.TIPOS.items() for c in [s["ejemplo"]["config"], *s["ejemplos"]]]
+        malos = [{"tipo": "sql_consulta", "config": {"credencial": "b"}}, {"tipo": "para_cada", "config": {"lista": "x", "max_iteraciones": 5000}},
+                 {"tipo": "esperar", "config": {"segundos": 120}}, {"tipo": "programado", "config": {"cron": "1 2 3"}},
+                 {"tipo": "correo_enviar", "config": {"credencial": "s", "para": "a@b.c", "asunto": "x"}},
+                 {"tipo": "archivo_guardar", "config": {"ruta": "../x", "contenido": "x"}}, {"tipo": "expresion", "config": {}}]
+        guion = ("const f = await import(process.argv[1]); const d = JSON.parse(process.argv[2]);"
+                 "const r = (xs) => xs.map((e) => { const s = f.CONFIG_DE[e.tipo]; return s ? s.safeParse(e.config).success : null; });"
+                 "console.log(JSON.stringify({tipos: [...f.TIPOS_DE_NODO], buenos: r(d.buenos), malos: r(d.malos)}));")
+        p = subprocess.run([node, "--input-type=module", "-e", guion, dist.as_uri(), json.dumps({"buenos": ejemplos, "malos": malos})],
+                           capture_output=True, text=True, encoding="utf-8", timeout=60)
+        r = json.loads(p.stdout.strip().splitlines()[-1])
+        self.assertEqual(set(r["tipos"]), fd.TIPOS)
+        rechazados = [e for e, ok in zip(ejemplos, r["buenos"]) if not ok]
+        self.assertEqual(rechazados, [])
+        self.assertEqual(r["malos"], [False] * len(malos))
+        for m in malos:  # y Python también los rechaza
+            self.assertTrue(fd._validar_config({"id": "n", **m}), m)
 
 
 if __name__ == "__main__":

@@ -420,6 +420,20 @@ def ejecutar(nombre: str, a: Dict[str, Any]) -> Any:
         return r
     if nombre == "correr_flujo":
         cuerpo = {k: a[k] for k in ("entrada", "caso") if a.get(k) is not None}
+        # Antes de correr, la entrada se revisa contra lo que pide el disparador del flujo.
+        f = api("GET", f"/api/flujos/{a['id']}")
+        disparador = next((n for n in ((f or {}).get("definicion") or {}).get("nodos", []) if n.get("tipo") in ("entrada_manual", "webhook", "programado", "entrada_correo", "correo_nuevo")), None)
+        if disparador and disparador.get("tipo") == "entrada_manual":
+            campos = (disparador.get("config") or {}).get("campos") or []
+            entrada = cuerpo.get("entrada") if isinstance(cuerpo.get("entrada"), dict) else {}
+            faltan = [c.get("nombre") for c in campos if c.get("obligatorio", True) and c.get("nombre") not in entrada]
+            sobran = [k for k in entrada if k not in {c.get("nombre") for c in campos}]
+            if faltan or (sobran and campos):
+                return {"error": "la entrada no coincide con lo que pide el flujo; corrígela y vuelve a correrlo sin preguntar",
+                        "campos_esperados": [{k: c.get(k) for k in ("nombre", "tipo", "obligatorio", "descripcion") if c.get(k) is not None} for c in campos],
+                        "faltan": faltan, "sobran": sobran}
+        if disparador and disparador.get("tipo") == "entrada_correo" and not cuerpo.get("caso"):
+            return {"error": "este flujo corre sobre un correo: pasa caso (búscalo con listar_correos)"}
         r = api("POST", f"/api/flujos/{a['id']}/correr", cuerpo)
         if not isinstance(r, dict) or not r.get("id"):
             return r

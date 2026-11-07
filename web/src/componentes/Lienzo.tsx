@@ -29,6 +29,13 @@ import type { Catalogo, Corrida, EstadoNodo, Nodo as NodoCatalogo, Regla } from 
 import { MenuContextual, type Opcion } from "./MenuContextual.tsx";
 import { lectura, urlArchivo } from "../adjuntos.ts";
 import "./adjuntos.css";
+import { EditorFlujo } from "./Editor.tsx";
+
+/** Los flujos declarativos se editan; los de código (PQRD, Tutelas) se observan y se ajustan. */
+export function Lienzo() {
+  const declarativo = usar((s) => s.flujos.find((f) => f.id === s.flujo)?.tipo === "declarativo");
+  return declarativo ? <EditorFlujo /> : <LienzoDeCodigo />;
+}
 
 const ANCHO = 248;
 const ANCHO_FIN = 204;
@@ -656,7 +663,7 @@ function Banda({ corrida, p, catalogo }: { corrida: Corrida | undefined; p: Prog
 
 type Menu = { x: number; y: number; opciones: Opcion[] } | null;
 
-export function Lienzo() {
+function LienzoDeCodigo() {
   const catalogo = usar((s) => s.catalogo);
   const corrida = usar((s) => (s.corridaVisible ? s.corridas[s.corridaVisible] : undefined));
   const foco = usar((s) => s.foco);

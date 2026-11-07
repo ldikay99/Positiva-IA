@@ -14,5 +14,8 @@ services:
       - ${RUTA_BANDEJA:?define RUTA_BANDEJA en .env}:/datos/bandeja:ro
       # Ajustes y corridas guardadas.
       - positiva-ia-datos:/datos/estado
+      # Archivos de trabajo de los flujos (archivo_leer/guardar, SQLite): sobreviven a cada reconstrucción.
+      - positiva-ia-archivos:/datos/archivos
 volumes:
   positiva-ia-datos:
+  positiva-ia-archivos:

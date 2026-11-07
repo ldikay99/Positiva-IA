@@ -39,7 +39,7 @@ export async function pedir<T>(ruta: string, init?: RequestInit): Promise<T> {
   return cuerpo;
 }
 
-export type Vista = "tablero" | "flujo" | "adjuntos" | "corridas" | "logs" | "herramientas" | "proveedores" | "configuracion";
+export type Vista = "tablero" | "flujo" | "conexiones" | "adjuntos" | "corridas" | "logs" | "herramientas" | "proveedores" | "configuracion";
 export type Foco = { tipo: "nodo"; id: string } | { tipo: "regla"; id: string } | { tipo: "correo"; caso: string } | { tipo: "corrida"; id: string } | null;
 
 export interface Aviso {
@@ -362,6 +362,8 @@ function recibir(e: Evento): void {
   const s0 = usar.getState();
   if (e.tipo === "flujo_guardado" || e.tipo === "flujo_borrado") {
     void s0.cargarFlujos();
+    // El editor abierto se recarga solo (o avisa si hay cambios sin guardar).
+    if (e.tipo === "flujo_guardado") window.dispatchEvent(new CustomEvent("positiva:flujo-guardado", { detail: { flujo: e.flujo, version: e.version, entorno: e.entorno } }));
     if (e.flujo === s0.flujo) {
       if (e.tipo === "flujo_borrado") void s0.cambiarFlujo("pqrd");
       else void pedir<Catalogo>(q("/api/catalogo", s0.flujo)).then((catalogo) => usar.setState({ catalogo }));

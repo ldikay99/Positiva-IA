@@ -26,22 +26,40 @@ aviso; sin ninguna de las dos, la corrida termina en error como siempre.
 `config.deshabilitado` salta el nodo sin ejecutarlo.
 
 El nodo `http` solo hace GET de verdad a los hosts de `HTTP_HOSTS_PERMITIDOS`
-(nunca a IP privadas, de loopback o de metadatos, y sin seguir redirecciones);
-cualquier otro método o host se arma y se anota como escritura bloqueada.
+o de su credencial (nunca a IP privadas, de loopback o de metadatos, ni a
+Positiva o SGDEA, y sin seguir redirecciones); los demás métodos solo salen
+con una credencial guardada cuya escritura habilitó una persona.
+
+Disparadores: entrada_correo (un correo de la bandeja), entrada_manual,
+programado, webhook y correo_nuevo; las corridas sin correo reciben `entrada`.
+Conectores (correo, Drive, SQL, hojas, archivos, tabla integrada) en
+`conectores/`. Todo nodo que escribe afuera solo escribe si su credencial
+tiene `permitir_escritura` (la pone una persona, nunca el flujo ni Vera); si
+no, arma la acción y la anota como escritura bloqueada.
+
+Secretos: el servidor manda, solo para la corrida, los valores de las
+credenciales que usa el flujo y el entorno del flujo (`{{entorno.NOMBRE}}`).
+Nunca salen en eventos, muestras, resultados ni consola: se enmascaran (••••).
 
 Protocolo: una orden JSON por línea en stdin
-  {"cmd": "procesar", "corrida", "caso", "definicion", "ia": {"modelo"}}
+  {"cmd": "procesar", "corrida", "caso", "definicion", "ia": {"modelo"}, "entrada", "origen",
+   "credenciales": {nombre: {tipo, valores, permitir_escritura}}, "entorno": {NOMBRE: valor},
+   "entorno_secretos": [NOMBRE], "subflujos": {id: definicion}}
   {"cmd": "validar", "definicion"}
 y eventos por stdout, cada uno en una línea que empieza con MARCA.
+Además `flujo_declarativo.py validar` (stdin: definición o {definicion, entorno: [nombres]})
+y `flujo_declarativo.py sondear` (stdin: {flujo, definicion, credenciales}) para correo_nuevo.
 """
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextvars
 import csv
+import datetime
+import hashlib
 import http.client
 import io
-import ipaddress
 import json
 import os
 import random
@@ -57,11 +75,26 @@ import unicodedata
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from conectores import archivos as c_archivos  # noqa: E402
+from conectores import correo as c_correo  # noqa: E402
+from conectores import drive as c_drive  # noqa: E402
+from conectores import expresion as c_expresion  # noqa: E402
+from conectores import hojas as c_hojas  # noqa: E402
+from conectores import sql as c_sql  # noqa: E402
+from conectores import tablas as c_tablas  # noqa: E402
+from conectores.base import (HOSTS_METADATOS, ErrorDeNegocio, ErrorTransitorio, destino_seguro, direccion_vetada,  # noqa: E402,F401
+                             host_vetado, ip_bloqueada, ruta_estado, timeout_de)
+from conectores.base import IPS_PERMITIDAS_PRUEBAS as _IPS_PERMITIDAS_PRUEBAS  # noqa: E402
+from conectores.base import MAX_FILAS as MAX_FILAS_DEFECTO  # noqa: E402
+
 MARCA = "\x1eEVT "
 RAIZ = Path(__file__).resolve().parent.parent
 MOTOR = Path(os.environ.get("RUTA_MOTOR", RAIZ / "motor"))
 BANDEJA = Path(os.environ.get("RUTA_BANDEJA", RAIZ / "datos" / "bandeja"))
 VIVO = Path(os.environ.get("RUTA_VIVO", RAIZ / "datos" / "vivo"))
+# Los correos que trae el disparador correo_nuevo (uno por carpeta, como la bandeja).
+RECIBIDOS = Path(os.environ.get("RUTA_RECIBIDOS") or (ruta_estado() / "recibidos"))
 PROYECTO = os.environ.get("GCP_PROJECT", "positiva-sgda-prd-416417")
 
 # La conversión de adjuntos sale del motor de PQRD: se carga como él, sin
@@ -77,14 +110,38 @@ _salida = sys.stdout
 _cerrojo = threading.Lock()
 _corrida: contextvars.ContextVar = contextvars.ContextVar("corrida", default=None)
 
-TIPOS = {"entrada_correo", "leer_adjuntos", "filtro", "condicion", "ia_clasificar", "ia_decidir", "ia_extraer",
-         "extraer_regex", "validar", "transformar", "buscar_en_tabla", "bifurcar_por_valor", "ia_generar", "resumir",
-         "ia_redactar", "notificar", "enviar", "http", "salida"}
+DISPARADORES = {"entrada_correo", "entrada_manual", "programado", "webhook", "correo_nuevo"}
+CONECTORES = {"correo_leer", "correo_enviar", "drive_listar", "drive_leer", "drive_subir", "hoja_leer", "sql_consulta", "sql_ejecutar"}
+TIPOS = DISPARADORES | CONECTORES | {
+    "leer_adjuntos", "filtro", "condicion", "ia_clasificar", "ia_decidir", "ia_extraer", "extraer_regex", "validar", "transformar",
+    "buscar_en_tabla", "bifurcar_por_valor", "ia_generar", "resumir", "ia_redactar", "notificar", "enviar", "http", "salida",
+    "para_cada", "fin_ciclo", "paralelo", "unir", "esperar", "expresion", "json", "fecha", "llamar_flujo", "respuesta_webhook",
+    "tabla_guardar", "tabla_consultar", "archivo_leer", "archivo_guardar"}
 TIPOS_IA = {"ia_clasificar", "ia_decidir", "ia_extraer", "ia_generar", "resumir", "ia_redactar"}
 # Los que hablan con algo de afuera y por eso aceptan reintentos.
-TIPOS_CON_REINTENTOS = TIPOS_IA | {"notificar", "enviar", "http"}
-# Ni la entrada ni las salidas se pueden saltar.
-NO_DESHABILITABLES = {"entrada_correo", "salida"}
+TIPOS_CON_REINTENTOS = TIPOS_IA | {"notificar", "enviar", "http", "llamar_flujo"} | CONECTORES
+# Los que escriben afuera (solo con una credencial con permitir_escritura; notificar y enviar nunca).
+TIPOS_ESCRITURA = {"correo_enviar", "drive_subir", "sql_ejecutar", "http", "enviar", "notificar"}
+# Ni los disparadores, ni las salidas, ni la estructura de bucles y ramas se pueden saltar.
+NO_DESHABILITABLES = DISPARADORES | {"salida", "fin_ciclo", "para_cada", "paralelo", "unir"}
+# Donde termina un camino: la salida (el flujo) y fin_ciclo (la vuelta).
+TERMINALES = {"salida", "fin_ciclo"}
+CREDENCIALES_DE = {"correo_leer": ("imap", "microsoft_graph"), "correo_nuevo": ("imap", "microsoft_graph"),
+                   "correo_enviar": ("smtp", "microsoft_graph"), "drive_listar": ("google_servicio",), "drive_leer": ("google_servicio",),
+                   "drive_subir": ("google_servicio",), "hoja_leer": ("google_servicio",), "sql_consulta": ("postgres", "mysql", "sqlite"),
+                   "sql_ejecutar": ("postgres", "mysql", "sqlite"), "http": ("http_bearer", "http_basico")}
+NOMBRE_CREDENCIAL = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,62}$")
+NOMBRE_ENTORNO = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
+ID_FLUJO = re.compile(r"^[a-z][a-z0-9-]{1,40}$")
+MAX_ITERACIONES, MAX_ITERACIONES_TOPE = 100, 1000
+MAX_PASOS_TOTALES = 20000
+MAX_SEGUNDOS = 1800
+MAX_PROFUNDIDAD_LLAMADAS = 3
+MAX_ESPERA_S = 60
+MAX_RAMAS = 10
+VUELTAS_VISIBLES = 3  # en un para_cada se ven los eventos de las primeras vueltas y de la última
+ZONA = "America/Bogota"
+MASCARA = "••••"
 RAMA_ERROR = "error"
 FALLO_CAMPOS = {"nodo", "nombre", "tipo", "motivo", "error"}
 DESENLACES = {"radicar": "radicado", "manual": "manual", "reenviar": "reenviado", "descartar": "descartado",
@@ -104,12 +161,14 @@ INTEGRADAS = {"correo": {"asunto", "cuerpo", "remitente", "remitente_correo", "r
 # Los nombres cortos de antes, que siguen valiendo en filtro y condición.
 LEGADO = {"asunto": "correo.asunto", "cuerpo": "correo.cuerpo", "remitente": "correo.remitente",
           "adjuntos": "adjuntos.nombres", "texto": "texto"}
-# «fallo» lo llena el motor cuando un nodo falla y el flujo sigue por la rama de error.
-RESERVADAS = set(INTEGRADAS) | set(LEGADO) | {"fallo"}
+# «fallo» lo llena el motor cuando un nodo falla y el flujo sigue por la rama de error;
+# «entorno» son las variables de entorno del flujo ({{entorno.NOMBRE}}).
+RESERVADAS = set(INTEGRADAS) | set(LEGADO) | {"fallo", "entorno"}
 PLANTILLA = re.compile(r"\{\{\s*([^{}]*?)\s*\}\}")
 NOMBRE_VAR = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-# Claves de config cuyo texto no es plantilla (datos o patrones).
-NO_PLANTILLA = {"tabla", "esquema", "patron", "valor_regex", "categorias", "opciones", "casos", "reemplazo", "credencial", "mapeo"}
+# Claves de config cuyo texto no es plantilla (datos, patrones, código o nombres).
+NO_PLANTILLA = {"tabla", "esquema", "patron", "valor_regex", "categorias", "opciones", "casos", "reemplazo", "credencial", "mapeo",
+                "consulta", "sentencia", "expresion", "cron", "secreto", "ramas", "zona", "formato", "recoger"}
 MAX_ENTRADA = 12000
 
 # Rutas dentro de una variable: nombre.campo, lista.0, lista[0], lista[campo=valor]
@@ -123,24 +182,19 @@ _SEGMENTO = re.compile(r"\.(?P<k>[A-Za-z0-9_]+)|" + _ENTRE_CORCHETES)
 METODOS_HTTP = ("GET", "POST", "PUT", "PATCH", "DELETE")
 HTTP_TIMEOUT_MS, HTTP_TIMEOUT_MAX_MS = 15000, 60000
 HTTP_MAX_BYTES = 2_000_000
-HOSTS_METADATOS = {"metadata", "metadata.google.internal", "metadata.goog", "169.254.169.254", "fd00:ec2::254",
-                   "100.100.100.200", "instance-data", "instance-data.ec2.internal"}
 ENCABEZADOS_SECRETOS = {"authorization", "proxy-authorization", "cookie", "x-api-key", "api-key", "apikey", "x-auth-token"}
-CREDENCIAL = re.compile(r"^[A-Z][A-Z0-9_]{2,63}$")
-# Solo las pruebas lo llenan (p. ej. con 127.0.0.1 para un servidor local): IP que
-# se dejan pasar aunque sean de loopback. En la plataforma queda siempre vacío.
-_IPS_PERMITIDAS_PRUEBAS: Set[str] = set()
+CREDENCIAL = re.compile(r"^[A-Z][A-Z0-9_]{2,63}$")  # el nombre de una variable de entorno (forma de antes)
 # Reintentos: lo que vale si el nodo no lo dice y los topes.
 REINTENTO_ESPERA_MS, REINTENTO_FACTOR, REINTENTO_MAXIMO_MS = 500, 2.0, 10000
 _dormir = time.sleep  # las pruebas lo cambian para no esperar
 
 
-class ErrorDeNegocio(Exception):
-    """Un fallo que no se arregla reintentando: datos que faltan, destino bloqueado, config imposible."""
+class _Terminar(BaseException):  # BaseException: ningún «except Exception» de un nodo la atrapa
+    """Un cuerpo de bucle o una rama llegó a una salida: termina todo el flujo con ese resultado."""
 
-
-class ErrorTransitorio(Exception):
-    """Un fallo pasajero (429, 5xx, tiempo agotado, conexión caída): vale la pena reintentar."""
+    def __init__(self, resultado: dict) -> None:
+        super().__init__("salida")
+        self.resultado = resultado
 
 
 class RespuestaTransitoria(ErrorTransitorio):
@@ -199,9 +253,64 @@ def navegar(v: Any, segs: List[tuple]) -> Any:
     return v
 
 
+# Los valores secretos de la corrida en curso (credenciales y entorno secreto): nunca salen.
+_secretos_activos: Set[str] = set()
+# Dentro de un bucle largo o de un flujo llamado, los eventos de cada nodo se callan (no las escrituras).
+_callar: contextvars.ContextVar = contextvars.ContextVar("callar", default=False)
+RUIDOSOS = {"etapa_inicio", "etapa_fin", "paso", "busqueda", "modelo_inicio", "modelo_fin"}
+
+
+def enmascarar(texto: str) -> str:
+    """Reemplaza cada secreto activo (tal cual y como queda escapado en JSON) por ••••."""
+    if not _secretos_activos or not texto:
+        return texto
+    for s in sorted(_secretos_activos, key=len, reverse=True):
+        if s in texto:
+            texto = texto.replace(s, MASCARA)
+        esc = json.dumps(s, ensure_ascii=False)[1:-1]
+        if esc != s and esc in texto:
+            texto = texto.replace(esc, MASCARA)
+    return texto
+
+
+def registrar_secretos(valores: Iterable[Any]) -> None:
+    for v in valores:
+        if isinstance(v, (dict, list)):
+            registrar_secretos(v.values() if isinstance(v, dict) else v)
+            continue
+        s = str(v) if v is not None and not isinstance(v, bool) else ""
+        if len(s) >= 4:
+            _secretos_activos.add(s)
+            # las llaves PEM y JSON largos: también cada línea, por si salen por pedazos
+            for linea in s.replace("\\n", "\n").splitlines():
+                if len(linea.strip()) >= 16:
+                    _secretos_activos.add(linea.strip())
+            if s.lstrip().startswith("{"):
+                try:
+                    registrar_secretos(json.loads(s).values())
+                except (ValueError, AttributeError):
+                    pass
+
+
+class _Enmascarado(io.TextIOBase):
+    """stdout/stderr de la corrida (bibliotecas, trazas): pasan por la máscara antes de salir."""
+
+    def __init__(self, real) -> None:
+        self.real = real
+
+    def write(self, s: str) -> int:
+        self.real.write(enmascarar(s))
+        return len(s)
+
+    def flush(self) -> None:
+        self.real.flush()
+
+
 def evento(tipo: str, **datos: Any) -> None:
-    linea = json.dumps({"tipo": tipo, "corrida": _corrida.get(), "t": time.time(), **datos},
-                       ensure_ascii=False, default=str)
+    if _callar.get() and tipo in RUIDOSOS:
+        return
+    linea = enmascarar(json.dumps({"tipo": tipo, "corrida": _corrida.get(), "t": time.time(), **datos},
+                                  ensure_ascii=False, default=str))
     with _cerrojo:
         _salida.write(MARCA + linea + "\n")
         _salida.flush()
@@ -245,8 +354,22 @@ def _lista_valores(xs: Any, clave: str = "valor") -> List[str]:
 
 
 def _salidas_propias(t: Any, c: dict) -> Tuple[List[str], List[str]]:
-    if t == "salida":
+    if t in TERMINALES:
         return [], []
+    if t == "para_cada":
+        return ["cada", "listo"], []
+    if t == "paralelo":
+        return _lista_valores(c.get("ramas")), ["listo"]
+    if t == "expresion" and c.get("como_condicion") is True:
+        return ["si", "no"], []
+    if t in ("correo_leer", "drive_listar", "sql_consulta", "hoja_leer"):
+        return ["ok", "vacio"], []
+    if t == "tabla_consultar":
+        return ["encontrado", "vacio"], []
+    if t == "tabla_guardar":
+        return ["ok"], ["existente"]
+    if t == "archivo_leer":
+        return ["ok"], ["no_existe"]
     if t in ("filtro", "condicion"):
         return ["si", "no"], []
     if t == "validar":
@@ -273,7 +396,7 @@ def salidas_posibles(n: dict) -> Tuple[List[str], List[str]]:
     Todo nodo, salvo la salida, puede tener además la rama «error»."""
     c = n.get("config") if isinstance(n.get("config"), dict) else {}
     obligatorias, opcionales = _salidas_propias(n.get("tipo"), c)
-    if n.get("tipo") != "salida":
+    if n.get("tipo") not in TERMINALES:
         opcionales = opcionales + [RAMA_ERROR]
     return obligatorias, opcionales
 
@@ -323,6 +446,16 @@ def produce(n: dict) -> Set[str]:
         r |= {m.get("variable") for m in c.get("mapeo") or [] if isinstance(m, dict) and m.get("variable")}
     elif t == "validar":
         r.add("_motivo")
+    elif t in DISPARADORES and t != "entrada_correo":
+        r.add("entrada")
+    elif t == "para_cada":
+        r |= {c.get("variable") or "elemento", c.get("indice") or "indice", c.get("salida") or nid}
+    elif t == "expresion":
+        if c.get("salida") or c.get("como_condicion") is not True:  # como condición, sin salida, no deja variable
+            r.add(c.get("salida") or nid)
+    elif t in CONECTORES or t in ("unir", "json", "fecha", "llamar_flujo", "tabla_guardar", "tabla_consultar",
+                                  "archivo_leer", "archivo_guardar"):
+        r.add(c.get("salida") or nid)
     return {x for x in r if isinstance(x, str)}
 
 
@@ -403,10 +536,20 @@ def referencias(n: dict) -> List[Tuple[str, Set[str]]]:
         refs += [(r, set()) for r in _ref_de_fuente(c.get("de"))]
     elif t == "salida" and isinstance(c.get("campos"), list):
         refs += [(str(x), set()) for x in c["campos"] if isinstance(x, str)]
+    elif t == "para_cada":
+        # «recoger» se evalúa al final de cada vuelta, con lo que dejó el cuerpo: no se revisa aquí.
+        refs += [(r, set()) for r in _ref_de_fuente(c.get("lista"))]
+    elif t in ("json", "archivo_guardar", "drive_subir", "tabla_guardar"):
+        refs += [(r, set()) for r in _ref_de_fuente(c.get("de"))]
+    elif t == "expresion" and isinstance(c.get("expresion"), str):
+        try:
+            refs += [(x, set()) for x in sorted(c_expresion.nombres(c["expresion"]) - {"entorno"})]
+        except ErrorDeNegocio:
+            pass  # la validación de la config ya lo dice
     return refs
 
 
-def _problema_ref(ref: str, disponibles: Set[str]) -> Optional[str]:
+def _problema_ref(ref: str, disponibles: Set[str], entorno: Optional[Set[str]] = None) -> Optional[str]:
     ref = ref.strip()
     segs = segmentos(ref)
     if not segs or segs[0][0] != "clave" or not NOMBRE_VAR.match(segs[0][1]):
@@ -416,6 +559,13 @@ def _problema_ref(ref: str, disponibles: Set[str]) -> Optional[str]:
         return None
     raiz = segs[0][1]
     sub = segs[1] if len(segs) > 1 else None
+    if raiz == "entorno":
+        if not sub or sub[0] != "clave" or not NOMBRE_ENTORNO.match(str(sub[1])):
+            return f"«{ref}»: usa {{{{entorno.NOMBRE}}}} con el nombre de una variable de entorno del flujo (MAYÚSCULAS_CON_GUION_BAJO)"
+        if entorno is not None and sub[1] not in entorno:
+            hay = ", ".join(sorted(entorno)) or "ninguna"
+            return f"«{ref}»: el flujo no tiene la variable de entorno {sub[1]} (tiene: {hay})"
+        return None
     if raiz in INTEGRADAS:
         if sub and (sub[0] != "clave" or sub[1] not in INTEGRADAS[raiz]):
             return f"«{ref}» no existe (de {raiz} hay: {', '.join(sorted(INTEGRADAS[raiz]))})"
@@ -501,8 +651,9 @@ def _validar_http(c: dict, q) -> None:
             q(f"encabezados: {', '.join(secretos)} no va en el flujo; usa credencial con el nombre de la variable de entorno")
     if "cuerpo" in c and not isinstance(c["cuerpo"], (str, dict, list)):
         q("cuerpo tiene que ser texto (plantilla) o un objeto JSON con plantillas")
-    if "credencial" in c and not (isinstance(c["credencial"], str) and CREDENCIAL.match(c["credencial"])):
-        q("credencial es el NOMBRE de una variable de entorno (p. ej. HTTP_TOKEN_X), nunca el valor")
+    if "credencial" in c and not (isinstance(c["credencial"], str) and (CREDENCIAL.match(c["credencial"]) or NOMBRE_CREDENCIAL.match(c["credencial"]))):
+        q("credencial es el NOMBRE de una credencial guardada (http_bearer o http_basico) o de una variable de entorno "
+          "(p. ej. HTTP_TOKEN_X), nunca el valor")
     if "timeout_ms" in c and not _entero(c["timeout_ms"], 100, HTTP_TIMEOUT_MAX_MS):
         q(f"timeout_ms tiene que ser un entero entre 100 y {HTTP_TIMEOUT_MAX_MS}")
     if "mapeo" in c:
@@ -524,6 +675,263 @@ def _validar_http(c: dict, q) -> None:
                     q(f"mapeo {i}: ruta «{m.get('ruta')}» no es válida (p. ej. «items.0.id», «items[estado=activo].id», «[\"a.b\"]»)")
                 if "obligatorio" in m and not isinstance(m["obligatorio"], bool):
                     q(f"mapeo {i}: obligatorio tiene que ser true o false")
+
+
+NUEVOS = (DISPARADORES - {"entrada_correo"}) | CONECTORES | {
+    "para_cada", "fin_ciclo", "paralelo", "unir", "esperar", "expresion", "json", "fecha", "llamar_flujo", "respuesta_webhook",
+    "tabla_guardar", "tabla_consultar", "archivo_leer", "archivo_guardar"}
+_RANGOS_CRON = [(0, 59), (0, 23), (1, 31), (1, 12), (0, 7)]
+
+
+def problema_cron(expr: Any) -> Optional[str]:
+    """Por qué un cron de 5 campos no vale (minuto hora día mes día_semana), o None."""
+    if not isinstance(expr, str) or len(expr.split()) != 5:
+        return "cron tiene que tener 5 campos: minuto hora día mes día_semana (p. ej. «0 7 * * 1-5»)"
+    for campo, (lo, hi), nombre in zip(expr.split(), _RANGOS_CRON, ("minuto", "hora", "día", "mes", "día de la semana")):
+        for parte in campo.split(","):
+            m = re.fullmatch(r"(\*|(\d+)(?:-(\d+))?)(?:/(\d+))?", parte)
+            if not m:
+                return f"cron: «{parte}» no se entiende en el {nombre}"
+            a, b, paso = m.group(2), m.group(3), m.group(4)
+            if paso is not None and not 1 <= int(paso) <= hi:
+                return f"cron: paso «/{paso}» inválido en el {nombre}"
+            for x in (a, b):
+                if x is not None and not lo <= int(x) <= hi:
+                    return f"cron: {x} está fuera de {lo}..{hi} en el {nombre}"
+            if a is not None and b is not None and int(a) > int(b):
+                return f"cron: el rango {a}-{b} está al revés en el {nombre}"
+    return None
+
+
+def _zona_valida(z: Any) -> bool:
+    try:
+        from zoneinfo import ZoneInfo
+
+        ZoneInfo(str(z))
+        return True
+    except Exception:
+        return False
+
+
+def _validar_credencial(t: str, c: dict, q, obligatoria: bool = True) -> None:
+    v = c.get("credencial")
+    if v in (None, ""):
+        if obligatoria:
+            q(f"{t} necesita credencial: el NOMBRE de una credencial guardada ({' o '.join(CREDENCIALES_DE[t])})")
+        return
+    if not (isinstance(v, str) and NOMBRE_CREDENCIAL.match(v)):
+        q("credencial es el NOMBRE de una credencial guardada (minúsculas, números, - _ .), nunca un valor ni una clave")
+
+
+def _validar_mapa_plantillas(c: dict, clave: str, q) -> None:
+    if clave in c and not (isinstance(c[clave], dict) and all(isinstance(k, str) and NOMBRE_VAR.match(k) for k in c[clave])
+                           and all(isinstance(x, (str, int, float, bool)) or x is None for x in c[clave].values())):
+        q(f"{clave} tiene que ser un objeto {{nombre: plantilla o valor}} con nombres de letras, números y _")
+
+
+def _validar_nuevos(t: str, c: dict, q) -> None:
+    def entero_en(clave: str, lo: int, hi: int) -> None:
+        if clave in c and not _entero(c[clave], lo, hi):
+            q(f"{clave} tiene que ser un entero entre {lo} y {hi}")
+
+    def bools(*claves: str) -> None:
+        for k in claves:
+            if k in c and not isinstance(c[k], bool):
+                q(f"{k} tiene que ser true o false")
+
+    def texto_req(clave: str, que: str) -> None:
+        if not (isinstance(c.get(clave), str) and c[clave].strip()):
+            q(f"{t} necesita {clave} ({que})")
+
+    def opcion(clave: str, validas: Iterable[str], obligatoria: bool = False) -> None:
+        validas = list(validas)
+        if clave not in c:
+            if obligatoria:
+                q(f"{t} necesita {clave} ({', '.join(validas)})")
+        elif c[clave] not in validas:
+            q(f"{clave} «{c[clave]}» (válidos: {', '.join(validas)})")
+
+    if "timeout_s" in c and not _numero(c["timeout_s"], 1, 60):
+        q("timeout_s tiene que ser un número entre 1 y 60")
+    if t in CREDENCIALES_DE and t != "hoja_leer":
+        _validar_credencial(t, c, q)
+
+    if t == "entrada_manual":
+        campos = c.get("campos", [])
+        if not isinstance(campos, list) or not all(isinstance(f, dict) for f in campos):
+            q("campos tiene que ser una lista [{nombre, tipo, obligatorio, descripcion}]")
+        else:
+            nombres = [f.get("nombre") for f in campos]
+            for f in campos:
+                if not _es_var(f.get("nombre")):
+                    q(f"el campo «{f.get('nombre')}» necesita un nombre válido (letras, números y _)")
+                if f.get("tipo", "texto") not in ("texto", "numero", "booleano", "fecha", "lista", "objeto"):
+                    q(f"campo {f.get('nombre')}: tipo «{f.get('tipo')}» (válidos: texto, numero, booleano, fecha, lista, objeto)")
+                if "obligatorio" in f and not isinstance(f["obligatorio"], bool):
+                    q(f"campo {f.get('nombre')}: obligatorio tiene que ser true o false")
+            if len(set(map(str, nombres))) != len(nombres):
+                q("hay campos con el mismo nombre")
+    elif t == "programado":
+        tiene_cron, tiene_cada = c.get("cron") not in (None, ""), c.get("cada_minutos") is not None
+        if tiene_cron == tiene_cada:
+            q("programado necesita cron o cada_minutos (uno de los dos)")
+        if tiene_cron and problema_cron(c["cron"]):
+            q(problema_cron(c["cron"]))
+        entero_en("cada_minutos", 1, 10080)
+        if "zona" in c and not _zona_valida(c["zona"]):
+            q(f"zona «{c['zona']}» no es una zona horaria (p. ej. America/Bogota)")
+        bools("activo")
+    elif t == "webhook":
+        if "secreto" in c and not (isinstance(c["secreto"], str) and re.fullmatch(r"[A-Za-z0-9_-]{16,128}", c["secreto"])):
+            q("secreto tiene que tener entre 16 y 128 letras, números, - o _ (se genera solo al guardar)")
+        opcion("metodo", ["POST"])
+        bools("responder")
+        entero_en("esperar_ms", 0, 30000)
+    elif t == "correo_nuevo":
+        entero_en("cada_minutos", 1, 1440)
+        entero_en("max_por_sondeo", 1, 50)
+        bools("activo", "procesar_existentes", "leer_adjuntos", "ocr")
+        if "filtro" in c and not isinstance(c["filtro"], dict):
+            q("filtro tiene que ser un objeto {remitente, asunto, texto, no_leidos}")
+    elif t == "correo_leer":
+        entero_en("max", 1, 100)
+        bools("incluir_adjuntos")
+        if "filtro" in c and not isinstance(c["filtro"], dict):
+            q("filtro tiene que ser un objeto {remitente, asunto, texto, no_leidos}")
+    elif t == "correo_enviar":
+        for k in ("para", "asunto", "cuerpo"):
+            texto_req(k, "admite plantillas")
+    elif t == "drive_listar":
+        entero_en("max", 1, 200)
+    elif t == "drive_leer":
+        texto_req("archivo", "id del archivo, admite plantillas")
+        bools("ocr")
+        entero_en("max_caracteres", 1, 500000)
+    elif t == "drive_subir":
+        texto_req("nombre", "nombre del archivo")
+        opcion("formato", c_archivos.FORMATOS_GUARDAR)
+        if not (c.get("contenido") or c.get("de")):
+            q("drive_subir necesita contenido (plantilla) o de (variable)")
+    elif t == "hoja_leer":
+        opcion("origen", ["adjunto", "drive", "archivo", "url"], True)
+        o = c.get("origen")
+        if o == "drive":
+            _validar_credencial(t, c, q)
+            texto_req("archivo", "id del archivo de Drive")
+        elif o == "archivo":
+            texto_req("archivo", "ruta en el espacio de archivos")
+        elif o == "url":
+            texto_req("url", "https://… de un host permitido")
+        elif o == "adjunto" and c.get("adjunto") and _regex_ok(c["adjunto"]):
+            q(f"adjunto: regex inválido: {_regex_ok(c['adjunto'])}")
+        entero_en("max_filas", 1, 5000)
+        bools("encabezados")
+    elif t in ("sql_consulta", "sql_ejecutar"):
+        clave = "consulta" if t == "sql_consulta" else "sentencia"
+        sql = c.get(clave)
+        if not (isinstance(sql, str) and sql.strip()):
+            q(f"{t} necesita {clave}")
+        elif "{{" in sql:
+            q(f"{clave}: no pegues valores con {{{{…}}}} en el SQL (inyección); usa :nombre y parametros")
+        else:
+            try:
+                _, usados = c_sql.revisar(sql, "lectura" if t == "sql_consulta" else "escritura", "postgres",
+                                          c.get("permitir_sin_where") is True)
+                faltan = [p for p in usados if p not in (c.get("parametros") or {})]
+                if faltan:
+                    q(f"{clave} usa :{', :'.join(faltan)} y no está en parametros")
+            except ErrorDeNegocio as e:
+                q(str(e))
+        _validar_mapa_plantillas(c, "parametros", q)
+        entero_en("max_filas", 1, 5000)
+        bools("permitir_sin_where")
+    elif t == "para_cada":
+        texto_req("lista", "la variable con la lista")
+        for k in ("variable", "indice"):
+            if k in c and not _es_var(c[k]):
+                q(f"{k} «{c[k]}» no es un nombre de variable válido")
+        entero_en("max_iteraciones", 1, MAX_ITERACIONES_TOPE)
+        opcion("al_fallar", ["detener", "continuar"])
+    elif t == "paralelo":
+        ramas = c.get("ramas")
+        if not (isinstance(ramas, list) and ramas and all(isinstance(x, str) and x.strip() for x in ramas)):
+            q("paralelo necesita ramas: [nombres]")
+        else:
+            if len(ramas) > MAX_RAMAS:
+                q(f"paralelo admite hasta {MAX_RAMAS} ramas")
+            if len({_norm(x) for x in ramas}) != len(ramas):
+                q("hay ramas repetidas")
+            if any(_norm(x) in (RAMA_ERROR, "listo") for x in ramas):
+                q("«error» y «listo» no pueden ser nombres de rama")
+    elif t == "esperar":
+        if not _numero(c.get("segundos"), 0, MAX_ESPERA_S):
+            q(f"segundos tiene que ser un número entre 0 y {MAX_ESPERA_S}")
+    elif t == "expresion":
+        try:
+            c_expresion.revisar(c.get("expresion"))
+        except ErrorDeNegocio as e:
+            q(f"expresion: {e}")
+        bools("como_condicion")
+    elif t == "json":
+        opcion("op", ["parsear", "serializar", "seleccionar"], True)
+        if not c.get("de"):
+            q("json necesita de (variable o plantilla)")
+        if c.get("op") == "seleccionar" and not segmentos(c.get("ruta")):
+            q("seleccionar necesita una ruta válida (p. ej. «items.0.id»)")
+        bools("indentar")
+    elif t == "fecha":
+        opcion("op", ["ahora", "parsear", "formatear", "sumar", "diferencia"], True)
+        opcion("unidad", ["minutos", "horas", "dias", "semanas"])
+        if "zona" in c and not _zona_valida(c["zona"]):
+            q(f"zona «{c['zona']}» no es una zona horaria")
+        if c.get("op") == "sumar" and "cantidad" not in c:
+            q("sumar necesita cantidad")
+        if "formato" in c and not (isinstance(c["formato"], str) and "%" in c["formato"]):
+            q("formato es un patrón strftime, p. ej. «%d/%m/%Y»")
+    elif t == "llamar_flujo":
+        if not (isinstance(c.get("flujo"), str) and ID_FLUJO.match(c["flujo"])):
+            q("llamar_flujo necesita flujo: el id de otro flujo declarativo")
+        _validar_mapa_plantillas(c, "entrada", q)
+    elif t == "respuesta_webhook":
+        entero_en("estado", 100, 599)
+        opcion("tipo_contenido", ["application/json", "text/plain"])
+    elif t == "tabla_guardar":
+        try:
+            c_tablas.revisar_tabla(c.get("tabla"))
+        except ErrorDeNegocio as e:
+            q(str(e))
+        opcion("modo", c_tablas.MODOS)
+        opcion("ambito", ["flujo", "compartida"])
+        if "datos" in c and not isinstance(c["datos"], dict):
+            q("datos tiene que ser un objeto {campo: plantilla o valor}")
+        if not (c.get("datos") or c.get("de")):
+            q("tabla_guardar necesita datos ({campo: plantilla}) o de (una variable)")
+    elif t == "tabla_consultar":
+        try:
+            c_tablas.revisar_tabla(c.get("tabla"))
+        except ErrorDeNegocio as e:
+            q(str(e))
+        _validar_mapa_plantillas(c, "filtro", q)
+        entero_en("limite", 1, 500)
+        opcion("orden", ["-creada", "creada", "-actualizada", "actualizada", "clave", "-clave"])
+        opcion("ambito", ["flujo", "compartida"])
+    elif t in ("archivo_leer", "archivo_guardar"):
+        texto_req("ruta", "ruta relativa dentro del espacio de archivos")
+        r = c.get("ruta")
+        if isinstance(r, str) and "{{" not in r:
+            try:
+                from conectores.base import ruta_segura
+                ruta_segura(r)
+            except ErrorDeNegocio as e:
+                q(str(e))
+        if t == "archivo_leer":
+            opcion("formato", c_archivos.FORMATOS_LEER)
+            entero_en("max_filas", 1, 5000)
+        else:
+            opcion("formato", c_archivos.FORMATOS_GUARDAR)
+            opcion("modo", c_archivos.MODOS)
+            if not (c.get("contenido") is not None or c.get("de")):
+                q("archivo_guardar necesita contenido (plantilla) o de (variable)")
 
 
 def _validar_config(n: dict) -> List[str]:
@@ -549,11 +957,11 @@ def _validar_config(n: dict) -> List[str]:
             q(f"{k} tiene que ser true o false")
     if c.get("deshabilitado") is True and t in NO_DESHABILITABLES:
         q(f"un nodo {t} no se puede deshabilitar")
-    if c.get("continuar_si_falla") is True and t == "salida":
-        q("una salida no puede continuar si falla: no tiene por dónde seguir")
+    if c.get("continuar_si_falla") is True and t in TERMINALES:
+        q(f"un nodo {t} no puede continuar si falla: no tiene por dónde seguir")
     if "reintentos" in c:
         if t not in TIPOS_CON_REINTENTOS:
-            q("reintentos solo aplica a los nodos de IA, enviar, notificar y http")
+            q("reintentos solo aplica a los nodos de IA, conectores, llamar_flujo, enviar, notificar y http")
         else:
             for m in _problemas_reintentos(c["reintentos"]):
                 q(m)
@@ -755,6 +1163,8 @@ def _validar_config(n: dict) -> List[str]:
             q(f"{t} necesita cuerpo (admite plantillas, p. ej. «{{{{respuesta}}}}»)")
     elif t == "http":
         _validar_http(c, q)
+    elif t in NUEVOS:
+        _validar_nuevos(t, c, q)
     elif t == "salida":
         if c.get("desenlace") not in DESENLACES:
             q(f"desenlace '{c.get('desenlace')}' (válidos: {', '.join(DESENLACES)})")
@@ -797,12 +1207,39 @@ def _ciclo(ids: List[str], aristas: List[dict]) -> Optional[List[str]]:
     return None
 
 
-def validar(defi: Dict[str, Any], al_ejecutar: bool = False) -> List[str]:
+def _cuerpos(nodos: List[dict], aristas: List[dict]) -> Set[str]:
+    """Los nodos que están dentro del cuerpo de un para_cada o de una rama de un paralelo (hasta un unir)."""
+    por_id = {n.get("id"): n for n in nodos}
+    inicios = []
+    for a in aristas:
+        d = por_id.get(a.get("desde"))
+        if not d:
+            continue
+        if d.get("tipo") == "para_cada" and _norm(_cuando(a)) == "cada":
+            inicios.append(a.get("hacia"))
+        elif d.get("tipo") == "paralelo" and _norm(_cuando(a)) in {_norm(x) for x in _lista_valores((d.get("config") or {}).get("ramas"))}:
+            inicios.append(a.get("hacia"))
+    dentro: Set[str] = set()
+    pila = list(inicios)
+    while pila:
+        x = pila.pop()
+        if x in dentro or x not in por_id or por_id[x].get("tipo") == "unir":
+            continue
+        dentro.add(x)
+        # todo lo que sigue (también tras el «listo» de un para_cada anidado) sigue en el cuerpo de afuera
+        pila += [a.get("hacia") for a in aristas if a.get("desde") == x]
+    return dentro
+
+
+def validar(defi: Dict[str, Any], al_ejecutar: bool = False, entorno: Optional[Iterable[str]] = None) -> List[str]:
     """Los problemas de una definición; vacío si se puede ejecutar.
 
     Con `al_ejecutar` se pasan por alto los que no impiden correr un flujo ya
     guardado (aristas de más que nunca se toman): así los flujos de antes siguen
-    corriendo, aunque para guardarlos de nuevo haya que corregirlos."""
+    corriendo, aunque para guardarlos de nuevo haya que corregirlos.
+    `entorno` son los nombres de las variables de entorno del flujo: con ellos
+    se marcan los {{entorno.X}} que no existen (sin ellos no se revisan)."""
+    nombres_entorno = set(entorno) if entorno is not None else None
     problemas: List[str] = []
     tolerables: List[str] = []
     if not isinstance(defi, dict):
@@ -817,11 +1254,12 @@ def validar(defi: Dict[str, Any], al_ejecutar: bool = False) -> List[str]:
     if len(set(ids)) != len(ids):
         problemas.append("hay nodos con el mismo id")
     por_id = {n.get("id"): n for n in nodos}
-    entradas = [n for n in nodos if n.get("tipo") == "entrada_correo"]
+    entradas = [n for n in nodos if n.get("tipo") in DISPARADORES]
     if len(entradas) != 1:
-        problemas.append(f"debe haber exactamente un nodo entrada_correo (hay {len(entradas)})")
+        problemas.append(f"debe haber exactamente un disparador ({', '.join(sorted(DISPARADORES))}); hay {len(entradas)}")
     if not any(n.get("tipo") == "salida" for n in nodos):
         problemas.append("no hay ningún nodo de salida")
+    dentro = _cuerpos(nodos, aristas)
     for n in nodos:
         if n.get("tipo") not in TIPOS:
             problemas.append(f"{n.get('id')}: tipo desconocido '{n.get('tipo')}' (válidos: {', '.join(sorted(TIPOS))})")
@@ -839,12 +1277,37 @@ def validar(defi: Dict[str, Any], al_ejecutar: bool = False) -> List[str]:
             continue
         nid = n.get("id")
         suyas = [a for a in aristas if a.get("desde") == nid]
-        if n.get("tipo") == "salida":
+        if n.get("tipo") in TERMINALES:
             if suyas:
-                problemas.append(f"{nid}: es una salida y no puede tener aristas que salgan")
+                problemas.append(f"{nid}: es {'una salida' if n.get('tipo') == 'salida' else 'un fin_ciclo'} y no puede tener aristas que salgan")
+            if n.get("tipo") == "fin_ciclo" and nid not in dentro:
+                problemas.append(f"{nid}: fin_ciclo solo va dentro del cuerpo de un para_cada (o de una rama de un paralelo)")
             continue
+        # dentro de un cuerpo, un nodo sin arista (o sin arista para alguna salida) termina la vuelta
+        en_cuerpo = nid in dentro
         if not suyas:
-            problemas.append(f"{nid}: no tiene arista de salida")
+            if not en_cuerpo:
+                problemas.append(f"{nid}: no tiene arista de salida")
+            continue
+        if n.get("tipo") == "paralelo":
+            c = n.get("config") or {}
+            ramas = {_norm(x) for x in _lista_valores(c.get("ramas"))}
+            faltan = [x for x in _lista_valores(c.get("ramas")) if not any(_norm(_cuando(a)) == _norm(x) for a in suyas)]
+            if faltan:
+                problemas.append(f"{nid}: falta arista para la rama {', '.join('«' + x + '»' for x in faltan)}")
+            if any(not _cuando(a) for a in suyas):
+                problemas.append(f"{nid}: las aristas de un paralelo llevan cuando = el nombre de la rama (o «listo»)")
+            for a in suyas:
+                if _cuando(a) and _norm(_cuando(a)) not in ramas | {"listo", RAMA_ERROR}:
+                    tolerables.append(f"arista {nid} → {a.get('hacia')}: cuando «{_cuando(a)}» no es una rama de {nid}")
+            continue
+        if n.get("tipo") == "para_cada":
+            for x in ("cada", "listo"):
+                if not any(_norm(_cuando(a)) == x for a in suyas):
+                    problemas.append(f"{nid}: un para_cada necesita una arista «{x}»" + (" (el cuerpo)" if x == "cada" else " (lo que sigue al terminar)"))
+            for a in suyas:
+                if _norm(_cuando(a)) not in ("cada", "listo", RAMA_ERROR):
+                    problemas.append(f"arista {nid} → {a.get('hacia')}: un para_cada sale por «cada», «listo» o «error»")
             continue
         obligatorias, opcionales = salidas_posibles(n)
         if any(_norm(x) == RAMA_ERROR for x in obligatorias):
@@ -859,13 +1322,13 @@ def validar(defi: Dict[str, Any], al_ejecutar: bool = False) -> List[str]:
         for a in suyas:
             if _cuando(a) and _norm(_cuando(a)) not in posibles:
                 tolerables.append(f"arista {nid} → {a.get('hacia')}: cuando «{_cuando(a)}» nunca ocurre ({nid} sale por: {', '.join(obligatorias + opcionales)})")
-        if not por_defecto:
+        if not por_defecto and not en_cuerpo:
             faltan = [x for x in obligatorias if _norm(x) not in explicitas]
             if faltan:
                 problemas.append(f"{nid}: falta arista para la salida {', '.join('«' + x + '»' for x in faltan)} (o una arista sin «cuando» por defecto)")
     ciclo = _ciclo([i for i in ids if isinstance(i, str)], aristas)
     if ciclo:
-        problemas.append(f"hay un ciclo: {' → '.join(ciclo)} (un flujo no puede volver a un nodo anterior)")
+        problemas.append(f"hay un ciclo: {' → '.join(ciclo)} (un flujo no puede volver a un nodo anterior; para repetir usa para_cada)")
     if len(entradas) == 1:
         inicio = entradas[0].get("id")
         vistos, pila = set(), [inicio]
@@ -901,7 +1364,7 @@ def validar(defi: Dict[str, Any], al_ejecutar: bool = False) -> List[str]:
                 continue
             vistas_aqui: Set[str] = set()
             for ref, locales in referencias(n):
-                m = _problema_ref(ref, antes.get(n.get("id"), set()) | locales)
+                m = _problema_ref(ref, antes.get(n.get("id"), set()) | locales, nombres_entorno)
                 if m and m not in vistas_aqui:
                     vistas_aqui.add(m)
                     problemas.append(f"{n.get('id')}: {m}")
@@ -911,7 +1374,9 @@ def validar(defi: Dict[str, Any], al_ejecutar: bool = False) -> List[str]:
 # ------------------------------------------------------------------- el correo
 
 def _carpeta(caso: str) -> Path:
-    for base in (VIVO, BANDEJA):
+    if not re.fullmatch(r"[\w.-]{1,200}", caso or "") or ".." in caso:
+        raise FileNotFoundError(f"caso inválido {caso!r}")
+    for base in (VIVO, BANDEJA, RECIBIDOS):
         if (base / caso / "mensaje.json").exists():
             return base / caso
     raise FileNotFoundError(f"no existe el caso {caso}")
@@ -1133,46 +1598,7 @@ def hosts_permitidos() -> Set[str]:
     return {h.strip().lower().rstrip(".") for h in os.environ.get("HTTP_HOSTS_PERMITIDOS", "").split(",") if h.strip()}
 
 
-def ip_bloqueada(ip: str) -> Optional[str]:
-    """Por qué no se puede llamar a una IP (SSRF), o None si es pública."""
-    if ip in _IPS_PERMITIDAS_PRUEBAS:
-        return None
-    try:
-        a = ipaddress.ip_address(ip.split("%")[0])
-    except ValueError:
-        return "no es una IP válida"
-    if isinstance(a, ipaddress.IPv6Address) and a.ipv4_mapped:
-        a = a.ipv4_mapped
-    if str(a) in HOSTS_METADATOS:
-        return "es un servicio de metadatos"
-    for prop, motivo in (("is_loopback", "es de loopback"), ("is_link_local", "es de enlace local"), ("is_private", "es privada"),
-                         ("is_multicast", "es multicast"), ("is_unspecified", "no está especificada"), ("is_reserved", "es reservada")):
-        if getattr(a, prop):
-            return motivo
-    if not a.is_global:
-        return "no es pública"
-    return None
-
-
-def destino_seguro(host: str, puerto: int) -> str:
-    """Resuelve el host y devuelve la IP a la que conectar; ErrorDeNegocio si alguna es interna."""
-    h = host.lower().rstrip(".")
-    if h in HOSTS_METADATOS or h.endswith(".internal") or h == "localhost" or h.endswith(".localhost"):
-        raise ErrorDeNegocio(f"bloqueado por seguridad: {host} es un destino interno")
-    try:
-        infos = socket.getaddrinfo(h, puerto, type=socket.SOCK_STREAM)
-    except socket.gaierror as e:
-        if e.errno == getattr(socket, "EAI_AGAIN", object()):
-            raise ErrorTransitorio(f"no se pudo resolver {host} por ahora") from e
-        raise ErrorDeNegocio(f"no se pudo resolver {host}") from e
-    ips = sorted({str(i[4][0]) for i in infos})
-    if not ips:
-        raise ErrorDeNegocio(f"no se pudo resolver {host}")
-    for ip in ips:
-        motivo = ip_bloqueada(ip)
-        if motivo:
-            raise ErrorDeNegocio(f"bloqueado por seguridad: {host} apunta a {ip}, que {motivo}")
-    return ips[0]
+# ip_bloqueada y destino_seguro vienen de conectores.base (también bloquean Positiva, SGDEA y metadatos).
 
 
 class _ConexionHTTP(http.client.HTTPConnection):
@@ -1214,18 +1640,32 @@ _paginas = threading.Lock()
 
 
 class Ejecucion:
-    def __init__(self, defi: dict, caso: str, modelo: str) -> None:
+    def __init__(self, defi: dict, caso: str, modelo: str, entrada: Any = None, credenciales: Optional[Dict[str, dict]] = None,
+                 entorno: Optional[Dict[str, str]] = None, subflujos: Optional[Dict[str, dict]] = None,
+                 pila: Optional[List[str]] = None, flujo: str = "") -> None:
         self.defi, self.caso, self.modelo = defi, caso, modelo
+        self.flujo = flujo or str(defi.get("id") or "")
+        self.entrada = entrada if entrada is not None else {}
+        self.creds: Dict[str, dict] = credenciales or {}
+        self.entorno: Dict[str, str] = entorno or {}
+        self.subflujos: Dict[str, dict] = subflujos or {}
+        self.pila: List[str] = pila or [self.flujo]
         self.vars: Dict[str, Any] = {}
         self.hallazgos: Dict[str, dict] = {}
         self.avisos: List[str] = []
         self.mensajes: List[dict] = []
         self.peticiones: List[dict] = []
+        self.escrituras: List[dict] = []
+        self.respuesta_gancho: Optional[dict] = None
         self.tokens = {"entrada": 0, "salida": 0}
         self.correo: Dict[str, Any] = {}
         self.msg: Dict[str, Any] = {}
         self.carpeta: Optional[Path] = None
         self._tablas: Dict[str, List[Dict[str, str]]] = {}
+        self._pasos = 0
+        self._inicio = time.time()
+        self._siguiente_forzado: Optional[str] = None
+        self._union: Dict[str, Any] = {}
 
     # ------------------------------------------------------ datos y plantillas
     def _vista_correo(self) -> dict:
@@ -1251,7 +1691,34 @@ class Ejecucion:
             return navegar(self._vista_correo(), segs[1:])
         if segs[0][1] == "adjuntos":
             return navegar(self._vista_adjuntos(), segs[1:])
+        if segs[0][1] == "entorno":
+            return navegar(self.entorno, segs[1:]) if len(segs) > 1 else None
         return navegar(self.vars, segs)
+
+    def valor_de(self, fuente: Any) -> Any:
+        """Como texto_de, pero sin aplanar: una referencia o una plantilla que es solo {{x}} da el valor tal cual (lista, objeto…)."""
+        if isinstance(fuente, str):
+            m = PLANTILLA.fullmatch(fuente.strip())
+            if m:
+                return self.resolver(m.group(1))
+            if "{{" in fuente:
+                return self.render(fuente)
+            return self.resolver(fuente)
+        return fuente
+
+    def render_profundo(self, v: Any) -> Any:
+        """Plantillas dentro de objetos y listas; un texto que es solo {{x}} conserva el tipo del valor."""
+        if isinstance(v, str):
+            m = PLANTILLA.fullmatch(v.strip())
+            if m:
+                r = self.resolver(m.group(1))
+                return r if r is not None else ""
+            return self.render(v)
+        if isinstance(v, dict):
+            return {k: self.render_profundo(x) for k, x in v.items()}
+        if isinstance(v, list):
+            return [self.render_profundo(x) for x in v]
+        return v
 
     def render(self, plantilla: Any) -> str:
         if not isinstance(plantilla, str):
@@ -1757,14 +2224,11 @@ class Ejecucion:
                 "ruta": ruta, "encabezados": encabezados, "cuerpo": cuerpo, "vista_cuerpo": vista_cuerpo, "credencial": credencial,
                 "cuerpo_ignorado": c.get("cuerpo") is not None and metodo == "GET"}
 
-    def _pedir(self, p: dict, timeout_s: float) -> dict:
+    def _pedir(self, p: dict, timeout_s: float, con_crudo: bool = False) -> dict:
         ip = destino_seguro(p["host"], p["puerto"])
         encabezados = dict(p["encabezados"])
         if p["credencial"]:
-            secreto = os.environ.get(p["credencial"], "")
-            if not secreto:
-                raise ErrorDeNegocio(f"la credencial {p['credencial']} no está definida en el entorno")
-            encabezados["Authorization"] = f"Bearer {secreto}"
+            encabezados["Authorization"] = self._autorizacion_http(p["credencial"])
         clase = _ConexionHTTPS if p["esquema"] == "https" else _ConexionHTTP
         con = clase(p["host"], ip, p["puerto"], timeout_s)
         t = time.time()
@@ -1792,7 +2256,8 @@ class Ejecucion:
         return {"metodo": p["metodo"], "url": p["url"], "status": status, "ok": 200 <= status < 400, "simulado": False,
                 "ms": int((time.time() - t) * 1000), "bytes": len(crudo), "truncado": truncado, "datos": datos,
                 "encabezados": {k: v for k, v in cabeceras.items() if k in ("content-type", "content-length", "location", "retry-after", "date", "etag")},
-                **({"redireccion": cabeceras.get("location", "")} if 300 <= status < 400 else {})}
+                **({"redireccion": cabeceras.get("location", "")} if 300 <= status < 400 else {}),
+                **({"crudo": crudo} if con_crudo else {})}
 
     def _mapear(self, n: dict, datos: Any, simulado: bool) -> None:
         c = n.get("config") or {}
@@ -1809,22 +2274,53 @@ class Ejecucion:
         if faltan:
             raise ErrorDeNegocio(f"la respuesta no trae {', '.join(faltan)} (obligatorio en el mapeo)")
 
+    def _autorizacion_http(self, nombre: str) -> str:
+        """El encabezado Authorization de una credencial: guardada (http_bearer/http_basico) o, la forma de antes, una variable de entorno."""
+        if CREDENCIAL.match(nombre):
+            secreto = self.entorno.get(nombre) or os.environ.get(nombre, "")
+            if not secreto:
+                raise ErrorDeNegocio(f"la credencial {nombre} no está definida en el entorno del flujo")
+            return f"Bearer {secreto}"
+        cred = self.cred(nombre, CREDENCIALES_DE["http"])
+        v = cred.get("valores") or {}
+        if cred["tipo"] == "http_bearer":
+            return f"Bearer {v.get('token', '')}"
+        return "Basic " + base64.b64encode(f"{v.get('usuario', '')}:{v.get('clave', '')}".encode()).decode()
+
     def http(self, n: dict) -> str:
         c = n.get("config") or {}
         p = self._armar_http(c)
         salida = c.get("salida") or n["id"]
         vista = {"metodo": p["metodo"], "url": p["url"], "encabezados": _sin_secretos(p["encabezados"], p["credencial"]), "cuerpo": p["vista_cuerpo"]}
         permitidos = hosts_permitidos()
-        if p["metodo"] != "GET" or p["host"] not in permitidos:
+        vetado = host_vetado(p["host"])
+        if vetado:
             if p["metodo"] != "GET":
-                motivo = f"{p['metodo']} escribe en otro sistema: se arma y se bloquea, esta plataforma nunca escribe en sistemas reales"
-            elif permitidos:
+                evento("escritura", sistema="http", operacion=p["metodo"], destino=p["url"], bloqueada=True, simulada=True, detalle=vista,
+                       nodo=n["id"], motivo=vetado, vetado=True)
+            raise ErrorDeNegocio(f"bloqueado por seguridad: {vetado}")
+        guardada = p["credencial"] and not CREDENCIAL.match(p["credencial"])
+        cred = self.cred(p["credencial"], CREDENCIALES_DE["http"]) if guardada else None
+        hosts_cred = {h.strip().lower().rstrip(".") for h in re.split(r"[,\s]+", str((cred or {}).get("valores", {}).get("hosts") or "")) if h.strip()}
+        if cred is not None and p["host"] not in hosts_cred:
+            raise ErrorDeNegocio(f"la credencial «{p['credencial']}» solo se puede mandar a {', '.join(sorted(hosts_cred)) or '(ningún host)'}, "
+                                 f"no a {p['host']}")
+        host_ok = p["host"] in permitidos or p["host"] in hosts_cred
+        escribe_ok = p["metodo"] == "GET" or (cred is not None and cred.get("permitir_escritura") is True)
+        if not host_ok or not escribe_ok:
+            if p["metodo"] != "GET" and cred is None:
+                motivo = f"{p['metodo']} escribe en otro sistema: solo sale con una credencial guardada cuya escritura habilitó una persona"
+            elif p["metodo"] != "GET":
+                motivo = f"{p['metodo']} escribe en otro sistema y la credencial «{p['credencial']}» no tiene la escritura habilitada por una persona"
+            elif permitidos or hosts_cred:
                 motivo = f"el host {p['host']} no está en HTTP_HOSTS_PERMITIDOS"
             else:
                 motivo = "HTTP_HOSTS_PERMITIDOS está vacío: ninguna petición sale"
             registro = {**vista, "simulado": True, "bloqueado": True, "motivo": motivo, "status": None, "ok": False, "datos": None, "nodo": n["id"]}
             self.vars[salida] = registro
             self.peticiones.append(registro)
+            if p["metodo"] != "GET":
+                self.escrituras.append(registro)
             evento("escritura", sistema="http", operacion=p["metodo"], destino=p["url"], bloqueada=True, simulada=True, detalle=vista,
                    nodo=n["id"], motivo=motivo)
             _paso(n["id"], f"{p['metodo']} {p['host']} · simulado, no sale", "aviso",
@@ -1845,6 +2341,10 @@ class Ejecucion:
             r = self._con_reintentos(n, una, f"{p['metodo']} {p['host']}")
         except RespuestaTransitoria as e:
             r = e.respuesta
+        if p["metodo"] != "GET":
+            evento("escritura", sistema="http", operacion=p["metodo"], destino=p["url"], bloqueada=False, simulada=False, detalle=vista,
+                   nodo=n["id"], credencial=p["credencial"], status=r["status"])
+            self.escrituras.append({**vista, "status": r["status"], "bloqueado": False, "nodo": n["id"]})
         self.vars[salida] = r
         self.peticiones.append({**vista, **{k: r[k] for k in ("status", "ok", "ms", "bytes", "simulado")}, "nodo": n["id"]})
         error = r["status"] >= 400
@@ -1875,12 +2375,502 @@ class Ejecucion:
         evento("etapa_fin", etapa=n["id"], ms=0, fallo="", muestra=muestra(solicitud))
         return {"accion": accion, "motivo": motivo, "destino": self.render(c.get("destino") or ""), "solicitud": solicitud, "respuesta": respuesta}
 
+    # ------------------------------------------------- credenciales y escrituras
+    def cred(self, nombre: Any, tipos: Iterable[str]) -> dict:
+        """La credencial de la corrida (el servidor solo manda las globales y las de este flujo)."""
+        nombre = str(nombre or "").strip()
+        tipos = tuple(tipos)
+        c = self.creds.get(nombre)
+        if not c:
+            raise ErrorDeNegocio(f"la credencial «{nombre}» no existe o este flujo no la puede usar (tiene que ser global o de este flujo)")
+        if c.get("tipo") not in tipos:
+            raise ErrorDeNegocio(f"la credencial «{nombre}» es de tipo {c.get('tipo')}; aquí sirve {' o '.join(tipos)}")
+        return {**c, "nombre": nombre, "valores": c.get("valores") or {}}
+
+    def _escribir(self, n: dict, sistema: str, operacion: str, destino: str, detalle: dict, cred: dict, hacer) -> dict:
+        """Una escritura afuera: solo se hace si una persona habilitó la escritura de la credencial; si no, queda bloqueada."""
+        if cred.get("permitir_escritura") is not True:
+            motivo = (f"la credencial «{cred['nombre']}» no tiene la escritura habilitada: solo una persona puede habilitarla "
+                      "desde la web (Credenciales); mientras tanto la acción se arma y no sale")
+            registro = {**detalle, "nodo": n["id"], "sistema": sistema, "operacion": operacion, "destino": destino,
+                        "bloqueado": True, "simulado": True, "motivo": motivo}
+            self.escrituras.append(registro)
+            evento("escritura", sistema=sistema, operacion=operacion, destino=destino, bloqueada=True, simulada=True, detalle=detalle,
+                   nodo=n["id"], credencial=cred["nombre"], motivo=motivo)
+            _paso(n["id"], f"{operacion} · bloqueado, no se escribe", "aviso", f"{motivo}\n{destino}", bloqueado=True, destino=destino)
+            return registro
+        r = self._con_reintentos(n, hacer, f"{operacion} en {sistema}") or {}
+        registro = {**detalle, **r, "nodo": n["id"], "sistema": sistema, "operacion": operacion, "destino": destino,
+                    "bloqueado": False, "simulado": False}
+        self.escrituras.append(registro)
+        evento("escritura", sistema=sistema, operacion=operacion, destino=destino, bloqueada=False, simulada=False, detalle=detalle,
+               nodo=n["id"], credencial=cred["nombre"], resultado=muestra(r))
+        _paso(n["id"], f"{operacion} · hecho", "ok", destino, bloqueado=False, destino=destino)
+        return registro
+
+    def _convertir(self, datos: bytes, nombre: str, ocr: bool = True) -> str:
+        """Bytes de un archivo a texto con la conversión del motor de PQRD (OCR con tesseract; sin visión)."""
+        try:
+            from pipeline import conversion
+        except Exception:
+            return c_hojas._texto(datos)
+        conversion.TRANSCRIPTOR_IA = None
+        presupuesto = conversion.PresupuestoDeOcr()
+        presupuesto.imagenes_ia = 0
+        if not ocr:
+            presupuesto.total_s = 0.0
+        with _paginas:
+            c = conversion.convertir(datos, nombre, presupuesto=presupuesto)
+        if c.error:
+            raise ErrorDeNegocio(f"no se pudo leer {nombre}: {c.error[:200]}")
+        return c.markdown
+
+    # ------------------------------------------------------------ disparadores
+    def entrada_manual(self, n: dict) -> str:
+        c = n.get("config") or {}
+        entrada = dict(self.entrada) if isinstance(self.entrada, dict) else {"valor": self.entrada}
+        faltan = []
+        for f in c.get("campos") or []:
+            k, tipo = f.get("nombre"), f.get("tipo", "texto")
+            v = entrada.get(k)
+            if v in (None, ""):
+                if f.get("obligatorio"):
+                    faltan.append(k)
+                continue
+            entrada[k] = _de_tipo(v, tipo, k)
+        if faltan:
+            raise ErrorDeNegocio(f"faltan en la entrada: {', '.join(faltan)}")
+        self.vars["entrada"] = entrada
+        _paso(n["id"], "Entrada recibida", "info", _a_texto(entrada)[:900], campos=list(entrada))
+        return "ok"
+
+    def programado(self, n: dict) -> str:
+        self.vars["entrada"] = self.entrada if isinstance(self.entrada, dict) else {}
+        _paso(n["id"], "Corrida programada", "info", _a_texto(self.vars["entrada"])[:600])
+        return "ok"
+
+    def webhook(self, n: dict) -> str:
+        self.vars["entrada"] = self.entrada if isinstance(self.entrada, dict) else {"cuerpo": self.entrada}
+        _paso(n["id"], "Llegó un webhook", "info", _a_texto(self.vars["entrada"].get("cuerpo"))[:900])
+        return "ok"
+
+    def correo_nuevo(self, n: dict) -> str:
+        self.entrada_correo(n)
+        self.vars["entrada"] = self.entrada if isinstance(self.entrada, dict) else {}
+        return "ok"
+
+    # -------------------------------------------------------------- conectores
+    def correo_leer(self, n: dict) -> str:
+        c = n.get("config") or {}
+        cred = self.cred(c.get("credencial"), CREDENCIALES_DE["correo_leer"])
+        filtro = {k: (self.render(v) if isinstance(v, str) else v) for k, v in (c.get("filtro") or {}).items()}
+        carpeta = self.render(c.get("carpeta") or ("INBOX" if cred["tipo"] == "imap" else "inbox"))
+        incluir = c.get("incluir_adjuntos") is True
+        correos = self._con_reintentos(n, lambda: c_correo.leer(cred["tipo"], cred["valores"], carpeta, filtro, self.render(c.get("desde_fecha") or ""),
+                                                                 int(c.get("max") or 20), incluir, timeout_de(c)), "el buzón")
+        for x in correos:
+            for a in x.get("adjuntos") or []:
+                datos = a.pop("_datos", None)
+                if datos is not None:
+                    try:
+                        a["texto"] = self._convertir(datos, a.get("nombre") or "adjunto")[:20000]
+                    except Exception as e:
+                        a["error"] = f"{type(e).__name__}: {e}"[:200]
+        salida = c.get("salida") or n["id"]
+        self.vars[salida] = correos
+        _paso(n["id"], f"{len(correos)} correo(s) de {carpeta}", "ok" if correos else "info",
+              "\n".join(f"· {x.get('fecha', '')[:16]} {x.get('remitente_correo', '')}: {x.get('asunto', '')}" for x in correos[:15]), total=len(correos))
+        return "ok" if correos else "vacio"
+
+    def correo_enviar(self, n: dict) -> str:
+        c = n.get("config") or {}
+        cred = self.cred(c.get("credencial"), CREDENCIALES_DE["correo_enviar"])
+        m = {k: self.render(c.get(k) or "").strip() for k in ("para", "cc", "cco", "asunto")}
+        m["cuerpo"] = self.render(c.get("cuerpo") or "")
+        if c.get("html"):
+            m["html"] = self.render(c["html"])
+        try:
+            c_correo.revisar_destinatarios(m)
+        except ErrorDeNegocio as e:
+            evento("escritura", sistema=cred["tipo"], operacion="enviar correo", destino=m["para"], bloqueada=True, simulada=True,
+                   detalle={k: m.get(k) for k in ("para", "cc", "asunto")}, nodo=n["id"], credencial=cred["nombre"], motivo=str(e), vetado=True)
+            raise
+        detalle = {k: m.get(k, "") for k in ("para", "cc", "cco", "asunto", "cuerpo")}
+        r = self._escribir(n, cred["tipo"], "enviar correo", m["para"], detalle, cred,
+                           lambda: c_correo.enviar(cred["tipo"], cred["valores"], m, timeout_de(c)))
+        self.mensajes.append({**detalle, "nodo": n["id"], "operacion": "correo_enviar", "enviado": not r["bloqueado"], "bloqueado": r["bloqueado"]})
+        self.vars[c.get("salida") or n["id"]] = {**detalle, "enviado": not r["bloqueado"], "bloqueado": r["bloqueado"], "motivo": r.get("motivo", "")}
+        return "ok"
+
+    def _drive(self, n: dict, c: dict) -> Tuple[Any, dict]:
+        cred = self.cred(c.get("credencial"), ("google_servicio",))
+        return c_drive.fabrica(cred["valores"], timeout_de(c)), cred
+
+    def drive_listar(self, n: dict) -> str:
+        c = n.get("config") or {}
+        cliente, _ = self._drive(n, c)
+        q = c_drive.consulta(self.render(c.get("carpeta") or ""), self.render(c.get("nombre") or ""), str(c.get("tipo_mime") or ""))
+        archivos = [c_drive.resumen(f) for f in self._con_reintentos(n, lambda: cliente.listar(q, int(c.get("max") or 50)), "Drive")]
+        self.vars[c.get("salida") or n["id"]] = archivos
+        _paso(n["id"], f"{len(archivos)} archivo(s) en Drive", "ok" if archivos else "info",
+              "\n".join(f"· {a['nombre']} ({a['tipo']})" for a in archivos[:20]), total=len(archivos))
+        return "ok" if archivos else "vacio"
+
+    def drive_leer(self, n: dict) -> str:
+        c = n.get("config") or {}
+        cliente, _ = self._drive(n, c)
+        id_ = self.render(c.get("archivo") or "").strip()
+        meta, datos, tipo = self._con_reintentos(n, lambda: c_drive.contenido(cliente, id_), "Drive")
+        nombre = meta.get("name") or id_
+        if tipo in ("text/plain", "text/csv") or nombre.lower().endswith((".txt", ".csv", ".json", ".md")):
+            texto = c_hojas._texto(datos)
+        else:
+            texto = self._convertir(datos, nombre, c.get("ocr", True) is not False)
+        tope = int(c.get("max_caracteres") or 60000)
+        self.vars[c.get("salida") or n["id"]] = {"id": meta.get("id") or id_, "nombre": nombre, "tipo": meta.get("mimeType"), "texto": texto[:tope],
+                                                 "truncado": len(texto) > tope}
+        _paso(n["id"], f"Leído de Drive: {nombre}", "ok" if texto.strip() else "aviso", f"{len(texto):,} caracteres\n\n{texto[:600]}")
+        return "ok"
+
+    def _contenido_a_guardar(self, c: dict) -> Tuple[Any, str]:
+        formato = c.get("formato") or "texto"
+        valor = self.valor_de(c["de"]) if c.get("de") else self.render(c.get("contenido") or "")
+        return valor, formato
+
+    def drive_subir(self, n: dict) -> str:
+        c = n.get("config") or {}
+        cred = self.cred(c.get("credencial"), ("google_servicio",))
+        valor, formato = self._contenido_a_guardar(c)
+        if formato == "json":
+            datos, tipo = json.dumps(valor, ensure_ascii=False, indent=2, default=str).encode(), "application/json"
+        elif formato == "csv":
+            datos, tipo = c_archivos._csv(valor).encode(), "text/csv"
+        else:
+            datos, tipo = (valor if isinstance(valor, str) else _a_texto(valor)).encode(), "text/plain"
+        nombre, carpeta = self.render(c.get("nombre") or "").strip(), self.render(c.get("carpeta") or "").strip()
+        if carpeta:
+            c_drive.revisar_id(carpeta, "carpeta")
+        detalle = {"nombre": nombre, "carpeta": carpeta, "tipo": tipo, "bytes": len(datos), "vista": datos[:600].decode("utf-8", "replace")}
+        r = self._escribir(n, "google_drive", "subir archivo", f"drive:{carpeta or 'raíz'}/{nombre}", detalle, cred,
+                           lambda: c_drive.fabrica(cred["valores"], timeout_de(c)).subir(nombre, carpeta, datos, tipo))
+        self.vars[c.get("salida") or n["id"]] = {k: r.get(k) for k in ("id", "nombre", "bloqueado", "motivo", "webViewLink") if k in r}
+        return "ok"
+
+    def hoja_leer(self, n: dict) -> str:
+        c = n.get("config") or {}
+        origen = c.get("origen")
+        if origen == "adjunto":
+            patron = c.get("adjunto") or r"\.(csv|tsv|xlsx|xlsm)$"
+            adj = next((a for a in self.msg.get("_adjuntos", []) if a.get("archivo") and re.search(patron, a.get("name") or "", re.I)), None)
+            if not adj or not self.carpeta:
+                raise ErrorDeNegocio(f"no hay un adjunto que coincida con «{patron}»")
+            nombre, datos = adj.get("name") or "", (self.carpeta / "adj" / adj["archivo"]).read_bytes()
+        elif origen == "drive":
+            cliente, _ = self._drive(n, c)
+            meta, datos, tipo = self._con_reintentos(n, lambda: c_drive.contenido(cliente, self.render(c.get("archivo") or "").strip()), "Drive")
+            nombre = (meta.get("name") or "hoja") + (".csv" if tipo == "text/csv" else "")
+        elif origen == "archivo":
+            from conectores.base import ruta_segura
+            p = ruta_segura(self.render(c.get("archivo") or ""))
+            if not p.is_file():
+                raise ErrorDeNegocio(f"no existe «{c.get('archivo')}» en el espacio de archivos")
+            nombre, datos = p.name, p.read_bytes()
+        else:
+            p = self._armar_http({"url": c.get("url"), "metodo": "GET"})
+            vetado = host_vetado(p["host"])
+            if vetado:
+                raise ErrorDeNegocio(f"bloqueado por seguridad: {vetado}")
+            if p["host"] not in hosts_permitidos():
+                raise ErrorDeNegocio(f"el host {p['host']} no está en HTTP_HOSTS_PERMITIDOS")
+            r = self._con_reintentos(n, lambda: self._pedir(p, timeout_de(c), con_crudo=True), f"GET {p['host']}")
+            if r["status"] >= 400:
+                raise ErrorDeNegocio(f"la URL respondió {r['status']}")
+            nombre, datos = urllib.parse.urlsplit(p["url"]).path.rsplit("/", 1)[-1] or "hoja.csv", r["crudo"]
+        filas, truncado, columnas = c_hojas.filas(datos, nombre, c.get("hoja"), int(c.get("max_filas") or MAX_FILAS_DEFECTO), c.get("encabezados", True) is not False)
+        self.vars[c.get("salida") or n["id"]] = filas
+        _paso(n["id"], f"{len(filas)} fila(s) de {nombre}", "ok" if filas else "info",
+              f"columnas: {', '.join(columnas)}" + (" · truncado" if truncado else ""), total=len(filas), truncado=truncado)
+        return "ok" if filas else "vacio"
+
+    def _parametros_sql(self, c: dict) -> Dict[str, Any]:
+        return {k: self.render_profundo(v) for k, v in (c.get("parametros") or {}).items()}
+
+    def sql_consulta(self, n: dict) -> str:
+        c = n.get("config") or {}
+        cred = self.cred(c.get("credencial"), CREDENCIALES_DE["sql_consulta"])
+        params = self._parametros_sql(c)
+        tope = max(1, min(5000, int(c.get("max_filas") or MAX_FILAS_DEFECTO)))
+        r = self._con_reintentos(n, lambda: c_sql.ejecutar(cred["tipo"], cred["valores"], c.get("consulta"), params, "lectura", tope, timeout_de(c)),
+                                 "la base de datos")
+        self.vars[c.get("salida") or n["id"]] = r["filas"]
+        _paso(n["id"], f"{r['total']} fila(s) de {cred['tipo']}" + (" (truncado)" if r["truncado"] else ""), "ok" if r["filas"] else "info",
+              f"columnas: {', '.join(r['columnas'])}", total=r["total"], truncado=r["truncado"], columnas=r["columnas"])
+        if r["truncado"]:
+            self.avisos.append(f"{n['id']}: la consulta trajo más de {tope} filas; se cortó")
+        return "ok" if r["filas"] else "vacio"
+
+    def sql_ejecutar(self, n: dict) -> str:
+        c = n.get("config") or {}
+        cred = self.cred(c.get("credencial"), CREDENCIALES_DE["sql_ejecutar"])
+        params = self._parametros_sql(c)
+        dialecto = "mysql" if cred["tipo"] == "mysql" else ("sqlite" if cred["tipo"] == "sqlite" else "postgres")
+        sentencia, _ = c_sql.revisar(c.get("sentencia"), "escritura", dialecto, c.get("permitir_sin_where") is True)  # falla aunque no se escriba
+        base = cred["valores"].get("ruta") or f"{cred['valores'].get('host', '')}/{cred['valores'].get('base', '')}"
+        detalle = {"sentencia": sentencia[:2000], "parametros": params}
+        r = self._escribir(n, cred["tipo"], "ejecutar SQL", f"{cred['tipo']}:{base}", detalle, cred,
+                           lambda: c_sql.ejecutar(cred["tipo"], cred["valores"], c.get("sentencia"), params, "escritura", MAX_FILAS_DEFECTO,
+                                                  timeout_de(c), c.get("permitir_sin_where") is True))
+        self.vars[c.get("salida") or n["id"]] = {"afectadas": r.get("afectadas"), "filas": r.get("filas", []), "bloqueado": r["bloqueado"],
+                                                 "motivo": r.get("motivo", "")}
+        return "ok"
+
+    # ---------------------------------------------------------- datos y estado
+    def _ambito(self, c: dict) -> str:
+        return "compartida" if c.get("ambito") == "compartida" else f"flujo-{self.flujo or 'sin-id'}"
+
+    def tabla_guardar(self, n: dict) -> str:
+        c = n.get("config") or {}
+        datos = self.render_profundo(c["datos"]) if isinstance(c.get("datos"), dict) and c["datos"] else self.valor_de(c.get("de"))
+        clave = self.render(c.get("clave") or "").strip() or None
+        modo = c.get("modo") or "reemplazar"
+        clave, nueva, fila = c_tablas.guardar(self._ambito(c), c["tabla"], clave, datos, modo)
+        self.vars[c.get("salida") or n["id"]] = fila
+        existente = modo == "insertar" and not nueva
+        _paso(n["id"], f"{c['tabla']}[{clave}] {'ya existía' if existente else 'guardada'}", "info" if existente else "ok", _a_texto(fila)[:600])
+        return "existente" if existente else "ok"
+
+    def tabla_consultar(self, n: dict) -> str:
+        c = n.get("config") or {}
+        filtro = {k: self.render_profundo(v) for k, v in (c.get("filtro") or {}).items()}
+        filas = c_tablas.consultar(self._ambito(c), c["tabla"], self.render(c.get("clave") or "").strip() or None, filtro,
+                                   int(c.get("limite") or 100), c.get("orden") or "-creada")
+        self.vars[c.get("salida") or n["id"]] = filas
+        _paso(n["id"], f"{len(filas)} fila(s) de {c['tabla']}", "ok" if filas else "info", _a_texto(filas[:5])[:600], total=len(filas))
+        return "encontrado" if filas else "vacio"
+
+    def archivo_leer(self, n: dict) -> str:
+        from conectores.base import ruta_segura
+        c = n.get("config") or {}
+        ruta = self.render(c.get("ruta") or "").strip()
+        if not ruta_segura(ruta).is_file():
+            self.vars[c.get("salida") or n["id"]] = {}
+            _paso(n["id"], f"No existe {ruta}", "aviso", "en el espacio de archivos")
+            return "no_existe"
+        r = c_archivos.leer(ruta, c.get("formato") or "auto", int(c.get("max_caracteres") or 60000), int(c.get("max_filas") or MAX_FILAS_DEFECTO),
+                            c.get("hoja"), lambda d, nombre: self._convertir(d, nombre))
+        self.vars[c.get("salida") or n["id"]] = r
+        _paso(n["id"], f"Leído {r['ruta']} ({r['formato']})", "ok", f"{r['bytes']:,} bytes")
+        return "ok"
+
+    def archivo_guardar(self, n: dict) -> str:
+        c = n.get("config") or {}
+        valor, formato = self._contenido_a_guardar(c)
+        r = c_archivos.guardar(self.render(c.get("ruta") or "").strip(), valor, formato, c.get("modo") or "reemplazar")
+        self.vars[c.get("salida") or n["id"]] = r
+        _paso(n["id"], f"Guardado {r['ruta']}", "ok", f"{r['bytes']:,} bytes · {r['modo']}")
+        return "ok"
+
+    def expresion(self, n: dict) -> str:
+        c = n.get("config") or {}
+        variables = {**self.vars, "correo": self._vista_correo(), "adjuntos": self._vista_adjuntos(), "entorno": dict(self.entorno)}
+        v = c_expresion.evaluar(c.get("expresion"), variables)
+        if c.get("salida") or c.get("como_condicion") is not True:
+            self.vars[c.get("salida") or n["id"]] = v
+        _paso(n["id"], f"{c.get('salida') or n['id']} = {_a_texto(v)[:120]}", "ok", str(c.get("expresion"))[:600])
+        if c.get("como_condicion") is True:
+            return "si" if v else "no"
+        return "ok"
+
+    def json(self, n: dict) -> str:
+        c = n.get("config") or {}
+        op = c.get("op")
+        if op == "parsear":
+            fuente = self.valor_de(c.get("de"))
+            if isinstance(fuente, (dict, list)):
+                v = fuente
+            else:
+                try:
+                    v = json.loads(_a_texto(fuente))
+                except ValueError as e:
+                    raise ErrorDeNegocio(f"no es JSON válido: {e}") from e
+        elif op == "serializar":
+            v = json.dumps(self.valor_de(c.get("de")), ensure_ascii=False, default=str, indent=2 if c.get("indentar") else None)
+        else:
+            base = self.valor_de(c.get("de"))
+            if isinstance(base, str):
+                try:
+                    base = json.loads(base)
+                except ValueError:
+                    pass
+            v = navegar(base, segmentos(c.get("ruta")) or [])
+            if v is None:
+                v = c.get("defecto")
+        self.vars[c.get("salida") or n["id"]] = v
+        _paso(n["id"], f"JSON · {op}", "ok", _a_texto(v)[:600])
+        return "ok"
+
+    def fecha(self, n: dict) -> str:
+        c = n.get("config") or {}
+        zona = c.get("zona") or ZONA
+        op = c.get("op")
+        unidades = {"minutos": 60, "horas": 3600, "dias": 86400, "semanas": 604800}
+        seg = unidades.get(c.get("unidad") or "dias", 86400)
+        valor = self.render(c["valor"]) if isinstance(c.get("valor"), str) else c.get("valor")
+        d = _a_fecha(None if op == "ahora" else valor, zona)
+        if op == "sumar":
+            cantidad = c.get("cantidad")
+            try:
+                cantidad = float(self.render(cantidad)) if isinstance(cantidad, str) else float(cantidad)
+            except (TypeError, ValueError) as e:
+                raise ErrorDeNegocio(f"cantidad «{cantidad}» no es un número") from e
+            d = d + datetime.timedelta(seconds=cantidad * seg)
+        if op == "diferencia":
+            hasta = _a_fecha(self.render(c["hasta"]) if isinstance(c.get("hasta"), str) and c["hasta"] else None, zona)
+            v: Any = round((hasta - d).total_seconds() / seg, 2)
+        else:
+            v = d.strftime(c["formato"]) if c.get("formato") else d.isoformat(timespec="seconds")
+        self.vars[c.get("salida") or n["id"]] = v
+        _paso(n["id"], f"Fecha · {op}: {v}", "ok", f"zona {zona}")
+        return "ok"
+
+    def esperar(self, n: dict) -> str:
+        s = max(0.0, min(float(MAX_ESPERA_S), float((n.get("config") or {}).get("segundos") or 0)))
+        _paso(n["id"], f"Espera {s:g} s", "info")
+        _dormir(s)
+        return "ok"
+
+    def respuesta_webhook(self, n: dict) -> str:
+        c = n.get("config") or {}
+        cuerpo = self.render_profundo(c.get("cuerpo")) if c.get("cuerpo") is not None else None
+        self.respuesta_gancho = {"estado": int(c.get("estado") or 200), "cuerpo": cuerpo, "tipo_contenido": c.get("tipo_contenido") or "application/json"}
+        evento("respuesta_webhook", **self.respuesta_gancho)
+        _paso(n["id"], f"Respuesta del webhook: {self.respuesta_gancho['estado']}", "ok", _a_texto(cuerpo)[:600])
+        return "ok"
+
+    def llamar_flujo(self, n: dict) -> str:
+        c = n.get("config") or {}
+        fid = str(c.get("flujo") or "")
+        if fid in self.pila:
+            raise ErrorDeNegocio(f"llamar a «{fid}» haría un ciclo ({' → '.join(self.pila + [fid])}): un flujo no se puede llamar a sí mismo")
+        if len(self.pila) > MAX_PROFUNDIDAD_LLAMADAS:
+            raise ErrorDeNegocio(f"se pasó de {MAX_PROFUNDIDAD_LLAMADAS} niveles de flujos llamados ({' → '.join(self.pila + [fid])})")
+        sub = self.subflujos.get(fid)
+        defi = (sub or {}).get("definicion")
+        if not defi:
+            raise ErrorDeNegocio(f"el flujo «{fid}» no existe o no es declarativo")
+        if not any(x.get("tipo") == "entrada_manual" for x in defi.get("nodos") or []):
+            raise ErrorDeNegocio(f"el flujo «{fid}» no empieza con entrada_manual: no se puede llamar desde otro")
+        problemas = validar(defi, al_ejecutar=True)
+        if problemas:
+            raise ErrorDeNegocio(f"el flujo «{fid}» no es válido: {problemas[0]}")
+        entrada = {k: self.render_profundo(v) for k, v in (c.get("entrada") or {}).items()}
+        hijo = Ejecucion(defi, self.caso, defi.get("modelo") or self.modelo, entrada=entrada, credenciales=sub.get("credenciales") or {},
+                         entorno=sub.get("entorno") or {}, subflujos=self.subflujos, pila=self.pila + [fid], flujo=fid)
+        marca = _callar.set(True)
+        try:
+            r = hijo.correr()
+        finally:
+            _callar.reset(marca)
+            self.tokens["entrada"] += hijo.tokens["entrada"]
+            self.tokens["salida"] += hijo.tokens["salida"]
+            self.escrituras += hijo.escrituras
+            self.mensajes += hijo.mensajes
+            self.peticiones += hijo.peticiones
+            self.avisos += [f"{fid}: {x}" for x in hijo.avisos]
+        self.vars[c.get("salida") or n["id"]] = {"accion": r["accion"], "motivo": r["motivo"], "solicitud": r["solicitud"], "respuesta": r.get("respuesta", ""),
+                                                 "variables": {k: v for k, v in hijo.vars.items() if not k.startswith("_")}}
+        _paso(n["id"], f"«{fid}» terminó: {r['accion']}", "ok" if r["accion"] != "error" else "error", _a_texto(r["motivo"])[:600])
+        return "ok"
+
+    # ------------------------------------------------------- bucles y ramas
+    def para_cada(self, n: dict) -> str:
+        c = n.get("config") or {}
+        lista = self.valor_de(c.get("lista"))
+        if isinstance(lista, str) and lista.strip().startswith("["):
+            try:
+                lista = json.loads(lista)
+            except ValueError:
+                pass
+        if isinstance(lista, dict):
+            lista = [{"clave": k, "valor": v} for k, v in lista.items()]
+        if lista in (None, ""):
+            lista = []
+        if not isinstance(lista, list):
+            raise ErrorDeNegocio(f"«{c.get('lista')}» no es una lista (es {type(lista).__name__})")
+        tope = max(1, min(MAX_ITERACIONES_TOPE, int(c.get("max_iteraciones") or MAX_ITERACIONES)))
+        if len(lista) > tope:
+            raise ErrorDeNegocio(f"la lista tiene {len(lista)} elementos y el tope de vueltas es {tope} "
+                                 f"(sube max_iteraciones, hasta {MAX_ITERACIONES_TOPE}, o filtra antes)")
+        cuerpo = next((a for a in self.defi.get("aristas") or [] if a.get("desde") == n["id"] and _norm(_cuando(a)) == "cada"), None)
+        if not cuerpo:
+            raise RuntimeError(f"{n['id']} no tiene arista «cada»")
+        var, ind = c.get("variable") or "elemento", c.get("indice") or "indice"
+        prof = self._prof + 1
+        resultados, fallidas = [], 0
+        for i, x in enumerate(lista):
+            visible = i < VUELTAS_VISIBLES or i == len(lista) - 1
+            marca = None if visible else _callar.set(True)
+            antes = dict(self.vars)
+            self.vars[var], self.vars[ind] = x, i
+            try:
+                self._recorrer(cuerpo["hacia"], prof, False)
+            except Exception as e:
+                if c.get("al_fallar") != "continuar":
+                    raise
+                fallidas += 1
+                resultados.append({"indice": i, "error": describir_fallo(n, e)})
+                _paso(n["id"], f"Vuelta {i + 1} falló: sigue", "aviso", describir_fallo(n, e))
+                continue
+            finally:
+                if marca is not None:
+                    _callar.reset(marca)
+            if c.get("recoger"):
+                resultados.append(self.valor_de(c["recoger"]))
+            else:
+                cambios = {k: v for k, v in self.vars.items() if k not in (var, ind) and not k.startswith("_") and (k not in antes or antes[k] is not v)}
+                resultados.append(cambios or x)
+        self.vars[c.get("salida") or n["id"]] = resultados
+        _paso(n["id"], f"{len(lista)} vuelta(s)" + (f", {fallidas} con fallo" if fallidas else ""), "ok" if not fallidas else "aviso",
+              f"se ven los pasos de las primeras {VUELTAS_VISIBLES} vueltas y de la última" if len(lista) > VUELTAS_VISIBLES + 1 else "",
+              vueltas=len(lista), fallidas=fallidas)
+        return "listo"
+
+    def paralelo(self, n: dict) -> str:
+        c = n.get("config") or {}
+        prof = self._prof + 1
+        aristas = [a for a in self.defi.get("aristas") or [] if a.get("desde") == n["id"]]
+        resultados: Dict[str, Any] = {}
+        union = None
+        for rama in _lista_valores(c.get("ramas")):
+            a = next((a for a in aristas if _norm(_cuando(a)) == _norm(rama)), None)
+            if not a:
+                continue
+            antes = dict(self.vars)
+            fin, valor = self._recorrer(a["hacia"], prof, True)
+            resultados[rama] = {k: v for k, v in self.vars.items() if not k.startswith("_") and (k not in antes or antes[k] is not v)}
+            if fin == "unir":
+                if union and union != valor:
+                    raise ErrorDeNegocio(f"las ramas de {n['id']} terminan en nodos unir distintos ({union} y {valor})")
+                union = valor
+        _paso(n["id"], f"{len(resultados)} rama(s) corridas", "ok", ", ".join(resultados))
+        if union:
+            self._union[union] = resultados
+            self._siguiente_forzado = union
+        else:
+            self.vars[n["id"]] = resultados
+        return "listo"
+
+    def unir(self, n: dict) -> str:
+        c = n.get("config") or {}
+        self.vars[c.get("salida") or n["id"]] = self._union.pop(n["id"], {})
+        return "ok"
+
     # ------------------------------------------------------------- recorrer
     def _muestra_de(self, n: dict, antes: Dict[str, Any]) -> Dict[str, Any]:
         """Lo que el nodo dejó: sus variables nuevas o cambiadas (y el correo, si es la entrada o la lectura)."""
         suyas = produce(n) | {k for k, v in self.vars.items() if k not in antes or antes[k] is not v}
         r = {k: self.vars[k] for k in sorted(suyas) if k in self.vars and not k.startswith("_")}
-        if n.get("tipo") == "entrada_correo":
+        if n.get("tipo") in ("entrada_correo", "correo_nuevo"):
             r = {"correo": self._vista_correo(), "adjuntos": self._vista_adjuntos(), **r}
         elif n.get("tipo") == "leer_adjuntos":
             r = {"adjuntos": self._vista_adjuntos(), **r}
@@ -1933,13 +2923,40 @@ class Ejecucion:
         return elegida["hacia"]
 
     def correr(self) -> dict:
-        nodos = {n["id"]: n for n in self.defi["nodos"]}
+        self._nodos = {n["id"]: n for n in self.defi["nodos"]}
+        self._prof = 0
+        inicio = next(n["id"] for n in self.defi["nodos"] if n["tipo"] in DISPARADORES)
+        try:
+            fin, valor = self._recorrer(inicio, 0, False)
+        except _Terminar as t:
+            return t.resultado
+        if fin == "salida":
+            return valor
+        raise RuntimeError("el flujo terminó sin llegar a una salida")
+
+    def _recorrer(self, actual: str, profundidad: int, parar_en_unir: bool) -> Tuple[str, Any]:
+        """Camina desde `actual` hasta una salida («salida», resultado), el fin de una vuelta o rama («fin», None)
+        o, en una rama de paralelo, hasta un unir («unir», id). Con profundidad > 0, una salida termina todo el flujo."""
         aristas = self.defi.get("aristas") or []
-        actual = next(n["id"] for n in self.defi["nodos"] if n["tipo"] == "entrada_correo")
         for _ in range(MAX_PASOS):
-            n = nodos[actual]
-            if n["tipo"] == "salida":
-                return self.salida(n)
+            self._pasos += 1
+            if self._pasos > MAX_PASOS_TOTALES:
+                raise ErrorDeNegocio(f"la corrida pasó de {MAX_PASOS_TOTALES:,} pasos en total")
+            if time.time() - self._inicio > MAX_SEGUNDOS:
+                raise ErrorDeNegocio(f"la corrida pasó de {MAX_SEGUNDOS // 60} minutos")
+            n = self._nodos[actual]
+            tipo = n["tipo"]
+            if tipo == "salida":
+                r = self.salida(n)
+                if profundidad:
+                    raise _Terminar(r)
+                return "salida", r
+            if tipo == "fin_ciclo":
+                evento("etapa_inicio", etapa=n["id"])
+                evento("etapa_fin", etapa=n["id"], ms=0, fallo="", salida="fin_ciclo", muestra={})
+                return "fin", None
+            if tipo == "unir" and parar_en_unir:
+                return "unir", actual
             candidatas = [a for a in aristas if a.get("desde") == actual]
             evento("etapa_inicio", etapa=n["id"])
             if (n.get("config") or {}).get("deshabilitado") is True:
@@ -1947,8 +2964,9 @@ class Ejecucion:
                 continue
             t = time.time()
             antes = dict(self.vars)
+            self._prof = profundidad
             try:
-                salida = getattr(self, n["tipo"])(n)
+                salida = getattr(self, tipo)(n)
             except Exception as e:
                 ms = int((time.time() - t) * 1000)
                 siguiente = self._tras_fallo(n, e, candidatas, ms, antes)
@@ -1957,14 +2975,21 @@ class Ejecucion:
                     raise
                 actual = siguiente
                 continue
+            if self._siguiente_forzado:  # un paralelo cuyas ramas llegaron a un unir: se sigue desde ese unir
+                actual, self._siguiente_forzado = self._siguiente_forzado, None
+                evento("etapa_fin", etapa=n["id"], ms=int((time.time() - t) * 1000), fallo="", salida=salida, siguiente=actual,
+                       muestra=self._muestra_de(n, antes))
+                continue
             # la rama de error solo se toma si el nodo falla
             elegida = self._arista([a for a in candidatas if _norm(_cuando(a)) != RAMA_ERROR or _norm(salida) == RAMA_ERROR], salida)
             evento("etapa_fin", etapa=n["id"], ms=int((time.time() - t) * 1000), fallo="", salida=salida,
                    siguiente=elegida["hacia"] if elegida else "", muestra=self._muestra_de(n, antes))
             if not elegida:
+                if profundidad:
+                    return "fin", None  # dentro de un cuerpo o una rama: sin arista, termina la vuelta
                 raise RuntimeError(f"el nodo {actual} salió por «{salida}» y ninguna arista sale por ahí")
             actual = elegida["hacia"]
-        raise RuntimeError(f"el flujo dio más de {MAX_PASOS} pasos: revisa si hay un ciclo")
+        raise RuntimeError(f"el flujo dio más de {MAX_PASOS} pasos seguidos sin terminar")
 
 
 def _paso(nodo: str, titulo: str, tono: str = "info", detalle: str = "", **datos: Any) -> None:
@@ -1980,30 +3005,178 @@ def _corto(v: Any) -> Any:
     return v
 
 
+def _de_tipo(v: Any, tipo: str, campo: str) -> Any:
+    """Un valor de la entrada convertido al tipo declarado del campo; ErrorDeNegocio si no se puede."""
+    try:
+        if tipo == "numero":
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                return v
+            return c_expresion._num(v)
+        if tipo == "booleano":
+            if isinstance(v, bool):
+                return v
+            t = _norm(v)
+            if t in ("true", "si", "1", "verdadero"):
+                return True
+            if t in ("false", "no", "0", "falso"):
+                return False
+            raise ValueError(v)
+        if tipo == "lista":
+            v = json.loads(v) if isinstance(v, str) else v
+            if not isinstance(v, list):
+                raise ValueError(v)
+            return v
+        if tipo == "objeto":
+            v = json.loads(v) if isinstance(v, str) else v
+            if not isinstance(v, dict):
+                raise ValueError(v)
+            return v
+        if tipo == "fecha":
+            _a_fecha(v, ZONA)
+            return str(v)
+        return v if isinstance(v, str) else _a_texto(v)
+    except (ValueError, TypeError, ErrorDeNegocio) as e:
+        raise ErrorDeNegocio(f"el campo «{campo}» de la entrada tiene que ser {tipo} (llegó «{_a_texto(v)[:60]}»)") from e
+
+
+def _a_fecha(valor: Any, zona: str) -> datetime.datetime:
+    from zoneinfo import ZoneInfo
+
+    z = ZoneInfo(zona)
+    if valor in (None, ""):
+        return datetime.datetime.now(z)
+    if isinstance(valor, (int, float)) and not isinstance(valor, bool):
+        return datetime.datetime.fromtimestamp(valor, z)
+    t = str(valor).strip()
+    d = None
+    try:
+        d = datetime.datetime.fromisoformat(t.replace("Z", "+00:00"))
+    except ValueError:
+        for f in ("%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d", "%d.%m.%Y"):
+            try:
+                d = datetime.datetime.strptime(t, f)
+                break
+            except ValueError:
+                continue
+    if d is None:
+        raise ErrorDeNegocio(f"«{t[:60]}» no es una fecha que se entienda (usa AAAA-MM-DD, DD/MM/AAAA o ISO)")
+    return d.replace(tzinfo=z) if d.tzinfo is None else d.astimezone(z)
+
+
+def preparar_secretos(orden: dict) -> None:
+    """Registra para la máscara cada valor secreto de la corrida: campos secretos de las credenciales y entorno secreto."""
+    _secretos_activos.clear()
+
+    def de_paquete(creds: Dict[str, dict], entorno: Dict[str, Any], secretos_entorno: Iterable[str]) -> None:
+        for c in (creds or {}).values():
+            valores = c.get("valores") or {}
+            campos = c.get("secretos")
+            registrar_secretos([valores.get(k) for k in (campos if isinstance(campos, list) else valores.keys())])
+        registrar_secretos([(entorno or {}).get(k) for k in secretos_entorno or []])
+
+    de_paquete(orden.get("credenciales") or {}, orden.get("entorno") or {}, orden.get("entorno_secretos") or [])
+    for sub in (orden.get("subflujos") or {}).values():
+        if isinstance(sub, dict):
+            de_paquete(sub.get("credenciales") or {}, sub.get("entorno") or {}, sub.get("entorno_secretos") or [])
+
+
 async def procesar(orden: dict) -> None:
-    defi, caso = orden["definicion"], orden["caso"]
+    defi, caso = orden["definicion"], orden.get("caso") or "manual"
     modelo = (orden.get("ia") or {}).get("modelo") or defi.get("modelo") or "gemini-2.5-flash"
-    problemas = validar(defi, al_ejecutar=True)
+    entorno = {str(k): ("" if v is None else str(v)) for k, v in (orden.get("entorno") or {}).items()}
+    preparar_secretos(orden)
+    problemas = validar(defi, al_ejecutar=True, entorno=entorno.keys() if "entorno" in orden else None)
     t = time.time()
     if problemas:
         evento("resultado", caso=caso, accion="error", motivo="el flujo no es válido", avisos=problemas, segundos=0)
         return
     _vueltas.clear()
-    e = Ejecucion(defi, caso, modelo)
+    e = Ejecucion(defi, caso, modelo, entrada=orden.get("entrada"), credenciales=orden.get("credenciales") or {}, entorno=entorno,
+                  subflujos=orden.get("subflujos") or {}, flujo=str(orden.get("flujo") or defi.get("id") or ""))
     e.avisos += [f"flujo: {x}" for x in validar(defi) if x not in problemas]
-    evento("inicio", caso=caso, asunto="", modelo=modelo, flujo=defi.get("id"))
+    evento("inicio", caso=caso, asunto="", modelo=modelo, flujo=defi.get("id"), origen=orden.get("origen") or "",
+           disparador=next((n["tipo"] for n in defi.get("nodos") or [] if n.get("tipo") in DISPARADORES), ""))
     try:
         r = await asyncio.to_thread(e.correr)
         evento("resultado", caso=caso, accion=r["accion"], motivo=r["motivo"], area_destino=r.get("destino", ""),
                hallazgos=e.hallazgos, atribucion={k: h.get("metodo") or "ia" for k, h in e.hallazgos.items() if h.get("valor")},
                sin_resolver=[k for k, h in e.hallazgos.items() if not h.get("valor")], solicitud=r["solicitud"],
                respuesta=r.get("respuesta", ""), mensajes=e.mensajes, peticiones=[_corto(x) for x in e.peticiones],
+               escrituras=[_corto(x) for x in e.escrituras], respuesta_webhook=e.respuesta_gancho,
                variables={k: _corto(v) for k, v in e.vars.items() if not k.startswith("_")},
                avisos=e.avisos, tokens_entrada=e.tokens["entrada"], tokens_salida=e.tokens["salida"],
                vueltas=sum(_vueltas.values()), segundos=round(time.time() - t, 1), radicado="SIMULADO" if r["accion"] == "radicado" else "")
     except Exception as ex:
-        evento("resultado", caso=caso, accion="error", motivo=f"{type(ex).__name__}: {ex}"[:500],
-               traza=traceback.format_exc()[-2500:], segundos=round(time.time() - t, 1))
+        evento("resultado", caso=caso, accion="error", motivo=f"{type(ex).__name__}: {ex}"[:500], escrituras=[_corto(x) for x in e.escrituras],
+               respuesta_webhook=e.respuesta_gancho, traza=traceback.format_exc()[-2500:], segundos=round(time.time() - t, 1))
+    finally:
+        _secretos_activos.clear()
+
+
+# ------------------------------------------------------- correo_nuevo: sondeo
+
+def _estado_sondeo(flujo: str) -> Path:
+    if not ID_FLUJO.match(flujo or ""):
+        raise ErrorDeNegocio("id de flujo inválido")
+    p = ruta_estado() / "disparadores" / f"{flujo}.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def sondear(orden: dict) -> dict:
+    """Revisa el buzón de un disparador correo_nuevo (solo lectura), guarda cada correo nuevo como un caso y devuelve sus nombres.
+    Recuerda los ya vistos por su Message-ID; la primera vez solo los memoriza (salvo procesar_existentes)."""
+    preparar_secretos(orden)
+    try:
+        defi, flujo = orden.get("definicion") or {}, str(orden.get("flujo") or "")
+        n = next((x for x in defi.get("nodos") or [] if x.get("tipo") == "correo_nuevo"), None)
+        if not n:
+            raise ErrorDeNegocio("el flujo no tiene un disparador correo_nuevo")
+        c = n.get("config") or {}
+        e = Ejecucion(defi, "sondeo", "", credenciales=orden.get("credenciales") or {}, flujo=flujo)
+        cred = e.cred(c.get("credencial"), CREDENCIALES_DE["correo_nuevo"])
+        carpeta = c.get("carpeta") or ("INBOX" if cred["tipo"] == "imap" else "inbox")
+        maximo = max(1, min(50, int(c.get("max_por_sondeo") or 10)))
+        correos = c_correo.leer(cred["tipo"], cred["valores"], carpeta, c.get("filtro") or {}, "", maximo,
+                                c.get("leer_adjuntos", True) is not False, timeout_de(c))
+        ruta = _estado_sondeo(flujo)
+        estado = json.loads(ruta.read_text(encoding="utf-8")) if ruta.exists() else {}
+        primera = "vistos" not in estado
+        vistos: List[str] = list(estado.get("vistos") or [])
+        casos = []
+        for m in reversed(correos):  # del más viejo al más nuevo
+            mid = str(m.get("id") or "")
+            if not mid or mid in vistos:
+                continue
+            vistos.append(mid)
+            if primera and c.get("procesar_existentes") is not True:
+                continue
+            caso = f"correo-{flujo}-{hashlib.sha1(mid.encode()).hexdigest()[:16]}"
+            dest = RECIBIDOS / caso
+            (dest / "adj").mkdir(parents=True, exist_ok=True)
+            adjuntos = []
+            for i, a in enumerate(m.get("adjuntos") or []):
+                datos = a.pop("_datos", None)
+                if datos is None:
+                    continue
+                ext = re.sub(r"[^A-Za-z0-9]", "", (a.get("nombre") or "").rsplit(".", 1)[-1])[:8] if "." in (a.get("nombre") or "") else "bin"
+                archivo = f"a{i + 1}.{ext or 'bin'}"
+                (dest / "adj" / archivo).write_bytes(datos)
+                adjuntos.append({"name": a.get("nombre") or archivo, "archivo": archivo, "contentType": a.get("tipo") or ""})
+            (dest / "mensaje.json").write_text(json.dumps({
+                "id": mid, "subject": m.get("asunto") or "", "receivedDateTime": m.get("fecha") or "",
+                "from": {"emailAddress": {"name": m.get("remitente_nombre") or "", "address": m.get("remitente_correo") or ""}},
+                "toRecipients": [{"emailAddress": {"address": x.strip()}} for x in (m.get("para") or "").split(",") if x.strip()],
+                "body": {"contentType": "text", "content": m.get("cuerpo") or ""}, "_adjuntos": adjuntos, "_origen": f"correo_nuevo:{flujo}"},
+                ensure_ascii=False), encoding="utf-8")
+            casos.append({"caso": caso, "id": mid, "asunto": m.get("asunto") or ""})
+        estado = {"vistos": vistos[-2000:], "ultimo": time.time(), "carpeta": carpeta}
+        ruta.write_text(json.dumps(estado, ensure_ascii=False), encoding="utf-8")
+        return {"ok": True, "casos": casos, "revisados": len(correos), "primera": primera}
+    except Exception as ex:
+        return {"ok": False, "error": enmascarar(f"{describir_fallo({'tipo': 'correo_nuevo', 'id': 'correo_nuevo'}, ex)}"[:400]), "casos": []}
+    finally:
+        _secretos_activos.clear()
 
 
 async def principal() -> None:
@@ -2027,8 +3200,21 @@ async def principal() -> None:
             evento("validacion", problemas=validar(orden.get("definicion") or {}))
 
 
+def _validar_cli(entrada: Any) -> List[str]:
+    if isinstance(entrada, dict) and "definicion" in entrada and "nodos" not in entrada:
+        return validar(entrada["definicion"], entorno=entrada.get("entorno"))
+    return validar(entrada)
+
+
 if __name__ == "__main__":
+    # stdout y stderr pasan por la máscara: ni una traza ni una biblioteca dejan salir un secreto
+    _real = sys.stdout
+    sys.stdout = _Enmascarado(_real)  # type: ignore[assignment]
+    sys.stderr = _Enmascarado(sys.stderr)  # type: ignore[assignment]
+    _salida = _real
     if sys.argv[1:2] == ["validar"]:
-        print(json.dumps(validar(json.loads(sys.stdin.read())), ensure_ascii=False))
+        _real.write(json.dumps(_validar_cli(json.loads(sys.stdin.read())), ensure_ascii=False) + "\n")
+    elif sys.argv[1:2] == ["sondear"]:
+        _real.write(json.dumps(sondear(json.loads(sys.stdin.read())), ensure_ascii=False) + "\n")
     else:
         asyncio.run(principal())

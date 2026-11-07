@@ -10,6 +10,7 @@ import type { Configuracion, Correo, Nodo, Parametro, Regla } from "../tipos.ts"
 import { Selector } from "./Selector.tsx";
 import { BloqueTramo, TablaSolicitud } from "./Dock.tsx";
 import { Codigo, Deslizador, EditorJson, EditorLista, EditorMapa, EditorRegex, Interruptor } from "./Editores.tsx";
+import { PanelNodo } from "./PanelNodo.tsx";
 
 function texto(v: unknown): string {
   return typeof v === "string" ? v : JSON.stringify(v, null, 2);
@@ -706,6 +707,8 @@ function InspectorCorrida({ id }: { id: string }) {
 export function Inspector() {
   const foco = usar((s) => s.foco);
   const catalogo = usar((s) => s.catalogo);
+  const declarativo = usar((s) => s.flujos.find((f) => f.id === s.flujo)?.tipo === "declarativo");
+  if (foco?.tipo === "nodo" && declarativo) return <PanelNodo id={foco.id} />;
   if (foco?.tipo === "nodo") {
     const n = catalogo?.nodos.find((x) => x.id === foco.id);
     return n ? <InspectorNodo n={n} /> : null;
