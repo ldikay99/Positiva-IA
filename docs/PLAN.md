@@ -264,6 +264,20 @@ Motor en `puente/nodos_producto.py` (+ `documentos.py`, `anonimizar.py`, `festiv
 - [x] Cada nodo nuevo con ficha completa (ayuda, ejemplos, consejos), validación Python y zod en paridad, y pruebas: `puente/pruebas_declarativo.py` 173 en verde (incluye la paridad con zod y `EscriturasConPermiso`), `pruebas_plataforma.ts` 22 y `pruebas_aprobaciones.ts` 4; `npx tsc --noEmit` limpio.
 - [x] Todo nodo que lee «un adjunto» (hoja_leer origen adjunto, archivo_leer con `{{entrada.archivos.0.id}}`, documentos, pdf, extraer_tablas, preguntar_documentos, leer_adjuntos) lee igual los adjuntos del correo y los archivos subidos a la corrida (`Hojas.test_archivos_subidos_se_leen_como_adjuntos`).
 
+### Archivos que entran y archivos que salen (pedido 2026-11-07)
+
+Que en un flujo entren documentos o imágenes por donde vengan (arrastrados, por correo, de cualquier fuente) y que también SALGAN archivos (Word, Excel, PDF, imágenes) generados con o sin IA, para automatizaciones completas como «leer el correo, redactar la respuesta, generar el documento y responder con los adjuntos».
+
+- [ ] Probar un paso desde su panel: arrastrar un archivo, o elegir un correo de su correspondencia, un archivo del flujo o la salida de una ejecución anterior, y correr solo ese paso (o hasta ese paso), viendo lo que produce; fijar esos datos de prueba para los pasos siguientes.
+- [ ] Enviar correo con adjuntos (generados en la ejecución, archivos de entrada o adjuntos originales del correo).
+- [ ] Nodo «Responder correo» en el mismo hilo, con adjuntos (de la bandeja o el buzón del flujo; escritura habilitada por una persona).
+- [ ] La IA genera documentos a partir de instrucciones: Word y PDF con títulos, párrafos, listas y tablas, y Excel con hojas y columnas.
+- [ ] Nodo de imagen generada por IA (Vertex Imagen y otros proveedores que la tengan).
+- [ ] La salida del flujo entrega archivos: descargables en el historial y la ejecución, en el chat de Vera y en la respuesta del webhook.
+- [ ] Drive, Teams, Slack y webhooks salientes también llevan los archivos generados.
+- [ ] Plantilla «Responder correos con documento y adjuntos».
+- [ ] Vera: probar un paso con lo que se le adjunta en el chat y mostrar los archivos generados como cápsulas en el chat.
+
 ### Vera en paridad con la pantalla
 - [ ] Todo lo nuevo se puede hacer también con Vera (plantillas, aprobaciones, historial, notificaciones, nodos nuevos) y la evaluación de Vera crece con casos de esto.
 
