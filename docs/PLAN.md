@@ -88,6 +88,6 @@ Una plataforma de flujos de IA con nodos, más potente que n8n, donde **Vera** (
 
 ## 6. Pendientes menores
 
-- [ ] Descripciones del catálogo sin tildes que vienen del backend.
+- [x] Descripciones del catálogo con tildes (`catalogo/generador/tildes.py`; corrige solo textos para leer, nunca claves, valores ni nombres de código).
 - [x] Limpiar del scratchpad los datos personales de los análisis (logs, buzón, OCR, corpus, capturas de casos).
 - [ ] Borrar las capturas de interfaz y el clon de telar cuando terminen los agentes.
