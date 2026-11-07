@@ -56,6 +56,7 @@ Una plataforma de flujos de IA con nodos, más potente que n8n, donde **Vera** (
 - [x] Conexiones (credenciales) cifradas, con permiso de escritura que solo da una persona.
 - [x] Entorno por flujo: variables y secretos propios de cada flujo, no globales.
   - [x] `{{entorno.NOMBRE}}` en plantillas, con los secretos enmascarados siempre.
+  - [x] Verificado: agregar, cambiar y quitar variables rige desde la siguiente corrida sin reiniciar; los secretos solo los cambia una persona, nunca se muestran y no se mezclan entre flujos.
   - [x] Conexiones de un flujo o globales.
   - [x] PQRD y tutelas arrancan con su propio entorno; la configuración global actual pasa a PQRD.
 - [x] Manifiesto por flujo para la revisión antes de producción.
