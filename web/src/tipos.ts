@@ -309,13 +309,31 @@ export interface RespuestaHistorial {
 }
 
 /** El detalle legible de una ejecución (GET /api/historial/:id). */
+/** Un archivo que generó una ejecución (GET /api/corridas/:id/archivos). */
+export interface ArchivoDeEjecucion {
+  id: string;
+  nombre: string;
+  tipo: string;
+  tamano: number;
+  nodo: string;
+  entregado: boolean;
+  disponible: boolean;
+  url: string;
+  texto_url: string;
+}
+
 export interface DetalleEjecucion {
   corrida: FilaHistorial;
   flujo: { id: string; nombre: string; tipo: "codigo" | "declarativo" };
   aprobacion: { titulo: string; viene_de: string | null; continuada_en: string | null } | null;
   entrada: { tipo: "correo" | "datos"; resumen: string; campos: { nombre: string; valor: string }[] };
   pasos: { id: string; nombre: string; tipo: string | null; estado: "hecho" | "fallo" | "en_curso"; salida: string; ms: number; veces: number; notas: string[]; datos: { nombre: string; valor: string }[]; fallo: string }[];
-  salida: { datos: { nombre: string; valor: string }[]; respuesta: string; escrituras: { que: string; destino: string; retenida: boolean }[]; avisos: string[] };
+  salida: {
+    datos: { nombre: string; valor: string }[]; respuesta: string; avisos: string[];
+    escrituras: { que: string; destino: string; retenida: boolean; motivo?: string; asunto?: string; adjuntos?: { nombre: string; tipo: string; tamano: number }[] }[];
+    /** Los archivos que generó la ejecución (y los que entrega su salida): descargables. */
+    archivos?: ArchivoDeEjecucion[];
+  };
   porque: { desenlace: string | null; estado: FilaHistorial["estado"]; motivo: string; explicacion: string; paso_final: string | null; fallo: string };
   consumo: { tokens: number; consultas_ia: number } | null;
   se_puede_reintentar: boolean;

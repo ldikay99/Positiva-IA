@@ -1,0 +1,66 @@
+{
+  "id": "responder-correos-con-documento",
+  "orden": 8,
+  "nombre": "Responder correos con documento y adjuntos",
+  "categoria": "Correo",
+  "resumen": "Lee el correo y sus adjuntos, saca los datos con IA, redacta un documento Word con la respuesta y contesta en el mismo hilo con el documento y los adjuntos originales.",
+  "descripcion": "Cuando llega un correo, lee sus adjuntos (con OCR si son escaneos), la IA extrae los datos del caso, redacta un documento de respuesta en Word (título, secciones, viñetas y una tabla con los datos) y escribe el texto del correo. Luego responde en el MISMO hilo al remitente con el documento generado y los adjuntos que trajo el correo. El documento queda como resultado de la ejecución, descargable en el historial. Mientras el buzón del flujo no tenga la escritura habilitada por una persona, la respuesta se arma completa (con la lista de adjuntos y sus tamaños) y queda retenida en el detalle de la ejecución: no sale.",
+  "como_probar": "Instálala, sube un correo .eml o .msg con un adjunto a la bandeja de prueba del flujo y córrelo: verás el documento generado en el historial y la respuesta retenida con sus adjuntos. En el editor puedes probar cada paso con «Probar este paso». Para responder de verdad, ponle a «Correo recibido» la conexión del buzón del flujo (Microsoft 365 o, con IMAP, una SMTP en «Responder en el hilo») y pide a una persona que le habilite la escritura.",
+  "necesita": [
+    { "tipo": "correos", "texto": "Correos de prueba (.eml o .msg) con adjuntos, o el buzón propio del flujo (Microsoft 365 o IMAP, solo lectura)." },
+    { "tipo": "conexion", "texto": "Para responder de verdad: la conexión del buzón del flujo (Microsoft 365, o SMTP si el buzón es IMAP) con la escritura habilitada por una persona." }
+  ],
+  "definicion": {
+    "nombre": "Responder correos con documento y adjuntos",
+    "descripcion": "Extrae los datos del correo, redacta un documento con IA y responde en el mismo hilo con el documento y los adjuntos.",
+    "ia": { "usar": "global" },
+    "nodos": [
+      { "id": "correo", "tipo": "entrada_correo", "nombre": "Correo recibido", "config": { "leer_adjuntos": false } },
+      { "id": "adjuntos", "tipo": "leer_adjuntos", "nombre": "Leer los adjuntos", "config": { "max_paginas": 15 } },
+      { "id": "datos", "tipo": "ia_extraer", "nombre": "Datos del caso", "config": {
+        "instrucciones": "Saca del correo y de sus adjuntos los datos del caso. Si un dato no aparece, déjalo vacío: no lo inventes.",
+        "entradas": ["correo", "adjuntos.texto"],
+        "salida": "datos",
+        "campos": [
+          { "nombre": "solicitante", "descripcion": "nombre completo de quien escribe o de la persona del caso" },
+          { "nombre": "documento", "descripcion": "número de documento de identidad (cédula, NIT…)" },
+          { "nombre": "solicitud", "descripcion": "qué pide, en una frase" },
+          { "nombre": "fecha", "tipo": "fecha", "descripcion": "la fecha más relevante del caso (de los hechos o del documento)" }
+        ]
+      } },
+      { "id": "documento", "tipo": "documento_generar", "nombre": "Documento de respuesta", "config": {
+        "formato": "docx",
+        "nombre": "respuesta-{{datos.documento}}",
+        "salida": "documento",
+        "desde_ia": {
+          "instrucciones": "Redacta la respuesta formal a la solicitud recibida: un saludo, un resumen claro de lo que pide, la respuesta o los pasos que siguen y un cierre cordial firmado por «Equipo de atención». Incluye una sección «Datos del caso» con una tabla de dos columnas (Dato, Valor) con el solicitante, el documento, la solicitud y la fecha. Usa solo la información recibida.",
+          "entradas": ["correo", "datos"]
+        }
+      } },
+      { "id": "redactar", "tipo": "ia_redactar", "nombre": "Texto del correo", "config": {
+        "instrucciones": "Redacta un correo breve y cordial (máximo 5 líneas) para {{correo.remitente_nombre}}: dile que adjuntamos la respuesta a su solicitud en un documento y que devolvemos sus adjuntos para su referencia. Firma como «Equipo de atención». No inventes datos.",
+        "variable": "respuesta"
+      } },
+      { "id": "responder", "tipo": "responder_correo", "nombre": "Responder en el hilo", "config": {
+        "cuerpo": "{{respuesta}}",
+        "adjuntos": ["{{documento}}", "{{adjuntos}}"],
+        "incluir_original": true
+      } },
+      { "id": "listo", "tipo": "salida", "nombre": "Respuesta enviada o retenida", "config": {
+        "desenlace": "responder",
+        "motivo": "Respuesta con documento para {{datos.solicitante}}",
+        "plantilla_respuesta": "{{respuesta}}",
+        "archivos": ["{{documento}}"]
+      } }
+    ],
+    "aristas": [
+      { "desde": "correo", "hacia": "adjuntos" },
+      { "desde": "adjuntos", "hacia": "datos", "cuando": "ok" },
+      { "desde": "adjuntos", "hacia": "datos", "cuando": "sin_adjuntos" },
+      { "desde": "datos", "hacia": "documento" },
+      { "desde": "documento", "hacia": "redactar" },
+      { "desde": "redactar", "hacia": "responder" },
+      { "desde": "responder", "hacia": "listo" }
+    ]
+  }
+}

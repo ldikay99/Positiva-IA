@@ -1,7 +1,10 @@
 import { timingSafeEqual } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import type { FastifyInstance } from "fastify";
 import type { Corrida, Evento } from "./motor.ts";
 import type { Flujo } from "./flujos.ts";
+import * as descargas from "./descargas.ts";
+import * as espacio from "./espacio.ts";
 import { multipart } from "./espacio.ts";
 
 /**
@@ -24,6 +27,27 @@ export interface Dependencias {
 }
 
 const QUITAR = /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api-key|apikey|x-auth-token|x-amz-security-token|x-goog-api-key|x-forwarded-.*|x-real-ip|forwarded|host|connection|content-length)$/i;
+
+/** Tope de lo que va en base64 dentro de la respuesta de un webhook (más que eso, mejor enlaces). */
+const MAX_BASE64 = 15 * 1024 * 1024;
+
+/** Los archivos de la respuesta de un webhook: enlaces de descarga firmados que vencen o su contenido en base64. Solo los del flujo. */
+async function archivosDeRespuesta(flujo: string, lista: { id?: unknown }[], como: "enlaces" | "base64"): Promise<Record<string, unknown>[]> {
+  const r: Record<string, unknown>[] = [];
+  let total = 0;
+  for (const x of lista.slice(0, 20)) {
+    const a = espacio.archivoDe(flujo, String(x.id ?? ""));
+    if (!a) continue;
+    const base = { nombre: a.nombre, tipo: a.tipo, tamano: a.tamano };
+    if (como === "base64" && total + a.tamano <= MAX_BASE64) {
+      total += a.tamano;
+      r.push({ ...base, base64: (await readFile(a.ruta)).toString("base64") });
+    } else {
+      r.push({ ...base, ...descargas.enlace(flujo, a.id), ...(como === "base64" ? { aviso: "pasa del tope de base64: va como enlace" } : {}) });
+    }
+  }
+  return r;
+}
 
 function igual(a: string, b: string): boolean {
   const x = Buffer.from(a);
@@ -84,8 +108,14 @@ export async function registrar(app: FastifyInstance, deps: Dependencias): Promi
       const respuesta = new Promise<Evento | null>((ok) => (resolver = ok));
       const soltar = espera ? deps.escuchar((e) => {
         if (e.corrida !== id || !id) return;
-        if (e.tipo === "respuesta_webhook") resolver(e);
-        else if (e.tipo === "resultado") resolver((e.respuesta_webhook as Evento | null) ?? null);
+        // con archivos se espera al resultado: para entonces ya están todos guardados en el espacio del flujo
+        if (e.tipo === "respuesta_webhook" && !Array.isArray(e.archivos)) resolver(e);
+        else if (e.tipo === "resultado") {
+          const rw = (e.respuesta_webhook as Evento | null) ?? null;
+          const salida = Array.isArray(e.archivos_salida) ? (e.archivos_salida as unknown[]) : [];
+          // sin respuesta_webhook pero con archivos que entrega la salida: se devuelven con el desenlace
+          resolver(rw ?? (salida.length ? { tipo: "respuesta_webhook", corrida: id, t: Date.now() / 1000, estado: 200, cuerpo: { corrida: id, desenlace: e.accion, motivo: e.motivo }, archivos: salida } : null));
+        }
       }) : () => undefined;
       const corrida = deps.disparar(f.id, entrada);
       if (!corrida) {
@@ -102,8 +132,11 @@ export async function registrar(app: FastifyInstance, deps: Dependencias): Promi
       const estado = Number(r.estado ?? 200);
       const tipo = String(r.tipo_contenido ?? "application/json");
       res.code(estado >= 100 && estado <= 599 ? estado : 200).header("X-Corrida", corrida.id);
-      if (tipo === "text/plain") return res.type("text/plain; charset=utf-8").send(typeof r.cuerpo === "string" ? r.cuerpo : JSON.stringify(r.cuerpo ?? ""));
-      return res.type("application/json; charset=utf-8").send(JSON.stringify(r.cuerpo ?? { corrida: corrida.id }));
+      const deRespuesta = Array.isArray(r.archivos) ? await archivosDeRespuesta(f.id, r.archivos as { id?: unknown }[], r.archivos_como === "base64" ? "base64" : "enlaces") : [];
+      if (tipo === "text/plain" && !deRespuesta.length) return res.type("text/plain; charset=utf-8").send(typeof r.cuerpo === "string" ? r.cuerpo : JSON.stringify(r.cuerpo ?? ""));
+      const cuerpoBase = r.cuerpo ?? { corrida: corrida.id };
+      const final = deRespuesta.length ? (cuerpoBase && typeof cuerpoBase === "object" && !Array.isArray(cuerpoBase) ? { ...(cuerpoBase as object), archivos: deRespuesta } : { datos: cuerpoBase, archivos: deRespuesta }) : cuerpoBase;
+      return res.type("application/json; charset=utf-8").send(JSON.stringify(final));
     });
   });
 }

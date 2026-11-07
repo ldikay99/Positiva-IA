@@ -314,6 +314,72 @@ export async function copiarArchivos(desde: string, hacia: string): Promise<numb
   return n;
 }
 
+// ------------------------------------------------ datos de prueba fijados por paso
+//
+// «Fijar como datos de prueba»: lo que produjo un paso al probarlo queda en <archivos>/<flujo>/fijados/<nodo>.json
+// (en el espacio del flujo, nunca en su definición) para probar los pasos siguientes sin volver a correr los anteriores.
+
+export const ID_NODO = /^[a-z][a-z0-9_]{1,40}$/;
+const fijadosDe = (flujo: string) => join(carpetaDe(flujo), "fijados");
+export const MAX_FIJADO = 2 * MB;
+
+export interface Fijado {
+  nodo: string;
+  variables: Record<string, unknown>;
+  salida?: string;
+  nota?: string;
+  origen?: string;
+  fijado: number;
+}
+
+export async function leerFijado(flujo: string, nodo: string): Promise<Fijado | null> {
+  if (!ID_FLUJO.test(flujo) || !ID_NODO.test(nodo)) return null;
+  try {
+    return JSON.parse(await readFile(join(fijadosDe(flujo), `${nodo}.json`), "utf8")) as Fijado;
+  } catch {
+    return null;
+  }
+}
+
+export async function listarFijados(flujo: string): Promise<Fijado[]> {
+  if (!ID_FLUJO.test(flujo)) return [];
+  const r: Fijado[] = [];
+  for (const a of await readdir(fijadosDe(flujo)).catch(() => [] as string[])) {
+    const nodo = a.replace(/\.json$/, "");
+    if (!a.endsWith(".json") || !ID_NODO.test(nodo)) continue;
+    const f = await leerFijado(flujo, nodo);
+    if (f) r.push(f);
+  }
+  return r;
+}
+
+export async function ponerFijado(flujo: string, nodo: string, datos: { variables?: unknown; salida?: unknown; nota?: unknown; origen?: unknown }): Promise<{ ok: true; fijado: Fijado } | { ok: false; error: string }> {
+  if (!ID_FLUJO.test(flujo) || !ID_NODO.test(nodo)) return { ok: false, error: "id de paso inválido" };
+  const v = datos.variables;
+  if (!v || typeof v !== "object" || Array.isArray(v)) return { ok: false, error: "manda {variables: {nombre: valor}, salida?}" };
+  if (datos.salida !== undefined && (typeof datos.salida !== "string" || datos.salida.length > 80)) return { ok: false, error: "salida es el nombre de la rama por la que sale (texto)" };
+  const fijado: Fijado = {
+    nodo, variables: Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([k]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && !k.startsWith("_"))),
+    ...(typeof datos.salida === "string" && datos.salida ? { salida: datos.salida } : {}),
+    ...(typeof datos.nota === "string" && datos.nota.trim() ? { nota: datos.nota.trim().slice(0, 200) } : {}),
+    ...(typeof datos.origen === "string" && datos.origen ? { origen: datos.origen.slice(0, 120) } : {}),
+    fijado: Date.now(),
+  };
+  const texto = JSON.stringify(fijado);
+  if (Buffer.byteLength(texto) > MAX_FIJADO) return { ok: false, error: `los datos fijados pasan de ${MAX_FIJADO / MB} MB: fija menos variables` };
+  await mkdir(fijadosDe(flujo), { recursive: true });
+  await writeFile(join(fijadosDe(flujo), `${nodo}.json`), texto, "utf8");
+  return { ok: true, fijado };
+}
+
+export async function borrarFijado(flujo: string, nodo: string): Promise<boolean> {
+  if (!ID_FLUJO.test(flujo) || !ID_NODO.test(nodo)) return false;
+  const ruta = join(fijadosDe(flujo), `${nodo}.json`);
+  if (!existsSync(ruta)) return false;
+  await rm(ruta, { force: true });
+  return true;
+}
+
 export async function existeCarpeta(flujo: string): Promise<boolean> {
   return (await stat(carpetaDe(flujo)).catch(() => null))?.isDirectory() ?? false;
 }

@@ -57,6 +57,7 @@ export const iaFlujo = z.union([z.object({ usar: z.literal("global") }).strict()
 
 /** La forma de las claves de IA de un nodo (lo semántico lo revisa el motor, con las credenciales y el catálogo). */
 export function revisarNodo(tipo: string, c: Record<string, unknown>, problema: (clave: string, m: string) => void): void {
+  if (tipo === "ia_imagen") return;  // su proveedor de imágenes (vertex, gemini u openai) lo revisa su propio esquema
   if (!CON_IA.has(tipo)) {
     if (c.proveedor !== undefined) problema("proveedor", "proveedor solo aplica a los nodos de IA y a leer_adjuntos");
     return;

@@ -12,6 +12,7 @@ import * as ia from "./ia.ts";
 import { PRODUCCION, LECTURAS_EN_SIMULACION } from "./produccion.ts";
 import * as compuerta from "./compuerta.ts";
 import * as espacio from "./espacio.ts";
+import * as descargas from "./descargas.ts";
 import { programacionDe, estado as estadoDelProgramador, enlace as programadorEnlace } from "./programador.ts";
 import type { Corrida } from "./motor.ts";
 
@@ -45,6 +46,8 @@ export const TIPOS_DE_NODO = [
   "anonimizar", "hoja_escribir", "mensaje_teams", "mensaje_slack", "webhook_saliente", "traducir", "resumir_largo", "preguntar_documentos",
   "extraer_tablas", "deduplicar", "agrupar", "ordenar_filtrar", "mapear", "validar_contra", "subflujo", "reintentar_mas_tarde", "limite_tasa",
   "ventana_horario", "detener_con_alerta",
+  // archivos que salen: responder el correo en su hilo (con adjuntos) e imágenes generadas por IA
+  "responder_correo", "ia_imagen",
 ] as const;
 export type TipoDeNodo = (typeof TIPOS_DE_NODO)[number];
 export const DISPARADORES = new Set<string>(["entrada_correo", "entrada_manual", "programado", "webhook", "correo_nuevo", "entrada_archivos"]);
@@ -55,10 +58,10 @@ const TIPOS_IA = new Set<string>(["ia_clasificar", "ia_decidir", "ia_extraer", "
   "traducir", "resumir_largo", "preguntar_documentos", "extraer_tablas", "documento_clasificar", "documento_comparar"]);
 /** Los que hablan con algo de afuera y por eso aceptan reintentos. */
 const TIPOS_CON_REINTENTOS = new Set<string>([...TIPOS_IA, "notificar", "enviar", "http", "llamar_flujo", ...CONECTORES,
-  "hoja_escribir", "mensaje_teams", "mensaje_slack", "webhook_saliente", "subflujo", "validar_contra"]);
+  "hoja_escribir", "mensaje_teams", "mensaje_slack", "webhook_saliente", "subflujo", "validar_contra", "responder_correo", "ia_imagen"]);
 /** Los que escriben afuera: solo con una credencial cuya escritura habilitó una persona (notificar y enviar nunca). */
 export const TIPOS_ESCRITURA = new Set<string>(["correo_enviar", "drive_subir", "sql_ejecutar", "http", "enviar", "notificar",
-  "hoja_escribir", "mensaje_teams", "mensaje_slack", "webhook_saliente"]);
+  "hoja_escribir", "mensaje_teams", "mensaje_slack", "webhook_saliente", "responder_correo"]);
 /** Ni los disparadores, ni las salidas, ni la estructura de bucles y ramas se pueden saltar. */
 const NO_DESHABILITABLES = new Set<string>([...DISPARADORES, "salida", "fin_ciclo", "para_cada", "paralelo", "unir", "detener_con_alerta"]);
 const TERMINALES = new Set<string>(["salida", "fin_ciclo", "detener_con_alerta"]);
@@ -262,6 +265,33 @@ const ID_ARCHIVO = /^a-[0-9a-z]{6,40}$/;
 const listaNombres = (que: string) => z.array(z.string().trim().min(1), { error: `${que} tiene que ser una lista de nombres de campo` });
 /** Uno o varios archivos: un id, una plantilla («{{doc.id}}»), «adjuntos» o una lista de ellos. */
 const textoOLista = (que: string) => z.union([z.string().trim().min(1), z.array(z.string().trim().min(1)).min(1)], { error: `falta ${que}: ids de archivos, plantillas o «adjuntos»` });
+/** Cómo se nombra un tipo en un filtro de archivos (igual que TIPOS_DE_ARCHIVO del motor) o una extensión. */
+const TIPO_ARCHIVO = /^\.?[a-z0-9]{1,6}$/i;
+const regexOk = (p: string) => {
+  try { new RegExp(p.replace(/\(\?P</g, "(?<")); return true; } catch { return false; }
+};
+/** Un filtro de archivos {de, nombre, tipo}: de «adjuntos», «archivos» o una variable con archivos; nombre sin distinguir mayúsculas ni tildes. */
+const filtroArchivos = z.looseObject({
+  de: textoReq("de («adjuntos», «archivos» o una variable con archivos)"),
+  nombre: z.string({ error: "nombre es un texto" }).refine(regexOk, "nombre inválido (expresión)").optional(),
+  tipo: z.union([z.string().regex(TIPO_ARCHIVO, "tipo: pdf, imagen, word, excel, texto o una extensión"), z.array(z.string().regex(TIPO_ARCHIVO, "tipo: pdf, imagen, word, excel, texto o una extensión"))]).optional(),
+}, { error: "un filtro de archivos es {de, nombre, tipo}" });
+/** Archivos que se mandan o se entregan: textos («{{documento}}», «{{adjuntos}}», ids) o filtros, sueltos o en lista (hasta 50). */
+const archivosRef = (que: string) => z.union([
+  z.string().trim().min(1, `${que}: está vacío`),
+  filtroArchivos,
+  z.array(z.union([z.string().trim().min(1, `${que}: hay uno vacío`), filtroArchivos]), { error: `${que}: lista de archivos` }).min(1, `${que} está vacío`).max(50, `${que}: hasta 50`),
+], { error: `${que}: «{{documento}}», «{{adjuntos}}», un id «a-…», un filtro {de, nombre, tipo} o una lista de ellos` });
+/** desde_ia: la IA redacta el documento o arma la hoja (con su IA propia, si se da). */
+const desdeIa = z.looseObject({
+  instrucciones: textoReq("desde_ia.instrucciones (qué redactar)"),
+  entradas: z.array(z.string().trim().min(1), { error: "desde_ia.entradas: lista de nombres" }).optional(),
+  proveedor: z.enum(ia.PROVEEDORES_IA, { error: `desde_ia.proveedor: ${ia.PROVEEDORES_IA.join(", ")}` }).optional(),
+  modelo: z.string().trim().min(1, "desde_ia.modelo: el nombre de un modelo").optional(),
+  credencial: z.string().regex(CREDENCIAL_GUARDADA, "desde_ia.credencial: el NOMBRE de una credencial guardada").optional(),
+  temperatura: entre("desde_ia.temperatura", 0, 2, false).optional(),
+}, { error: "desde_ia tiene que ser un objeto {instrucciones, entradas?, proveedor?, modelo?}" })
+  .refine((d) => !d.proveedor || Boolean(d.modelo), { message: "desde_ia: con proveedor hace falta también el modelo", path: ["modelo"] });
 
 export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
   // Su correspondencia es SUYA: la bandeja de prueba (.eml/.msg) y, con credencial, su buzón (solo lectura).
@@ -297,14 +327,23 @@ export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
   }),
   correo_enviar: conf({
     credencial: credencialRef, para: textoReq("para"), cc: z.string().optional(), cco: z.string().optional(), asunto: textoReq("asunto"),
-    cuerpo: textoReq("cuerpo"), html: z.string().optional(), timeout_s: timeoutS,
+    cuerpo: textoReq("cuerpo"), html: z.string().optional(), adjuntos: archivosRef("adjuntos").optional(), timeout_s: timeoutS,
   }),
   drive_listar: conf({ credencial: credencialRef, carpeta: z.string().optional(), nombre: z.string().optional(), tipo_mime: z.string().optional(), max: entre("max", 1, 200).optional(), timeout_s: timeoutS }),
   drive_leer: conf({ credencial: credencialRef, archivo: textoReq("archivo"), ocr: opcional, max_caracteres: entre("max_caracteres", 1, 500000).optional(), timeout_s: timeoutS }),
   drive_subir: conf({
-    credencial: credencialRef, carpeta: z.string().optional(), nombre: textoReq("nombre"), contenido: z.string().optional(), de: z.string().optional(),
+    credencial: credencialRef, carpeta: z.string().optional(), nombre: z.string().optional(), contenido: z.string().optional(), de: z.string().optional(),
+    archivo: archivosRef("archivo").optional(),
     formato: z.enum(["texto", "json", "csv"], { error: "formato: texto, json o csv" }).optional(), timeout_s: timeoutS,
-  }).refine((c) => c.contenido || c.de, { message: "drive_subir necesita contenido (plantilla) o de (variable)", path: ["contenido"] }),
+  }).superRefine((c, ctx) => {
+    const mal = (k: string, m: string) => ctx.addIssue({ code: "custom", path: [k], message: m });
+    if (c.archivo !== undefined) {
+      if (c.contenido || c.de) mal("archivo", "drive_subir: usa archivo (un archivo tal cual) o contenido/de (un texto), no los dos");
+    } else {
+      if (!c.nombre?.trim()) mal("nombre", "falta nombre");
+      if (!c.contenido && !c.de) mal("contenido", "drive_subir necesita archivo (p. ej. «{{documento}}»), contenido (plantilla) o de (variable)");
+    }
+  }),
   hoja_leer: conf({
     origen: z.enum(["adjunto", "drive", "archivo", "url", "sheets"], { error: "origen: adjunto, drive, archivo, url o sheets" }), adjunto: regex("adjunto").optional(),
     credencial: credencialRef.optional(), archivo: z.string().optional(), url: z.string().optional(), hoja: z.string().optional(), encabezados: opcional,
@@ -372,6 +411,7 @@ export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
   respuesta_webhook: conf({
     estado: entre("estado", 100, 599).optional(), cuerpo: z.unknown().optional(),
     tipo_contenido: z.enum(["application/json", "text/plain"], { error: "tipo_contenido: application/json o text/plain" }).optional(),
+    archivos: archivosRef("archivos").optional(), archivos_como: z.enum(["enlaces", "base64"], { error: "archivos_como: enlaces o base64" }).optional(),
   }),
   leer_adjuntos: conf({
     ocr: booleano.optional(), vision: booleano.optional(),
@@ -441,7 +481,7 @@ export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
   resumir: conf({ longitud: z.string().optional(), enfoque: z.string().optional(), instrucciones: z.string().optional() }),
   ia_redactar: conf({ instrucciones: z.string().optional(), variable: variable.optional() }),
   notificar: conf({ para: textoReq("para"), cuerpo: textoReq("cuerpo"), asunto: z.string().optional(), cc: z.string().optional(), canal: z.string().optional() }),
-  enviar: conf({ cuerpo: textoReq("cuerpo"), para: z.string().optional(), asunto: z.string().optional(), cc: z.string().optional() }),
+  enviar: conf({ cuerpo: textoReq("cuerpo"), para: z.string().optional(), asunto: z.string().optional(), cc: z.string().optional(), adjuntos: archivosRef("adjuntos").optional() }),
   // Solo los GET a hosts de HTTP_HOSTS_PERMITIDOS salen de verdad; lo demás se arma y queda como escritura bloqueada.
   http: conf({
     metodo: z.enum(METODOS_HTTP, { error: `metodo: ${METODOS_HTTP.join(", ")}` }).optional(),
@@ -475,7 +515,9 @@ export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
   documento_generar: conf({
     formato: z.enum(["pdf", "docx"], { error: "formato: pdf o docx" }), plantilla: z.string().optional(),
     plantilla_archivo: z.string().regex(ID_ARCHIVO, "plantilla_archivo: el id de un .docx subido al flujo").optional(), nombre: z.string().optional(), titulo: z.string().optional(),
-  }).refine((c) => Boolean(c.plantilla?.trim()) !== Boolean(c.plantilla_archivo), { message: "documento_generar necesita plantilla o plantilla_archivo (una de las dos)", path: ["plantilla"] }),
+    desde_ia: desdeIa.optional(),
+  }).refine((c) => Number(Boolean(c.plantilla?.trim())) + Number(Boolean(c.plantilla_archivo)) + Number(c.desde_ia !== undefined) === 1,
+    { message: "documento_generar necesita plantilla, plantilla_archivo o desde_ia (una de las tres)", path: ["plantilla"] }),
   pdf_unir: conf({ archivos: textoOLista("archivos"), nombre: z.string().optional() }),
   pdf_dividir: conf({
     archivo: textoReq("archivo"), modo: z.enum(["cada_pagina", "rangos"], { error: "modo: cada_pagina o rangos" }).optional(),
@@ -507,9 +549,13 @@ export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
     formato: z.enum(["xlsx", "csv"], { error: "formato: xlsx o csv" }).optional(), credencial: credencialRef.optional(), hoja_id: z.string().optional(), hoja: z.string().optional(),
     modo: z.enum(["anexar", "actualizar", "reemplazar"], { error: "modo: anexar, actualizar o reemplazar" }).optional(), clave: z.string().optional(),
     insertar_si_falta: opcional, filas: z.string().optional(), fila: z.record(z.string(), z.unknown(), { error: "fila tiene que ser un objeto {columna: plantilla}" }).optional(), timeout_s: timeoutS,
+    desde_ia: desdeIa.optional(),
   }).superRefine((c, ctx) => {
     const mal = (k: string, m: string) => ctx.addIssue({ code: "custom", path: [k], message: m });
-    if (!c.filas && !c.fila) mal("filas", "hoja_escribir necesita filas (una variable) o fila ({columna: plantilla})");
+    if (c.desde_ia !== undefined) {
+      if (c.filas || c.fila) mal("desde_ia", "con desde_ia la IA arma las hojas: quita filas y fila");
+      if (c.destino === "sheets" || c.archivo) mal("desde_ia", "desde_ia crea una hoja nueva del flujo (destino archivo, sin archivo)");
+    } else if (!c.filas && !c.fila) mal("filas", "hoja_escribir necesita filas (una variable), fila ({columna: plantilla}) o desde_ia");
     if (c.modo === "actualizar" && !c.clave?.trim()) mal("clave", "con modo actualizar hace falta clave");
     if (c.destino === "sheets") {
       if (!c.credencial) mal("credencial", "con destino sheets hace falta credencial (google_servicio)");
@@ -519,10 +565,11 @@ export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
       if (c.archivo && !c.archivo.includes("{{") && !ID_ARCHIVO.test(c.archivo)) mal("archivo", "archivo: el id de una hoja del flujo");
     }
   }),
-  mensaje_teams: conf({ credencial: credencialRef, titulo: z.string().optional(), texto: textoReq("texto"), hechos: mapaPlantillas("hechos").optional(), enlace: z.string().optional(), timeout_s: timeoutS }),
-  mensaje_slack: conf({ credencial: credencialRef, titulo: z.string().optional(), texto: textoReq("texto"), hechos: mapaPlantillas("hechos").optional(), enlace: z.string().optional(), timeout_s: timeoutS }),
+  mensaje_teams: conf({ credencial: credencialRef, titulo: z.string().optional(), texto: textoReq("texto"), hechos: mapaPlantillas("hechos").optional(), enlace: z.string().optional(), archivos: archivosRef("archivos").optional(), timeout_s: timeoutS }),
+  mensaje_slack: conf({ credencial: credencialRef, titulo: z.string().optional(), texto: textoReq("texto"), hechos: mapaPlantillas("hechos").optional(), enlace: z.string().optional(), archivos: archivosRef("archivos").optional(), timeout_s: timeoutS }),
   webhook_saliente: conf({
-    credencial: credencialRef,
+    credencial: credencialRef, archivos: archivosRef("archivos").optional(),
+    modo_archivos: z.enum(["base64", "multipart", "enlace"], { error: "modo_archivos: base64, multipart o enlace" }).optional(),
     cuerpo: z.union([z.string(), z.record(z.string(), z.unknown()), z.array(z.unknown())], { error: "falta cuerpo: un objeto JSON con plantillas (o un texto)" }),
     encabezados: z.record(z.string(), z.string(), { error: "encabezados tiene que ser un objeto {nombre: plantilla}" })
       .refine((e) => !Object.keys(e).some((k) => ENCABEZADOS_SECRETOS.includes(k.trim().toLowerCase())), "encabezados: Authorization y las claves van en la credencial, no en el flujo").optional(),
@@ -605,6 +652,25 @@ export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
     desenlace: z.enum(DESENLACES_DECL, { error: `desenlace: ${DESENLACES_DECL.join(", ")}` }),
     motivo: z.string().optional(), destino: z.string().optional(), plantilla_respuesta: z.string().optional(),
     campos: z.union([z.array(z.string().min(1)), z.record(z.string(), z.string())], { error: "campos: lista de variables o {nombre: plantilla}" }).optional(),
+    archivos: archivosRef("archivos").optional(),
+  }),
+  // ---------------------------------------------- archivos que salen (puente/nodos_producto.py)
+  responder_correo: conf({
+    cuerpo: textoReq("cuerpo"), html: z.string().optional(), cc: z.string().optional(), para: z.string().optional(), asunto: z.string().optional(),
+    adjuntos: archivosRef("adjuntos").optional(), incluir_original: opcional, credencial: credencialRef.optional(), timeout_s: timeoutS,
+  }),
+  ia_imagen: conf({
+    instrucciones: textoReq("instrucciones"), aspecto: z.enum(["1:1", "3:4", "4:3", "9:16", "16:9"], { error: "aspecto: 1:1, 3:4, 4:3, 9:16 o 16:9" }).optional(),
+    tamano: z.enum(["cuadrado", "vertical", "horizontal", "historia", "panoramica"], { error: "tamano: cuadrado, vertical, horizontal, historia o panoramica" }).optional(),
+    cantidad: entre("cantidad", 1, 4).optional(), estilo: z.string().optional(), negativo: z.string().optional(), nombre: z.string().optional(),
+    proveedor: z.enum(["vertex", "gemini", "openai"], { error: "proveedor de imágenes: vertex, gemini u openai" }).optional(),
+    modelo: z.string().trim().min(1, "modelo: el nombre de un modelo de imágenes").optional(), credencial: credencialRef.optional(),
+  }).superRefine((c, ctx) => {
+    const mal = (k: string, m: string) => ctx.addIssue({ code: "custom", path: [k], message: m });
+    if (c.aspecto && c.tamano) mal("aspecto", "usa aspecto o tamano, no los dos");
+    const prov = c.proveedor ?? "vertex";
+    if (prov === "vertex" && c.credencial) mal("credencial", "con proveedor vertex no va credencial (usa la identidad del servicio)");
+    if (prov !== "vertex" && !c.credencial) mal("credencial", `con proveedor ${prov} hace falta credencial: una conexión ia_${prov}`);
   }),
 };
 
@@ -1022,7 +1088,10 @@ const ENV_VIEJA = /^[A-Z][A-Z0-9_]{2,63}$/;
 
 /** Las credenciales guardadas que nombra una definición (la forma vieja de http, una variable de entorno, no cuenta). */
 export function credencialesUsadas(d: Definicion): string[] {
-  return [...new Set([...d.nodos.map((n) => (n.config as { credencial?: unknown }).credencial).filter((x): x is string => typeof x === "string" && !ENV_VIEJA.test(x)), ...ia.credencialesDeIa(d)])];
+  // también la de la IA que redacta un documento o arma una hoja (config.desde_ia.credencial)
+  const deIaDocumentos = d.nodos.map((n) => ((n.config as { desde_ia?: { credencial?: unknown } }).desde_ia ?? {}).credencial);
+  return [...new Set([...d.nodos.map((n) => (n.config as { credencial?: unknown }).credencial), ...deIaDocumentos]
+    .filter((x): x is string => typeof x === "string" && !ENV_VIEJA.test(x)).concat(ia.credencialesDeIa(d)))];
 }
 
 function subflujosDe(d: Definicion, pila: string[], acumulado: Record<string, unknown> = {}): Record<string, unknown> {
@@ -1073,6 +1142,21 @@ function ordenBase(id: string, f: Flujo, corrida: Corrida): Record<string, unkno
     archivos: espacio.resolverArchivos(id, corrida.entrada, f.definicion).map(({ id: a, nombre, tipo, tamano, sha256, ruta }) => ({ id: a, nombre, tipo, tamano, sha256, ruta })),
     credenciales: credenciales.paraCorrida(id, credencialesUsadas(f.definicion)), entorno: ent.valores, entorno_secretos: ent.secretos, ia_global: ia.obtenerGlobal(),
     subflujos: subflujosDe(f.definicion, [id]),
+    // para firmar enlaces de descarga con vencimiento (Teams, Slack, webhooks): la clave sale enmascarada de todo
+    enlaces: descargas.paraOrden(),
+  };
+}
+
+/**
+ * La orden de «Probar este paso»: como la de una corrida, pero ninguna credencial escribe (permitir_escritura apagado,
+ * aunque una persona lo haya habilitado) y sin subflujos (la prueba no llama a otros flujos).
+ */
+export function ordenDePrueba(id: string, d: Definicion): Record<string, unknown> {
+  const ent = entornos.paraCorrida(id);
+  const creds = credenciales.paraCorrida(id, credencialesUsadas(d));
+  return {
+    definicion: d, flujo: id, credenciales: Object.fromEntries(Object.entries(creds).map(([k, v]) => [k, { ...v, permitir_escritura: false }])),
+    entorno: ent.valores, entorno_secretos: ent.secretos, ia_global: ia.obtenerGlobal(), enlaces: descargas.paraOrden(),
   };
 }
 
@@ -1241,6 +1325,7 @@ const CATEGORIA: Record<TipoDeNodo, string> = {
   mensaje_slack: "integracion", webhook_saliente: "integracion", traducir: "ia", resumir_largo: "ia", preguntar_documentos: "ia", extraer_tablas: "ia",
   deduplicar: "datos", agrupar: "datos", ordenar_filtrar: "datos", mapear: "datos", validar_contra: "validacion", subflujo: "logica",
   reintentar_mas_tarde: "logica", limite_tasa: "logica", ventana_horario: "logica", detener_con_alerta: "salida",
+  responder_correo: "conector", ia_imagen: "ia",
 };
 const NOMBRE_TIPO: Record<TipoDeNodo, string> = {
   entrada_correo: "Entrada de correo", leer_adjuntos: "Leer adjuntos", filtro: "Filtro", condicion: "Condición",
@@ -1261,6 +1346,7 @@ const NOMBRE_TIPO: Record<TipoDeNodo, string> = {
   extraer_tablas: "IA · extraer tablas", deduplicar: "Deduplicar", agrupar: "Agrupar y sumar", ordenar_filtrar: "Ordenar y filtrar", mapear: "Mapear campos",
   validar_contra: "Validar contra lista, tabla o SQL", subflujo: "Subflujo", reintentar_mas_tarde: "Reintentar más tarde", limite_tasa: "Límite de tasa",
   ventana_horario: "Ventana de horario", detener_con_alerta: "Detener con alerta",
+  responder_correo: "Responder correo", ia_imagen: "IA · generar imagen",
 };
 
 const valorDe = (x: unknown, clave = "valor") => (typeof x === "object" && x ? String((x as Record<string, unknown>)[clave] ?? "") : String(x));

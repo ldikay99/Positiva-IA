@@ -21,7 +21,7 @@ import copy
 import json
 from typing import Any, Dict, List, Optional, Sequence
 
-VERSION = 7
+VERSION = 8
 
 DESENLACES = ["radicar", "manual", "reenviar", "descartar", "responder", "duplicado"]
 DISPARADORES = ["entrada_correo", "entrada_manual", "programado", "webhook", "correo_nuevo", "entrada_archivos"]
@@ -201,7 +201,7 @@ _ARCHIVOS_DESC = ("lista de archivos: «{{documento}}» o «{{pdf.id}}» (genera
                   "(los subidos a la corrida), «{{adjuntos}}» (los del correo original), un id «a-…» de un archivo del flujo, o un filtro "
                   "{de: \"adjuntos\", nombre: \"factura\", tipo: \"pdf\"} (nombre sin distinguir mayúsculas ni tildes; tipo pdf, imagen, word, excel, "
                   "texto o «.ext»). Hasta 10 archivos y 20 MB en total.")
-ARCHIVOS = lambda desc=_ARCHIVOS_DESC: {**libre(desc), "format": "archivos"}  # noqa: E731
+ARCHIVOS = lambda desc=_ARCHIVOS_DESC: libre(desc)  # noqa: E731
 # La IA redacta el documento o arma la hoja con sus instrucciones (y su IA propia, si se da).
 DESDE_IA = objeto({"instrucciones": plantilla("qué redactar o armar, con {{variables}}", largo=True),
                    "entradas": lista(texto(), "lo que ve la IA (variables, «correo», «adjuntos.texto»); si no, ve todo el contexto"),
@@ -1446,8 +1446,7 @@ AYUDA: Dict[str, Dict[str, Any]] = {
         "consejos": ["Mientras la credencial no tenga la escritura habilitada por una persona, el correo se arma (con la lista de adjuntos y sus tamaños) y queda bloqueado.",
                      "adjuntos: «{{documento}}» (lo que generó un paso), «{{archivos}}» (lo subido), «{{adjuntos}}» o {de: \"adjuntos\", nombre: \"factura\", tipo: \"pdf\"}; "
                      "hasta 10 archivos y 20 MB (por Graph, 3 MB cada uno).",
-                     "Para contestar el correo que arrancó la ejecución en su mismo hilo usa responder_correo.",
-                     "Nunca se envía a direcciones de Positiva."],
+                     "Nunca se envía a direcciones de Positiva; para contestar en el mismo hilo el correo que arrancó la ejecución usa responder_correo."],
     },
     "drive_listar": {
         "ejemplos": [{"credencial": "drive-operaciones", "carpeta": "1AbCdEfGhIjKlMnOp", "salida": "archivos"}, {"credencial": "drive-operaciones", "nombre": "factura", "tipo_mime": "application/pdf"}],
@@ -1506,7 +1505,7 @@ AYUDA: Dict[str, Dict[str, Any]] = {
                      "Dale una arista a «error_http» (status ≥ 400) y otra a «error» (tiempo agotado, destino bloqueado)."],
     },
     "respuesta_webhook": {
-        "ejemplos": [{"estado": 200, "cuerpo": {"ok": True, "total": "{{total}}"}}, {"estado": 422, "cuerpo": "faltan datos: {{fallo.motivo}}", "tipo_contenido": "text/plain"},
+        "ejemplos": [{"estado": 200, "cuerpo": {"ok": True, "total": "{{total}}"}},
                      {"estado": 200, "cuerpo": {"ok": True}, "archivos": ["{{documento}}"], "archivos_como": "enlaces"}],
         "consejos": ["Solo tiene efecto si el disparador es webhook con responder: true.",
                      "Con archivos, el cuerpo JSON trae «archivos»: enlaces de descarga firmados que vencen (o el contenido en base64 con archivos_como)."],
@@ -1521,12 +1520,11 @@ AYUDA: Dict[str, Dict[str, Any]] = {
     },
     "documento_generar": {
         "ejemplos": [{"formato": "docx", "nombre": "respuesta-{{radicado}}", "plantilla": "# Respuesta a su solicitud\n\n{{respuesta}}\n\n| Campo | Valor |\n| Radicado | {{radicado}} |"},
-                     {"formato": "pdf", "plantilla_archivo": "a-plantilla01", "nombre": "carta-{{entrada.documento}}", "salida": "carta"},
                      {"formato": "docx", "nombre": "respuesta-{{datos.radicado}}", "salida": "documento", "desde_ia": {
                          "instrucciones": "Redacta la respuesta formal a la solicitud: saludo, resumen de lo pedido, la decisión y los próximos pasos. "
                                           "Incluye una tabla con los datos del caso.", "entradas": ["correo", "datos"]}}],
-        "consejos": ["En la plantilla de texto: «# » título, «## » subtítulo, «- » viñeta, líneas con «|» tabla y una línea en blanco separa párrafos.",
-                     "Con plantilla_archivo, cada párrafo del .docx que tenga {{…}} se llena (queda con el formato de su primer tramo).",
+        "consejos": ["En la plantilla de texto: «# » título, «## » subtítulo, «- » viñeta, líneas con «|» tabla y una línea en blanco separa párrafos; "
+                     "con plantilla_archivo (un .docx del flujo) se llena cada párrafo que tenga {{…}}.",
                      "Con desde_ia la IA redacta el documento (título, secciones, párrafos, viñetas y tablas) y no inventa datos: dale entradas con lo que sabe.",
                      "El archivo queda en el flujo y como resultado de la ejecución: adjúntalo con «{{salida}}» (correo, respuesta, Drive, Teams) o pásalo a pdf_unir."],
     },
@@ -1563,14 +1561,13 @@ AYUDA: Dict[str, Dict[str, Any]] = {
     },
     "hoja_escribir": {
         "ejemplos": [{"destino": "archivo", "archivo": "a-registro01", "modo": "actualizar", "clave": "documento", "filas": "resultados"},
-                     {"destino": "sheets", "credencial": "google-ops", "hoja_id": "1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789", "hoja": "Casos", "fila": {"radicado": "{{radicado}}", "estado": "{{estado}}"}},
                      {"nombre": "resumen-de-facturas", "formato": "xlsx", "salida": "hoja", "desde_ia": {
                          "instrucciones": "Arma una hoja «Facturas» con número, fecha, proveedor y valor de cada factura, y otra «Totales» por proveedor.",
                          "entradas": ["adjuntos.texto"]}}],
         "consejos": ["En un archivo del flujo no escribe afuera: sin archivo crea uno nuevo (nombre y formato) y con archivo lo actualiza en su lugar.",
                      "Con desde_ia la IA arma una hoja nueva con una o varias pestañas; en CSV solo va la primera.",
-                     "Google Sheets escribe afuera: queda bloqueado mientras una persona no habilite la escritura de la credencial.",
-                     "Las columnas nuevas se agregan al encabezado; actualizar busca por clave y agrega las que faltan (insertar_si_falta)."],
+                     "Google Sheets escribe afuera: queda bloqueado mientras una persona no habilite la escritura de la credencial; actualizar busca por "
+                     "clave y agrega las que faltan (insertar_si_falta)."],
     },
     "mensaje_teams": {
         "ejemplos": [{"credencial": "teams-operaciones", "titulo": "Caso {{radicado}}", "texto": "{{resumen}}", "enlace": "{{enlace}}"},
@@ -1587,8 +1584,8 @@ AYUDA: Dict[str, Dict[str, Any]] = {
     },
     "webhook_saliente": {
         "ejemplos": [{"credencial": "gancho-crm", "cuerpo": {"radicado": "{{radicado}}", "estado": "{{estado}}"}},
-                     {"credencial": "gancho-erp", "cuerpo": {"factura": "{{factura}}"}, "encabezados": {"X-Origen": "positiva-ia"}, "reintentos": {"intentos": 3}},
-                     {"credencial": "gancho-crm", "cuerpo": {"radicado": "{{radicado}}"}, "archivos": ["{{documento}}"], "modo_archivos": "multipart"}],
+                     {"credencial": "gancho-crm", "cuerpo": {"radicado": "{{radicado}}"}, "archivos": ["{{documento}}"], "modo_archivos": "multipart",
+                      "reintentos": {"intentos": 3}}],
         "consejos": ["La URL y el token viven en la credencial webhook_saliente: nunca en el flujo.",
                      "Con archivos: base64 los mete en «archivos» del JSON, multipart manda form-data y enlace manda enlaces firmados que vencen.",
                      "Solo https a hosts públicos; Positiva, SGDEA, IP privadas y metadatos se bloquean siempre."],
@@ -1664,7 +1661,7 @@ AYUDA: Dict[str, Dict[str, Any]] = {
                      "Es un final: no tiene aristas que salgan."],
     },
     "salida": {
-        "ejemplos": [{"desenlace": "radicar", "campos": ["nombre", "documento"]}, {"desenlace": "manual", "motivo": "{{fallo.motivo}}"},
+        "ejemplos": [{"desenlace": "radicar", "campos": ["nombre", "documento"]},
                      {"desenlace": "responder", "plantilla_respuesta": "{{respuesta}}", "archivos": ["{{documento}}", "{{imagenes}}"]}],
         "consejos": ["campos como objeto {nombre: plantilla} arma la solicitud con otros nombres.", "No se puede deshabilitar ni tiene aristas que salgan.",
                      "archivos dice qué entrega el flujo; todo lo que la ejecución generó igual queda en sus resultados (historial, Vera, webhook)."],
@@ -1679,8 +1676,8 @@ AYUDA: Dict[str, Dict[str, Any]] = {
                      "Por Graph responde con createReply (queda en el hilo del original); por SMTP lleva In-Reply-To y References."],
     },
     "ia_imagen": {
-        "ejemplos": [{"instrucciones": "Ilustración sencilla para el boletín sobre {{tema}}, sin texto", "aspecto": "16:9"},
-                     {"instrucciones": "Ícono plano de un documento con un sello", "cantidad": 2, "estilo": "minimalista, azul y blanco", "negativo": "texto, marcas de agua"},
+        "ejemplos": [{"instrucciones": "Ícono plano de un documento con un sello", "cantidad": 2, "aspecto": "1:1", "estilo": "minimalista, azul y blanco",
+                      "negativo": "texto, marcas de agua"},
                      {"instrucciones": "Portada del informe de {{mes}}", "proveedor": "openai", "modelo": "gpt-image-1", "credencial": "openai-imagenes", "tamano": "vertical"}],
         "consejos": ["Por defecto usa Vertex (gemini-2.5-flash-image) con la identidad del servicio: no necesita llave.",
                      "Deja la lista de imágenes en su salida: adjúntalas con «{{imagenes}}» o la primera con «{{imagenes.0.id}}».",
@@ -1778,11 +1775,21 @@ REGLAS = """Un flujo declarativo es {id, nombre, descripcion, ia, nodos: [{id, t
   No va dentro de para_cada, de ramas ni de flujos llamados. Vera puede listar las aprobaciones, nunca decidirlas.
 - Corridas que vuelven: reintentar_mas_tarde, limite_tasa (al_exceder aplazar) y ventana_horario (fuera aplazar) terminan la corrida como «aplazada» y la
   vuelven a correr desde el principio a la hora que toca, con la misma entrada; {{aplazamiento.intento}} dice en qué intento va (0 la primera vez).
-- Archivos del flujo: documento_generar, pdf_unir, pdf_dividir, documento_convertir y hoja_escribir dejan fichas {id, nombre, tipo, tamano}; los nodos que
+- Archivos del flujo: documento_generar, pdf_unir, pdf_dividir, documento_convertir, hoja_escribir e ia_imagen dejan fichas {id, nombre, tipo, tamano}; los nodos que
   leen documentos reciben ids («a-…»), plantillas como «{{carta.id}}», una variable con fichas o «adjuntos» (los del correo).
+- Archivos que salen: todo archivo que genera una ejecución queda como su resultado (descargable en el historial y la ejecución, en el chat y, con
+  respuesta_webhook archivos, en la respuesta del webhook). Para mandarlos: correo_enviar y enviar (adjuntos), responder_correo (responde en el MISMO hilo
+  al correo que arrancó la ejecución, con adjuntos), drive_subir (archivo), mensaje_teams y mensaje_slack (archivos como enlaces de descarga firmados que
+  vencen), webhook_saliente (archivos en base64, multipart o enlace) y salida (archivos que entrega). Una lista de archivos admite «{{documento}}»,
+  «{{pdf.id}}», «{{imagenes}}», «{{archivos}}» (los subidos), «{{adjuntos}}» (los del correo), ids «a-…» y filtros {de, nombre, tipo}; hasta 10 y 20 MB.
+- La IA genera archivos: documento_generar con desde_ia {instrucciones, entradas} (Word o PDF con títulos, párrafos, viñetas y tablas), hoja_escribir con
+  desde_ia (Excel con pestañas, columnas y filas, o CSV) e ia_imagen (PNG; Vertex gemini-2.5-flash-image por defecto).
+- Probar un paso: en el editor (o con POST /api/flujos/<id>/probar-paso) se corre SOLO un paso, o el flujo hasta ese paso, con un archivo, un correo
+  de su correspondencia, un archivo del flujo o los datos de una ejecución anterior; nunca escribe (todo queda retenido) ni llama a otros flujos, y lo
+  que produce se puede fijar como datos de prueba para los pasos siguientes.
 - Datos personales: antes de mandar textos con datos de personas a una IA externa (proveedor distinto de vertex), pásalos por anonimizar (modo seudonimo,
   guardar_mapa) y, si hace falta, revierte la respuesta con otro anonimizar (operacion revertir).
-- LÍMITES (no se negocian): los nodos que escriben afuera (correo_enviar, drive_subir, sql_ejecutar, http distinto de GET, mensaje_teams, mensaje_slack,
+- LÍMITES (no se negocian): los nodos que escriben afuera (correo_enviar, responder_correo, drive_subir, sql_ejecutar, http distinto de GET, mensaje_teams, mensaje_slack,
   webhook_saliente, hoja_escribir con destino sheets y la alerta de detener_con_alerta con credencial) solo escriben si una PERSONA habilitó
   la escritura de su credencial; si no, arman la acción y la anotan como escritura bloqueada. notificar y enviar nunca envían. Nunca se tocan hosts de Positiva
   (positiva.gov.co), SGDEA, metadatos ni IP privadas, ni los buzones de PQRD y tutelas. Archivos solo dentro de /datos/archivos. SQL: una sola sentencia,

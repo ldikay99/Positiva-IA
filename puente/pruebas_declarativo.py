@@ -1220,12 +1220,16 @@ class ImapFalso:
 
 class SmtpFalso:
     enviados = []
+    mensajes = []
 
     def login(self, u, c):
         pass
 
     def send_message(self, m, from_addr=None, to_addrs=None):
-        SmtpFalso.enviados.append({"de": from_addr, "para": to_addrs, "asunto": m["Subject"], "cuerpo": m.get_content()})
+        cuerpo = (m.get_body(preferencelist=("plain",)) or m).get_content()
+        SmtpFalso.enviados.append({"de": from_addr, "para": to_addrs, "asunto": m["Subject"], "cuerpo": cuerpo})
+        # el mensaje entero y sus adjuntos (nombre, bytes), para las pruebas de adjuntos y de hilo
+        SmtpFalso.mensajes.append({"mensaje": m, "adjuntos": [(a.get_filename(), a.get_payload(decode=True)) for a in m.iter_attachments()]})
 
     def quit(self):
         pass
@@ -2224,7 +2228,24 @@ class ParidadConElServidor(unittest.TestCase):
                  {"tipo": "ventana_horario", "config": {"desde": "18:00", "hasta": "08:00"}},
                  {"tipo": "ventana_horario", "config": {"desde": "8am"}},
                  {"tipo": "detener_con_alerta", "config": {"nivel": "error"}},
-                 {"tipo": "detener_con_alerta", "config": {"mensaje": "x", "nivel": "grave"}}]
+                 {"tipo": "detener_con_alerta", "config": {"mensaje": "x", "nivel": "grave"}},
+                 # archivos que entran y salen
+                 {"tipo": "correo_enviar", "config": {"credencial": "s", "para": "a@b.co", "asunto": "x", "cuerpo": "x", "adjuntos": [{"nombre": "x"}]}},
+                 {"tipo": "correo_enviar", "config": {"credencial": "s", "para": "a@b.co", "asunto": "x", "cuerpo": "x", "adjuntos": []}},
+                 {"tipo": "enviar", "config": {"cuerpo": "x", "adjuntos": [{"de": "adjuntos", "tipo": "planillaexcel"}]}},
+                 {"tipo": "drive_subir", "config": {"credencial": "d", "archivo": "{{doc}}", "contenido": "x"}},
+                 {"tipo": "drive_subir", "config": {"credencial": "d"}},
+                 {"tipo": "documento_generar", "config": {"formato": "pdf", "plantilla": "x", "desde_ia": {"instrucciones": "x"}}},
+                 {"tipo": "documento_generar", "config": {"formato": "pdf", "desde_ia": {"entradas": ["correo"]}}},
+                 {"tipo": "documento_generar", "config": {"formato": "pdf", "desde_ia": {"instrucciones": "x", "proveedor": "openai"}}},
+                 {"tipo": "hoja_escribir", "config": {"fila": {"a": "1"}, "desde_ia": {"instrucciones": "x"}}},
+                 {"tipo": "webhook_saliente", "config": {"credencial": "w", "cuerpo": {}, "archivos": ["{{doc}}"], "modo_archivos": "ftp"}},
+                 {"tipo": "respuesta_webhook", "config": {"archivos": ["{{doc}}"], "archivos_como": "zip"}},
+                 {"tipo": "responder_correo", "config": {"adjuntos": ["{{doc}}"]}},
+                 {"tipo": "ia_imagen", "config": {"instrucciones": "x", "cantidad": 9}},
+                 {"tipo": "ia_imagen", "config": {"instrucciones": "x", "proveedor": "openai"}},
+                 {"tipo": "ia_imagen", "config": {"instrucciones": "x", "aspecto": "2:1"}},
+                 {"tipo": "ia_imagen", "config": {"instrucciones": "x", "aspecto": "1:1", "tamano": "vertical"}}]
         guion = ("const f = await import(process.argv[1]); const d = JSON.parse(process.argv[2]);"
                  "const r = (xs) => xs.map((e) => { const s = f.CONFIG_DE[e.tipo]; return s ? s.safeParse(e.config).success : null; });"
                  "console.log(JSON.stringify({tipos: [...f.TIPOS_DE_NODO], buenos: r(d.buenos), malos: r(d.malos)}));")
@@ -3110,8 +3131,12 @@ class _Receptor(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         n = int(self.headers.get("Content-Length") or 0)
-        cuerpo = self.rfile.read(n).decode("utf-8")
-        _Receptor.recibidos.append({"ruta": self.path, "cuerpo": json.loads(cuerpo or "null"), "encabezados": dict(self.headers)})
+        crudo = self.rfile.read(n)
+        try:
+            cuerpo = json.loads(crudo.decode("utf-8") or "null")
+        except ValueError:  # multipart/form-data: se guarda tal cual
+            cuerpo = None
+        _Receptor.recibidos.append({"ruta": self.path, "cuerpo": cuerpo, "crudo": crudo, "encabezados": dict(self.headers)})
         datos = b"ok"
         self.send_response(_Receptor.status)
         self.send_header("Content-Length", str(len(datos)))
@@ -3938,10 +3963,393 @@ class EscriturasConPermiso(Producto):
     """Toda escritura de los nodos nuevos que sale de la plataforma pasa por el permiso de la credencial."""
 
     def test_cada_tipo_que_escribe(self):
-        self.assertEqual(np_.ESCRITURA, {"mensaje_teams", "mensaje_slack", "webhook_saliente", "hoja_escribir"})
+        self.assertEqual(np_.ESCRITURA, {"mensaje_teams", "mensaje_slack", "webhook_saliente", "hoja_escribir", "responder_correo"})
         self.assertTrue(np_.ESCRITURA <= fd.TIPOS_ESCRITURA)
         self.assertTrue(np_.ESCRITURA <= nd.ESCRITURA)
         self.assertEqual({t for t in nd.TIPOS if nd.TIPOS[t]["escritura"]} & np_.TIPOS, np_.ESCRITURA)
+
+
+# ===================================================== archivos que entran y salen
+
+CLAVE_ENLACES = "clave-de-enlaces-MUY-SECRETA-0123456789abcdef"
+ENLACES = {"base": "https://positiva-ia.ejemplo.test", "clave": CLAVE_ENLACES, "vence_s": 3600}
+MSG_ORIGINAL = "<original-123@empresa.example>"
+
+
+def png(ancho=8, alto=6, color=(0, 148, 255)):
+    from PIL import Image
+    s = io.BytesIO()
+    Image.new("RGB", (ancho, alto), color).save(s, format="PNG")
+    return s.getvalue()
+
+
+class _BaseArchivos(Producto):
+    """Lo común de las pruebas de archivos que salen: SMTP, Graph, Drive e imágenes falsos y el correo del caso con su hilo."""
+
+    def setUp(self):
+        super().setUp()
+        SmtpFalso.enviados.clear()
+        SmtpFalso.mensajes.clear()
+        self.drive = DriveFalso()
+        self._previos_c = (fd.c_correo.fabrica_smtp, fd.c_correo.pedir_https, fd.c_drive.fabrica, fd._generar_imagen)
+        fd.c_correo.fabrica_smtp = lambda *a: SmtpFalso()
+        fd.c_drive.fabrica = lambda valores, timeout: self.drive
+        self.creds = {**self.creds,
+                      "smtp": cred("smtp", secretos=["clave"], host="smtp.ejemplo.test", usuario="ops@ejemplo.test", clave=CLAVE_SQL),
+                      "smtp-ok": cred("smtp", True, secretos=["clave"], host="smtp.ejemplo.test", usuario="ops@ejemplo.test", clave=CLAVE_SQL),
+                      "buzon-imap": cred("imap", True, secretos=["clave"], host="imap.ejemplo.test", usuario="ops@ejemplo.test", clave=CLAVE_SQL),
+                      "graph-ok": cred("microsoft_graph", True, secretos=["client_secret"], tenant="tenant-1", client_id="c", client_secret=TOKEN, buzon="respuestas@ejemplo.test"),
+                      "drive": cred("google_servicio", secretos=["json"], json='{"type": "service_account"}'),
+                      "drive-ok": cred("google_servicio", True, secretos=["json"], json='{"type": "service_account"}')}
+        # el correo del caso de prueba, con su Message-ID y References para responder en su hilo
+        m = Path(self.tmp.name) / CASO / "mensaje.json"
+        datos = json.loads(m.read_text(encoding="utf-8"))
+        datos.update({"id": MSG_ORIGINAL, "_referencias": "<hilo-1@empresa.example>", "_graph_id": "AAMkAGraphIdDelOriginal123="})
+        m.write_text(json.dumps(datos), encoding="utf-8")
+
+    def tearDown(self):
+        fd.c_correo.fabrica_smtp, fd.c_correo.pedir_https, fd.c_drive.fabrica, fd._generar_imagen = self._previos_c
+        super().tearDown()
+
+    def documento(self, id_="doc", **conf):
+        return nodo(id_, "documento_generar", **{"formato": "pdf", "plantilla": "# Respuesta\n\nHola {{correo.remitente_nombre}}", "nombre": "respuesta", "salida": id_, **conf})
+
+    def correr_correo(self, *nodos, **orden):
+        return self.correr_orden(cadena(*nodos), caso=CASO, **orden)
+
+
+class ArchivosQueSalen(_BaseArchivos):
+    """Correo con adjuntos, responder en el hilo, documentos y hojas que redacta la IA, imágenes, archivos de la salida y mensajería con archivos."""
+
+    # ------------------------------------------------------------ correo_enviar
+    def test_correo_enviar_con_adjuntos_retenido_y_real(self):
+        adj = ["{{doc}}", {"de": "adjuntos", "tipo": "texto"}]
+        r, ev = self.correr_correo(self.documento(), nodo("mail", "correo_enviar", credencial="smtp", para="cliente@empresa.example", asunto="Su respuesta",
+                                                                          cuerpo="Adjunto", adjuntos=adj, salida="mail"))
+        retenida = next(w for w in r["escrituras"] if w["nodo"] == "mail")
+        self.assertTrue(retenida["bloqueado"])
+        self.assertEqual([a["nombre"] for a in retenida["adjuntos"]], ["respuesta.pdf", "certificado.txt"])
+        self.assertTrue(all(a["tamano"] > 0 for a in retenida["adjuntos"]))
+        self.assertEqual(SmtpFalso.enviados, [])
+        esc = next(e for e in self.eventos_de(ev, "escritura") if e["nodo"] == "mail")
+        self.assertEqual([a["nombre"] for a in esc["detalle"]["adjuntos"]], ["respuesta.pdf", "certificado.txt"])
+        # con la escritura habilitada por una persona: sale con sus adjuntos
+        r, _ = self.correr_correo(self.documento(), nodo("mail", "correo_enviar", credencial="smtp-ok", para="cliente@empresa.example", asunto="Su respuesta",
+                                                                        cuerpo="Adjunto", adjuntos=adj))
+        enviado = SmtpFalso.mensajes[-1]
+        self.assertEqual([n for n, _ in enviado["adjuntos"]], ["respuesta.pdf", "certificado.txt"])
+        self.assertTrue(enviado["adjuntos"][0][1].startswith(b"%PDF-"))
+        self.assertEqual(enviado["adjuntos"][1][1].decode("utf-8"), CERTIFICADO)
+
+    def test_limites_de_adjuntos_y_positiva(self):
+        ids = [self.archivo(f"a{i}.txt", b"x") for i in range(11)]
+        r, _ = self.correr_orden(self.con(nodo("mail", "correo_enviar", credencial="smtp-ok", para="a@empresa.example", asunto="x", cuerpo="x", adjuntos=ids)),
+                                 exigir_ok=False, entrada={})
+        self.assertIn("se mandan hasta 10", r["motivo"])
+        grandes = [self.archivo(f"g{i}.bin", os.urandom(7_500_000)) for i in range(3)]
+        r, _ = self.correr_orden(self.con(nodo("mail", "correo_enviar", credencial="smtp-ok", para="a@empresa.example", asunto="x", cuerpo="x", adjuntos=grandes)),
+                                 exigir_ok=False, entrada={})
+        self.assertIn("pasan de 20 MB", r["motivo"])
+        r, _ = self.correr_orden(self.con(nodo("mail", "correo_enviar", credencial="smtp-ok", para="alguien@positiva.gov.co", asunto="x", cuerpo="x", adjuntos=ids[:1])),
+                                 exigir_ok=False, entrada={})
+        self.assertIn("bloqueado por seguridad", r["motivo"])
+        self.assertEqual(SmtpFalso.enviados, [])
+
+    def test_enviar_simulado_lleva_sus_adjuntos(self):
+        r, _ = self.correr_correo(self.documento(), nodo("resp", "enviar", cuerpo="Hola", adjuntos=["{{doc}}", "{{adjuntos}}"], salida="resp"))
+        self.assertEqual([a["nombre"] for a in r["variables"]["resp"]["adjuntos"]], ["respuesta.pdf", "certificado.txt"] + (["soporte.pdf"] if self.hay_pdf else []))
+        self.assertTrue(r["variables"]["resp"]["bloqueado"])
+
+    # --------------------------------------------------------- responder_correo
+    def test_responder_correo_smtp_en_el_hilo(self):
+        responder = nodo("resp", "responder_correo", cuerpo="Adjuntamos su respuesta.", credencial="smtp-ok", adjuntos=["{{doc}}", {"de": "adjuntos", "nombre": "CERTIFICADO"}])
+        r, ev = self.correr_correo(self.documento(), responder)
+        m, x = SmtpFalso.enviados[-1], SmtpFalso.mensajes[-1]
+        self.assertEqual(m["para"], ["rrhh@empresa.example"])
+        self.assertEqual(m["asunto"], "RE: Solicitud pago incapacidad")
+        self.assertEqual(x["mensaje"]["In-Reply-To"], MSG_ORIGINAL)
+        self.assertEqual(x["mensaje"]["References"], f"<hilo-1@empresa.example> {MSG_ORIGINAL}")
+        self.assertIn("Adjuntamos su respuesta.", m["cuerpo"])
+        self.assertIn("> ", m["cuerpo"])  # con el original citado
+        self.assertEqual([n for n, _ in x["adjuntos"]], ["respuesta.pdf", "certificado.txt"])
+        self.assertEqual(r["variables"]["respuesta_correo"]["en_respuesta_a"], MSG_ORIGINAL)
+        self.assertFalse(r["variables"]["respuesta_correo"]["bloqueado"])
+
+    def test_responder_correo_retenido_sin_permiso_o_sin_buzon(self):
+        for conf in ({"credencial": "smtp"}, {}):
+            with self.subTest(conf=conf):
+                r, ev = self.correr_correo(self.documento(), nodo("resp", "responder_correo", cuerpo="Hola", adjuntos=["{{doc}}"], **conf))
+                w = next(x for x in r["escrituras"] if x["nodo"] == "resp")
+                self.assertTrue(w["bloqueado"])
+                self.assertEqual((w["en_respuesta_a"], w["mismo_hilo"]), (MSG_ORIGINAL, True))
+                self.assertEqual([a["nombre"] for a in w["adjuntos"]], ["respuesta.pdf"])
+                self.assertEqual(SmtpFalso.enviados, [])
+        # un buzón IMAP solo lee: pide una smtp
+        d = cadena(nodo("resp", "responder_correo", cuerpo="Hola"))
+        d["nodos"][0]["config"]["credencial"] = "buzon-imap"
+        r, _ = self.correr_orden(d, exigir_ok=False, caso=CASO)
+        self.assertIn("credencial smtp", r["motivo"])
+        # sin correo (un flujo manual) no hay a quién responder
+        r, _ = self.correr_orden(self.con(nodo("resp", "responder_correo", cuerpo="Hola")), exigir_ok=False, entrada={})
+        self.assertIn("arranca con un correo", r["motivo"])
+
+    def test_responder_correo_graph_create_reply(self):
+        llamadas = []
+
+        def https(metodo, url, cuerpo, encabezados, timeout):
+            llamadas.append((metodo, url, json.loads(cuerpo) if cuerpo and cuerpo[:1] == b"{" else cuerpo))
+            if "oauth2" in url:
+                return 200, json.dumps({"access_token": "tok"}).encode()
+            if url.endswith("/createReply"):
+                return 201, json.dumps({"id": "BORRADOR-1"}).encode()
+            return (202, b"") if url.endswith("/send") else (200, b"{}")
+        fd.c_correo.pedir_https = https
+        r, _ = self.correr_correo(self.documento(), nodo("resp", "responder_correo", cuerpo="Hola", credencial="graph-ok", cc="copia@empresa.example",
+                                                                       adjuntos=["{{doc}}"], incluir_original=False))
+        rutas = [(m, u.split("/v1.0/users/respuestas%40ejemplo.test")[-1]) for m, u, _ in llamadas[1:]]
+        self.assertEqual(rutas, [("POST", "/messages/AAMkAGraphIdDelOriginal123%3D/createReply"), ("PATCH", "/messages/BORRADOR-1"),
+                                 ("POST", "/messages/BORRADOR-1/attachments"), ("POST", "/messages/BORRADOR-1/send")])
+        cambios = llamadas[2][2]
+        self.assertEqual(cambios["toRecipients"], [{"emailAddress": {"address": "rrhh@empresa.example"}}])
+        self.assertEqual(cambios["ccRecipients"], [{"emailAddress": {"address": "copia@empresa.example"}}])
+        self.assertEqual(cambios["body"], {"contentType": "Text", "content": "Hola"})
+        adjunto = llamadas[3][2]
+        self.assertEqual((adjunto["@odata.type"], adjunto["name"]), ("#microsoft.graph.fileAttachment", "respuesta.pdf"))
+        import base64
+        self.assertTrue(base64.b64decode(adjunto["contentBytes"]).startswith(b"%PDF-"))
+        self.assertFalse(r["variables"]["respuesta_correo"]["bloqueado"])
+        self.assertNotIn(TOKEN, self.salida.getvalue())
+
+    # --------------------------------------------------- la IA redacta archivos
+    def test_documento_y_hoja_desde_ia(self):
+        import docx
+        import openpyxl
+        self.modelo.r["json"] = {"titulo": "Respuesta a su solicitud", "secciones": [
+            {"titulo": "Resumen", "parrafos": ["Usted pidió el pago de una incapacidad."], "lista": ["Paso uno", "Paso dos"]},
+            {"titulo": "Datos del caso", "tabla": {"columnas": ["Dato", "Valor"], "filas": [["Documento", "1023456789"], ["Días", "5"]]}}]}
+        r, ev = self.correr_correo(nodo("doc", "documento_generar", formato="docx", nombre="respuesta", salida="doc",
+                                        desde_ia={"instrucciones": "Redacta la respuesta", "entradas": ["correo"]}),
+                                   nodo("pdf", "documento_generar", formato="pdf", salida="pdf", desde_ia={"instrucciones": "Lo mismo en PDF"}))
+        d = docx.Document(str(self.ruta_de(r["variables"]["doc"])))
+        textos = [p.text for p in d.paragraphs]
+        self.assertIn("Respuesta a su solicitud", textos)
+        self.assertIn("Datos del caso", textos)
+        self.assertEqual([c.text for c in d.tables[0].rows[1].cells], ["Documento", "1023456789"])
+        self.assertIn("Respuesta a su solicitud", Documentos.texto_pdf(self, self.ruta_de(r["variables"]["pdf"])))
+        self.assertTrue(any(ll["esquema"] and "secciones" in ll["esquema"]["properties"] for ll in self.modelo.llamadas))
+        # la hoja: pestañas, columnas y filas que arma la IA
+        self.modelo.r["json"] = {"hojas": [{"nombre": "Facturas", "columnas": ["Número", "Valor"], "filas": [["F-1", "1500"], ["F-2", "250.5"]]},
+                                           {"nombre": "Totales", "columnas": ["Total"], "filas": [["1750.5"]]}]}
+        r, _ = self.correr_correo(nodo("hoja", "hoja_escribir", nombre="facturas", salida="hoja", desde_ia={"instrucciones": "Arma las hojas"}))
+        libro = openpyxl.load_workbook(str(self.ruta_de(r["variables"]["hoja"])))
+        self.assertEqual(libro.sheetnames, ["Facturas", "Totales"])
+        self.assertEqual([c.value for c in libro["Facturas"][2]], ["F-1", 1500])
+        self.assertEqual(r["variables"]["hoja"]["filas"], 3)
+        # sin documento de la IA: falla con un motivo claro
+        self.modelo.r["json"] = {"nada": 1}
+        r, _ = self.correr_orden(cadena(nodo("doc", "documento_generar", formato="pdf", desde_ia={"instrucciones": "x"})), exigir_ok=False, caso=CASO)
+        self.assertIn("no devolvió un documento", r["motivo"])
+
+    def test_ia_imagen_genera_png_como_resultados(self):
+        pedidos = []
+
+        def falso(proveedor, modelo, prompt, cantidad, aspecto, credencial, flujo):
+            pedidos.append((proveedor, modelo, prompt, cantidad, aspecto, credencial, flujo))
+            return {"imagenes": [png(16, 9), png(16, 9, (1, 91, 157))][:cantidad], "proveedor": proveedor, "modelo": modelo or "gemini-2.5-flash-image", "ms": 5}
+        fd._generar_imagen = falso
+        r, ev = self.correr_orden(self.con(nodo("img", "ia_imagen", instrucciones="Ícono de {{entrada.nombre}}", cantidad=2, aspecto="16:9",
+                                                estilo="plano", negativo="texto", nombre="icono")), entrada={"nombre": "Ana"})
+        self.assertEqual(pedidos[0][:5], ("vertex", "", "Ícono de Ana\n\nEstilo: plano\n\nEvita: texto", 2, "16:9"))
+        imgs = r["variables"]["imagenes"]
+        self.assertEqual([x["nombre"] for x in imgs], ["icono_1.png", "icono_2.png"])
+        self.assertEqual((imgs[0]["ancho"], imgs[0]["alto"], imgs[0]["tipo"]), (16, 9, "image/png"))
+        self.assertTrue(self.ruta_de(imgs[0]).read_bytes().startswith(b"\x89PNG"))
+        self.assertEqual([(a["nombre"], a["nodo"]) for a in r["archivos"]], [("icono_1.png", "img"), ("icono_2.png", "img")])
+        self.assertEqual(len(self.eventos_de(ev, "archivo_generado")), 2)
+        # gemini u openai necesitan su conexión
+        r, _ = self.correr_orden(self.con(nodo("img", "ia_imagen", instrucciones="x", proveedor="openai", credencial="no-existe")), exigir_ok=False, entrada={})
+        self.assertIn("no existe", r["motivo"])
+        self.assertTrue(fd._validar_config(nodo("img", "ia_imagen", instrucciones="x", proveedor="openai")))
+
+    # ------------------------------------------------- la salida entrega archivos
+    def test_salida_entrega_archivos_y_resultado(self):
+        fin = nodo("fin", "salida", desenlace="responder", archivos=["{{doc}}", {"de": "adjuntos", "tipo": "texto"}])
+        r, _ = self.correr_orden(cadena(self.documento(), fin=fin), caso=CASO)
+        self.assertEqual([a["nombre"] for a in r["archivos_salida"]], ["respuesta.pdf", "certificado.txt"])
+        self.assertTrue(all(fd.ID_ARCHIVO.fullmatch(a["id"]) for a in r["archivos_salida"]))  # el adjunto se copió al flujo
+        self.assertEqual({a["nodo"] for a in r["archivos"]}, {"doc", "fin"})
+        # respuesta_webhook con archivos: se anuncian para que el servidor arme enlaces o base64
+        d = flujo([nodo("w", "webhook"), self.documento(plantilla="# Hola"), nodo("rw", "respuesta_webhook", cuerpo={"ok": True}, archivos=["{{doc}}"]),
+                   nodo("fin", "salida", desenlace="manual")],
+                  [{"desde": "w", "hacia": "doc"}, {"desde": "doc", "hacia": "rw"}, {"desde": "rw", "hacia": "fin"}])
+        r, _ = self.correr_orden(d, entrada={"cuerpo": {}})
+        self.assertEqual([a["nombre"] for a in r["respuesta_webhook"]["archivos"]], ["respuesta.pdf"])
+        self.assertEqual(r["respuesta_webhook"]["archivos_como"], "enlaces")
+
+    # ------------------------------------------- Drive, Teams, Slack y webhooks
+    def test_drive_sube_el_archivo_generado(self):
+        r, _ = self.correr_correo(self.documento(), nodo("sube", "drive_subir", credencial="drive", carpeta="1AbCdEfGhIjKlMnOp", archivo="{{doc}}"))
+        w = next(x for x in r["escrituras"] if x["nodo"] == "sube")
+        self.assertTrue(w["bloqueado"])
+        self.assertEqual((w["nombre"], w["archivo"]["nombre"], w["tipo"]), ("respuesta.pdf", "respuesta.pdf", "application/pdf"))
+        self.assertEqual(self.drive.subidos, [])
+        self.correr_correo(self.documento(), nodo("sube", "drive_subir", credencial="drive-ok", archivo="{{doc}}", nombre="copia.pdf"))
+        self.assertEqual(self.drive.subidos[-1][0], "copia.pdf")
+        self.assertTrue(self.drive.subidos[-1][2].startswith(b"%PDF-"))
+
+    def test_teams_slack_y_webhook_llevan_archivos(self):
+        import base64
+        import hashlib as _h
+        import hmac as _hm
+        self.permitir_local()
+        u = self.url
+        creds = {**self.creds, "teams": cred("webhook_teams", True, ("url",), url=f"{u}/teams/secreto-teams-1"),
+                 "slack": cred("webhook_slack", True, ("url",), url=f"{u}/slack/secreto-slack-2"),
+                 "gancho": cred("webhook_saliente", True, ("url",), url=f"{u}/gancho/secreto-gancho-3")}
+        d = self.con(self.documento(plantilla="# Informe"),
+                     nodo("t", "mensaje_teams", credencial="teams", texto="Listo", archivos=["{{doc}}"]),
+                     nodo("s", "mensaje_slack", credencial="slack", texto="Listo", archivos=["{{doc}}"]),
+                     nodo("b64", "webhook_saliente", credencial="gancho", cuerpo={"caso": 1}, archivos=["{{doc}}"]),
+                     nodo("mp", "webhook_saliente", credencial="gancho", cuerpo={"caso": 2}, archivos=["{{doc}}"], modo_archivos="multipart"),
+                     nodo("en", "webhook_saliente", credencial="gancho", cuerpo={"caso": 3}, archivos=["{{doc}}"], modo_archivos="enlace"))
+        r, _ = self.correr_orden(d, entrada={}, credenciales=creds, enlaces=ENLACES)
+        teams, slack, b64, mp, en = _Receptor.recibidos
+        boton = teams["cuerpo"]["attachments"][0]["content"]["actions"][0]
+        self.assertTrue(boton["title"].startswith("Descargar respuesta.pdf"))
+        url = boton["url"]
+        doc = r["variables"]["doc"]
+        self.assertTrue(url.startswith(f"https://positiva-ia.ejemplo.test/api/descargas/prueba/{doc['id']}?vence="))
+        vence = url.split("vence=")[1].split("&")[0]
+        firma = _hm.new(CLAVE_ENLACES.encode(), f"prueba/{doc['id']}/{vence}".encode(), _h.sha256).hexdigest()[:40]
+        self.assertTrue(url.endswith(f"&firma={firma}"))
+        self.assertIn(url, slack["cuerpo"]["text"])
+        datos = self.ruta_de(doc).read_bytes()
+        self.assertEqual(base64.b64decode(b64["cuerpo"]["archivos"][0]["base64"]), datos)
+        self.assertEqual(b64["cuerpo"]["caso"], 1)
+        self.assertIn("multipart/form-data; boundary=", mp["encabezados"]["Content-Type"])
+        self.assertIn(b'name="datos"', mp["crudo"])
+        self.assertIn(datos[:40], mp["crudo"])
+        self.assertTrue(en["cuerpo"]["archivos"][0]["url"].startswith("https://positiva-ia.ejemplo.test/api/descargas/prueba/"))
+        # lo que queda en el resultado no trae el base64 ni la clave de los enlaces
+        self.assertNotIn(CLAVE_ENLACES, self.salida.getvalue())
+        self.assertEqual([a["nombre"] for a in r["variables"]["t"]["archivos"]], ["respuesta.pdf"])
+        # sin enlaces configurados: un mensaje con archivos falla diciendo por qué
+        r, _ = self.correr_orden(self.con(self.documento(), nodo("t", "mensaje_teams", credencial="teams", texto="x", archivos=["{{doc}}"])), exigir_ok=False,
+                                 entrada={}, credenciales=creds)
+        self.assertIn("enlaces de descarga", r["motivo"])
+
+    def test_validacion_de_referencias_de_archivos(self):
+        self.assertEqual(fd.validar(cadena(self.documento(), nodo("m", "enviar", cuerpo="x", adjuntos=["{{doc}}", "adjuntos", "a-abc12345", {"de": "adjuntos", "tipo": "pdf"}]))), [])
+        self.assertTrue(any("ningún nodo anterior produce la variable «no_hay»" in p for p in fd.validar(cadena(nodo("m", "enviar", cuerpo="x", adjuntos=["{{no_hay}}"])))))
+        for malo in ([{"nombre": "x"}], [{"de": "adjuntos", "tipo": "planillaexcel"}], [3], []):
+            with self.subTest(malo=malo):
+                self.assertTrue(fd._validar_config(nodo("m", "correo_enviar", credencial="s", para="a@b.co", asunto="x", cuerpo="x", adjuntos=malo)))
+
+
+class ProbarUnPaso(_BaseArchivos):
+    """«Probar este paso»: solo ese paso (o hasta él), en simulación; nunca escribe ni toca otros flujos; datos fijados."""
+
+    def flujo_prueba(self):
+        return cadena(self.documento(),
+                      nodo("anota", "tabla_guardar", tabla="respuestas", clave="{{correo.asunto}}", datos={"doc": "{{doc.id}}"}),
+                      nodo("mail", "correo_enviar", credencial="smtp-ok", para="cliente@empresa.example", asunto="Su respuesta", cuerpo="Hola", adjuntos=["{{doc}}"]),
+                      nodo("otro", "llamar_flujo", flujo="otro-flujo"),
+                      nodo("resp", "responder_correo", cuerpo="Hola", credencial="smtp-ok", adjuntos=["{{doc}}"]))
+
+    def probar(self, defi, **orden):
+        orden.setdefault("credenciales", self.creds)
+        return fd.probar({"definicion": defi, "flujo": "prueba", **orden})
+
+    def test_hasta_un_paso_nunca_escribe(self):
+        r = self.probar(self.flujo_prueba(), nodo="resp", hasta=True, caso=CASO)
+        self.assertTrue(r["ok"], r)
+        self.assertEqual((r["salida"], r["alcanzado"]), ("ok", True))
+        self.assertEqual(SmtpFalso.enviados, [])  # smtp-ok tiene la escritura habilitada y aun así no sale
+        self.assertEqual(fd.c_tablas.consultar("flujo-prueba", "respuestas"), [])  # la tabla del flujo no se tocó
+        retenidas = {w["nodo"]: w for w in r["escrituras"]}
+        self.assertEqual(set(retenidas), {"anota", "mail", "otro", "resp"})
+        self.assertTrue(all(w["bloqueado"] for w in retenidas.values()))
+        self.assertEqual([a["nombre"] for a in retenidas["resp"]["adjuntos"]], ["respuesta.pdf"])
+        self.assertIn("otro-flujo", retenidas["otro"]["motivo"])  # no se llamó al otro flujo
+        self.assertEqual([a["nodo"] for a in r["archivos"]], ["doc"])
+        self.assertTrue(any(e["tipo"] == "etapa_fin" and e["etapa"] == "resp" for e in r["eventos"]))
+        self.assertIn("respuesta_correo", r["variables"])
+        meta = json.loads((self.ruta_de(r["todas"]["doc"]).parent / "meta.json").read_text(encoding="utf-8"))
+        self.assertTrue(meta["origen"].startswith("prueba:"))
+
+    def test_un_solo_paso_con_datos_fijados(self):
+        d = self.flujo_prueba()
+        primero = self.probar(d, nodo="doc", caso=CASO)
+        self.assertTrue(primero["ok"], primero)
+        self.assertEqual(list(primero["variables"]), ["doc"])
+        fijados = {"doc": {"variables": primero["variables"], "salida": primero["salida"]}}
+        r = self.probar(d, nodo="mail", caso=CASO, fijados=fijados)
+        self.assertTrue(r["ok"], r)
+        self.assertEqual(r["archivos"], [])  # el documento no se volvió a generar: se usó el fijado
+        w = next(x for x in r["escrituras"] if x["nodo"] == "mail")
+        self.assertEqual([a["nombre"] for a in w["adjuntos"]], ["respuesta.pdf"])
+        # hasta un paso, saltando los fijados
+        r = self.probar(d, nodo="mail", hasta=True, caso=CASO, fijados=fijados)
+        self.assertEqual(r["archivos"], [])
+        self.assertTrue(any(e["tipo"] == "paso" and e.get("fijado") for e in r["eventos"]))
+        # con las variables de una ejecución anterior y un archivo arrastrado (de ESTE flujo)
+        aid = self.archivo("carta.txt", "Señora Núñez".encode("utf-8"))
+        manual_ = self.con(nodo("leer", "leer_adjuntos", ocr=False), nodo("resumen", "ia_generar", instrucciones="Resume {{archivos.texto}} para {{entrada.previo}}"))
+        r = self.probar(manual_, nodo="resumen", archivos=[{"id": aid, "nombre": "carta.txt", "tipo": "text/plain", "ruta": str(self.ruta_de({"id": aid, "nombre": "carta.txt"}))}],
+                        variables={"entrada": {"previo": "Ana"}}, entrada={})
+        self.assertTrue(r["ok"], r)
+        self.assertIn("Ana", self.modelo.llamadas[-1]["sistema"])
+
+    def test_no_toca_otros_flujos(self):
+        otro = self.archivos / "otro-flujo" / "entradas" / "a-ajeno0001"
+        otro.mkdir(parents=True)
+        (otro / "x.txt").write_text("de otro flujo", encoding="utf-8")
+        d = self.con(nodo("leer", "leer_adjuntos", ocr=False))
+        r = self.probar(d, nodo="leer", archivos=[{"id": "a-ajeno0001", "nombre": "x.txt", "ruta": str(otro / "x.txt")}], entrada={})
+        self.assertTrue(any("no está en el espacio de este flujo" in a for a in r["avisos"]))
+        self.assertEqual(r["salida"], "sin_adjuntos")
+        # una referencia por id a un archivo de otro flujo tampoco
+        r = self.probar(self.con(nodo("m", "enviar", cuerpo="x", adjuntos=["a-ajeno0001"])), nodo="m", entrada={})
+        self.assertFalse(r["ok"])
+        self.assertIn("no está en el espacio de este flujo", r["error"] + r.get("detalle_error", ""))
+
+    def test_por_la_linea_de_comandos(self):
+        orden = {"definicion": self.flujo_prueba(), "flujo": "prueba", "nodo": "doc", "caso": CASO, "credenciales": self.creds, "enlaces": ENLACES}
+        env = {**os.environ, "RUTA_DATOS": str(self.estado), "RUTA_ARCHIVOS": str(self.archivos), "RUTA_BANDEJA": str(Path(self.tmp.name)),
+               "CACHE_CONVERSION": "no", "PYTHONIOENCODING": "utf-8"}
+        p = subprocess.run([sys.executable, str(AQUI / "flujo_declarativo.py"), "probar"], input=json.dumps(orden), capture_output=True, text=True,
+                           encoding="utf-8", env=env, timeout=120)
+        r = json.loads(p.stdout.strip().splitlines()[-1])
+        self.assertTrue(r["ok"], p.stdout[-1500:] + p.stderr[-1500:])
+        self.assertEqual(r["variables"]["doc"]["nombre"], "respuesta.pdf")
+        self.assertNotIn(CLAVE_SQL, p.stdout)
+        self.assertNotIn(CLAVE_ENLACES, p.stdout)
+
+
+class PlantillaResponderConDocumento(_BaseArchivos):
+    def test_plantilla_valida_y_corre_retenida(self):
+        p = json.loads((AQUI.parent / "catalogo" / "plantillas" / "08-responder-correos-con-documento.json").read_text(encoding="utf-8"))
+        d = {**p["definicion"], "id": "prueba", "modelo": "gemini-falso"}
+        self.assertEqual(fd.validar(d), [])
+        self.modelo.r["json"] = {"titulo": "Respuesta", "secciones": [{"titulo": "Datos del caso", "tabla": {"columnas": ["Dato", "Valor"], "filas": [["Documento", "1"]]}}]}
+        r, _ = self.correr_orden(d, caso=CASO)
+        self.assertEqual(r["accion"], "respondido")
+        w = next(x for x in r["escrituras"] if x["nodo"] == "responder")
+        self.assertTrue(w["bloqueado"])
+        nombres = [a["nombre"] for a in w["adjuntos"]]
+        self.assertTrue(nombres[0].startswith("respuesta-") and nombres[0].endswith(".docx"))
+        self.assertIn("certificado.txt", nombres)
+        self.assertEqual(len(r["archivos_salida"]), 1)
+
+
+@unittest.skipUnless(os.environ.get("PRUEBA_IMAGEN_REAL") == "si", "una llamada real a Vertex: PRUEBA_IMAGEN_REAL=si")
+class ImagenRealEnVertex(unittest.TestCase):
+    def test_una_imagen_pequena(self):
+        import proveedores
+        r = proveedores.generar_imagen("vertex", "", "un círculo azul pequeño sobre fondo blanco, sin texto", 1, "1:1", None, "prueba")
+        self.assertEqual(r["modelo"], "gemini-2.5-flash-image")
+        self.assertTrue(r["imagenes"][0].startswith(b"\x89PNG"))
+        print(f"\nVertex {r['modelo']}: {len(r['imagenes'][0]):,} bytes en {r['ms']} ms")
 
 
 if __name__ == "__main__":

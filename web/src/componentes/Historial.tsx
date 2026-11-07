@@ -3,8 +3,11 @@ import { pedir, usar } from "../estado.ts";
 import { Icono } from "../iconos.tsx";
 import { motivoLegible } from "../progreso.ts";
 import { ESTADOS, duracion, fechaHora, hace, iconoDePaso, nombreResultado, origenLegible, ramaLegible, type EstadoLegible } from "../lenguaje.ts";
-import type { DetalleEjecucion, FilaHistorial, RespuestaHistorial } from "../tipos.ts";
+import type { ArchivoDeEjecucion, DetalleEjecucion, FilaHistorial, RespuestaHistorial } from "../tipos.ts";
 import { Selector } from "./Selector.tsx";
+import { AnimatePresence } from "motion/react";
+import { CapsulaArchivo, VisorArchivo, peso } from "./Archivos.tsx";
+import "./probar.css";
 import { marcarPaso } from "../guia.ts";
 
 type Rango = "hoy" | "7" | "30" | "todo";
@@ -356,17 +359,42 @@ function DetalleDeEjecucion({ id, cerrar, alReintentar }: { id: string; cerrar: 
                 <h4>Lo que habría escrito afuera</h4>
                 <ul>
                   {d.salida.escrituras.map((w, i) => (
-                    <li key={i}><Icono n={w.retenida ? "candado" : "enviar"} tam={13} /><span className="crece">{w.que.replace(/_/g, " ")}{w.destino ? <span className="texto-3"> a {w.destino}</span> : null}</span><span className={`ficha ${w.retenida ? "tono-ambar" : "tono-verde"}`}>{w.retenida ? "Registrado, no enviado" : "Enviado"}</span></li>
+                    <li key={i}><Icono n={w.retenida ? "candado" : "enviar"} tam={13} /><span className="crece">{w.que.replace(/_/g, " ")}{w.destino ? <span className="texto-3"> a {w.destino}</span> : null}{w.asunto ? <span className="texto-3"> · «{w.asunto}»</span> : null}{w.adjuntos?.length ? <span className="texto-3 diminuto"> · con {w.adjuntos.map((a) => `${a.nombre} (${peso(a.tamano)})`).join(", ")}</span> : null}</span><span className={`ficha ${w.retenida ? "tono-ambar" : "tono-verde"}`}>{w.retenida ? "Registrado, no enviado" : "Enviado"}</span></li>
                   ))}
                 </ul>
               </div>
             )}
+            {(d.salida.archivos?.length ?? 0) > 0 && <ArchivosDeEjecucion corrida={d.corrida.id} flujo={d.flujo.id} archivos={d.salida.archivos!} />}
             {d.salida.avisos.length > 0 && <ul className="pr-avisos">{d.salida.avisos.map((a, i) => <li key={i}><Icono n="info" tam={13} />{a}</li>)}</ul>}
           </Seccion>
           {d.consumo && d.consumo.tokens > 0 && <p className="texto-3 diminuto pr-consumo">Usó la IA {d.consumo.consultas_ia ? `${d.consumo.consultas_ia} ${d.consumo.consultas_ia === 1 ? "vez" : "veces"} ` : ""}({d.consumo.tokens.toLocaleString("es-CO")} unidades de texto, «tokens»).</p>}
         </div>
       )}
     </article>
+  );
+}
+
+/** Los archivos que salieron de una ejecución: cápsulas con vista previa en su lugar (imagen, PDF; Word y Excel como texto) y descarga. */
+function ArchivosDeEjecucion({ corrida, flujo, archivos }: { corrida: string; flujo: string; archivos: ArchivoDeEjecucion[] }) {
+  const [visor, setVisor] = useState<ArchivoDeEjecucion | null>(null);
+  return (
+    <div className="pr-escrituras hi-archivos">
+      <h4>Archivos que salieron ({archivos.length})</h4>
+      <div className="arch-capsulas">
+        {archivos.map((a) => (
+          <span key={a.id} className="hi-archivo">
+            <CapsulaArchivo flujo={flujo} a={a} {...(a.disponible ? { alAbrir: () => setVisor(a) } : {})} {...(!a.disponible ? { error: "ya no está en el flujo" } : {})} />
+            {a.entregado && <span className="hi-entregado" title="Lo entrega la salida del flujo">entregado</span>}
+            {a.disponible && (
+              <a className="hi-archivo-descargar" href={`/api/corridas/${encodeURIComponent(corrida)}/archivos/${a.id}?descargar=1`} download={a.nombre} aria-label={`Descargar ${a.nombre}`} title="Descargar">
+                <Icono n="descargar" tam={14} />
+              </a>
+            )}
+          </span>
+        ))}
+      </div>
+      <AnimatePresence>{visor && <VisorArchivo key="visor" flujo={flujo} a={{ ...visor, sha256: "", subido: 0 }} cerrar={() => setVisor(null)} />}</AnimatePresence>
+    </div>
   );
 }
 

@@ -1,4 +1,8 @@
+import { spawn } from "node:child_process";
+import { createReadStream } from "node:fs";
+import { resolve } from "node:path";
 import type { FastifyInstance } from "fastify";
+import { config } from "./config.ts";
 import type { Corrida, Evento, Motor } from "./motor.ts";
 import * as flujos from "./flujos.ts";
 import * as bandeja from "./bandeja.ts";
@@ -275,12 +279,28 @@ export function detalle(c: Corrida) {
   // ---- qué salió
   const hallazgos = r?.hallazgos && typeof r.hallazgos === "object" ? campos(r.hallazgos) : [];
   const solicitud = r?.solicitud && typeof r.solicitud === "object" ? campos(r.solicitud) : [];
-  const escrituras = Array.isArray(r?.escrituras) ? (r!.escrituras as Record<string, unknown>[]).slice(0, 12).map((w) => ({ que: String(w.tipo ?? w.sistema ?? w.operacion ?? "escritura"), destino: corto(w.destino ?? w.para ?? w.url ?? w.ruta ?? "", 120), retenida: w.enviada !== true && w.real !== true })) : [];
+  const adjuntosDe = (w: Record<string, unknown>) => (Array.isArray(w.adjuntos) ? (w.adjuntos as Record<string, unknown>[]) : Array.isArray(w.archivos) ? (w.archivos as Record<string, unknown>[]) : [])
+    .slice(0, 12).map((a) => ({ nombre: String(a.nombre ?? ""), tipo: String(a.tipo ?? ""), tamano: Number(a.tamano ?? 0) }));
+  const escrituras = Array.isArray(r?.escrituras) ? (r!.escrituras as Record<string, unknown>[]).slice(0, 12).map((w) => ({
+    que: String(w.tipo ?? w.operacion ?? w.sistema ?? "escritura"), destino: corto(w.destino ?? w.para ?? w.url ?? w.ruta ?? "", 120),
+    retenida: w.bloqueado !== false && w.enviada !== true && w.real !== true, motivo: corto(w.motivo ?? "", 240),
+    ...(typeof w.asunto === "string" && w.asunto ? { asunto: corto(w.asunto, 160) } : {}), adjuntos: adjuntosDe(w),
+  })) : [];
+  // enviar y notificar nunca salen: se ven como escrituras retenidas, con sus adjuntos
+  const yaEn = new Set(escrituras.map((w) => `${w.destino}|${w.asunto ?? ""}`));
+  for (const m of Array.isArray(r?.mensajes) ? (r!.mensajes as Record<string, unknown>[]) : []) {
+    if (!["enviar", "notificar"].includes(String(m.operacion ?? "")) || escrituras.length >= 16) continue;
+    const w = { que: String(m.operacion), destino: corto(m.para ?? "", 120), retenida: true, motivo: "enviar y notificar nunca envían: se arma y se anota",
+      ...(typeof m.asunto === "string" && m.asunto ? { asunto: corto(m.asunto, 160) } : {}), adjuntos: adjuntosDe(m) };
+    if (!yaEn.has(`${w.destino}|${w.asunto ?? ""}`)) escrituras.push(w);
+  }
   const salida = {
     datos: hallazgos.length ? hallazgos : solicitud,
     respuesta: typeof r?.respuesta === "string" ? corto(r.respuesta, 1200) : "",
     escrituras,
     avisos: Array.isArray(r?.avisos) ? (r!.avisos as unknown[]).slice(0, 8).map((x) => corto(x, 200)) : [],
+    /** Los archivos que generó la ejecución (y los que entrega su salida), descargables. */
+    archivos: archivosDe(c),
   };
 
   // ---- por qué terminó así
@@ -305,10 +325,48 @@ export function detalle(c: Corrida) {
     entrada,
     pasos: pasos.map(({ veces, ...p }) => ({ ...p, veces })),
     salida,
+    archivos: salida.archivos,
     porque,
     consumo: r ? { tokens: Number(r.tokens_entrada ?? 0) + Number(r.tokens_salida ?? 0), consultas_ia: Number(r.vueltas ?? 0) } : null,
     se_puede_reintentar: puedeReintentar(c).ok,
   };
+}
+
+// ------------------------------------------------------- archivos que salen
+
+export interface ArchivoDeCorrida {
+  id: string;
+  nombre: string;
+  tipo: string;
+  tamano: number;
+  nodo: string;
+  /** Si lo entrega la salida del flujo (además de haberlo generado). */
+  entregado: boolean;
+  /** Si todavía está en el espacio del flujo. */
+  disponible: boolean;
+  url: string;
+  texto_url: string;
+}
+
+/** Los archivos de una ejecución: los que generó (cada paso) y los que entrega su salida, sin repetir. */
+export function archivosDe(c: Corrida): ArchivoDeCorrida[] {
+  const r = c.resultado;
+  const generados = Array.isArray(r?.archivos) ? (r!.archivos as Record<string, unknown>[]) : [];
+  const salida = Array.isArray(r?.archivos_salida) ? (r!.archivos_salida as Record<string, unknown>[]) : [];
+  const entregados = new Set(salida.map((x) => String(x.id ?? "")));
+  const vistos = new Set<string>();
+  const lista: ArchivoDeCorrida[] = [];
+  for (const x of [...generados, ...salida]) {
+    const id = String(x.id ?? "");
+    if (!/^a-[0-9a-z]{6,40}$/.test(id) || vistos.has(id)) continue;
+    vistos.add(id);
+    const a = espacio.archivoDe(c.flujo, id);
+    lista.push({
+      id, nombre: String(a?.nombre ?? x.nombre ?? id), tipo: String(a?.tipo ?? x.tipo ?? ""), tamano: Number(a?.tamano ?? x.tamano ?? 0), nodo: String(x.nodo ?? ""),
+      entregado: entregados.has(id), disponible: Boolean(a), url: `/api/corridas/${c.id}/archivos/${id}`, texto_url: `/api/corridas/${c.id}/archivos/${id}/texto`,
+    });
+  }
+  return lista.slice(0, 200);
 }
 
 // ---------------------------------------------------------------- reintentar
@@ -389,6 +447,43 @@ export async function registrar(app: FastifyInstance, deps: Dependencias): Promi
     const x = buscarCorrida(deps, req.params.id);
     if (!x) return res.code(404).send({ error: "esa ejecución no existe" });
     return detalle(x.c);
+  });
+
+  // Los archivos que generó una ejecución: lista, descarga (o vista en el navegador) y texto de lo que el navegador no muestra.
+  app.get<{ Params: { id: string } }>("/api/corridas/:id/archivos", async (req, res) => {
+    const x = buscarCorrida(deps, req.params.id);
+    if (!x) return res.code(404).send({ error: "esa ejecución no existe" });
+    return { corrida: x.c.id, flujo: x.c.flujo, archivos: archivosDe(x.c) };
+  });
+
+  const archivoDeCorrida = (id: string, archivo: string) => {
+    const x = buscarCorrida(deps, id);
+    if (!x || !archivosDe(x.c).some((a) => a.id === archivo)) return null;  // solo los de ESA ejecución
+    return espacio.archivoDe(x.c.flujo, archivo);
+  };
+
+  app.get<{ Params: { id: string; archivo: string }; Querystring: { descargar?: string } }>("/api/corridas/:id/archivos/:archivo", async (req, res) => {
+    const a = archivoDeCorrida(req.params.id, req.params.archivo);
+    if (!a) return res.code(404).send({ error: "ese archivo no es de esta ejecución o ya no está" });
+    return res.header("Content-Type", a.tipo || "application/octet-stream")
+      .header("Content-Disposition", `${req.query.descargar ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(a.nombre)}`)
+      .header("Cache-Control", "private, max-age=3600").header("X-Content-Type-Options", "nosniff").send(createReadStream(a.ruta));
+  });
+
+  app.get<{ Params: { id: string; archivo: string } }>("/api/corridas/:id/archivos/:archivo/texto", async (req, res) => {
+    const a = archivoDeCorrida(req.params.id, req.params.archivo);
+    if (!a) return res.code(404).send({ error: "ese archivo no es de esta ejecución o ya no está" });
+    const texto = await new Promise<string>((resolver) => {
+      const p = spawn(config.python, [resolve(config.raiz, "puente", "texto_de_archivo.py"), a.ruta, a.nombre], { env: { ...process.env, PYTHONIOENCODING: "utf-8" } });
+      let salida = "";
+      p.stdout.setEncoding("utf8").on("data", (t: string) => (salida += t));
+      const reloj = setTimeout(() => p.kill(), 60_000);
+      p.on("exit", () => {
+        clearTimeout(reloj);
+        resolver(salida);
+      });
+    });
+    return { nombre: a.nombre, texto };
   });
 
   app.post<{ Params: { id: string } }>("/api/historial/:id/reintentar", async (req, res) => {

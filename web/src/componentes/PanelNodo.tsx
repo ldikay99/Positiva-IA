@@ -11,6 +11,7 @@ import { Campo, CampoNumero, CamposObjeto, CampoPlantilla, type Contexto } from 
 import { Selector } from "./Selector.tsx";
 import { UrlGancho, urlDeGancho } from "./Dialogos.tsx";
 import { OpcionesIaNodo } from "./IA.tsx";
+import { ProbarPaso } from "./ProbarPaso.tsx";
 
 /**
  * El panel de un nodo de un flujo declarativo: su configuración (un
@@ -18,8 +19,8 @@ import { OpcionesIaNodo } from "./IA.tsx";
  * nodo, la ayuda con ejemplos y lo que produjo en la última corrida.
  */
 
-type Seccion = "configurar" | "opciones" | "ayuda" | "datos";
-const SECCIONES: Seccion[] = ["configurar", "opciones", "ayuda", "datos"];
+type Seccion = "configurar" | "opciones" | "ayuda" | "datos" | "probar";
+const SECCIONES: Seccion[] = ["configurar", "opciones", "ayuda", "datos", "probar"];
 const COMUNES = ["deshabilitado", "continuar_si_falla", "reintentos", "entradas", "salida", "proveedor", "modelo", "credencial", "temperatura"];
 
 function Pestanas({ valor, cambiar, opciones }: { valor: Seccion; cambiar: (s: Seccion) => void; opciones: { id: Seccion; nombre: string; n?: number; alerta?: boolean }[] }) {
@@ -341,6 +342,7 @@ export function PanelNodo({ id }: { id: string }) {
             { id: "opciones", nombre: "Opciones" },
             { id: "ayuda", nombre: "Ayuda", ...(tipo?.ejemplos.length ? { n: tipo.ejemplos.length } : {}) },
             { id: "datos", nombre: "Datos", ...(r ? { n: 1 } : {}) },
+            { id: "probar", nombre: "Probar" },
           ]}
         />
       </header>
@@ -381,6 +383,7 @@ export function PanelNodo({ id }: { id: string }) {
         {seccion === "opciones" && <Opciones n={n} tipo={tipo} poner={poner} ctx={ctx} />}
         {seccion === "ayuda" && <Ayuda n={n} tipo={tipo} usarEjemplo={usarEjemplo} />}
         {seccion === "datos" && <Datos n={n} />}
+        {seccion === "probar" && <ProbarPaso n={n} />}
         {seccion === "configurar" && tipo && (
           <button className="enlace pn-reiniciar" onClick={() => ponerConfig(configInicial(tipo))}>Volver a la configuración inicial del tipo</button>
         )}
