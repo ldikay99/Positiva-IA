@@ -957,6 +957,7 @@ const turnoDeVoz = z.object({
     pasos: z.array(z.object({ nombre: z.string(), argumentos: z.unknown().optional(), resultado: z.string().optional() })).max(60).default([]),
     cambiados: z.array(z.string()).max(20).default([]),
     propuestas: z.array(z.object({ accion: z.string(), id: z.string() })).max(10).default([]),
+    archivos: z.array(z.object({ corrida: z.string(), id: z.string(), nombre: z.string(), tipo: z.string(), tamano: z.number().optional() })).max(20).default([]),
   }),
 });
 
@@ -968,7 +969,8 @@ app.post<{ Params: { id: string } }>("/api/chats/:id/turno", async (req, res) =>
   if (!r.success) return res.code(400).send({ error: "turno inválido" });
   const t = Date.now();
   if (r.data.usuario.texto.trim()) c.mensajes.push({ rol: "usuario", texto: r.data.usuario.texto, t, voz: true });
-  if (r.data.asistente.texto.trim() || r.data.asistente.pasos.length) c.mensajes.push({ rol: "asistente", texto: r.data.asistente.texto, t: t + 1, voz: true, pasos: r.data.asistente.pasos, cambiados: r.data.asistente.cambiados, propuestas: r.data.asistente.propuestas });
+  const a = r.data.asistente;
+  if (a.texto.trim() || a.pasos.length || a.archivos.length) c.mensajes.push({ rol: "asistente", texto: a.texto, t: t + 1, voz: true, pasos: a.pasos, cambiados: a.cambiados, propuestas: a.propuestas, ...(a.archivos.length ? { archivos: a.archivos } : {}) });
   if (c.titulo === "Nueva conversación" && r.data.usuario.texto.trim()) c.titulo = r.data.usuario.texto.trim().replace(/\s+/g, " ").slice(0, 60);
   await chats.guardar(c);
   return { ok: true };

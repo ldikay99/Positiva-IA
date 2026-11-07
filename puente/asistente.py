@@ -11,6 +11,7 @@ Salida (stdout): una línea JSON por paso: {"tipo": "herramienta"|"texto"|"fin"|
 from __future__ import annotations
 
 import json
+import re
 import os
 import sys
 import time
@@ -103,6 +104,7 @@ INDICE_NODOS = _indice_nodos()
 SISTEMA = IDENTIDAD + f"""
 Cómo trabajas:
 1. Antes de crear o cambiar un flujo, entiende qué necesita la persona; si falta algo esencial, pregunta una sola cosa concreta.
+   Automatizaciones grandes (varios servicios, más de unos 6 pasos, o que escriben afuera): primero muestra un plan corto en pasos (qué lo arranca, cada paso con su nodo, qué conexiones hacen falta y cuáles faltan crear, qué escribe afuera y que eso queda retenido hasta que una persona habilite la escritura). Si falta algo esencial, pregúntalo en ese mismo mensaje (una sola cosa); si no falta nada, constrúyelo de una vez: arma, valida, prueba paso a paso con probar_paso lo que se pueda sin escribir afuera y reporta qué quedó listo y qué falta (por ejemplo, crear la conexión con pedir_credencial).
 2. Para crear o cambiar un flujo declarativo: arma la definición completa, validar_flujo, corrige hasta que no haya problemas, guardar_flujo y enfocar_flujo.
    Usa EXACTAMENTE los nombres que diga la persona (ids de flujo, campos de entrada, tablas, variables, categorías): si pide «un campo 'texto'», el campo se llama texto, no texto_entrada.
 3. Después de guardar, pruébalo: si la persona dio un ejemplo de entrada, córrelo con ESA entrada tal cual (correr_flujo con esperar=true); si no, con probar_flujo sobre un correo real que encaje (listar_correos) y revisa el resultado. Si algo sale mal, corrígelo y vuelve a probar.
@@ -989,6 +991,64 @@ NOMBRES_VISTA = {
 VISTAS_DE_FLUJO = {"flujo", "historial", "corridas", "logs", "adjuntos", "herramientas", "proveedores", "configuracion"}
 
 
+# ---------------------------------------------------------------- presupuesto de contexto
+# Una conversación larga no se manda entera en cada pregunta: los últimos turnos van completos
+# y lo anterior se condensa en una memoria (qué pidió, qué hizo, con qué flujos y adjuntos),
+# así Vera no se satura ni pierde lo importante.
+RECIENTES_COMPLETOS = int(os.environ.get("VERA_TURNOS_COMPLETOS", "12"))
+TOPE_CONTEXTO = int(os.environ.get("VERA_TOPE_CONTEXTO", "60000"))
+
+
+def _peso(m: Dict[str, Any]) -> int:
+    return len(m.get("texto") or "") + sum(len(json.dumps(p, ensure_ascii=False, default=str)) for p in m.get("pasos") or []) + 3000 * len(m.get("adjuntos") or [])
+
+
+def compactar(mensajes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Si la conversación pasa del presupuesto, deja completos los últimos turnos y resume lo anterior."""
+    if len(mensajes) <= RECIENTES_COMPLETOS and sum(_peso(m) for m in mensajes) <= TOPE_CONTEXTO:
+        return mensajes
+    corte = max(0, len(mensajes) - RECIENTES_COMPLETOS)
+    # que lo completo no exceda el tope: se corre el corte mientras haga falta (siempre queda el último pedido)
+    while corte < len(mensajes) - 1 and sum(_peso(m) for m in mensajes[corte:]) > TOPE_CONTEXTO:
+        corte += 1
+    # que lo completo empiece en un pedido de la persona
+    while corte < len(mensajes) - 1 and mensajes[corte].get("rol") != "usuario":
+        corte += 1
+    viejos, recientes = mensajes[:corte], mensajes[corte:]
+    if not viejos:
+        return mensajes
+    lineas: List[str] = []
+    flujos: List[str] = []
+    adjuntos: List[str] = []
+    for m in viejos:
+        texto = re.sub(r"\s+", " ", m.get("texto") or "").strip()
+        if m.get("rol") == "usuario":
+            lineas.append(f"- Pidió: {texto[:280]}")
+            adjuntos += [a.get("nombre") or "" for a in m.get("adjuntos") or []]
+        else:
+            hechos = []
+            for p in m.get("pasos") or []:
+                arg = p.get("argumentos") or {}
+                f = arg.get("flujo") or arg.get("id") if isinstance(arg, dict) else None
+                if isinstance(f, str) and f and not f.startswith("2026"):
+                    if f in flujos:
+                        flujos.remove(f)
+                    flujos.append(f)
+                hechos.append(p.get("nombre") + (f"({f})" if isinstance(f, str) and f else ""))
+            lineas.append(f"- Respondí: {texto[:220]}" + (f" [hice: {', '.join(hechos[:8])}]" if hechos else ""))
+    resumen = ["[Memoria de la conversación anterior (resumida para no saturar; lo reciente va completo después):"]
+    resumen += lineas[-40:]
+    if flujos:
+        resumen.append(f"- Flujos con los que se trabajó, del primero al último: {', '.join(flujos[-12:])}. El último de la lista es «el flujo donde estábamos», salvo que en los mensajes recientes se haya trabajado con otro.")
+    if adjuntos:
+        resumen.append(f"- Adjuntos que mandó antes (siguen disponibles con subir_adjuntos_a_flujo / probar_paso): {', '.join(x for x in adjuntos if x)[:600]}.")
+    resumen.append("]")
+    memoria = {"rol": "usuario", "texto": "\n".join(resumen)}
+    acuse = {"rol": "asistente", "texto": "Entendido, tengo presente lo anterior."}
+    return [memoria, acuse] + recientes
+
+
+
 def describir_pantalla(p: Dict[str, Any], flujo: str) -> str:
     """Dónde está la persona ahora mismo, según lo que manda la web en cada mensaje."""
     vista = p.get("vista") or ""
@@ -1045,7 +1105,7 @@ def conversar(entrada: Dict[str, Any], aviso: Any = None) -> Dict[str, Any]:
                                          tools=[_herramientas()], temperature=0.2,
                                          automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True))
     contenidos: List[Any] = []
-    mensajes = entrada.get("mensajes") or []
+    mensajes = compactar(entrada.get("mensajes") or [])
     # Los adjuntos se le muestran tal cual (imágenes y PDF) en los últimos
     # mensajes; en los anteriores van como texto, para no repetir bytes.
     recientes = set(sorted(i for i, m in enumerate(mensajes) if m.get("rol") == "usuario")[-3:])
@@ -1126,7 +1186,7 @@ def _conversar_con_proveedor(entrada: Dict[str, Any], ia: Dict[str, Any], avisar
     PANTALLA["flujo"] = flujo
     sistema = SISTEMA + "\n\n" + describir_pantalla(entrada.get("pantalla") or {}, flujo)
     mensajes: List[Dict[str, Any]] = []
-    todos = entrada.get("mensajes") or []
+    todos = compactar(entrada.get("mensajes") or [])
     recientes = set(sorted(i for i, m in enumerate(todos) if m.get("rol") == "usuario")[-3:])
     for i, m in enumerate(todos):
         if m.get("rol") == "usuario":

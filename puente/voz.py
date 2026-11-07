@@ -97,7 +97,18 @@ def enviar_audio(datos: bytes) -> None:
 
 
 # Lo que las herramientas del chat emiten (enfocar, navegar, propuesta…) va al navegador.
-asistente.emitir = enviar
+# Los archivos que generan las herramientas durante la llamada se guardan con el turno (y quedan como cápsulas en el chat).
+ARCHIVOS_DEL_TURNO: List[Dict[str, Any]] = []
+
+
+def _emitir_en_llamada(tipo: str, **datos: Any) -> None:
+    if tipo == "archivos" and isinstance(datos.get("archivos"), list):
+        with _salida:
+            ARCHIVOS_DEL_TURNO.extend(x for x in datos["archivos"] if isinstance(x, dict))
+    enviar(tipo, **datos)
+
+
+asistente.emitir = _emitir_en_llamada
 
 
 def leer_trama() -> tuple[str, bytes] | None:
@@ -299,7 +310,10 @@ async def llamada(primera: Any, abrir: Any, types: Any, cid: str, flujo: str, pr
     async def guardar() -> None:
         nonlocal turno
         t, turno = turno, Turno()
-        if t.vacio():
+        with _salida:
+            archivos = ARCHIVOS_DEL_TURNO[:20]
+            ARCHIVOS_DEL_TURNO.clear()
+        if t.vacio() and not archivos:
             return
         texto = re.sub(r"<[^>]{1,40}>|\{[a-z_ ]{1,30}\}", "", t.dicho).strip()
         if not re.search(r"\w", texto):  # ruido como «-» o «...» no es una respuesta
@@ -308,7 +322,7 @@ async def llamada(primera: Any, abrir: Any, types: Any, cid: str, flujo: str, pr
             texto = (texto + "\n\n" if texto else "") + "\n\n".join(t.escrito)
         cuerpo = {
             "usuario": {"texto": t.escuchado.strip(), "voz": True},
-            "asistente": {"texto": texto, "voz": True, "pasos": t.pasos, "cambiados": sorted(t.cambiados), "propuestas": t.propuestas},
+            "asistente": {"texto": texto, "voz": True, "pasos": t.pasos, "cambiados": sorted(t.cambiados), "propuestas": t.propuestas, "archivos": archivos},
         }
         await asyncio.to_thread(api, "POST", f"/api/chats/{cid}/turno", cuerpo)
         enviar("guardado", cambiados=sorted(t.cambiados))
