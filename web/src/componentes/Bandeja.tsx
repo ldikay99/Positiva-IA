@@ -226,15 +226,20 @@ function PanelBuzon({ porCaso }: { porCaso: Record<string, Corrida> }) {
   const correr = usar((s) => s.correrComoElJob);
   const avisar = usar((s) => s.avisar);
   const enfocar = usar((s) => s.enfocar);
+  const flujo = usar((s) => s.flujo);
   const [n, setN] = useState(10);
   const [elegidos, setElegidos] = useState<string[]>([]);
   const [corriendo, setCorriendo] = useState(false);
 
+  // Cada flujo lee su propia carpeta del buzón de producción.
   useEffect(() => {
+    usar.setState({ buzon: null });
+    setElegidos([]);
     void cargar(n);
-  }, [n, cargar]);
+  }, [n, cargar, flujo]);
 
-  const correos = buzon?.correos ?? [];
+  // En tutelas el job toma el hilo como unidad: se elige el correo más reciente de cada hilo.
+  const correos = (buzon?.correos ?? []).filter((c) => c.principal !== false);
   const porId = useMemo(() => new Map(correos.map((c) => [c.id, c])), [correos]);
   const alternar = (id: string) => setElegidos((m) => (m.includes(id) ? m.filter((x) => x !== id) : [...m, id]));
 
@@ -286,6 +291,7 @@ function PanelBuzon({ porCaso }: { porCaso: Record<string, Corrida> }) {
             fichas={
               <>
                 {c.conAdjuntos && <span className="ficha"><Icono n="adjunto" tam={11} /></span>}
+                {(c.correosEnHilo ?? 1) > 1 && <span className="ficha tono-azul" title="El job procesa el hilo completo">hilo de {c.correosEnHilo}</span>}
                 {c.categorias.map((k) => <span key={k} className="ficha tono-ambar" title="Etiqueta que tiene hoy en el buzón">{k}</span>)}
               </>
             }

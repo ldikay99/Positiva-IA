@@ -125,6 +125,9 @@ export interface CorreoDelBuzon {
   conAdjuntos: boolean;
   hilo: string;
   traido?: boolean;
+  /** Solo tutelas: el job procesa el hilo como unidad. */
+  correosEnHilo?: number;
+  principal?: boolean;
 }
 
 /** Un flujo de la plataforma: de código (un motor real) o declarativo (creado aquí o por la IA). */

@@ -242,7 +242,7 @@ export const usar = create<Estado>((set, get) => ({
   cargarBuzon: async (n, fresco = false) => {
     set({ cargandoBuzon: true });
     try {
-      const buzon = await pedir<Buzon>(`/api/buzon?n=${n}${fresco ? "&fresco=1" : ""}`);
+      const buzon = await pedir<Buzon>(`/api/buzon?n=${n}${fresco ? "&fresco=1" : ""}&flujo=${encodeURIComponent(get().flujo)}`);
       set({ buzon });
     } catch (e) {
       set({ buzon: { carpeta: "", total: null, correos: [], error: (e as Error).message } });
@@ -252,7 +252,7 @@ export const usar = create<Estado>((set, get) => ({
   },
 
   correrComoElJob: async (n, ids) => {
-    const r = await pedir<{ lote: string | null; corridas: { id: string; caso: string }[] }>("/api/buzon/correr", { method: "POST", body: JSON.stringify(ids?.length ? { ids } : { n }) });
+    const r = await pedir<{ lote: string | null; corridas: { id: string; caso: string }[] }>(q("/api/buzon/correr", get().flujo), { method: "POST", body: JSON.stringify(ids?.length ? { ids } : { n }) });
     const bandeja = await pedir<Correo[]>("/api/bandeja");
     set((s) => {
       const corridas = { ...s.corridas };

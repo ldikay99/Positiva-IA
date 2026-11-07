@@ -27,6 +27,7 @@ const RUTAS = {
   correo: "M3 6h18v12H3zM3 6l9 7 9-7",
   rayo: "M13 3L5 13h6l-1 8 8-10h-6z",
   mas: "M12 5v14M5 12h14",
+  atras: "M15 5l-7 7 7 7",
   menos: "M5 12h14",
   menu: "M4 6h16M4 12h16M4 18h16",
   lado: "M4 4h16v16H4zM15 4v16",

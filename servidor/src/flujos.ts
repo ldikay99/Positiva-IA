@@ -18,15 +18,134 @@ import { catalogo as catalogoDePqrd, type Catalogo } from "./catalogo.ts";
  * nada de un flujo aparece en otro.
  */
 
-export const TIPOS_DE_NODO = ["entrada_correo", "filtro", "condicion", "ia_clasificar", "ia_extraer", "validar", "ia_redactar", "salida"] as const;
+/** Los tipos de nodo; su documentación está en `puente/nodos_declarativos.py`. */
+export const TIPOS_DE_NODO = [
+  "entrada_correo", "leer_adjuntos", "filtro", "condicion", "ia_clasificar", "ia_decidir", "ia_extraer", "extraer_regex", "validar",
+  "transformar", "buscar_en_tabla", "bifurcar_por_valor", "ia_generar", "resumir", "ia_redactar", "notificar", "enviar", "salida",
+] as const;
+export type TipoDeNodo = (typeof TIPOS_DE_NODO)[number];
+const TIPOS_IA = new Set<string>(["ia_clasificar", "ia_decidir", "ia_extraer", "ia_generar", "resumir", "ia_redactar"]);
+
+// ------------------------------------------------- config de cada tipo
+//
+// La forma de la config. Lo semántico (variables que existan antes, aristas por
+// cada salida, ciclos) lo valida el motor en Python, que es quien ejecuta.
+
+const RESERVADAS = ["correo", "adjuntos", "asunto", "cuerpo", "remitente", "texto"];
+const variable = z.string({ error: "tiene que ser un nombre de variable" })
+  .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "nombre de variable: letras, números y guion bajo, sin espacios")
+  .refine((x) => !RESERVADAS.includes(x), `nombre reservado (${RESERVADAS.join(", ")})`);
+const textoReq = (que: string) => z.string({ error: `falta ${que}` }).trim().min(1, `falta ${que}`);
+const booleano = z.boolean({ error: "tiene que ser true o false" });
+const regex = (que: string) => z.string({ error: `falta ${que}` }).min(1, `falta ${que}`).refine((p) => {
+  try { new RegExp(p.replace(/\(\?P</g, "(?<")); return true; } catch { return false; }
+}, `${que}: expresión regular inválida`);
+const comunes = {
+  entradas: z.array(z.string().min(1), { error: "entradas tiene que ser una lista de nombres" }).optional(),
+  salida: variable.optional(),
+  modelo: z.string().min(1).optional(),
+  temperatura: z.number({ error: "temperatura tiene que ser un número" }).min(0, "temperatura entre 0 y 2").max(2, "temperatura entre 0 y 2").optional(),
+};
+const conf = <T extends z.ZodRawShape>(forma: T) => z.looseObject({ ...comunes, ...forma });
+const valorOObjeto = (clave: string) => z.union([z.string().min(1), z.looseObject({ [clave]: z.string({ error: `cada elemento necesita ${clave}` }).min(1) })]);
+const OPERADOR = z.enum(["contiene", "coincide", "no_coincide", "igual", "vacio", "no_vacio"], { error: "operador: contiene, coincide, no_coincide, igual, vacio o no_vacio" });
+const filtroConf = conf({ campo: textoReq("campo"), operador: OPERADOR.optional(), valor: z.unknown().optional() });
+const OPS = ["plantilla", "asignar", "mayusculas", "minusculas", "titulo", "limpiar", "solo_digitos", "regex_extraer", "regex_reemplazar", "concatenar", "defecto"] as const;
+const operacion = z.looseObject({
+  op: z.enum(OPS, { error: `op: ${OPS.join(", ")}` }),
+  salida: variable,
+  de: z.union([z.string().min(1), z.array(z.string().min(1)).min(1)]).optional(),
+  plantilla: z.string().optional(),
+  patron: regex("patron").optional(),
+  reemplazo: z.string().optional(),
+  separador: z.string().optional(),
+  grupo: z.number().int().min(0).optional(),
+});
+const DESENLACES_DECL = ["radicar", "manual", "reenviar", "descartar", "responder", "duplicado"] as const;
+
+export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
+  entrada_correo: conf({ leer_adjuntos: booleano.optional(), ocr: booleano.optional() }),
+  leer_adjuntos: conf({
+    ocr: booleano.optional(), vision: booleano.optional(),
+    tipos: z.array(z.string().regex(/^(pdf|imagen|docx|xlsx|texto|p7m|\.[a-z0-9]{1,6})$/i, "tipo: pdf, imagen, docx, xlsx, texto, p7m o una extensión como .pdf")).min(1).optional(),
+    nombre_patron: regex("nombre_patron").optional(),
+    max_paginas: z.number().int().min(1, "max_paginas entre 1 y 60").max(60, "max_paginas entre 1 y 60").optional(),
+    max_caracteres: z.number().int().positive().optional(),
+  }),
+  filtro: filtroConf,
+  condicion: filtroConf,
+  ia_clasificar: conf({
+    categorias: z.array(valorOObjeto("valor"), { error: "faltan categorias: [{valor, descripcion}]" }).min(1, "faltan categorias"),
+    variable: variable.optional(), instrucciones: z.string().optional(),
+  }).refine((c) => c.variable || c.salida, { message: "falta variable (o salida) donde dejar la categoría", path: ["variable"] }),
+  ia_decidir: conf({
+    pregunta: z.string().optional(), instrucciones: z.string().optional(),
+    opciones: z.array(z.looseObject({ valor: textoReq("valor"), criterio: z.string().optional(), descripcion: z.string().optional() }), { error: "faltan opciones: [{valor, criterio}]" }).min(2, "al menos dos opciones"),
+  }).refine((c) => c.pregunta || c.instrucciones, { message: "falta pregunta (o instrucciones)", path: ["pregunta"] }),
+  ia_extraer: conf({
+    instrucciones: z.string().optional(),
+    campos: z.array(z.looseObject({
+      nombre: variable, descripcion: z.string().optional(), obligatorio: z.boolean().optional(),
+      tipo: z.enum(["texto", "numero", "fecha", "lista", "booleano"], { error: "tipo: texto, numero, fecha, lista o booleano" }).optional(),
+    }), { error: "faltan campos: [{nombre, descripcion}]" }).min(1, "faltan campos"),
+  }),
+  extraer_regex: conf({
+    de: z.string().optional(), patron: regex("patron").optional(),
+    campos: z.array(z.looseObject({ nombre: variable, patron: regex("patron"), grupo: z.number().int().min(0).optional(), todos: z.boolean().optional(), obligatorio: z.boolean().optional() })).min(1).optional(),
+  }).refine((c) => c.campos || (c.patron && c.salida), { message: "faltan campos: [{nombre, patron}] (o patron y salida)", path: ["campos"] }),
+  validar: conf({
+    reglas: z.array(z.looseObject({
+      campo: textoReq("campo"),
+      regla: z.enum(["obligatorio", "patron", "en_lista", "longitud"], { error: "regla: obligatorio, patron, en_lista o longitud" }).optional(),
+      valor: z.unknown().optional(), codigo: z.string().optional(), mensaje: z.string().optional(),
+    }), { error: "faltan reglas: [{campo, regla}]" }).min(1, "faltan reglas"),
+  }),
+  // Una lista de operaciones o, en corto, una sola operación en la propia config.
+  transformar: z.looseObject({ operaciones: z.array(operacion, { error: "operaciones tiene que ser una lista [{op, salida, ...}]" }).min(1, "faltan operaciones").optional() })
+    .superRefine((c, ctx) => {
+      if (c.operaciones) return;
+      if (!("op" in c)) return void ctx.addIssue({ code: "custom", path: ["operaciones"], message: "transformar necesita operaciones: [{op, salida, ...}]" });
+      const r = operacion.safeParse(c);
+      if (!r.success) for (const i of r.error.issues) ctx.addIssue({ code: "custom", path: i.path.map((p) => (typeof p === "symbol" ? String(p) : p)), message: i.message });
+    }),
+  buscar_en_tabla: conf({
+    buscar: textoReq("buscar"), columna: textoReq("columna"),
+    tabla: z.array(z.record(z.string(), z.unknown())).min(1, "la tabla está vacía").optional(),
+    archivo: z.string().regex(/^[^:]+\.csv$/i, "archivo: ruta relativa a un .csv del repositorio").refine((r) => !r.split(/[\\/]/).includes(".."), "archivo: sin «..»").optional(),
+    traer: z.array(z.string().min(1)).optional(),
+    modo: z.enum(["igual", "contiene"], { error: "modo: igual o contiene" }).optional(),
+  }).refine((c) => c.tabla || c.archivo, { message: "falta tabla (filas embebidas) o archivo (CSV del repositorio)", path: ["tabla"] }),
+  bifurcar_por_valor: conf({
+    variable: textoReq("variable"),
+    casos: z.array(valorOObjeto("valor"), { error: "faltan casos: [valores]" }).min(1, "faltan casos"),
+  }),
+  ia_generar: conf({
+    instrucciones: textoReq("instrucciones"),
+    formato: z.enum(["texto", "json"], { error: "formato: texto o json" }).optional(),
+    esquema: z.record(z.string(), z.unknown(), { error: "esquema tiene que ser un objeto" }).optional(),
+    mensaje: z.string().optional(),
+  }),
+  resumir: conf({ longitud: z.string().optional(), enfoque: z.string().optional(), instrucciones: z.string().optional() }),
+  ia_redactar: conf({ instrucciones: z.string().optional(), variable: variable.optional() }),
+  notificar: conf({ para: textoReq("para"), cuerpo: textoReq("cuerpo"), asunto: z.string().optional(), cc: z.string().optional(), canal: z.string().optional() }),
+  enviar: conf({ cuerpo: textoReq("cuerpo"), para: z.string().optional(), asunto: z.string().optional(), cc: z.string().optional() }),
+  salida: z.looseObject({
+    desenlace: z.enum(DESENLACES_DECL, { error: `desenlace: ${DESENLACES_DECL.join(", ")}` }),
+    motivo: z.string().optional(), destino: z.string().optional(), plantilla_respuesta: z.string().optional(),
+    campos: z.union([z.array(z.string().min(1)), z.record(z.string(), z.string())], { error: "campos: lista de variables o {nombre: plantilla}" }).optional(),
+  }),
+};
 
 const nodo = z.object({
   id: z.string().regex(/^[a-z][a-z0-9_]{1,40}$/, "id en minúsculas, sin espacios"),
-  tipo: z.enum(TIPOS_DE_NODO),
+  tipo: z.enum(TIPOS_DE_NODO, { error: `tipo desconocido (válidos: ${TIPOS_DE_NODO.join(", ")})` }),
   nombre: z.string().min(1).max(80),
   descripcion: z.string().max(600).optional(),
   // La IA a veces manda null por «sin configuración».
   config: z.record(z.string(), z.unknown()).nullish().transform((v) => v ?? {}),
+}).superRefine((n, ctx) => {
+  const r = CONFIG_DE[n.tipo].safeParse(n.config);
+  if (!r.success) for (const i of r.error.issues) ctx.addIssue({ code: "custom", path: ["config", ...i.path.map((p) => (typeof p === "symbol" ? String(p) : p))], message: `${n.id} (${n.tipo}): ${i.message}` });
 });
 
 export const definicion = z.object({
@@ -65,7 +184,7 @@ const DE_CODIGO: Flujo[] = [
     trabajador: config.trabajador,
   },
   {
-    id: "tutelas", nombre: "Radicación de tutelas", tipo: "codigo", buzonReal: false, lote: false,
+    id: "tutelas", nombre: "Radicación de tutelas", tipo: "codigo", buzonReal: true, lote: false,
     descripcion: "Notificaciones judiciales: valida que el remitente sea un juzgado, detecta tutela o actuación, encuentra el radicado y el juzgado, exige anexos, deduplica y radica en SGDEA.",
     trabajador: resolve(raiz, "puente", "trabajador_tutelas.py"),
   },
@@ -146,26 +265,98 @@ export async function borrar(id: string): Promise<boolean> {
 
 // ------------------------------------------------------------------ catálogos
 
-const CATEGORIA: Record<string, string> = {
-  entrada_correo: "entrada", filtro: "filtro", condicion: "ruta", ia_clasificar: "ia", ia_extraer: "ia",
-  validar: "validacion", ia_redactar: "ia", salida: "salida",
+const CATEGORIA: Record<TipoDeNodo, string> = {
+  entrada_correo: "entrada", leer_adjuntos: "ocr", filtro: "filtro", condicion: "ruta", ia_clasificar: "ia", ia_decidir: "ia",
+  ia_extraer: "ia", extraer_regex: "busqueda", validar: "validacion", transformar: "datos", buscar_en_tabla: "datos",
+  bifurcar_por_valor: "ruta", ia_generar: "ia", resumir: "ia", ia_redactar: "ia", notificar: "integracion", enviar: "integracion", salida: "salida",
 };
-const NOMBRE_TIPO: Record<string, string> = {
-  entrada_correo: "Entrada de correo", filtro: "Filtro", condicion: "Condición", ia_clasificar: "IA · clasificar",
-  ia_extraer: "IA · extraer datos", validar: "Validación", ia_redactar: "IA · redactar", salida: "Salida",
+const NOMBRE_TIPO: Record<TipoDeNodo, string> = {
+  entrada_correo: "Entrada de correo", leer_adjuntos: "Leer adjuntos", filtro: "Filtro", condicion: "Condición",
+  ia_clasificar: "IA · clasificar", ia_decidir: "IA · decidir", ia_extraer: "IA · extraer datos", extraer_regex: "Extraer con regex",
+  validar: "Validación", transformar: "Transformar", buscar_en_tabla: "Buscar en tabla", bifurcar_por_valor: "Bifurcar por valor",
+  ia_generar: "IA · generar", resumir: "IA · resumir", ia_redactar: "IA · redactar", notificar: "Notificar (simulado)",
+  enviar: "Enviar respuesta (simulado)", salida: "Salida",
 };
+
+const valorDe = (x: unknown, clave = "valor") => (typeof x === "object" && x ? String((x as Record<string, unknown>)[clave] ?? "") : String(x));
+const lista = (x: unknown) => (Array.isArray(x) ? (x as unknown[]) : []);
+const corto = (x: unknown, n = 160) => { const t = typeof x === "string" ? x : JSON.stringify(x ?? ""); return t.length > n ? `${t.slice(0, n)}…` : t; };
 
 function describirConfig(n: Definicion["nodos"][number]): { id: string; descripcion: string }[] {
   const c = n.config as Record<string, unknown>;
   const r: { id: string; descripcion: string }[] = [];
   const add = (d: string) => r.push({ id: `${n.id}_${r.length + 1}`, descripcion: d });
+  const ia = TIPOS_IA.has(n.tipo);
+  if (Array.isArray(c.entradas) && c.entradas.length) add(`Recibe: ${(c.entradas as string[]).join(", ")}`);
+  else if (ia) add("Recibe: el correo, los adjuntos y las variables obtenidas");
   if (typeof c.instrucciones === "string" && c.instrucciones) add(`Instrucciones a la IA: ${c.instrucciones}`);
-  if (Array.isArray(c.categorias)) add(`Categorías: ${(c.categorias as unknown[]).map((x) => (typeof x === "object" && x ? `${(x as { valor: string }).valor}` : String(x))).join(", ")} → variable «${String(c.variable ?? n.id)}»`);
-  if (Array.isArray(c.campos)) for (const f of c.campos as { nombre: string; descripcion?: string; obligatorio?: boolean }[]) add(`Campo «${f.nombre}»${f.obligatorio ? " (obligatorio)" : ""}: ${f.descripcion ?? ""}`);
-  if (Array.isArray(c.reglas)) for (const x of c.reglas as { campo: string; regla: string; valor?: unknown; mensaje?: string }[]) add(`${x.campo}: ${x.regla}${x.valor !== undefined ? ` ${JSON.stringify(x.valor)}` : ""}${x.mensaje ? ` — ${x.mensaje}` : ""}`);
-  if (n.tipo === "filtro" || n.tipo === "condicion") add(`${String(c.campo)} ${String(c.operador ?? "contiene")} «${String(c.valor ?? "")}»: sale por «si» o «no»`);
-  if (n.tipo === "salida") add(`Desenlace: ${String(c.desenlace)}${c.motivo ? ` · motivo ${String(c.motivo)}` : ""}${c.destino ? ` · destino ${String(c.destino)}` : ""}`);
-  if (n.tipo === "entrada_correo") add(`Lee asunto, cuerpo y remitente${c.leer_adjuntos === false ? "" : `, y los adjuntos${c.ocr === false ? "" : " con OCR y visión"}`}`);
+  switch (n.tipo) {
+    case "entrada_correo":
+      add(`Lee asunto, cuerpo y remitente${c.leer_adjuntos === false ? " (los adjuntos se leen aparte o no se leen)" : `, y los adjuntos${c.ocr === false ? " sin OCR" : " con OCR y visión"}`}`);
+      break;
+    case "leer_adjuntos":
+      add(`Lee ${lista(c.tipos).length ? `solo ${lista(c.tipos).join(", ")}` : "todos los adjuntos"}${c.nombre_patron ? ` cuyo nombre coincide con «${String(c.nombre_patron)}»` : ""}`);
+      add(`${c.ocr === false ? "Sin OCR (solo el texto propio)" : c.vision === false ? "Con OCR de tesseract, sin visión" : "Con OCR y visión del modelo"} · hasta ${String(c.max_paginas ?? 60)} páginas por PDF`);
+      add("Sale por «ok» o «sin_adjuntos»");
+      break;
+    case "filtro":
+    case "condicion":
+      add(`${String(c.campo)} ${String(c.operador ?? "contiene")} «${String(c.valor ?? "")}»: sale por «si» o «no»`);
+      break;
+    case "ia_clasificar":
+      add(`Categorías: ${lista(c.categorias).map((x) => valorDe(x)).join(", ")} → variable «${String(c.salida ?? c.variable ?? n.id)}»`);
+      break;
+    case "ia_decidir":
+      if (c.pregunta) add(`Pregunta: ${String(c.pregunta)}`);
+      for (const o of lista(c.opciones)) add(`«${valorDe(o)}» si ${valorDe(o, "criterio") || valorDe(o, "descripcion")}`);
+      add(`Deja la decisión en «${String(c.salida ?? n.id)}» y la justificación en «${String(c.salida ?? n.id)}_justificacion»`);
+      break;
+    case "ia_extraer":
+    case "extraer_regex":
+      if (n.tipo === "extraer_regex") add(`Busca en: ${String(c.de ?? "asunto, cuerpo y adjuntos")}`);
+      for (const f of lista(c.campos) as { nombre: string; descripcion?: string; obligatorio?: boolean; patron?: string }[])
+        add(`Campo «${f.nombre}»${f.obligatorio ? " (obligatorio)" : ""}: ${f.patron ? `/${f.patron}/` : (f.descripcion ?? "")}`);
+      if (n.tipo === "extraer_regex" && c.patron) add(`«${String(c.salida)}»: /${String(c.patron)}/`);
+      if (n.tipo === "ia_extraer" && c.salida) add(`Además deja todos los campos juntos en «${String(c.salida)}»`);
+      break;
+    case "validar":
+      for (const x of lista(c.reglas) as { campo: string; regla?: string; valor?: unknown; mensaje?: string }[])
+        add(`${x.campo}: ${x.regla ?? "obligatorio"}${x.valor !== undefined ? ` ${JSON.stringify(x.valor)}` : ""}${x.mensaje ? ` — ${x.mensaje}` : ""}`);
+      break;
+    case "transformar":
+      for (const o of (Array.isArray(c.operaciones) ? c.operaciones : [c]) as Record<string, unknown>[])
+        add(`«${String(o.salida)}» ← ${String(o.op)}${o.de ? ` de ${corto(o.de)}` : ""}${o.plantilla ? ` «${corto(o.plantilla)}»` : ""}${o.patron ? ` /${String(o.patron)}/` : ""}${o.valor !== undefined ? ` = ${corto(o.valor)}` : ""}`);
+      break;
+    case "buscar_en_tabla":
+      add(`Busca ${String(c.buscar)} en la columna «${String(c.columna)}» de ${c.archivo ? String(c.archivo) : `una tabla de ${lista(c.tabla).length} filas`} (${String(c.modo ?? "igual")})`);
+      add(`Trae ${lista(c.traer).length ? lista(c.traer).join(", ") : "todas las columnas"} → «${String(c.salida ?? n.id)}» · sale por «encontrado» o «no_encontrado»`);
+      break;
+    case "bifurcar_por_valor":
+      add(`Según ${String(c.variable)}: ${lista(c.casos).map((x) => valorDe(x)).join(", ")} u «otro»`);
+      break;
+    case "ia_generar":
+      add(`Genera ${c.esquema || c.formato === "json" ? "JSON" : "texto"} → «${String(c.salida ?? n.id)}»${c.temperatura !== undefined ? ` · temperatura ${String(c.temperatura)}` : ""}${c.modelo ? ` · ${String(c.modelo)}` : ""}`);
+      if (c.esquema) add(`Esquema: ${corto(c.esquema, 300)}`);
+      break;
+    case "resumir":
+      add(`Resume en ${String(c.longitud ?? "un párrafo breve")}${c.enfoque ? `, priorizando ${String(c.enfoque)}` : ""} → «${String(c.salida ?? "resumen")}»`);
+      break;
+    case "ia_redactar":
+      add(`Redacta → «${String(c.salida ?? c.variable ?? "respuesta")}»`);
+      break;
+    case "notificar":
+    case "enviar":
+      add(`Para: ${String(c.para ?? "{{correo.remitente_correo}}")}${c.cc ? ` · cc ${String(c.cc)}` : ""} · asunto: ${String(c.asunto ?? (n.tipo === "enviar" ? "RE: {{correo.asunto}}" : ""))}`);
+      add(`Cuerpo: ${corto(c.cuerpo, 300)}`);
+      add("Simulado: se arma el mensaje y queda como escritura bloqueada, nunca se envía");
+      break;
+    case "salida":
+      add(`Desenlace: ${String(c.desenlace)}${c.motivo ? ` · motivo ${String(c.motivo)}` : ""}${c.destino ? ` · destino ${String(c.destino)}` : ""}`);
+      if (c.campos) add(`Entrega: ${Array.isArray(c.campos) ? (c.campos as string[]).join(", ") : Object.keys(c.campos as object).join(", ")}`);
+      if (c.plantilla_respuesta) add(`Respuesta: ${corto(c.plantilla_respuesta, 300)}`);
+      break;
+  }
+  if (c.salida && !["ia_clasificar", "ia_decidir", "ia_extraer", "extraer_regex", "transformar", "buscar_en_tabla", "ia_generar", "resumir", "ia_redactar", "salida"].includes(n.tipo)) add(`Deja su resultado en «${String(c.salida)}»`);
   return r;
 }
 
@@ -185,13 +376,13 @@ export function catalogoDeclarativo(d: Definicion): Catalogo & { fases: { id: st
   // Cada columna se llama por lo que hacen sus nodos ("IA · clasificar", "Validación").
   const fases = columnas.filter(Boolean).map((ids, i) => {
     const tipos = [...new Set(ids.map((x) => d.nodos.find((n) => n.id === x)?.tipo ?? ""))];
-    const nombre = i === 0 ? "Entrada" : tipos.every((t) => t === "salida") ? "Salidas" : tipos.map((t) => NOMBRE_TIPO[t] ?? t).join(" y ");
+    const nombre = i === 0 ? "Entrada" : tipos.every((t) => t === "salida") ? "Salidas" : tipos.map((t) => (NOMBRE_TIPO as Record<string, string>)[t] ?? t).join(" y ");
     return { id: `paso-${i + 1}`, nombre, nodos: ids };
   });
   return {
     nodos: d.nodos.map((n) => ({
       id: n.id, nombre: n.nombre, descripcion: n.descripcion || NOMBRE_TIPO[n.tipo] || n.tipo, etapa_cronometro: n.id,
-      usa_ia: n.tipo.startsWith("ia_"), categoria: CATEGORIA[n.tipo], tipo_declarativo: n.tipo, config: n.config,
+      usa_ia: TIPOS_IA.has(n.tipo), categoria: CATEGORIA[n.tipo], tipo_declarativo: n.tipo, config: n.config,
       siguientes: d.aristas.filter((a) => a.desde === n.id).map((a) => a.hacia),
       desenlaces: n.tipo === "salida" ? [{ accion: String((n.config as { desenlace?: string }).desenlace ?? ""), cuando: "al llegar aquí" }] : [],
       reglas: describirConfig(n), parametros: [],

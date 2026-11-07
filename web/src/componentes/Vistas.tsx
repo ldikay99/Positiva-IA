@@ -29,9 +29,13 @@ export function VistaCorridas() {
   const verCorrida = usar((s) => s.verCorrida);
   const enfocar = usar((s) => s.enfocar);
   const irA = usar((s) => s.irA);
+  const flujo = usar((s) => s.flujo);
+  const nombreFlujo = usar((s) => s.flujos.find((f) => f.id === s.flujo)?.nombre ?? s.flujo);
+  // La comparación con producción solo existe para PQRD: la bandeja trae lo que hizo el job con esos correos.
+  const conProduccion = flujo === "pqrd";
   const lista = orden.map((id) => corridas[id]).filter((c) => c !== undefined);
   const terminadas = lista.filter((c) => c.resultado);
-  const prod = useMemo(() => Object.fromEntries(bandeja.map((b) => [b.caso, b])), [bandeja]);
+  const prod = useMemo(() => (conProduccion ? Object.fromEntries(bandeja.map((b) => [b.caso, b])) : {}) as Record<string, (typeof bandeja)[number]>, [bandeja, conProduccion]);
 
   const cuenta: Record<string, number> = {};
   for (const c of terminadas) cuenta[String(c.resultado!.accion)] = (cuenta[String(c.resultado!.accion)] ?? 0) + 1;
@@ -47,13 +51,13 @@ export function VistaCorridas() {
   const segmentos = Object.entries(cuenta).sort((a, b) => b[1] - a[1]);
   return (
     <div className="vista">
-      <Cabecera titulo="Corridas" sub="Lo procesado en este visor, comparado con lo que hizo producción con los mismos correos." />
+      <Cabecera titulo="Corridas" sub={conProduccion ? `Lo procesado de «${nombreFlujo}» en este visor, comparado con lo que hizo producción con los mismos correos.` : `Lo procesado de «${nombreFlujo}» en este visor. Solo las corridas de este flujo.`} />
       <div className="kpis grandes">
         <div><b>{terminadas.length}</b><span>correos procesados</span></div>
         <div className="verde"><b>{pct(cuenta.radicado ?? 0)} %</b><span>radicados ({cuenta.radicado ?? 0})</span></div>
         <div className="rojo"><b>{pct(cuenta.manual ?? 0)} %</b><span>a revisión manual ({cuenta.manual ?? 0})</span></div>
-        <div className="azul"><b>{rescatados}</b><span>que producción mandó a manual y aquí se radican</span></div>
-        <div className="ambar"><b>{perdidos}</b><span>que producción radicó y aquí no</span></div>
+        {conProduccion && <div className="azul"><b>{rescatados}</b><span>que producción mandó a manual y aquí se radican</span></div>}
+        {conProduccion && <div className="ambar"><b>{perdidos}</b><span>que producción radicó y aquí no</span></div>}
         <div><b>{tokens.toLocaleString("es-CO")}</b><span>tokens · mediana {String(mediana).replace(".", ",")} s por correo</span></div>
       </div>
       {segmentos.length > 0 && (
@@ -67,7 +71,7 @@ export function VistaCorridas() {
       )}
       <div className="tabla-envoltura">
         <table className="tabla">
-          <thead><tr><th>Correo</th><th>Aquí</th><th>Motivo</th><th>Producción</th><th className="num">Vueltas IA</th><th className="num">Tokens</th><th className="num">Tiempo</th></tr></thead>
+          <thead><tr><th>Correo</th><th>Aquí</th><th>Motivo</th>{conProduccion && <th>Producción</th>}<th className="num">Vueltas IA</th><th className="num">Tokens</th><th className="num">Tiempo</th></tr></thead>
           <tbody>
             {lista.map((c) => {
               const r = c.resultado;
@@ -75,10 +79,10 @@ export function VistaCorridas() {
               const pr = prod[c.caso];
               return (
                 <tr key={c.id} onClick={() => { void verCorrida(c.id); enfocar({ tipo: "corrida", id: c.id }); irA("flujo"); }}>
-                  <td><span className="ficha">{c.caso}</span> <span className="texto-2 chico">{pr?.asunto.slice(0, 50)}</span></td>
+                  <td><span className="ficha">{c.caso}</span> <span className="texto-2 chico">{(pr?.asunto ?? String(c.resultado?.asunto ?? "")).slice(0, 50)}</span></td>
                   <td>{r ? <span className={`pastilla ${TONO_DESENLACE[a] ?? ""}`}>{NOMBRES_DESENLACE[a] ?? a}</span> : <span className="pastilla azul"><span className="girando" />{c.estado === "en_cola" ? "En cola" : "Procesando"}</span>}</td>
                   <td className="chico texto-2">{r?.motivo ? String(r.motivo) : ""}</td>
-                  <td className="chico">{pr ? <span className={`ficha tono-${TONO_DESENLACE[pr.desenlaceProduccion] ?? ""}`}>{pr.desenlaceProduccion}{pr.motivoProduccion ? ` · ${pr.motivoProduccion}` : ""}</span> : ""}</td>
+                  {conProduccion && <td className="chico">{pr ? <span className={`ficha tono-${TONO_DESENLACE[pr.desenlaceProduccion] ?? ""}`}>{pr.desenlaceProduccion}{pr.motivoProduccion ? ` · ${pr.motivoProduccion}` : ""}</span> : ""}</td>}
                   <td className="num">{r ? String(r.vueltas ?? 0) : ""}</td>
                   <td className="num">{r ? (Number(r.tokens_entrada ?? 0) + Number(r.tokens_salida ?? 0)).toLocaleString("es-CO") : ""}</td>
                   <td className="num">{r?.segundos !== undefined ? `${String(r.segundos).replace(".", ",")} s` : ""}</td>
