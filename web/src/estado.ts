@@ -157,10 +157,8 @@ export const usar = create<Estado>((set, get) => ({
       pedir<EstadoMotor>(q("/api/salud", id)),
     ]);
     if (get().flujo !== id) return;
-    const corridas: Record<string, Corrida> = {};
-    for (const c of lista) corridas[c.id] = { ...c, eventos: [] };
-    for (const e of recientes) if (e.corrida && corridas[e.corrida]) corridas[e.corrida]!.eventos.push(e);
-    set({ catalogo, corridas, orden: lista.map((c) => c.id), recientes, motor });
+    // Lo que llegó por el canal mientras se cargaba la lista no se pierde: se fusiona.
+    set((s) => ({ catalogo, motor, ...fusionar(lista, recientes, s) }));
   },
 
   catalogo: null,
@@ -207,7 +205,12 @@ export const usar = create<Estado>((set, get) => ({
   conectar: () => {
     const proto = location.protocol === "https:" ? "wss" : "ws";
     const ws = new WebSocket(`${proto}://${location.host}/api/eventos`);
-    ws.onopen = () => set({ conectado: true });
+    ws.onopen = () => {
+      const reconexion = conexiones++ > 0;
+      set({ conectado: true });
+      // Tras un corte, lo que pasó mientras tanto se trae del servidor: ninguna corrida queda trabada.
+      if (reconexion) void resincronizar();
+    };
     ws.onclose = () => {
       set({ conectado: false });
       setTimeout(() => get().conectar(), 1500);
@@ -357,6 +360,60 @@ export const usar = create<Estado>((set, get) => ({
   centrar: (id) => set((s) => ({ objetivo: { id, n: (s.objetivo?.n ?? 0) + 1 }, vista: "flujo" })),
   abrirParametro: (nodo, clave) => set({ foco: { tipo: "nodo", id: nodo }, parametroAbierto: clave, vista: "flujo" }),
 }));
+
+let conexiones = 0;
+
+type Resumen = Omit<Corrida, "eventos"> & { nEventos: number };
+
+/**
+ * Une lo que dice el servidor (lista y eventos recientes) con lo que ya llegó
+ * por el canal: para cada corrida gana el estado más avanzado y los eventos no
+ * se duplican (se identifican por tipo y momento).
+ */
+function fusionar(lista: Resumen[], recientes: Evento[], s: { corridas: Record<string, Corrida>; orden: string[]; recientes: Evento[] }) {
+  const corridas: Record<string, Corrida> = {};
+  for (const c of lista) corridas[c.id] = { ...c, eventos: [] };
+  for (const e of recientes) if (e.corrida && corridas[e.corrida]) corridas[e.corrida]!.eventos.push(e);
+  const clave = (e: Evento) => `${e.tipo}|${e.t}|${String(e.etapa ?? e.nodo ?? e.campo ?? "")}`;
+  const avance = { en_cola: 0, procesando: 1, terminada: 2, fallida: 2 } as Record<string, number>;
+  for (const [id, viva] of Object.entries(s.corridas)) {
+    const base = corridas[id];
+    if (!base) {
+      corridas[id] = viva;
+      continue;
+    }
+    const vistos = new Set(base.eventos.map(clave));
+    const extra = viva.eventos.filter((e) => !vistos.has(clave(e)));
+    const eventos = [...base.eventos, ...extra].sort((a, b) => a.t - b.t);
+    const masAvanzada = (avance[viva.estado] ?? 0) > (avance[base.estado] ?? 0) ? viva : base;
+    corridas[id] = { ...base, eventos, estado: masAvanzada.estado, resultado: masAvanzada.resultado ?? base.resultado ?? viva.resultado };
+  }
+  const orden = [...new Set([...s.orden.filter((id) => corridas[id]), ...lista.map((c) => c.id)])].sort((a, b) => (corridas[b]!.creada ?? 0) - (corridas[a]!.creada ?? 0));
+  const vistosRecientes = new Set(recientes.map(clave));
+  const todos = [...recientes, ...s.recientes.filter((e) => !vistosRecientes.has(clave(e)))].sort((a, b) => a.t - b.t).slice(-3000);
+  return { corridas, orden, recientes: todos };
+}
+
+async function resincronizar(): Promise<void> {
+  const id = usar.getState().flujo;
+  try {
+    const [lista, recientes, motor] = await Promise.all([
+      pedir<Resumen[]>(q("/api/corridas", id)),
+      pedir<Evento[]>(q("/api/eventos/recientes", id)),
+      pedir<EstadoMotor>(q("/api/salud", id)),
+    ]);
+    if (usar.getState().flujo !== id) return;
+    usar.setState((s) => ({ motor, ...fusionar(lista, recientes, s) }));
+    // La corrida a la vista se vuelve a pedir completa, por si le faltan eventos.
+    const visible = usar.getState().corridaVisible;
+    if (visible) {
+      const completa = await pedir<Corrida>(`/api/corridas/${visible}`).catch(() => null);
+      if (completa && usar.getState().flujo === id) usar.setState((s) => ({ corridas: { ...s.corridas, [visible]: completa } }));
+    }
+  } catch {
+    /* el servidor aún no responde: la próxima reconexión lo intenta de nuevo */
+  }
+}
 
 function recibir(e: Evento): void {
   const s0 = usar.getState();

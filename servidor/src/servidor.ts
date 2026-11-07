@@ -150,7 +150,8 @@ app.delete<{ Params: { id: string } }>("/api/flujos/:id", async (req, res) => {
 
 /** Lo confirma la web después de que una persona acepta explícitamente; Vera nunca lo manda. */
 const confirmadoPorPersona = (req: { headers: Record<string, unknown> }) => String(req.headers["x-confirmado-por-persona"] ?? "").trim().toLowerCase() === "si";
-const sello = () => new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "");
+// Rótulo de una corrida sin correo: fecha y hora más 4 caracteres al azar, para que dos corridas del mismo segundo se distingan.
+const sello = () => `${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "")}-${Math.random().toString(36).slice(2, 6)}`;
 const avisarFlujo = (id: string, extra: Record<string, unknown> = {}) => bus.emit("evento", { tipo: "flujo_guardado", corrida: null, t: Date.now() / 1000, flujo: id, ...extra });
 const MAX_EN_ESPERA = 50;
 

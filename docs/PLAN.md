@@ -35,8 +35,11 @@ Una plataforma de flujos de IA con nodos, más potente que n8n, donde **Vera** (
 - [x] Ficha de cada nodo (`tipos_de_nodo`, `ayuda_nodo`, `reglas_de_flujos`) para explicarlos y para armar flujos.
 - [x] Propone borrar con un botón; nunca borra sola.
 - [x] Herramientas para el entorno de cada flujo y el manifiesto (`ver_entorno`, `definir_variable`, `quitar_variable`, `pedir_secreto`, `ver_manifiesto`, `abrir_entorno`); 60 herramientas en total.
-- [ ] Probar esas herramientas contra las rutas reales cuando el motor las entregue.
-- [ ] Usar los disparadores y conectores nuevos y probarlo armando automatizaciones reales con Vera, por escrito y por voz.
+- [x] Probadas contra las rutas reales: definir variable, ver entorno y manifiesto.
+- [x] Vera armó, validó, corrigió y corrió una automatización real (entrada manual → para cada → fecha → tabla → salida), por escrito y por voz.
+- [x] Antes de correr un flujo, Vera revisa la entrada contra lo que pide su disparador y corrige sola.
+- [x] Voz en paralelo sin choques: los resultados se entregan solo cuando no hay un turno abierto, una tarea idéntica en curso no se repite, el proceso escrito no repite lo que la voz ya lanzó y no se guardan marcadores ni ruido.
+- [ ] Probar los conectores reales (Postgres, MySQL, Graph, Drive) con cuentas de prueba: hoy solo están probados con dobles.
 
 ## 2. Motor de flujos
 
@@ -45,16 +48,16 @@ Una plataforma de flujos de IA con nodos, más potente que n8n, donde **Vera** (
 - [x] Plantillas `{{lista[campo=valor]}}` y claves con punto.
 - [x] Nodo `http` seguro.
 - [x] Muestra de datos por nodo.
-- [~] Disparadores: manual, programado, webhook y correo nuevo; correr cualquier flujo con datos de entrada.
-- [~] Conectores: correo (IMAP, SMTP, Graph), Google Drive, Postgres, MySQL, SQLite, hojas de cálculo y archivos.
-- [~] Lógica: `para_cada`, ramas en paralelo y `unir`, subflujos, expresiones seguras, fechas, JSON y tablas de datos propias.
-- [~] Conexiones (credenciales) cifradas, con permiso de escritura que solo da una persona.
-- [~] Entorno por flujo: variables y secretos propios de cada flujo, no globales.
-  - [~] `{{entorno.NOMBRE}}` en plantillas, con los secretos enmascarados siempre.
-  - [~] Conexiones de un flujo o globales.
-  - [~] PQRD y tutelas arrancan con su propio entorno; la configuración global actual pasa a PQRD.
-- [~] Manifiesto por flujo para la revisión antes de producción.
-- [~] Versiones, restaurar, duplicar y renombrar por API.
+- [x] Disparadores: manual, programado, webhook y correo nuevo; correr cualquier flujo con datos de entrada.
+- [x] Conectores: correo (IMAP, SMTP, Graph), Google Drive, Postgres, MySQL, SQLite, hojas de cálculo y archivos.
+- [x] Lógica: `para_cada`, ramas en paralelo y `unir`, subflujos, expresiones seguras, fechas, JSON y tablas de datos propias.
+- [x] Conexiones (credenciales) cifradas, con permiso de escritura que solo da una persona.
+- [x] Entorno por flujo: variables y secretos propios de cada flujo, no globales.
+  - [x] `{{entorno.NOMBRE}}` en plantillas, con los secretos enmascarados siempre.
+  - [x] Conexiones de un flujo o globales.
+  - [x] PQRD y tutelas arrancan con su propio entorno; la configuración global actual pasa a PQRD.
+- [x] Manifiesto por flujo para la revisión antes de producción.
+- [x] Versiones, restaurar, duplicar y renombrar por API.
 
 ## 3. Editor visual e interfaz
 
@@ -63,16 +66,27 @@ Una plataforma de flujos de IA con nodos, más potente que n8n, donde **Vera** (
 - [x] Celular con «Más»; vistas que se reacomodan.
 - [x] Corridas por flujo, con motivos en palabras.
 - [x] Eventos `positiva:control` para lienzo, correspondencia, filtros, proceso y paneles.
-- [~] Editor de flujos declarativos:
-  - [~] paleta de nodos y conexiones arrastrando;
-  - [~] formularios generados desde el esquema de cada nodo, con ayuda y ejemplos;
-  - [~] guardar con validación, versiones, deshacer y rehacer;
-  - [~] renombrar, duplicar y borrar con confirmación;
-  - [~] «Correr» con formulario de entrada.
-- [~] Vista «Conexiones».
-- [~] Sección «Entorno» por flujo y vista del manifiesto.
-- [~] Eventos de control del editor para Vera.
+- [x] Editor de flujos declarativos:
+  - [x] paleta de nodos y conexiones arrastrando;
+  - [x] formularios generados desde el esquema de cada nodo, con ayuda y ejemplos;
+  - [x] guardar con validación, versiones, deshacer y rehacer;
+  - [x] renombrar, duplicar y borrar con confirmación;
+  - [x] «Correr» con formulario de entrada.
+- [x] Vista «Conexiones».
+- [x] Sección «Entorno» por flujo y vista del manifiesto.
+- [x] Eventos de control del editor para Vera.
 - [ ] Tooltips propios en lugar de los `title` nativos.
+
+## 3b. Canal de eventos y paralelismo
+
+- [x] Prueba de carga: 8 corridas en paralelo de 3 flujos (declarativo, tutelas, PQRD). 222 eventos, ninguno sin flujo ni cruzado; cada corrida completa, en orden, con un solo resultado e igual a su historial.
+- [x] En el navegador: 4 corridas en paralelo del flujo abierto aparecen todas; la de otro flujo no se cuela.
+- [x] Tras un corte del WebSocket, la web se resincroniza con el servidor y ninguna corrida queda trabada.
+- [x] Al cambiar de flujo, lo que llega mientras carga se fusiona en vez de perderse.
+- [x] Rótulos únicos para corridas sin correo (`manual-<fecha>-<4 caracteres>`).
+- [x] Posición de los nodos guardada en el servidor (`definicion.disenio`).
+- [x] Editar una conexión conserva los campos no enviados; la escritura solo se apaga si cambia algún valor.
+- [x] Volumen persistente para `/datos/archivos`.
 
 ## 4. Flujos de producción
 
@@ -90,4 +104,4 @@ Una plataforma de flujos de IA con nodos, más potente que n8n, donde **Vera** (
 
 - [x] Descripciones del catálogo con tildes (`catalogo/generador/tildes.py`; corrige solo textos para leer, nunca claves, valores ni nombres de código).
 - [x] Limpiar del scratchpad los datos personales de los análisis (logs, buzón, OCR, corpus, capturas de casos).
-- [ ] Borrar las capturas de interfaz y el clon de telar cuando terminen los agentes.
+- [x] Borradas las capturas de interfaz y el clon de telar.

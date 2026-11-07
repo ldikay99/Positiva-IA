@@ -321,6 +321,9 @@ const TITULOS: Record<string, string> = {
   flujo: "Flujo", hosts_http: "Hosts HTTP", entorno_sin_definir: "Variables usadas sin definir", flujos_llamados: "Flujos que llama", archivos: "Archivos", tablas: "Tablas", limites: "Límites de la plataforma", programacion: "Programación", secreto_definido: "Secreto definido", nodos_: "Nodos", usado: "Usada",
   disparador: "Cómo arranca", nodos: "Pasos", conexiones: "Conexiones externas", credenciales: "Conexiones externas", entorno: "Variables de entorno", variables: "Variables de entorno",
   escrituras: "Escrituras", capacidades_escritura: "Escrituras", escritura: "Escrituras", horario: "Horario", programado: "Horario", webhook: "Webhook", version: "Versión", modelo: "Modelo de IA",
+  descripcion: "Descripción", obligatorio: "Obligatorio", tipo: "Tipo", id: "Id", actualizado: "Actualizado", creado: "Creado", nombre: "Nombre",
+  campos: "Campos", direccion: "Dirección", metodo: "Método", credencial: "Conexión", habilitada: "Habilitada", destino: "Destino", alcance: "Alcance",
+  operacion: "Operación", consulta: "Consulta", ruta: "Ruta", categoria: "Categoría", accion: "Acción", ultima_ejecucion: "Última ejecución",
 };
 
 function etiqueta(k: string): string {

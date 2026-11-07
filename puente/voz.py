@@ -41,7 +41,7 @@ MAX_SEGUNDOS = int(os.environ.get("VOZ_MAX_SEGUNDOS", "900"))
 TOPE_HERRAMIENTA = 45
 TOPE_LARGA = 300
 # Estas corren en segundo plano durante la llamada: Vera sigue hablando y haciendo otras cosas.
-LARGAS = {"responder_por_escrito", "probar_flujo", "correr_flujo", "correr_buzon", "ver_buzon", "correr_correos", "listar_correos", "ver_logs"}
+LARGAS = {"responder_por_escrito", "probar_flujo", "correr_flujo", "correr_buzon", "ver_buzon", "listar_correos", "ver_logs"}
 VOZ_POR_DEFECTO = "Laomedeia"
 
 NOTA_VOZ = """
@@ -57,7 +57,7 @@ ESTÁS EN UNA LLAMADA DE VOZ. Así hablas:
 Cómo trabajas en la llamada (dos manos):
 - «Ver», «muéstrame», «ábreme», «dónde está» = ábrelo EN PANTALLA con la herramienta de navegación que corresponda (por ejemplo, correos → abrir_correspondencia; una corrida → abrir_corrida; un documento → abrir_adjuntos) y di un dato concreto de lo que quedó a la vista («Ahí están: 389 correos, el más reciente es de Seguros Bolívar»).
 - Lo rápido lo haces tú directamente: moverte por la plataforma (navegar, abrir_*, ajustar_lienzo, centrar_nodo, filtrar_correos, seleccionar_correos), consultas cortas (resumen_tablero, listar_flujos, ultimas_corridas, estado_motor, listar_correos, ver_buzon) y acciones (correr_correos, correr_buzon, cancelar_cola).
-- Lo que necesita pensar o escribir bien —crear o cambiar un flujo, cualquier «¿por qué…?», analizar fallas, explicar resultados, comparar, cualquier lista o tabla de más de tres cosas— se lo pasas SIEMPRE a responder_por_escrito con un pedido claro y completo, SIN consultar ni concluir nada antes (no llames otras herramientas primero ni adelantes una respuesta): delega de una vez y espera su resultado. Lo que digas después sale SOLO de lo que devolvió responder_por_escrito. Esa herramienta lo resuelve y lo deja escrito en el chat; tú dices en una frase lo esencial («Te lo dejé en el chat: fueron tres a manual por falta de cédula»).
+- Lo que necesita pensar o escribir bien —crear o cambiar un flujo, cualquier «¿por qué…?», analizar fallas, explicar resultados, comparar, cualquier lista o tabla de más de tres cosas— se lo pasas SIEMPRE a responder_por_escrito con un pedido claro y completo (y NO hagas tú esa misma parte: lo que delegas no lo repites con otras herramientas), SIN consultar ni concluir nada antes (no llames otras herramientas primero ni adelantes una respuesta): delega de una vez y espera su resultado. Lo que digas después sale SOLO de lo que devolvió responder_por_escrito. Esa herramienta lo resuelve y lo deja escrito en el chat; tú dices en una frase lo esencial («Te lo dejé en el chat: fueron tres a manual por falta de cédula»).
 - Trabajas en paralelo: las tareas largas (responder_por_escrito, probar o correr flujos, el buzón real, listar correos) corren en segundo plano y te responden «en_curso». Di en pocas palabras que ya estás en eso («Lo estoy revisando») y SIGUE atendiendo: puedes responder otras preguntas y lanzar otras herramientas mientras tanto. Cuando llegue «[Resultado de la tarea N]», cuéntalo en una o dos frases y continúa.
 - Después de una herramienta nunca te quedes callada.
 - Si solo oyes ruido o algo sin sentido, no respondas.
@@ -199,11 +199,14 @@ async def llamada(sesion: Any, types: Any, cid: str, flujo: str) -> None:
     colgar = asyncio.Event()
     inicio = time.monotonic()
     pantalla_actual: Dict[str, Any] = {"p": dict(PANTALLA_INICIAL), "flujo": flujo}
-    despedida = {"hecha": False}
+    despedida = {"hecha": False, "completa": False}
     contador = {"n": 0}
     tareas_vivas: Dict[int, Any] = {}
     pendientes: List[Any] = []
-    actividad = {"salida": 0.0, "entrada": 0.0}
+    actividad = {"salida": 0.0, "entrada": 0.0, "turno_abierto": False}
+    # Herramientas largas en curso por su firma (nombre + argumentos): no se lanzan dos veces.
+    en_curso_por_firma: Dict[str, int] = {}
+    lanzadas: List[Any] = []
     # Si tras devolver una herramienta Vera no dice nada en unos segundos, se le recuerda.
     silencio = {"desde": 0.0}
 
@@ -213,7 +216,9 @@ async def llamada(sesion: Any, types: Any, cid: str, flujo: str) -> None:
         mensajes = [{"rol": m.get("rol"), "texto": m.get("texto"), "pasos": m.get("pasos")} for m in (conv.get("mensajes") or [])[-30:]]
         if turno.escuchado.strip():
             mensajes.append({"rol": "usuario", "texto": turno.escuchado.strip()})
-        mensajes.append({"rol": "usuario", "texto": f"[Pedido desde la llamada de voz; respóndelo por escrito, completo y bien presentado]\n{pedido}"})
+        hechas = "; ".join(f"{n}({json.dumps(a, ensure_ascii=False)[:160]})" for n, a in lanzadas[-12:])
+        nota = (f"\n[Esto ya lo lanzó la voz en esta llamada; NO lo repitas, solo consulta su resultado si lo necesitas (ultimas_corridas, ver_corrida): {hechas}]" if hechas else "")
+        mensajes.append({"rol": "usuario", "texto": f"[Pedido desde la llamada de voz; respóndelo por escrito, completo y bien presentado]\n{pedido}{nota}"})
 
         def aviso(tipo: str, **d: Any) -> None:
             if tipo == "herramienta":
@@ -221,20 +226,16 @@ async def llamada(sesion: Any, types: Any, cid: str, flujo: str) -> None:
             elif tipo in ("enfocar", "navegar", "abrir_corrida", "centrar_nodo", "propuesta", "renombrado", "control", "abrir_correo", "seleccionar_correos", "abrir_adjuntos", "corridas_creadas", "progreso"):
                 enviar(tipo, **d)
 
-        anterior = asistente.emitir
-        asistente.emitir = lambda tipo, **d: aviso(tipo, **d)
-        try:
-            r = asistente.conversar({"mensajes": mensajes, "flujo": pantalla_actual["flujo"], "pantalla": pantalla_actual["p"], "modelo": MODELO_ESCRITO, "conversacion": cid}, aviso)
-        finally:
-            asistente.emitir = anterior
-        return r
+        # Los eventos de pantalla que emiten las herramientas ya van al navegador por asistente.emitir = enviar
+        # (sin cambiarlo aquí: con varias tareas a la vez, cambiar un global se pisaría entre hilos).
+        return asistente.conversar({"mensajes": mensajes, "flujo": pantalla_actual["flujo"], "pantalla": pantalla_actual["p"], "modelo": MODELO_ESCRITO, "conversacion": cid}, aviso)
 
     async def guardar() -> None:
         nonlocal turno
         t, turno = turno, Turno()
         if t.vacio():
             return
-        texto = t.dicho.strip()
+        texto = re.sub(r"<[^>]{1,40}>|\{[a-z_ ]{1,30}\}", "", t.dicho).strip()
         if not re.search(r"\w", texto):  # ruido como «-» o «...» no es una respuesta
             texto = ""
         if t.escrito:
@@ -259,6 +260,8 @@ async def llamada(sesion: Any, types: Any, cid: str, flujo: str) -> None:
                 continue
             m = json.loads(datos)
             if m.get("tipo") == "texto" and m.get("texto"):
+                actividad["entrada"] = time.monotonic()
+                actividad["turno_abierto"] = True
                 turno.escuchado += (" " if turno.escuchado else "") + m["texto"]
                 await sesion.send_client_content(turns=types.Content(role="user", parts=[types.Part(text=m["texto"])]), turn_complete=True)
             elif m.get("tipo") == "pantalla":
@@ -291,6 +294,8 @@ async def llamada(sesion: Any, types: Any, cid: str, flujo: str) -> None:
             res = {"ok": True, "nota": "Ya está en el chat; en voz di solo lo esencial."}
         elif nombre == "terminar_llamada":
             despedida["hecha"] = True
+            # Si la despedida ya quedó completa, después de colgar no se oye nada más.
+            despedida["completa"] = bool(re.search(r"[.!?…]\s*$", turno.dicho.strip()))
             asyncio.get_running_loop().call_later(4, colgar.set)
             res = {"ok": True, "nota": "Si dejaste la despedida a medias, termínala en español en pocas palabras. Nada más."}
         else:
@@ -322,16 +327,28 @@ async def llamada(sesion: Any, types: Any, cid: str, flujo: str) -> None:
         enviar("tarea_lista", tarea=numero, nombre=nombre)
         pendientes.append((numero, nombre, res))
         tareas_vivas.pop(numero, None)
+        for f, n in list(en_curso_por_firma.items()):
+            if n == numero:
+                en_curso_por_firma.pop(f, None)
 
     async def herramienta(ll: Any) -> Any:
         args = dict(ll.args or {})
         nombre = ll.name
         resumen = {k: (v if k != "definicion" else {"id": (v or {}).get("id"), "nodos": len((v or {}).get("nodos", []))}) for k, v in args.items()}
         enviar("paso", nombre=nombre, argumentos=resumen)
-        if nombre in LARGAS:
+        firma = nombre + json.dumps(args, sort_keys=True, ensure_ascii=False, default=str)
+        if nombre not in ("responder_por_escrito", "escribir_en_chat", "terminar_llamada"):
+            lanzadas.append((nombre, args))
+        # Correr sin esperar el resultado responde al instante: no hace falta segundo plano.
+        larga = nombre in LARGAS and not (nombre == "correr_flujo" and not args.get("esperar"))
+        if larga and firma in en_curso_por_firma:
+            res_dup: Any = {"estado": "en_curso", "tarea": en_curso_por_firma[firma], "nota": "Esa misma tarea ya está corriendo; no la repitas. Su resultado llegará solo."}
+            return types.FunctionResponse(id=ll.id, name=nombre, response={"resultado": res_dup})
+        if larga:
             # Lo largo corre aparte: Vera sigue la conversación y el resultado llega cuando esté.
             contador["n"] += 1
             numero = contador["n"]
+            en_curso_por_firma[firma] = numero
             tareas_vivas[numero] = asyncio.create_task(en_segundo_plano(numero, nombre, args, resumen))
             enviar("tarea_iniciada", tarea=numero, nombre=nombre)
             res: Any = {"estado": "en_curso", "tarea": numero,
@@ -352,14 +369,15 @@ async def llamada(sesion: Any, types: Any, cid: str, flujo: str) -> None:
                 if sc:
                     if sc.model_turn:
                         for p in sc.model_turn.parts or []:
-                            if p.inline_data and p.inline_data.data:
+                            if p.inline_data and p.inline_data.data and not (despedida["hecha"] and despedida["completa"]):
                                 actividad["salida"] = time.monotonic()
                                 enviar_audio(p.inline_data.data)
                     if sc.input_transcription and sc.input_transcription.text:
                         turno.escuchado += sc.input_transcription.text
                         actividad["entrada"] = time.monotonic()
+                        actividad["turno_abierto"] = True
                         enviar("escuchado", texto=sc.input_transcription.text, total=turno.escuchado)
-                    if sc.output_transcription and sc.output_transcription.text:
+                    if sc.output_transcription and sc.output_transcription.text and not (despedida["hecha"] and despedida["completa"]):
                         turno.dicho += sc.output_transcription.text
                         silencio["desde"] = 0.0
                         enviar("dicho", texto=sc.output_transcription.text, total=turno.dicho)
@@ -367,6 +385,8 @@ async def llamada(sesion: Any, types: Any, cid: str, flujo: str) -> None:
                         enviar("interrumpido")
                     if sc.turn_complete:
                         enviar("turno")
+                        if not silencio["desde"]:
+                            actividad["turno_abierto"] = False
                         # Si usó herramientas y aún no dijo nada, lo que diga después
                         # pertenece a esta misma pregunta: se guarda junto.
                         # Si devolvió una herramienta y todavía no habló de su resultado, lo que
@@ -385,7 +405,11 @@ async def llamada(sesion: Any, types: Any, cid: str, flujo: str) -> None:
             await asyncio.sleep(0.5)
             ahora = time.monotonic()
             # Un resultado listo se entrega en una pausa: ni la persona ni Vera hablando.
-            if pendientes and ahora - actividad["salida"] > 1.5 and ahora - actividad["entrada"] > 1.5 and not despedida["hecha"]:
+            # Salvaguarda: un turno abierto sin ninguna actividad por 25 s se da por cerrado.
+            if actividad["turno_abierto"] and ahora - max(actividad["salida"], actividad["entrada"]) > 25:
+                actividad["turno_abierto"] = False
+            if (pendientes and not actividad["turno_abierto"] and ahora - actividad["salida"] > 1.5
+                    and ahora - actividad["entrada"] > 1.5 and not despedida["hecha"]):
                 numero, nombre, res = pendientes.pop(0)
                 texto = json.dumps(res, ensure_ascii=False, default=str)[:12000]
                 try:
@@ -393,6 +417,7 @@ async def llamada(sesion: Any, types: Any, cid: str, flujo: str) -> None:
                         f"[Resultado de la tarea {numero} ({nombre})]: {texto}\n"
                         "[Aviso del sistema: cuéntale a la persona en una o dos frases lo esencial (si quedó en el chat, dilo) y sigue con lo que estaban hablando.]"))]), turn_complete=True)
                     silencio["desde"] = 0.0
+                    actividad["turno_abierto"] = True
                 except Exception:
                     pendientes.insert(0, (numero, nombre, res))
             if silencio["desde"] and time.monotonic() - silencio["desde"] > 6 and not despedida["hecha"]:
