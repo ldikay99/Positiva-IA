@@ -59,10 +59,17 @@ export const NOMBRES_DEL_JOB: Record<string, ReadonlySet<string>> = {
   ]),
 };
 
+/**
+ * De qué job es instancia un flujo de código (las copias de pqrd y tutelas aceptan los
+ * nombres del job de su original). Lo fija el servidor con el registro de flujos.
+ */
+export const enlace = { baseDe: (flujo: string): string => flujo };
+const delJob = (flujo: string) => NOMBRES_DEL_JOB[enlace.baseDe(flujo)];
+
 /** Por qué un nombre no vale en el entorno de ese flujo, o null si vale. */
 export function problemaDeNombre(flujo: string, nombre: string): string | null {
   if (PROHIBIDAS_SIEMPRE.test(nombre)) return `${nombre} es una variable que maneja la plataforma: ningún flujo la puede cambiar`;
-  if (NOMBRES_DEL_JOB[flujo]?.has(nombre)) return null;
+  if (delJob(flujo)?.has(nombre)) return null;
   if (!NOMBRE.test(nombre)) return "nombre inválido: MAYÚSCULAS, números y _ (empieza por letra, hasta 64)";
   if (PROTEGIDAS.test(nombre)) return `${nombre} es una variable que maneja la plataforma: un flujo no la puede cambiar`;
   return null;
@@ -75,6 +82,8 @@ interface Guardada {
   cifrado?: { iv: string; tag: string; datos: string };
   descripcion: string;
   actualizado: number;
+  /** De qué flujo se copió (al clonar): el valor es el mismo del original hasta que una persona lo cambie. */
+  copiado_de?: string;
 }
 interface Archivo {
   variables: Record<string, Guardada>;
@@ -88,6 +97,7 @@ export interface Vista {
   valor?: string;
   descripcion: string;
   actualizado: number;
+  copiado_de?: string;
 }
 
 const carpeta = () => join(config.datos, "entornos");
@@ -127,8 +137,26 @@ function escribir(flujo: string, a: Archivo): Promise<void> {
 
 const vista = (nombre: string, g: Guardada): Vista => ({
   nombre, secreto: g.secreto, definido: g.secreto ? !!g.cifrado : g.valor !== undefined, ...(g.secreto ? {} : { valor: g.valor ?? "" }),
-  descripcion: g.descripcion, actualizado: g.actualizado,
+  descripcion: g.descripcion, actualizado: g.actualizado, ...(g.copiado_de ? { copiado_de: g.copiado_de } : {}),
 });
+
+/**
+ * La copia de un flujo de CÓDIGO (otra instancia del mismo job, en esta misma plataforma):
+ * todas sus variables, las secretas tal cual cifradas (nunca se descifran para copiarlas),
+ * marcadas con copiado_de. Se cambian en la copia sin tocar el original.
+ */
+export async function copiar(desde: string, hacia: string): Promise<number> {
+  const a = await leer(desde);
+  const b = await leer(hacia);
+  let n = 0;
+  for (const [k, g] of Object.entries(a.variables)) {
+    if (b.variables[k] || !nombreValido(hacia, k)) continue;
+    b.variables[k] = { ...structuredClone(g), copiado_de: desde, actualizado: Date.now() };
+    n++;
+  }
+  await escribir(hacia, b);
+  return n;
+}
 
 export async function listar(flujo: string): Promise<Vista[]> {
   const a = await leer(flujo);
@@ -156,7 +184,7 @@ export async function poner(flujo: string, nombre: string, cuerpo: unknown, conf
   if ((secreto || previo?.secreto) && !confirmado)
     return { ok: false, codigo: 403, error: "crear o cambiar una variable secreta requiere la confirmación de una persona (X-Confirmado-Por-Persona: si)" };
   // Las variables del job (aunque no sean secretas) deciden a dónde lee y escribe el flujo: también las pone una persona.
-  if (NOMBRES_DEL_JOB[flujo]?.has(nombre) && !confirmado)
+  if (delJob(flujo)?.has(nombre) && !confirmado)
     return { ok: false, codigo: 403, error: `${nombre} es una variable del job: la pone una persona con confirmación (X-Confirmado-Por-Persona: si)` };
   const g: Guardada = {
     secreto, descripcion: typeof b.descripcion === "string" ? b.descripcion.slice(0, 300) : (previo?.descripcion ?? ""), actualizado: Date.now(),

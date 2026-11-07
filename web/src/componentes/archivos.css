@@ -1,0 +1,90 @@
+/*
+ * Archivos de un flujo y acciones del flujo (renombrar, clonar, borrar).
+ * La zona para soltar es una ranura de entrada de la sala de correspondencia:
+ * papel con borde punteado que se vuelve azul cuando algo está encima.
+ */
+
+/* ---------------------------------------------------------- zona de archivos */
+.arch-zona-caja { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.arch-zona {
+  display: flex; align-items: center; gap: 12px; min-width: 0; padding: 16px 14px;
+  border-radius: 12px; background: var(--superficie-2); cursor: pointer;
+  border: 1.5px dashed var(--linea-2); outline-offset: 2px; transition: background 0.15s, border-color 0.15s;
+}
+.arch-zona:hover { background: var(--pliego); border-color: var(--texto-3); }
+.arch-zona.encima { background: var(--azul-suave); border-color: var(--azul); border-style: solid; }
+.arch-zona.con-archivos { padding: 10px 12px; }
+.arch-zona:focus-visible { outline: 2px solid var(--azul); }
+.arch-zona-icono { display: grid; place-items: center; flex: none; width: 38px; height: 38px; border-radius: 10px; background: var(--pliego); color: var(--azul); box-shadow: var(--sombra-1); }
+.arch-zona.encima .arch-zona-icono { background: var(--azul); color: #fff; }
+.arch-zona-texto { display: flex; flex-direction: column; gap: 2px; min-width: 0; line-height: 1.35; }
+.arch-zona-texto b { font-size: 13px; font-weight: 620; color: var(--texto); }
+.arch-zona-texto small { font-size: 11.5px; color: var(--texto-3); }
+.arch-capsulas { display: flex; flex-wrap: wrap; gap: 10px 8px; padding-top: 2px; }
+.arch-capsulas .capsula { max-width: min(260px, 100%); }
+.arch-icono-error { background: var(--rojo-suave) !important; color: var(--rojo) !important; }
+
+/* el visor, encima de todo (también de los diálogos) */
+.arch-visor { position: fixed; inset: 0; z-index: 400; display: grid; place-items: center; padding: 24px; background: rgba(24, 32, 58, 0.6); backdrop-filter: blur(3px); }
+.arch-visor-hoja { width: min(980px, 100%); height: min(86vh, 900px); display: grid; grid-template-rows: auto minmax(0, 1fr); border-radius: 16px; overflow: hidden; background: var(--pliego); box-shadow: var(--sombra-3); }
+.arch-visor-hoja header { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 10px 10px 10px 12px; box-shadow: 0 1px 0 var(--linea); }
+.arch-visor-hoja header b { flex: 1; min-width: 0; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.arch-visor-hoja header small { flex: none; font-size: 11px; color: var(--texto-3); }
+.arch-visor-cuerpo { min-height: 0; overflow: auto; display: grid; place-items: center; background: var(--superficie-2); }
+.arch-visor-cuerpo img { max-width: 100%; max-height: 100%; object-fit: contain; }
+.arch-visor-cuerpo iframe { width: 100%; height: 100%; border: 0; background: #fff; }
+.arch-visor-cuerpo pre { align-self: start; justify-self: stretch; margin: 0; padding: 16px; font-family: var(--mono); font-size: 11.5px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--texto); }
+.arch-leyendo { display: flex; align-items: center; gap: 8px; color: var(--texto-2); font-size: 13px; }
+@media (max-width: 760px) {
+  .arch-visor { padding: 0; }
+  .arch-visor-hoja { width: 100%; height: 100%; border-radius: 0; }
+}
+
+/* ------------------------------------------------------- acciones del flujo */
+.af { position: relative; display: flex; flex-direction: column; min-width: 0; }
+.af-botones { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+.af-botones .boton.fantasma { color: var(--texto-2); }
+.af-botones .af-borrar:hover, .af-botones .af-borrar.activo { background: var(--rojo-suave); color: var(--rojo); }
+.af-fijo { display: inline-flex; align-items: center; gap: 5px; padding: 5px 8px; font-size: 12px; color: var(--texto-3); }
+
+.af-panel { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: 12px; background: var(--pliego); box-shadow: var(--sombra-3); }
+.af-panel.cabecera { position: absolute; top: calc(100% + 8px); left: 0; z-index: 60; width: min(360px, calc(100vw - 32px)); }
+.af-panel.tarjeta { margin-top: 8px; box-shadow: var(--sombra-1); background: var(--superficie-2); }
+.af-panel.peligro { box-shadow: var(--sombra-3), inset 3px 0 0 var(--rojo); }
+.af-panel.tarjeta.peligro { box-shadow: var(--sombra-1), inset 3px 0 0 var(--rojo); }
+.af-panel form { display: flex; flex-direction: column; gap: 8px; }
+.af-titulo { margin: 0; font-size: 13px; font-weight: 650; color: var(--texto); }
+.af-nota { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 12px; line-height: 1.45; color: var(--texto-2); }
+.af-lista { margin: 0; padding-left: 18px; font-size: 12px; line-height: 1.55; color: var(--texto); }
+.af-pie { display: flex; justify-content: flex-end; gap: 6px; flex-wrap: wrap; }
+
+/* en la cabecera del flujo, junto al nombre */
+.barra .af { flex: none; }
+@media (max-width: 760px) {
+  .barra .af .etq { display: none; }
+  .af-panel.cabecera { position: fixed; top: 60px; left: 16px; right: 16px; width: auto; }
+}
+
+/* ------------------------------------------------- panel izquierdo sin correo */
+.panel-corridas { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--pliego); border-radius: var(--radio); box-shadow: var(--sombra-1); overflow: hidden; }
+.panel-corridas > header { padding: 16px 16px 12px; display: flex; flex-direction: column; gap: 10px; box-shadow: 0 1px 0 var(--linea); }
+.panel-corridas > header p { margin: 0; font-size: 12.5px; color: var(--texto-2); line-height: 1.45; }
+.panel-corridas > header .boton.primario { align-self: flex-start; }
+.pc-lista { list-style: none; margin: 0; padding: 8px; overflow: auto; display: flex; flex-direction: column; gap: 4px; min-height: 0; flex: 1; }
+.pc-lista li button { width: 100%; display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 10px; text-align: left; color: var(--texto); }
+.pc-lista li button:hover { background: var(--superficie-2); }
+.pc-lista li button.activa { background: var(--azul-suave); }
+.pc-lista .punto { width: 8px; height: 8px; border-radius: 50%; background: var(--texto-3); }
+.pc-lista .punto.tono-verde { background: var(--verde); }
+.pc-lista .punto.tono-rojo { background: var(--rojo); }
+.pc-lista .punto.tono-ambar { background: var(--ambar); }
+.pc-lista .punto.tono-azul { background: var(--azul); }
+.pc-texto { display: flex; flex-direction: column; min-width: 0; line-height: 1.3; }
+.pc-texto b { font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc-texto small { font-size: 11px; color: var(--texto-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pc-cuando { font-size: 11px; color: var(--texto-3); white-space: nowrap; }
+.pc-vacio { padding: 18px 16px; font-size: 12.5px; color: var(--texto-2); line-height: 1.5; }
+
+/* bandeja de prueba y buzón del flujo */
+.bandeja-prueba { padding: 10px 12px 4px; }
+.fuente-propia { font-size: 11.5px; color: var(--texto-3); padding: 0 12px 8px; margin: 0; }

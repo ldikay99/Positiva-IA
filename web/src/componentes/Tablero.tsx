@@ -5,6 +5,7 @@ import { Icono } from "../iconos.tsx";
 import { NOMBRES_CORTOS_DESENLACE, TONO_DESENLACE, motivoLegible } from "../progreso.ts";
 import type { TableroFlujo } from "../tipos.ts";
 import { textoConsumo } from "./IA.tsx";
+import { AccionesFlujo } from "./AccionesFlujo.tsx";
 
 /** Pide algo al asistente: abre la burbuja con el texto ya escrito y lo envía. */
 export function pedirAlAsistente(texto: string): void {
@@ -58,7 +59,7 @@ function TarjetaFlujo({ f, i }: { f: TableroFlujo; i: number }) {
   return (
     <motion.article className="tab-flujo" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05, type: "spring", stiffness: 380, damping: 32 }}>
       <header>
-        <span className={`tab-tipo ${f.tipo}`}>{f.tipo === "codigo" ? "Motor de producción" : `Creado aquí, versión ${info?.version ?? 1}`}</span>
+        <span className={`tab-tipo ${f.tipo}`}>{f.tipo === "codigo" ? (f.copia_de ? `Copia del motor de ${f.base === "tutelas" ? "tutelas" : "PQRD"}` : "Motor de producción") : `Creado aquí, versión ${info?.version ?? 1}`}</span>
         {f.enCurso > 0 && <span className="tab-vivo"><span className="girando" />{f.enCurso} corriendo</span>}
       </header>
       <h2>{f.nombre}</h2>
@@ -99,6 +100,7 @@ function TarjetaFlujo({ f, i }: { f: TableroFlujo; i: number }) {
           <Icono n="chispa" tam={13} />Revisar con IA
         </button>
       </footer>
+      <AccionesFlujo flujo={f.id} variante="tarjeta" />
     </motion.article>
   );
 }

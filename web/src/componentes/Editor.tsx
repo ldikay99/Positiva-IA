@@ -504,9 +504,7 @@ function BarraEditor({ abrirPaleta, paletaAbierta, abrirCorrer, ordenar }: { abr
               <button role="menuitem" className="menu-opcion solo-movil-editor" onClick={() => setPop("versiones")}><span className="menu-icono"><Icono n="historial" tam={14} /></span>Versiones</button>
               <button role="menuitem" className="menu-opcion" onClick={() => { setPop(null); ordenar(); }}><span className="menu-icono"><Icono n="reordenar" tam={14} /></span>Ordenar automáticamente</button>
               <button role="menuitem" className="menu-opcion" onClick={() => { setPop(null); void s.validar().then((ok) => avisar(ok ? "El flujo es válido" : `${usarEditor.getState().problemas.length} problema(s) marcados en los nodos`, ok ? "ok" : "error")); }}><span className="menu-icono"><Icono n="escudo" tam={14} /></span>Validar sin guardar</button>
-              <button role="menuitem" className="menu-opcion" onClick={() => { setPop(null); setDuplicar(true); }}><span className="menu-icono"><Icono n="copiar" tam={14} /></span>Duplicar el flujo</button>
-              <div className="menu-separador" />
-              <button role="menuitem" className="menu-opcion peligro" onClick={() => setPop("borrar")}><span className="menu-icono"><Icono n="papelera" tam={14} /></span>Eliminar el flujo</button>
+              {/* Renombrar, clonar y borrar están a la vista en la cabecera del flujo (AccionesFlujo). */}
             </motion.div>
           )}
           {pop === "borrar" && (

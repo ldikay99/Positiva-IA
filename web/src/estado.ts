@@ -2,6 +2,10 @@ import { create } from "zustand";
 import { reglaNueva } from "./flujo.ts";
 import type { Buzon, Catalogo, Configuracion, Corrida, Correo, EstadoMotor, Evento, FlujoResumen, Regla, TableroFlujo } from "./tipos.ts";
 
+/** La ruta de un correo de la correspondencia de un flujo (solo de ESE flujo). */
+export const urlCorreo = (flujo: string, caso: string, adjunto?: string) =>
+  `/api/bandeja/${encodeURIComponent(caso)}${adjunto ? `/adjuntos/${encodeURIComponent(adjunto)}` : ""}?flujo=${encodeURIComponent(flujo)}`;
+
 export interface Nota {
   id: string;
   texto: string;
@@ -71,6 +75,12 @@ interface Estado {
   cambiarFlujo: (id: string) => Promise<void>;
   cargarFlujos: () => Promise<void>;
   cargarTablero: () => Promise<void>;
+  /** La correspondencia del flujo abierto (GET /api/bandeja?flujo=). */
+  cargarBandeja: () => Promise<void>;
+  renombrarFlujo: (id: string, nombre: string) => Promise<void>;
+  /** Clona cualquier flujo (también pqrd y tutelas) y devuelve el id de la copia. */
+  clonarFlujo: (id: string, nombre: string) => Promise<string>;
+  borrarFlujo: (id: string) => Promise<void>;
   catalogo: Catalogo | null;
   bandeja: Correo[];
   configuracion: Configuracion | null;
@@ -149,16 +159,43 @@ export const usar = create<Estado>((set, get) => ({
     if (id === get().flujo && get().catalogo) return;
     guardarLocal(CLAVE_FLUJO, id);
     // Nada del flujo anterior queda en pantalla.
-    set({ flujo: id, catalogo: null, corridas: {}, orden: [], recientes: [], corridaVisible: null, foco: null, seleccion: [], motor: null });
-    const [catalogo, lista, recientes, motor] = await Promise.all([
+    set({ flujo: id, catalogo: null, corridas: {}, orden: [], recientes: [], corridaVisible: null, foco: null, seleccion: [], motor: null, bandeja: [], buzon: null });
+    const [catalogo, lista, recientes, motor, bandeja] = await Promise.all([
       pedir<Catalogo>(q("/api/catalogo", id)),
       pedir<(Omit<Corrida, "eventos"> & { nEventos: number })[]>(q("/api/corridas", id)),
       pedir<Evento[]>(q("/api/eventos/recientes", id)),
       pedir<EstadoMotor>(q("/api/salud", id)),
+      // la correspondencia es de ESTE flujo (un flujo nuevo nunca ve la de PQRD)
+      pedir<Correo[]>(q("/api/bandeja", id)).catch(() => [] as Correo[]),
     ]);
     if (get().flujo !== id) return;
     // Lo que llegó por el canal mientras se cargaba la lista no se pierde: se fusiona.
-    set((s) => ({ catalogo, motor, ...fusionar(lista, recientes, s) }));
+    set((s) => ({ catalogo, motor, bandeja, ...fusionar(lista, recientes, s) }));
+  },
+
+  cargarBandeja: async () => {
+    const id = get().flujo;
+    const bandeja = await pedir<Correo[]>(q("/api/bandeja", id)).catch(() => [] as Correo[]);
+    if (get().flujo === id) set({ bandeja });
+  },
+
+  renombrarFlujo: async (id, nombre) => {
+    await pedir(`/api/flujos/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ nombre }) });
+    await Promise.all([get().cargarFlujos(), get().cargarTablero().catch(() => undefined)]);
+  },
+
+  clonarFlujo: async (id, nombre) => {
+    const r = await pedir<{ flujo: FlujoResumen }>(`/api/flujos/${encodeURIComponent(id)}/clonar`, { method: "POST", body: JSON.stringify({ nombre }) });
+    await get().cargarFlujos();
+    void get().cargarTablero().catch(() => undefined);
+    return r.flujo.id;
+  },
+
+  borrarFlujo: async (id) => {
+    await pedir(`/api/flujos/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (get().flujo === id) await get().cambiarFlujo("pqrd");
+    await get().cargarFlujos();
+    void get().cargarTablero().catch(() => undefined);
   },
 
   catalogo: null,
@@ -189,7 +226,7 @@ export const usar = create<Estado>((set, get) => ({
     set({ flujos, flujo });
     const [catalogo, bandeja, conf, lista, recientes] = await Promise.all([
       pedir<Catalogo>(q("/api/catalogo", flujo)),
-      pedir<Correo[]>("/api/bandeja"),
+      pedir<Correo[]>(q("/api/bandeja", flujo)).catch(() => [] as Correo[]),
       pedir<Configuracion & { modelos: string[] }>("/api/configuracion"),
       pedir<(Omit<Corrida, "eventos"> & { nEventos: number })[]>(q("/api/corridas", flujo)),
       pedir<Evento[]>(q("/api/eventos/recientes", flujo)),
@@ -256,7 +293,7 @@ export const usar = create<Estado>((set, get) => ({
 
   correrComoElJob: async (n, ids) => {
     const r = await pedir<{ lote: string | null; corridas: { id: string; caso: string }[] }>(q("/api/buzon/correr", get().flujo), { method: "POST", body: JSON.stringify(ids?.length ? { ids } : { n }) });
-    const bandeja = await pedir<Correo[]>("/api/bandeja");
+    const bandeja = await pedir<Correo[]>(q("/api/bandeja", get().flujo));
     set((s) => {
       const corridas = { ...s.corridas };
       for (const c of r.corridas) corridas[c.id] ??= { id: c.id, caso: c.caso, estado: "en_cola", creada: Date.now(), eventos: [], ...(r.lote ? { lote: r.lote } : {}) };

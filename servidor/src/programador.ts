@@ -74,10 +74,32 @@ let programaciones: Record<string, ProgramacionDeCodigo> = {};
 /** Corridas programadas en curso de cada flujo de código (desde que se pide el lote hasta que terminan). */
 const enCursoDeCodigo = new Map<string, { desde: number; ids: string[]; reloj?: NodeJS.Timeout }>();
 
+/**
+ * De qué flujo de código es instancia (pqrd o tutelas, para sus copias). Lo fija el servidor.
+ * Una copia arranca con la programación del job de su original pero APAGADA, y la suya
+ * se guarda aparte (por su id): nunca comparte la del original.
+ */
+export const enlace = { baseDe: (flujo: string): string | null => (flujo in PROGRAMACION_DEL_JOB ? flujo : null) };
+
 export function programacionDe(flujo: string): ProgramacionDeCodigo | null {
-  const base = PROGRAMACION_DEL_JOB[flujo];
+  const b = enlace.baseDe(flujo);
+  const base = b ? PROGRAMACION_DEL_JOB[b] : undefined;
   if (!base) return null;
-  return { ...base, ...(programaciones[flujo] ?? {}) };
+  return { ...base, ...(b !== flujo ? { activo: false } : {}), ...(programaciones[flujo] ?? {}) };
+}
+
+/** Un flujo borrado no deja su programación ni sus marcas de tiempo. */
+export async function olvidar(flujo: string): Promise<void> {
+  const x = enCursoDeCodigo.get(flujo);
+  if (x?.reloj) clearTimeout(x.reloj);
+  enCursoDeCodigo.delete(flujo);
+  for (const k of Object.keys(ultimas)) if (k.split(":")[1] === flujo) delete ultimas[k];
+  if (flujo in programaciones) {
+    delete programaciones[flujo];
+    await mkdir(config.datos, { recursive: true });
+    await writeFile(rutaProgramaciones(), JSON.stringify(programaciones, null, 2), "utf8");
+  }
+  await guardarEstado().catch(() => undefined);
 }
 
 export type ResultadoProgramacion = { ok: true; programacion: ProgramacionDeCodigo } | { ok: false; codigo: number; error: string };
@@ -167,9 +189,10 @@ async function correrComoElJob(deps: Dependencias, flujo: string, p: Programacio
 
 function ticDeCodigo(deps: Dependencias, ahora: Date): boolean {
   let cambio = false;
-  for (const flujo of Object.keys(PROGRAMACION_DEL_JOB)) {
-    const p = programacionDe(flujo)!;
-    if (!p.activo || !deps.flujos().some((f) => f.id === flujo && f.tipo === "codigo")) continue;
+  // pqrd, tutelas y sus copias: cada uno con su propia programación
+  for (const flujo of deps.flujos().filter((f) => f.tipo === "codigo").map((f) => f.id)) {
+    const p = programacionDe(flujo);
+    if (!p?.activo) continue;
     const clave = `j:${flujo}:minuto`;
     const minuto = Date.parse(`${partes(ahora, p.zona).clave}:00Z`);
     if (!coincideCron(p.cron, ahora, p.zona) || ultimas[clave] === minuto) continue;

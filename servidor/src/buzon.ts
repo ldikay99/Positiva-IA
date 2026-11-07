@@ -10,7 +10,9 @@ import { enmascarar, enmascararTexto, variantes } from "./enmascarar.ts";
  * usa esas credenciales en vez de Secret Manager. Los valores secretos se enmascaran
  * en todo lo que vuelve de Python. Lo fija el servidor.
  */
-export const enlace = { entorno: (): Record<string, string> => ({}), secretos: (): string[] => [] };
+export const enlace = { entorno: (_flujo: string): Record<string, string> => ({}), secretos: (_flujo: string): string[] => [] };
+/** pqrd o una copia suya: cada una lee con SU entorno (sus credenciales del buzón). */
+const BASE = "pqrd";
 
 /**
  * El buzón de producción, solo lectura, a través de `puente/buzon_vivo.py`.
@@ -41,11 +43,11 @@ export interface Listado {
   error?: string;
 }
 
-function correrPython(args: string[], tope = 180_000): Promise<unknown> {
+function correrPython(args: string[], tope = 180_000, flujo = BASE): Promise<unknown> {
   return new Promise((resolver, rechazar) => {
-    const mascaras = variantes(enlace.secretos());
+    const mascaras = variantes(enlace.secretos(flujo));
     const p = spawn(config.python, [config.buzonVivo, ...args], {
-      env: { ...process.env, ...enlace.entorno(), PYTHONIOENCODING: "utf-8", PYTHONUNBUFFERED: "1" },
+      env: { ...process.env, ...enlace.entorno(flujo), PYTHONIOENCODING: "utf-8", PYTHONUNBUFFERED: "1" },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let salida = "";
@@ -66,14 +68,15 @@ function correrPython(args: string[], tope = 180_000): Promise<unknown> {
   });
 }
 
-let ultimo: { n: number; cuando: number; listado: Listado } | null = null;
+const ultimos = new Map<string, { n: number; cuando: number; listado: Listado }>();
 
 /** Lo que tomaría el job ahora: un correo por hilo, del más viejo al más nuevo. */
-export async function listar(n: number, fresco = false): Promise<Listado> {
+export async function listar(n: number, fresco = false, flujo = BASE): Promise<Listado> {
+  const ultimo = ultimos.get(flujo);
   if (!fresco && ultimo && ultimo.n === n && Date.now() - ultimo.cuando < 30_000) return marcarTraidos(ultimo.listado);
-  const r = (await correrPython(["listar", String(n)])) as Listado & { error?: string };
+  const r = (await correrPython(["listar", String(n)], 180_000, flujo)) as Listado & { error?: string };
   if (r.error) return { carpeta: "", total: null, correos: [], error: r.error };
-  ultimo = { n, cuando: Date.now(), listado: r };
+  ultimos.set(flujo, { n, cuando: Date.now(), listado: r });
   return marcarTraidos(r);
 }
 
@@ -82,12 +85,12 @@ function marcarTraidos(l: Listado): Listado {
 }
 
 /** Baja los correos a la carpeta del visor. Devuelve los casos en el mismo orden. */
-export async function traer(ids: string[]): Promise<string[]> {
+export async function traer(ids: string[], flujo = BASE): Promise<string[]> {
   await mkdir(config.vivo, { recursive: true });
   const hechos: Record<string, string> = {};
   // De a 10 por llamada: cada correo con adjuntos es una descarga.
   for (let i = 0; i < ids.length; i += 10) {
-    const r = (await correrPython(["traer", config.vivo, ...ids.slice(i, i + 10)], 300_000)) as Record<string, string> & { error?: string };
+    const r = (await correrPython(["traer", config.vivo, ...ids.slice(i, i + 10)], 300_000, flujo)) as Record<string, string> & { error?: string };
     if (typeof r.error === "string") throw new Error(r.error);
     Object.assign(hechos, r);
   }

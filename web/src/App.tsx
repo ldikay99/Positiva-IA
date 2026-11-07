@@ -3,7 +3,8 @@ import { ReactFlowProvider } from "@xyflow/react";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { guardarLocal, leerLocal, pedir, usar, type Vista } from "./estado.ts";
 import { Icono, type NombreIcono } from "./iconos.tsx";
-import { Bandeja } from "./componentes/Bandeja.tsx";
+import { Bandeja, PanelSinCorreo } from "./componentes/Bandeja.tsx";
+import { AccionesFlujo } from "./componentes/AccionesFlujo.tsx";
 import { Lienzo } from "./componentes/Lienzo.tsx";
 import { Inspector } from "./componentes/Inspector.tsx";
 import { Dock } from "./componentes/Dock.tsx";
@@ -157,7 +158,7 @@ function BarraSuperior({ alternarBandeja, bandejaVisible, abrirEntorno, nuevoFlu
   return (
     <header className="barra">
       {vista === "flujo" && (
-        <button className={`boton-mini grande ${bandejaVisible ? "activo" : ""}`} aria-label={bandejaVisible ? "Ocultar la correspondencia" : "Mostrar la correspondencia"} aria-pressed={bandejaVisible} title={bandejaVisible ? "Ocultar la correspondencia" : "Mostrar la correspondencia"} onClick={alternarBandeja}>
+        <button className={`boton-mini grande ${bandejaVisible ? "activo" : ""}`} aria-label={`${bandejaVisible ? "Ocultar" : "Mostrar"} ${flujoActual?.correspondencia === false ? "las corridas" : "la correspondencia"}`} aria-pressed={bandejaVisible} title={`${bandejaVisible ? "Ocultar" : "Mostrar"} ${flujoActual?.correspondencia === false ? "las corridas" : "la correspondencia"}`} onClick={alternarBandeja}>
           <Icono n="lado" tam={17} />
         </button>
       )}
@@ -190,6 +191,7 @@ function BarraSuperior({ alternarBandeja, bandejaVisible, abrirEntorno, nuevoFlu
         <Icono n="abajo" tam={14} />
       </button>
       )}
+      {vista === "flujo" && flujoActual && <AccionesFlujo flujo={flujoActual.id} />}
       <span className="espacio" />
       {vista === "flujo" && (
         <button className="boton chico boton-entorno" onClick={() => abrirEntorno()} title="Variables, secretos, conexiones y manifiesto de este flujo">
@@ -296,6 +298,9 @@ function Riel({ movil }: { movil: boolean }) {
 function EspacioFlujo({ ancho, bandejaVisible, cerrarBandeja }: { ancho: number; bandejaVisible: boolean; cerrarBandeja: () => void }) {
   const foco = usar((s) => s.foco);
   const enfocar = usar((s) => s.enfocar);
+  // Solo los flujos que arrancan con un correo tienen correspondencia; los demás muestran sus corridas.
+  const conCorreo = usar((s) => s.flujos.find((f) => f.id === s.flujo)?.correspondencia !== false);
+  const Izquierda = conCorreo ? Bandeja : PanelSinCorreo;
   const espacio = useRef<HTMLDivElement>(null);
   const centro = useRef<HTMLDivElement>(null);
   const [medidas, setMedidas] = useState<Medidas>(() => ({ ...MEDIDAS, ...leerLocal<Partial<Medidas>>(CLAVE_MEDIDAS, {}) }));
@@ -357,7 +362,7 @@ function EspacioFlujo({ ancho, bandejaVisible, cerrarBandeja }: { ancho: number;
     <div ref={espacio} className={`espacio-flujo ${bandejaVisible && !compacto ? "" : "sin-bandeja"} ${compacto ? "compacto" : ""}`}>
       {!compacto && bandejaVisible && (
         <>
-          <div className="columna-bandeja"><Bandeja /></div>
+          <div className="columna-bandeja"><Izquierda /></div>
           <Divisor contenedor={espacio} medida="bandeja" eje="x" min={260} max={() => Math.min(620, window.innerWidth * 0.45)} calcular={(e, caja) => e.clientX - caja.left} alSoltar={(v) => fijar("bandeja", v)} titulo="Arrastra para cambiar el ancho de la bandeja" />
         </>
       )}
@@ -383,7 +388,7 @@ function EspacioFlujo({ ancho, bandejaVisible, cerrarBandeja }: { ancho: number;
           <>
             <motion.button key="fondo" className="cajon-fondo" aria-label="Cerrar bandeja" onClick={cerrarBandeja} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} />
             <motion.div key="cajon" className="cajon" initial={{ x: "-100%" }} animate={{ x: 0 }} exit={{ x: "-100%" }} transition={{ type: "spring", stiffness: 420, damping: 40 }}>
-              <Bandeja />
+              <Izquierda />
             </motion.div>
           </>
         )}

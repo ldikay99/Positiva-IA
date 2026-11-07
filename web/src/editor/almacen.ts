@@ -16,6 +16,8 @@ export interface VariableEntorno {
   definido: boolean;
   descripcion?: string;
   actualizado?: number;
+  /** Copiada de otro flujo al clonar (el mismo valor; los secretos van cifrados). */
+  copiado_de?: string;
 }
 
 export function normalizarEntorno(x: unknown): VariableEntorno[] {
@@ -29,6 +31,7 @@ export function normalizarEntorno(x: unknown): VariableEntorno[] {
       definido: v.definido === undefined ? v.valor !== undefined : Boolean(v.definido),
       descripcion: typeof v.descripcion === "string" ? v.descripcion : undefined,
       actualizado: typeof v.actualizado === "number" ? v.actualizado : undefined,
+      ...(typeof v.copiado_de === "string" ? { copiado_de: v.copiado_de } : {}),
     }))
     .sort((a, b) => a.nombre.localeCompare(b.nombre));
 }

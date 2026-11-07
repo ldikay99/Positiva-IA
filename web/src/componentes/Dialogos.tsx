@@ -8,6 +8,13 @@ import { autoOrdenar, configInicial, slugFlujo, valoresIniciales, textoJson, vis
 import { CampoNumero } from "./Formulario.tsx";
 import { Codigo, Interruptor } from "./Editores.tsx";
 import { Selector } from "./Selector.tsx";
+import { ZonaArchivos } from "./Archivos.tsx";
+import { pedir } from "../estado.ts";
+import type { ArchivoFlujo } from "../tipos.ts";
+
+type ReglasArchivos = { tipos_permitidos: string[]; max_mb: number; max_archivos: number };
+/** Lo que va a la entrada: los archivos de un campo como sus ids (uno solo en «archivo»). */
+const idsDe = (v: unknown, uno: boolean) => { const ids = (Array.isArray(v) ? (v as ArchivoFlujo[]) : []).map((a) => a.id); return uno ? ids[0] ?? null : ids; };
 
 /** Una ventana propia: se cierra con Esc o tocando afuera y guarda el foco adentro. */
 export function Dialogo({ abierto, cerrar, titulo, sub, children, pie, ancho = 560 }: { abierto: boolean; cerrar: () => void; titulo: string; sub?: string; children: React.ReactNode; pie?: React.ReactNode; ancho?: number }) {
@@ -19,6 +26,8 @@ export function Dialogo({ abierto, cerrar, titulo, sub, children, pie, ancho = 5
     const t = setTimeout(() => caja.current?.querySelector<HTMLElement>("[autofocus], input, textarea, button.primario, button")?.focus(), 40);
     const tecla = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        // con el visor de un archivo abierto, Esc cierra solo el visor
+        if (document.querySelector(".arch-visor")) return;
         e.stopPropagation();
         cerrar();
       } else if (e.key === "Tab" && caja.current) {
@@ -123,7 +132,7 @@ function primeraMayuscula(t: string): string {
   return t ? t[0]!.toUpperCase() + t.slice(1) : t;
 }
 
-function FormularioEntrada({ campos, valor, alCambiar }: { campos: CampoEntrada[]; valor: Record<string, unknown>; alCambiar: (v: Record<string, unknown>) => void }) {
+function FormularioEntrada({ campos, valor, alCambiar, flujo, reglas }: { campos: CampoEntrada[]; valor: Record<string, unknown>; alCambiar: (v: Record<string, unknown>) => void; flujo: string; reglas?: ReglasArchivos }) {
   return (
     <div className="f-campos">
       {campos.map((c) => {
@@ -131,7 +140,10 @@ function FormularioEntrada({ campos, valor, alCambiar }: { campos: CampoEntrada[
         const v = valor[c.nombre];
         const poner = (x: unknown) => alCambiar({ ...valor, [c.nombre]: x });
         const t = c.tipo.toLowerCase();
-        const control = c.opciones?.length ? (
+        const control = t === "archivo" || t === "archivos" ? (
+          // un archivo se sube al espacio del flujo: nunca se escribe una ruta
+          <ZonaArchivos id={id} flujo={flujo} valor={Array.isArray(v) ? (v as ArchivoFlujo[]) : []} alCambiar={poner} multiple={t === "archivos"} maximo={t === "archivos" ? reglas?.max_archivos ?? 20 : 1} tipos={reglas?.tipos_permitidos} maxMb={reglas?.max_mb ?? 25} />
+        ) : c.opciones?.length ? (
           <Selector etiqueta={c.titulo} valor={v === undefined ? null : String(v)} opciones={c.opciones.map((o) => ({ valor: o, etiqueta: o }))} alCambiar={poner} />
         ) : t.startsWith("bool") ? (
           <Interruptor valor={Boolean(v)} alCambiar={poner} />
@@ -179,20 +191,33 @@ export function DialogoCorrer({ abierto, cerrar }: { abierto: boolean; cerrar: (
   const [q, setQ] = useState("");
   const [error, setError] = useState("");
   const [enviando, setEnviando] = useState(false);
+  const [archivos, setArchivos] = useState<ArchivoFlujo[]>([]);
+  const [reglas, setReglas] = useState<ReglasArchivos | undefined>();
 
   useEffect(() => {
     if (!abierto) return;
     setError("");
     setCasos(seleccion);
+    setArchivos([]);
     const ini: Record<string, unknown> = {};
     for (const c of campos) if (c.defecto !== undefined) ini[c.nombre] = c.defecto;
     setValores(ini);
     setComoJson(false);
+    if (flujo) void pedir<{ reglas: ReglasArchivos }>(`/api/flujos/${encodeURIComponent(flujo)}/archivos`).then((r) => setReglas(r.reglas)).catch(() => undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [abierto]);
 
   const deCorreo = DE_CORREO.has(tipo);
-  const manual = tipo === "entrada_manual" && campos.length > 0;
+  const deArchivos = tipo === "entrada_archivos";
+  const extra = useMemo(() => (deArchivos && disparador ? camposDe({ campos: disparador.config.campos_extra }) : []), [deArchivos, disparador]);
+  const manual = (tipo === "entrada_manual" && campos.length > 0) || (deArchivos && extra.length > 0);
+  const camposForm = deArchivos ? extra : campos;
+  /** Los campos archivo/archivos van como ids; lo demás, tal cual. */
+  const entradaDe = (v: Record<string, unknown>) => Object.fromEntries(Object.entries(v).map(([k, x]) => {
+    const c = camposForm.find((y) => y.nombre === k);
+    const t = c?.tipo.toLowerCase();
+    return [k, t === "archivo" || t === "archivos" ? idsDe(x, t === "archivo") : x];
+  }));
   const urlGancho = tipo === "webhook" && flujo ? urlDeGancho(flujo, disparador!.config) : "";
   const correos = bandeja.filter((c) => !q.trim() || `${c.caso} ${c.asunto} ${c.remitente}`.toLowerCase().includes(q.trim().toLowerCase())).slice(0, 80);
 
@@ -218,13 +243,20 @@ export function DialogoCorrer({ abierto, cerrar }: { abierto: boolean; cerrar: (
         } else await procesar(casos);
       } else {
         let entrada: Record<string, unknown> = {};
+        if (deArchivos && !archivos.length) {
+          setError("Sube al menos un archivo: arrástralo a la zona o haz clic para elegirlo.");
+          return;
+        }
         if (manual && !comoJson) {
-          const faltan = campos.filter((c) => c.obligatorio && (valores[c.nombre] === undefined || valores[c.nombre] === ""));
+          const vacio = (x: unknown) => x === undefined || x === "" || (Array.isArray(x) && !x.length);
+          const faltan = camposForm.filter((c) => c.obligatorio && vacio(valores[c.nombre]));
           if (faltan.length) {
             setError(`Falta ${faltan.map((c) => `«${c.titulo}»`).join(", ")}.`);
             return;
           }
-          entrada = valores;
+          entrada = entradaDe(valores);
+        } else if (deArchivos) {
+          entrada = {};
         } else {
           try {
             const t = json.trim();
@@ -234,6 +266,8 @@ export function DialogoCorrer({ abierto, cerrar }: { abierto: boolean; cerrar: (
             return;
           }
         }
+        // los archivos de la zona (entrada_archivos o webhook) van como ids del espacio del flujo
+        if (archivos.length) entrada = { ...entrada, archivos: archivos.map((a) => a.id) };
         await correr({ entrada });
       }
       window.dispatchEvent(new CustomEvent("positiva:control", { detail: { accion: "proceso" } }));
@@ -268,7 +302,7 @@ export function DialogoCorrer({ abierto, cerrar }: { abierto: boolean; cerrar: (
     >
       {deCorreo ? (
         <div className="pila">
-          <p className="texto-2 chico">Elige los correos de la correspondencia con que quieres probarlo. Nada se escribe en el buzón real.</p>
+          <p className="texto-2 chico">Elige correos de la correspondencia de este flujo (su bandeja de prueba o su buzón). Nada se escribe en ningún buzón.</p>
           <div className="fila">
             <div className="campo-icono crece"><Icono n="buscar" tam={14} /><input className="campo" placeholder="Buscar por caso, asunto o remitente" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Buscar correos" /></div>
             {casos.length > 0 && <button className="boton chico" onClick={() => setCasos([])}>Quitar {casos.length}</button>}
@@ -286,21 +320,28 @@ export function DialogoCorrer({ abierto, cerrar }: { abierto: boolean; cerrar: (
                 </li>
               );
             })}
-            {!correos.length && <li className="vacio chico">{bandeja.length ? "Ningún correo coincide." : "La correspondencia está vacía."}</li>}
+            {!correos.length && <li className="vacio chico">{bandeja.length ? "Ningún correo coincide." : "Este flujo todavía no tiene correos: súbelos a su bandeja de prueba (.eml o .msg) o ponle un buzón en su «Entrada de correo»."}</li>}
           </ul>
         </div>
       ) : (
         <div className="pila">
-          {urlGancho && <UrlGancho url={urlGancho} ayuda="Otro sistema la llama con un POST; aquí puedes probarla con el cuerpo que mandaría." />}
+          {urlGancho && <UrlGancho url={urlGancho} ayuda="Otro sistema la llama con un POST (JSON o multipart con archivos); aquí puedes probarla con el cuerpo que mandaría." />}
+          {(deArchivos || tipo === "webhook") && flujo && (
+            <div className="f-campo">
+              <span className="f-etiqueta"><span>{deArchivos ? "Archivos" : "Archivos (opcional)"}</span>{deArchivos && <span className="f-obligatorio">obligatorio</span>}</span>
+              <ZonaArchivos flujo={flujo} valor={archivos} alCambiar={setArchivos} maximo={reglas?.max_archivos ?? 20} tipos={deArchivos ? reglas?.tipos_permitidos : undefined} maxMb={reglas?.max_mb ?? 25}
+                ayuda={`Imágenes, PDF, Word, Excel, PowerPoint, texto, correos o ZIP; hasta ${reglas?.max_archivos ?? 20} archivos de ${reglas?.max_mb ?? 25} MB. Video y audio no se aceptan.`} />
+            </div>
+          )}
           {manual && (
             <div className="fila">
-              <p className="texto-2 chico crece">{comoJson ? "La entrada completa, en JSON." : "Los datos con que arranca esta corrida."}</p>
-              <button className="enlace" onClick={() => { if (!comoJson) setJson(textoJson(valores)); setComoJson(!comoJson); }}>{comoJson ? "Volver al formulario" : "Escribir como JSON"}</button>
+              <p className="texto-2 chico crece">{comoJson ? "La entrada completa, en JSON." : deArchivos ? "Los otros datos que pide este flujo." : "Los datos con que arranca esta corrida."}</p>
+              <button className="enlace" onClick={() => { if (!comoJson) setJson(textoJson(entradaDe(valores))); setComoJson(!comoJson); }}>{comoJson ? "Volver al formulario" : "Escribir como JSON"}</button>
             </div>
           )}
           {manual && !comoJson ? (
-            <FormularioEntrada campos={campos} valor={valores} alCambiar={setValores} />
-          ) : (
+            <FormularioEntrada campos={camposForm} valor={valores} alCambiar={setValores} flujo={flujo ?? ""} reglas={reglas} />
+          ) : deArchivos && !manual ? null : (
             <>
               {!manual && <p className="texto-2 chico">{tipo === "programado" ? "Corre ahora, sin esperar el horario. Puedes pasarle datos de prueba en JSON." : "Los datos de entrada, en JSON (puede quedar vacío)."}</p>}
               <Codigo valor={json} alCambiar={setJson} lenguaje="json" minAlto="140px" />
@@ -316,10 +357,11 @@ export function DialogoCorrer({ abierto, cerrar }: { abierto: boolean; cerrar: (
 // ------------------------------------------------------------- flujo nuevo
 
 const DISPARADORES_BASE: { tipo: string; nombre: string; descripcion: string; icono: NombreIcono }[] = [
-  { tipo: "entrada_correo", nombre: "Correo entrante", descripcion: "Corre sobre los correos que elijas de la correspondencia.", icono: "correo" },
+  { tipo: "entrada_correo", nombre: "Correo entrante", descripcion: "Corre sobre los correos de su bandeja de prueba o de su buzón.", icono: "correo" },
+  { tipo: "entrada_archivos", nombre: "Archivos", descripcion: "Corre con imágenes y documentos que subes al correrlo.", icono: "adjunto" },
 ];
 
-const ICONO_DISPARADOR: Record<string, NombreIcono> = { entrada_correo: "correo", correo_nuevo: "bandeja", entrada_manual: "editar", programado: "calendario", webhook: "gancho" };
+const ICONO_DISPARADOR: Record<string, NombreIcono> = { entrada_correo: "correo", correo_nuevo: "bandeja", entrada_manual: "editar", programado: "calendario", webhook: "gancho", entrada_archivos: "adjunto" };
 
 export function DialogoNuevoFlujo({ abierto, cerrar }: { abierto: boolean; cerrar: () => void }) {
   const tipos = usarEditor((s) => s.tipos);

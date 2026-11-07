@@ -3,7 +3,7 @@ import CodeMirror from "@uiw/react-codemirror";
 import { json } from "@codemirror/lang-json";
 import { markdown } from "@codemirror/lang-markdown";
 import { EditorView } from "@codemirror/view";
-import { pedir, usar } from "../estado.ts";
+import { pedir, urlCorreo, usar } from "../estado.ts";
 import { Icono } from "../iconos.tsx";
 import { esRegex, type Regex } from "../parametros.ts";
 
@@ -37,11 +37,12 @@ function useTextoDeMuestra(): string {
   const foco = usar((s) => s.foco);
   const corrida = usar((s) => (s.corridaVisible ? s.corridas[s.corridaVisible] : undefined));
   const caso = foco?.tipo === "correo" ? foco.caso : corrida?.caso;
+  const flujo = usar((s) => s.flujo);
   const [texto, setTexto] = useState("");
   useEffect(() => {
     if (!caso) return;
-    void pedir<{ asunto: string; cuerpo?: string }>(`/api/bandeja/${encodeURIComponent(caso)}`).then((c) => setTexto(`${c.asunto}\n\n${c.cuerpo ?? ""}`)).catch(() => undefined);
-  }, [caso]);
+    void pedir<{ asunto: string; cuerpo?: string }>(urlCorreo(flujo, caso)).then((c) => setTexto(`${c.asunto}\n\n${c.cuerpo ?? ""}`)).catch(() => undefined);
+  }, [caso, flujo]);
   return texto;
 }
 

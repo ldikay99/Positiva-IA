@@ -6,7 +6,9 @@ import { config } from "./config.ts";
 import { enmascarar, enmascararTexto, variantes } from "./enmascarar.ts";
 
 /** El entorno del flujo tutelas (TUTELAS-MICROSOFT-*) y sus valores secretos, para enmascararlos. Lo fija el servidor. */
-export const enlace = { entorno: (): Record<string, string> => ({}), secretos: (): string[] => [] };
+export const enlace = { entorno: (_flujo: string): Record<string, string> => ({}), secretos: (_flujo: string): string[] => [] };
+/** tutelas o una copia suya: cada una lee con SU entorno. */
+const BASE = "tutelas";
 
 /**
  * El buzón de producción de TUTELAS, solo lectura, a través de `puente/buzon_tutelas.py`.
@@ -54,11 +56,11 @@ interface Traidos {
   error?: string;
 }
 
-function correrPython(args: string[], tope = 180_000): Promise<unknown> {
+function correrPython(args: string[], tope = 180_000, flujo = BASE): Promise<unknown> {
   return new Promise((resolver, rechazar) => {
-    const mascaras = variantes(enlace.secretos());
+    const mascaras = variantes(enlace.secretos(flujo));
     const p = spawn(config.python, [script, ...args], {
-      env: { ...process.env, ...enlace.entorno(), PYTHONIOENCODING: "utf-8", PYTHONUNBUFFERED: "1", RUTA_TRABAJO: join(config.datos, "trabajo") },
+      env: { ...process.env, ...enlace.entorno(flujo), PYTHONIOENCODING: "utf-8", PYTHONUNBUFFERED: "1", RUTA_TRABAJO: join(config.datos, "trabajo") },
       stdio: ["ignore", "pipe", "pipe"],
     });
     let salida = "";
@@ -79,14 +81,15 @@ function correrPython(args: string[], tope = 180_000): Promise<unknown> {
   });
 }
 
-let ultimo: { n: number; cuando: number; listado: ListadoDeTutelas } | null = null;
+const ultimos = new Map<string, { n: number; cuando: number; listado: ListadoDeTutelas }>();
 
 /** Lo que tomaría el job de tutelas ahora: los hilos en su orden, cada uno del más viejo al más nuevo. */
-export async function listar(n: number, fresco = false): Promise<ListadoDeTutelas> {
+export async function listar(n: number, fresco = false, flujo = BASE): Promise<ListadoDeTutelas> {
+  const ultimo = ultimos.get(flujo);
   if (!fresco && ultimo && ultimo.n === n && Date.now() - ultimo.cuando < 30_000) return marcarTraidos(ultimo.listado);
-  const r = (await correrPython(["listar", String(n)])) as ListadoDeTutelas;
+  const r = (await correrPython(["listar", String(n)], 180_000, flujo)) as ListadoDeTutelas;
   if (r.error) return { carpeta: "", total: null, correos: [], error: r.error };
-  ultimo = { n, cuando: Date.now(), listado: r };
+  ultimos.set(flujo, { n, cuando: Date.now(), listado: r });
   return marcarTraidos(r);
 }
 
@@ -99,12 +102,12 @@ function marcarTraidos(l: ListadoDeTutelas): ListadoDeTutelas {
  * caso por HILO, en el orden de los ids: el job procesa el hilo como una unidad,
  * así que dos ids del mismo hilo dan una sola corrida.
  */
-export async function traer(ids: string[]): Promise<string[]> {
+export async function traer(ids: string[], flujo = BASE): Promise<string[]> {
   await mkdir(config.vivo, { recursive: true });
   const principales: Record<string, string> = {};
   // De a 10 por llamada: cada correo con adjuntos es una descarga, y su hilo también.
   for (let i = 0; i < ids.length; i += 10) {
-    const r = (await correrPython(["traer", config.vivo, ...ids.slice(i, i + 10)], 300_000)) as Traidos;
+    const r = (await correrPython(["traer", config.vivo, ...ids.slice(i, i + 10)], 300_000, flujo)) as Traidos;
     if (typeof r.error === "string") throw new Error(r.error);
     Object.assign(principales, r.principales);
   }
@@ -112,7 +115,7 @@ export async function traer(ids: string[]): Promise<string[]> {
 }
 
 /** Vacío si el buzón de tutelas se puede leer; si no, por qué. */
-export async function disponible(): Promise<string> {
-  const r = (await correrPython(["disponible"], 60_000)) as { error?: string };
+export async function disponible(flujo = BASE): Promise<string> {
+  const r = (await correrPython(["disponible"], 60_000, flujo)) as { error?: string };
   return r.error ?? "";
 }

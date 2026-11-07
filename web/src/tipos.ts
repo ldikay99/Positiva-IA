@@ -111,6 +111,8 @@ export interface Correo {
   origen?: "buzon" | "local";
   categorias?: string[];
   cuerpo?: string;
+  /** universo (descargados de PQRD), buzon_real, prueba (subido al flujo), buzon_flujo o recibido. */
+  fuente?: "universo" | "buzon_real" | "prueba" | "buzon_flujo" | "recibido";
 }
 
 /** Un correo de la carpeta que lee el job, tal como lo tomaría ahora. */
@@ -141,12 +143,36 @@ export interface FlujoResumen {
   version?: number;
   actualizado?: number;
   nodos?: number;
+  /** De código: el motor del que es instancia (pqrd o tutelas), también en sus copias. */
+  base?: string;
+  /** pqrd y tutelas: los de producción, que no se borran. */
+  original?: boolean;
+  borrable?: boolean;
+  copia_de?: string;
+  /** Con qué arranca (tipo del disparador; «buzon_real» en los de código). */
+  disparador?: string;
+  /** Si arranca con un correo: solo esos muestran «Correspondencia». */
+  correspondencia?: boolean;
+}
+
+/** Un archivo subido al espacio de un flujo. */
+export interface ArchivoFlujo {
+  id: string;
+  nombre: string;
+  tipo: string;
+  tamano: number;
+  sha256: string;
+  subido: number;
 }
 
 export interface TableroFlujo {
   id: string;
   nombre: string;
   tipo: "codigo" | "declarativo";
+  base?: string;
+  copia_de?: string;
+  disparador?: string | null;
+  borrable?: boolean;
   corridas: number;
   desenlaces: Record<string, number>;
   segundosMediana: number;

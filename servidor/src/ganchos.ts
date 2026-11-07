@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { Corrida, Evento } from "./motor.ts";
 import type { Flujo } from "./flujos.ts";
+import { multipart } from "./espacio.ts";
 
 /**
  * Webhooks: POST /api/ganchos/:flujo/:token corre un flujo cuyo disparador es
@@ -18,6 +19,8 @@ export interface Dependencias {
   disparar: (flujo: string, entrada: unknown) => Corrida | null;
   /** Se suscribe a los eventos de todas las corridas; devuelve cómo desuscribirse. */
   escuchar: (f: (e: Evento) => void) => () => void;
+  /** multipart: guarda los archivos en el espacio del flujo (video y audio rechazados). */
+  guardarArchivos?: (flujo: string, partes: { nombre: string; tipo: string; datos: Buffer }[]) => Promise<{ archivos: { id: string; nombre: string }[]; rechazados: { nombre: string; error: string }[] }>;
 }
 
 const QUITAR = /^(authorization|proxy-authorization|cookie|set-cookie|x-api-key|api-key|apikey|x-auth-token|x-amz-security-token|x-goog-api-key|x-forwarded-.*|x-real-ip|forwarded|host|connection|content-length)$/i;
@@ -32,7 +35,9 @@ export async function registrar(app: FastifyInstance, deps: Dependencias): Promi
   await app.register(async (sub) => {
     // Aquí llega cualquier tipo de contenido: JSON se interpreta, lo demás queda como texto.
     sub.removeAllContentTypeParsers();
-    sub.addContentTypeParser("*", { parseAs: "string", bodyLimit: 1024 * 1024 }, (req, cuerpo, listo) => {
+    // multipart/form-data: campos y archivos (los archivos se guardan como los de «Correr»)
+    sub.addContentTypeParser("multipart/form-data", { parseAs: "buffer", bodyLimit: 130 * 1024 * 1024 }, (_req, cuerpo, listo) => listo(null, cuerpo));
+    sub.addContentTypeParser("*",{ parseAs: "string", bodyLimit: 1024 * 1024 }, (req, cuerpo, listo) => {
       const texto = String(cuerpo);
       if (/json/i.test(String(req.headers["content-type"] ?? "")) && texto.trim()) {
         try {
@@ -50,7 +55,28 @@ export async function registrar(app: FastifyInstance, deps: Dependencias): Promi
       const c = (disp?.config ?? {}) as { secreto?: string; responder?: boolean; esperar_ms?: number };
       if (!f || !disp || typeof c.secreto !== "string" || !igual(c.secreto, req.params.token)) return res.code(404).send({ error: "no existe" });
       const encabezados = Object.fromEntries(Object.entries(req.headers).filter(([k, v]) => !QUITAR.test(k) && typeof v === "string").slice(0, 50).map(([k, v]) => [k, String(v).slice(0, 2000)]));
-      const entrada = { cuerpo: req.body ?? null, consulta: req.query ?? {}, encabezados, metodo: "POST", recibido: new Date().toISOString() };
+      let cuerpo: unknown = req.body ?? null;
+      let archivos: string[] = [];
+      const tipoCuerpo = String(req.headers["content-type"] ?? "");
+      if (Buffer.isBuffer(req.body) && /multipart\/form-data/i.test(tipoCuerpo)) {
+        let partes: ReturnType<typeof multipart>;
+        try {
+          partes = multipart(req.body, tipoCuerpo);
+        } catch {
+          return res.code(400).send({ error: "multipart inválido" });
+        }
+        const campos: Record<string, string> = {};
+        for (const p of partes) if (p.archivo === undefined && p.campo) campos[p.campo] = p.datos.toString("utf8").slice(0, 20000);
+        const subir = partes.filter((p) => p.archivo !== undefined).map((p) => ({ nombre: p.archivo || "archivo", tipo: p.tipo, datos: p.datos }));
+        if (subir.length) {
+          if (!deps.guardarArchivos) return res.code(415).send({ error: "este servidor no acepta archivos por webhook" });
+          const r = await deps.guardarArchivos(f.id, subir);
+          if (r.rechazados.length) return res.code(400).send({ error: r.rechazados.map((x) => x.error).join(" · "), rechazados: r.rechazados });
+          archivos = r.archivos.map((a) => a.id);
+        }
+        cuerpo = campos;
+      }
+      const entrada = { cuerpo, consulta: req.query ?? {}, encabezados, metodo: "POST", recibido: new Date().toISOString(), ...(archivos.length ? { archivos } : {}) };
       // Se escucha antes de encolar: la respuesta puede llegar muy rápido.
       const espera = c.responder === true ? Math.max(0, Math.min(30_000, c.esperar_ms ?? 10_000)) : 0;
       let id = "";

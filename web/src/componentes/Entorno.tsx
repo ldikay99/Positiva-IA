@@ -52,7 +52,8 @@ function FormularioVariable({ flujo, variable, existentes, alTerminar }: { flujo
   const deCodigo = usar((s) => s.flujos.find((f) => f.id === flujo)?.tipo === "codigo");
   // En un flujo de código las variables son las del job: deciden a dónde lee y escribe, así que también se confirman.
   const pideConfirmar = secreto || Boolean(variable?.secreto) || deCodigo;
-  const conGuion = flujo === "tutelas";
+  // tutelas y sus copias usan los nombres de su job (con guion)
+  const conGuion = usar((s) => (s.flujos.find((f) => f.id === flujo)?.base ?? flujo) === "tutelas");
 
   const revisar = () => {
     setError("");
@@ -210,7 +211,8 @@ function Variables({ flujo }: { flujo: string }) {
               <div className="ent-principal">
                 <code className="ent-nombre">{v.nombre}</code>
                 {v.secreto && <span className="ficha tono-violeta"><Icono n="candado" tam={10} />secreto</span>}
-                {!v.definido && <span className="ficha tono-ambar">sin valor</span>}
+                {!v.definido && <span className="ficha tono-ambar" title="Declarada sin valor (en una copia los secretos no pasan): ponle el suyo">falta valor</span>}
+                {(v as { copiado_de?: string }).copiado_de && <span className="ficha tono-azul" title={`Copiada de «${(v as { copiado_de?: string }).copiado_de}» al clonar: es el mismo valor (los secretos van cifrados). Cámbiala aquí sin tocar el original.`}>copiada de {(v as { copiado_de?: string }).copiado_de}</span>}
                 <span className="espacio" />
                 <button className="boton chico" onClick={() => { setBorrar(null); setEditando(v.nombre); }}><Icono n="editar" tam={12} />Editar</button>
                 <button className="boton-mini peligro" aria-label={`Eliminar ${v.nombre}`} title="Eliminar" onClick={() => setBorrar(v.nombre)}><Icono n="papelera" tam={13} /></button>

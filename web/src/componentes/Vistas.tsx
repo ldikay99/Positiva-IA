@@ -63,7 +63,7 @@ export function VistaCorridas() {
   const flujo = usar((s) => s.flujo);
   const nombreFlujo = usar((s) => s.flujos.find((f) => f.id === s.flujo)?.nombre ?? s.flujo);
   // La comparación con producción solo existe para PQRD: la bandeja trae lo que hizo el job con esos correos.
-  const conProduccion = flujo === "pqrd";
+  const conProduccion = usar((s) => (s.flujos.find((f) => f.id === s.flujo)?.base ?? flujo) === "pqrd");
   const lista = orden.map((id) => corridas[id]).filter((c) => c !== undefined);
   const terminadas = lista.filter((c) => c.resultado);
   const prod = useMemo(() => (conProduccion ? Object.fromEntries(bandeja.map((b) => [b.caso, b])) : {}) as Record<string, (typeof bandeja)[number]>, [bandeja, conProduccion]);

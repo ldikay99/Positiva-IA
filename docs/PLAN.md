@@ -138,15 +138,15 @@ Cada flujo, y cada nodo de IA, elige su proveedor y su modelo. Hoy todo usa Vert
 
 El proyecto nació como PQRD y quedan cosas de PQRD que se ven en todos los flujos. Cada flujo debe funcionar como lo que es.
 
-- [ ] La «Correspondencia» (bandeja descargada y buzón real de PQRD) solo aparece en los flujos que la usan. Un flujo nuevo no ve los correos de PQRD.
-- [ ] Un flujo nuevo con disparador de correo se conecta a SU buzón (conexión IMAP o Graph, carpeta) o a su bandeja de prueba propia (subir .eml/.msg), no a la de PQRD.
-- [ ] Nodo para subir archivos (imágenes y documentos; no video ni audio):
-  - [ ] disparador «archivos» y campo de archivo en «entrada manual», con arrastrar y soltar en «Correr»;
-  - [ ] el archivo se guarda como archivo del flujo (no como una ruta escrita a mano) y pasa por la misma lectura, OCR y visión que los adjuntos;
-  - [ ] también por webhook (multipart) y desde el chat de Vera (los adjuntos del chat sirven para correr un flujo).
-- [ ] Renombrar, clonar y borrar a la vista en cada flujo (cabecera y tarjeta del tablero), con confirmación al borrar.
-- [ ] Clonar también PQRD y tutelas: la copia es una instancia propia (su entorno, conexiones, compuerta y programación) que corre el mismo motor; los originales no se borran.
-- [ ] Vera hace todo esto: crear, editar, renombrar, clonar, borrar (con botón), conectar un buzón o una carpeta a un flujo y correrlo con archivos.
+- [x] La «Correspondencia» (bandeja descargada y buzón real de PQRD) solo aparece en los flujos que la usan. Un flujo nuevo no ve los correos de PQRD.
+- [x] Un flujo nuevo con disparador de correo se conecta a SU buzón (conexión IMAP o Graph, carpeta) o a su bandeja de prueba propia (subir .eml/.msg), no a la de PQRD.
+- [x] Nodo para subir archivos (imágenes y documentos; no video ni audio):
+  - [x] disparador «archivos» y campo de archivo en «entrada manual», con arrastrar y soltar en «Correr»;
+  - [x] el archivo se guarda como archivo del flujo (no como una ruta escrita a mano) y pasa por la misma lectura, OCR y visión que los adjuntos;
+  - [x] también por webhook (multipart) y desde el chat de Vera (los adjuntos del chat sirven para correr un flujo). Webhook multipart hecho; falta el chat (Vera).
+- [x] Renombrar, clonar y borrar a la vista en cada flujo (cabecera y tarjeta del tablero), con confirmación al borrar.
+- [x] Clonar también PQRD y tutelas: la copia es una instancia propia (su entorno, conexiones, compuerta y programación) que corre el mismo motor; los originales no se borran.
+- [x] Vera hace todo esto: crear, editar, renombrar, clonar (también PQRD y tutelas), borrar con botón (no los originales), correspondencia por flujo, leer el buzón propio de un flujo y correrlo con los archivos adjuntos en el chat. Probado: documento adjunto → flujo `entrada_archivos` → extrajo los 5 datos y radicó en 23 s; el flujo nuevo no ve correos de PQRD.
 
 ### 2f. Vera, la voz y el chat (pedido 2026-11-07)
 
@@ -158,7 +158,7 @@ El proyecto nació como PQRD y quedan cosas de PQRD que se ven en todos los fluj
 
 ### 3a. Detalles visuales
 
-- [ ] El fondo claro del área principal no debe tener esquinas redondeadas.
+- [x] El fondo claro del área principal no debe tener esquinas redondeadas.
 
 ## 3. Editor visual e interfaz
 

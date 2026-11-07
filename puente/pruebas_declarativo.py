@@ -1001,9 +1001,9 @@ class Documentacion(unittest.TestCase):
 
     def test_contrato_de_tipos(self):
         """GET /api/nodos/tipos: la forma que esperan el editor y Vera, con JSON Schema del subconjunto acordado."""
-        formatos = {"plantilla", "credencial", "variable", "expresion", "texto-largo", "cron", "proveedor-ia", "modelo-ia"}
+        formatos = {"plantilla", "credencial", "variable", "expresion", "texto-largo", "cron", "proveedor-ia", "modelo-ia", "archivo-flujo"}
         claves = {"type", "properties", "required", "enum", "items", "description", "default", "minimum", "maximum", "title", "format",
-                  "x-credencial-tipos", "x-comun", "x-largo", "additionalProperties", "minItems"}
+                  "x-credencial-tipos", "x-comun", "x-largo", "x-legado", "additionalProperties", "minItems"}
 
         def revisar(esq, donde):
             self.assertTrue(set(esq) <= claves, f"{donde}: {set(esq) - claves}")
@@ -2611,6 +2611,134 @@ class ParidadDeProveedores(unittest.TestCase):
         r = json.loads(p.stdout.strip().splitlines()[-1])
         self.assertEqual(r["p"], list(pv.PROVEEDORES))
         self.assertEqual(r["c"], tipos)
+
+
+# =====================================================================
+#   Cada flujo independiente: archivos subidos, su bandeja propia y su buzón
+# =====================================================================
+
+class ArchivosDelFlujo(Plataforma):
+    """Los archivos subidos a una corrida se leen como adjuntos y solo del espacio del propio flujo."""
+
+    def subir(self, nombre, datos, flujo="prueba", aid=None, tipo="text/plain"):
+        aid = aid or f"a-{abs(hash(nombre)) % 10 ** 12:012d}"
+        carpeta = self.archivos / flujo / "entradas" / aid
+        carpeta.mkdir(parents=True, exist_ok=True)
+        (carpeta / nombre).write_bytes(datos)
+        return {"id": aid, "nombre": nombre, "tipo": tipo, "tamano": len(datos), "sha256": "x", "ruta": str(carpeta / nombre)}
+
+    def test_entrada_archivos_llega_a_leer_adjuntos_con_filtros(self):
+        a = self.subir("CERTIFICACIÓN médica.txt", CERTIFICADO.encode("utf-8"))
+        b = self.subir("otra-cosa.txt", "texto que no se lee".encode("utf-8"))
+        d = flujo([nodo("archivos", "entrada_archivos", leer=False),
+                   nodo("leer", "leer_adjuntos", nombre_patron="certificacion", salida="texto_cert"),
+                   nodo("fin", "salida", desenlace="manual", motivo="{{archivos.cantidad}}|{{archivos.nombres}}|{{archivos.leidos}}")],
+                  [{"desde": "archivos", "hacia": "leer"}, {"desde": "leer", "hacia": "fin"}])
+        self.assertEqual(fd.validar(d), [])
+        r, eventos = self.correr_orden(d, archivos=[a, b], entrada={"archivos": [a["id"], b["id"]]})
+        self.assertEqual(r["motivo"], "2|CERTIFICACIÓN médica.txt, otra-cosa.txt|CERTIFICACIÓN médica.txt")
+        self.assertIn("Ana María Pérez", r["variables"]["texto_cert"])  # se leyó con la conversión del motor
+        self.assertTrue(any(e.get("titulo", "").startswith("otra-cosa.txt: se omite") for e in eventos))
+        self.assertEqual([x["nombre"] for x in r["variables"]["entrada"]["archivos"]], ["CERTIFICACIÓN médica.txt", "otra-cosa.txt"])
+
+    def test_entrada_archivos_lee_sola_y_exige_archivos(self):
+        a = self.subir("acta.txt", CERTIFICADO.encode("utf-8"))
+        d = flujo([nodo("archivos", "entrada_archivos"), nodo("fin", "salida", desenlace="manual", motivo="{{archivos.texto}}")],
+                  [{"desde": "archivos", "hacia": "fin"}])
+        r, _ = self.correr_orden(d, archivos=[a])
+        self.assertIn("Ana María Pérez", r["motivo"])
+        r, _ = self.correr_orden(d, exigir_ok=False, archivos=[])
+        self.assertEqual(r["accion"], "error")
+        self.assertIn("no trae archivos", r["motivo"])
+
+    def test_archivos_de_otro_flujo_o_video_no_entran(self):
+        ajeno = self.subir("ajeno.txt", b"de otro flujo", flujo="otro-flujo")
+        video = self.subir("clase.mp4", b"\x00\x00\x00\x18ftypisom", tipo="video/mp4")
+        bueno = self.subir("bueno.txt", CERTIFICADO.encode("utf-8"))
+        d = flujo([nodo("archivos", "entrada_archivos"), nodo("fin", "salida", desenlace="manual", motivo="{{archivos.nombres}}")],
+                  [{"desde": "archivos", "hacia": "fin"}])
+        r, _ = self.correr_orden(d, archivos=[ajeno, video, bueno])
+        self.assertEqual(r["motivo"], "bueno.txt")
+        self.assertTrue(any("no está en el espacio de este flujo" in x for x in r["avisos"]))
+        self.assertTrue(any("video o audio" in x for x in r["avisos"]))
+
+    def test_tipos_permitidos_y_tamano(self):
+        self.assertProblema(flujo([nodo("a", "entrada_archivos", tipos_permitidos=["pdf", "mp4"]), nodo("fin", "salida", desenlace="manual")],
+                                  [{"desde": "a", "hacia": "fin"}]), "video o audio")
+        a = self.subir("foto.png", b"\x89PNG\r\n\x1a\n", tipo="image/png")
+        d = flujo([nodo("a", "entrada_archivos", tipos_permitidos=["pdf"], leer=False), nodo("fin", "salida", desenlace="manual")], [{"desde": "a", "hacia": "fin"}])
+        r, _ = self.correr_orden(d, exigir_ok=False, archivos=[a])
+        self.assertIn("no acepta archivos .png", r["motivo"])
+
+    def test_campo_archivo_en_entrada_manual(self):
+        a = self.subir("soporte.txt", CERTIFICADO.encode("utf-8"))
+        d = manual(nodo("leer", "leer_adjuntos", salida="soporte_texto"), campos=[{"nombre": "soporte", "tipo": "archivo", "obligatorio": True}],
+                   fin=nodo("fin", "salida", desenlace="manual", motivo="{{entrada.soporte.nombre}}"))
+        self.assertEqual(fd.validar(d), [])
+        r, _ = self.correr_orden(d, archivos=[a], entrada={"soporte": a["id"]})
+        self.assertEqual(r["motivo"], "soporte.txt")
+        self.assertIn("Ana María Pérez", r["variables"]["soporte_texto"])
+        r, _ = self.correr_orden(d, exigir_ok=False, archivos=[], entrada={})
+        self.assertIn("faltan en la entrada: soporte", r["motivo"])
+
+    def test_webhook_con_archivos(self):
+        a = self.subir("adjunto.txt", CERTIFICADO.encode("utf-8"))
+        d = flujo([nodo("w", "webhook"), nodo("fin", "salida", desenlace="manual", motivo="{{archivos.cantidad}} {{entrada.cuerpo.nota}}")], [{"desde": "w", "hacia": "fin"}])
+        r, _ = self.correr_orden(d, archivos=[a], entrada={"cuerpo": {"nota": "urgente"}, "archivos": [a["id"]]})
+        self.assertEqual(r["motivo"], "1 urgente")
+
+    def test_archivo_leer_con_archivo_del_flujo_y_sin_tocar_lo_de_otro(self):
+        a = self.subir("lista.csv", "documento,nombre\n111,Ana\n".encode("utf-8"), aid="a-000000lista")
+        d = manual(nodo("leer", "archivo_leer", archivo="a-000000lista", salida="lista"), fin=nodo("fin", "salida", desenlace="manual", motivo="{{lista.filas.0.nombre}}"))
+        self.assertEqual(fd.validar(d), [])
+        r, _ = self.correr_orden(d)
+        self.assertEqual(r["motivo"], "Ana")
+        self.assertTrue(fd._validar_config({"id": "n", "tipo": "archivo_leer", "config": {"archivo": "a-000000lista", "ruta": "x.csv"}}))
+        self.subir("secreto.txt", b"privado", flujo="otro-flujo", aid="a-0000ajeno00")
+        d2 = manual(nodo("leer", "archivo_leer", ruta="otro-flujo/entradas/a-0000ajeno00/secreto.txt", salida="x"))
+        r, _ = self.correr_orden(d2, exigir_ok=False)
+        self.assertEqual(r["accion"], "error")
+        self.assertIn("espacio privado de otro flujo", r["motivo"])
+        self.assertEqual(a["nombre"], "lista.csv")
+
+
+class BandejaPropia(Plataforma):
+    """entrada_correo lee de la bandeja PROPIA del flujo; los .eml y .msg se convierten en casos suyos."""
+
+    EML = ("From: =?utf-8?q?Mar=C3=ADa_G=C3=B3mez?= <maria@ejemplo.test>\r\nTo: mesa@ejemplo.test\r\nSubject: =?utf-8?q?Petici=C3=B3n_de_informaci=C3=B3n?=\r\n"
+           "Date: Thu, 05 Nov 2026 10:00:00 -0500\r\nMessage-ID: <abc@ejemplo.test>\r\nMIME-Version: 1.0\r\n"
+           "Content-Type: multipart/mixed; boundary=\"XX\"\r\n\r\n--XX\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nSolicito copia del certificado.\r\n"
+           "--XX\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Disposition: attachment; filename=\"anexo.txt\"\r\n\r\n" + CERTIFICADO + "\r\n--XX--\r\n")
+
+    def test_eml_a_caso_y_correr(self):
+        import correo_de_archivo as cda
+
+        bandeja = fd.bandeja_del_flujo("prueba")
+        r = cda.a_caso(self.EML.encode("utf-8"), "peticion.eml", bandeja)
+        self.assertTrue(r["caso"].startswith("prueba-"))
+        self.assertEqual(r["asunto"], "Petición de información")
+        self.assertEqual(r["adjuntos"], 1)
+        d = flujo([nodo("correo", "entrada_correo"), nodo("fin", "salida", desenlace="manual", motivo="{{correo.remitente_nombre}}|{{adjuntos.nombres}}")],
+                  [{"desde": "correo", "hacia": "fin"}])
+        res, _ = self.correr_orden(d, caso=r["caso"], flujo="prueba")
+        self.assertEqual(res["motivo"], "María Gómez|anexo.txt")
+        # el mismo caso no lo encuentra otro flujo en su bandeja (su carpeta es otra)
+        self.assertFalse((fd.bandeja_del_flujo("otro-flujo") / r["caso"]).exists())
+
+    def test_rechaza_lo_que_no_es_correo(self):
+        import correo_de_archivo as cda
+
+        with self.assertRaises(ValueError):
+            cda.a_caso(b"\x89PNG\r\n\x1a\n" + b"\x00" * 20, "foto.png", fd.bandeja_del_flujo("prueba"))
+
+    def test_buzon_del_flujo_sin_credencial_explica(self):
+        d = flujo([nodo("correo", "entrada_correo"), nodo("fin", "salida", desenlace="manual")], [{"desde": "correo", "hacia": "fin"}])
+        r = fd.buzon_del_flujo({"flujo": "prueba", "definicion": d, "credenciales": {}})
+        self.assertFalse(r["ok"])
+        self.assertIn("credencial", r["error"])
+        # con credencial en la config, la validación la acepta (solo el nombre)
+        d["nodos"][0]["config"] = {"credencial": "buzon-soporte", "carpeta": "INBOX"}
+        self.assertEqual(fd._validar_config(d["nodos"][0]), [])
 
 
 if __name__ == "__main__":

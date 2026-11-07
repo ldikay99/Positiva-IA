@@ -22,6 +22,12 @@ import { config } from "./config.ts";
  */
 
 export const FLUJOS_CON_COMPUERTA = new Set(["pqrd", "tutelas"]);
+/**
+ * Qué flujos tienen compuerta: pqrd, tutelas y sus copias (instancias propias con el
+ * mismo motor). Lo fija el servidor con el registro de flujos; cada copia tiene la
+ * SUYA, que nace apagada (no hereda nada del original).
+ */
+export const enlace = { tieneCompuerta: (flujo: string): boolean => FLUJOS_CON_COMPUERTA.has(flujo) };
 
 export interface EstadoCompuerta {
   radicacion_real: boolean;
@@ -71,7 +77,14 @@ export function obtener(flujo: string): EstadoCompuerta {
 
 /** Si ese flujo debe escribir de verdad AHORA: la compuerta encendida Y la segunda llave puesta. */
 export function radicacionReal(flujo: string): boolean {
-  return cargado && FLUJOS_CON_COMPUERTA.has(flujo) && estado[flujo]?.radicacion_real === true && permitidoEnDespliegue();
+  return cargado && enlace.tieneCompuerta(flujo) && estado[flujo]?.radicacion_real === true && permitidoEnDespliegue();
+}
+
+/** Un flujo borrado (una copia) no deja su compuerta guardada. */
+export async function olvidar(flujo: string): Promise<void> {
+  if (!(flujo in estado)) return;
+  delete estado[flujo];
+  await guardar();
 }
 
 /** La regla de las dos llaves, sin efectos (para probarla sin tocar el entorno). */
@@ -85,7 +98,7 @@ export function puedeCambiar(encender: boolean, confirmado: boolean, segundaLlav
 export type ResultadoCambio = { ok: true; compuerta: EstadoCompuerta; cambio: boolean } | { ok: false; codigo: number; error: string };
 
 export async function cambiar(flujo: string, cuerpo: unknown, confirmado: boolean, quien = "persona en la web"): Promise<ResultadoCambio> {
-  if (!FLUJOS_CON_COMPUERTA.has(flujo)) return { ok: false, codigo: 404, error: "solo los flujos de código (pqrd, tutelas) tienen compuerta de radicación" };
+  if (!enlace.tieneCompuerta(flujo)) return { ok: false, codigo: 404, error: "solo los flujos de código (pqrd, tutelas y sus copias) tienen compuerta de radicación" };
   const encender = (cuerpo as { radicacion_real?: unknown } | null)?.radicacion_real;
   if (typeof encender !== "boolean") return { ok: false, codigo: 400, error: "manda {radicacion_real: true|false}" };
   const regla = puedeCambiar(encender, confirmado, permitidoEnDespliegue());

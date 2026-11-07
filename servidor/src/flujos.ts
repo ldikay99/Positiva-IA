@@ -11,7 +11,8 @@ import * as entornos from "./entornos.ts";
 import * as ia from "./ia.ts";
 import { PRODUCCION, LECTURAS_EN_SIMULACION } from "./produccion.ts";
 import * as compuerta from "./compuerta.ts";
-import { programacionDe, estado as estadoDelProgramador } from "./programador.ts";
+import * as espacio from "./espacio.ts";
+import { programacionDe, estado as estadoDelProgramador, enlace as programadorEnlace } from "./programador.ts";
 import type { Corrida } from "./motor.ts";
 
 /**
@@ -29,7 +30,7 @@ import type { Corrida } from "./motor.ts";
 /** Los tipos de nodo; su documentación está en `puente/nodos_declarativos.py`. */
 export const TIPOS_DE_NODO = [
   // disparadores (exactamente uno por flujo)
-  "entrada_correo", "entrada_manual", "programado", "webhook", "correo_nuevo",
+  "entrada_correo", "entrada_manual", "programado", "webhook", "correo_nuevo", "entrada_archivos",
   // lectura, lógica, IA y datos
   "leer_adjuntos", "filtro", "condicion", "ia_clasificar", "ia_decidir", "ia_extraer", "extraer_regex", "validar",
   "transformar", "buscar_en_tabla", "bifurcar_por_valor", "ia_generar", "resumir", "ia_redactar",
@@ -41,7 +42,9 @@ export const TIPOS_DE_NODO = [
   "notificar", "enviar", "http", "respuesta_webhook", "salida",
 ] as const;
 export type TipoDeNodo = (typeof TIPOS_DE_NODO)[number];
-export const DISPARADORES = new Set<string>(["entrada_correo", "entrada_manual", "programado", "webhook", "correo_nuevo"]);
+export const DISPARADORES = new Set<string>(["entrada_correo", "entrada_manual", "programado", "webhook", "correo_nuevo", "entrada_archivos"]);
+/** Los disparadores de correo: solo los flujos que arrancan con ellos tienen «Correspondencia». */
+export const DISPARADORES_DE_CORREO = new Set<string>(["entrada_correo", "correo_nuevo"]);
 const CONECTORES = ["correo_leer", "correo_enviar", "drive_listar", "drive_leer", "drive_subir", "hoja_leer", "sql_consulta", "sql_ejecutar"];
 const TIPOS_IA = new Set<string>(["ia_clasificar", "ia_decidir", "ia_extraer", "ia_generar", "resumir", "ia_redactar"]);
 /** Los que hablan con algo de afuera y por eso aceptan reintentos. */
@@ -241,13 +244,25 @@ const expresionTexto = z.string({ error: "falta expresion" }).trim().min(1, "fal
   .refine((s) => !/(^|[^A-Za-z0-9_])_/.test(s), "expresion: nada que empiece por _ (ni __import__, ni __class__…)")
   .refine((s) => !/\blambda\b|\bfor\b.+\bin\b|:=|\bf['"]/.test(s), "expresion: sin lambdas, comprensiones, := ni f-strings");
 const CAMPO_ENTRADA = z.looseObject({
-  nombre: variable, tipo: z.enum(["texto", "numero", "booleano", "fecha", "lista", "objeto"], { error: "tipo: texto, numero, booleano, fecha, lista u objeto" }).optional(),
+  nombre: variable, tipo: z.enum(["texto", "numero", "booleano", "fecha", "lista", "objeto", "archivo", "archivos"], { error: "tipo: texto, numero, booleano, fecha, lista, objeto, archivo o archivos" }).optional(),
   obligatorio: opcional, descripcion: z.string().optional(),
 });
 const unicos = (xs: string[]) => new Set(xs.map((x) => x.trim().toLowerCase())).size === xs.length;
 
 export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
-  entrada_correo: conf({ leer_adjuntos: booleano.optional(), ocr: booleano.optional() }),
+  // Su correspondencia es SUYA: la bandeja de prueba (.eml/.msg) y, con credencial, su buzón (solo lectura).
+  entrada_correo: conf({
+    leer_adjuntos: booleano.optional(), ocr: booleano.optional(), bandeja_prueba: opcional,
+    credencial: z.string().regex(CREDENCIAL_GUARDADA, "credencial: el NOMBRE de una credencial guardada (imap o microsoft_graph)").optional(),
+    carpeta: z.string().optional(), filtro: z.looseObject({ remitente: z.string().optional(), asunto: z.string().optional(), texto: z.string().optional(), no_leidos: z.boolean().optional() }).optional(),
+  }),
+  entrada_archivos: conf({
+    tipos_permitidos: z.array(z.string().regex(/^\.?[a-z0-9]{1,6}$/i, "cada tipo es una extensión (pdf, jpg, docx…)"), { error: "tipos_permitidos: lista de extensiones" }).min(1).optional()
+      .refine((xs) => !xs?.some((x) => espacio.EXT_VIDEO_AUDIO.has(x.toLowerCase().replace(/^\./, ""))), "tipos_permitidos: video y audio nunca se aceptan"),
+    max_archivos: z.number().int().min(1).max(50).optional(), max_mb: z.number().int().min(1).max(25).optional(),
+    leer: z.boolean().optional(), ocr: z.boolean().optional(),
+    campos_extra: z.array(z.looseObject({ nombre: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/), tipo: z.string().optional(), obligatorio: z.boolean().optional(), descripcion: z.string().optional() })).optional(),
+  }),
   entrada_manual: conf({ campos: z.array(CAMPO_ENTRADA, { error: "campos tiene que ser una lista [{nombre, tipo, obligatorio, descripcion}]" }).optional() })
     .refine((c) => !c.campos || unicos(c.campos.map((x) => x.nombre)), { message: "hay campos con el mismo nombre", path: ["campos"] }),
   programado: conf({
@@ -289,10 +304,12 @@ export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
   }),
   sql_consulta: conf({ credencial: credencialRef, consulta: sqlTexto("consulta"), parametros: mapaPlantillas("parametros").optional(), max_filas: entre("max_filas", 1, 5000).optional(), timeout_s: timeoutS }),
   sql_ejecutar: conf({ credencial: credencialRef, sentencia: sqlTexto("sentencia"), parametros: mapaPlantillas("parametros").optional(), permitir_sin_where: opcional, timeout_s: timeoutS }),
+  // Un archivo subido al flujo (archivo: su id) o, en los flujos de antes, una ruta relativa.
   archivo_leer: conf({
-    ruta: rutaRelativa, formato: z.enum(["auto", "texto", "json", "filas"], { error: "formato: auto, texto, json o filas" }).optional(), hoja: z.string().optional(),
+    archivo: z.string().regex(/^a-[0-9a-z]{6,40}$/, "archivo: el id de un archivo subido al flujo").optional(), ruta: rutaRelativa.optional(),
+    formato: z.enum(["auto", "texto", "json", "filas"], { error: "formato: auto, texto, json o filas" }).optional(), hoja: z.string().optional(),
     max_caracteres: entre("max_caracteres", 1, 500000).optional(), max_filas: entre("max_filas", 1, 5000).optional(),
-  }),
+  }).refine((c) => Number(!!c.archivo) + Number(!!c.ruta) === 1, { message: "archivo_leer necesita el archivo subido al flujo (o, en los flujos de antes, una ruta)", path: ["archivo"] }),
   archivo_guardar: conf({
     ruta: rutaRelativa, contenido: z.string().optional(), de: z.string().optional(),
     formato: z.enum(["texto", "json", "csv"], { error: "formato: texto, json o csv" }).optional(), modo: z.enum(["crear", "reemplazar", "anexar"], { error: "modo: crear, reemplazar o anexar" }).optional(),
@@ -482,10 +499,23 @@ export interface Flujo {
   definicion?: Definicion;
   /** La nota de la versión actual (restaurada, copia, renombrado…). */
   nota?: string;
+  /** De código: el motor del que es instancia (pqrd o tutelas). Una copia corre el mismo código con lo suyo. */
+  base?: string;
+  /** Los de código originales (pqrd, tutelas): no se borran. */
+  original?: boolean;
+  /** De qué flujo es copia (si lo es). */
+  copia_de?: string;
+  /** Con qué arranca: el tipo del disparador (o «buzon_real» en los de código). */
+  disparador?: string;
+  /** Si tiene «Correspondencia» (arranca con un correo): los de código y los de entrada_correo o correo_nuevo. */
+  correspondencia?: boolean;
+  creado?: number;
 }
 
 const raiz = config.raiz;
 const carpetaDeclarativos = () => join(config.datos, "flujos");
+/** Las copias de los flujos de código: <estado>/flujos_codigo/<id>.json (y los nombres propios de los originales en _originales.json). */
+const carpetaCodigo = () => join(config.datos, "flujos_codigo");
 
 const DE_CODIGO: Flujo[] = [
   {
@@ -498,9 +528,60 @@ const DE_CODIGO: Flujo[] = [
     descripcion: "Notificaciones judiciales: valida que el remitente sea un juzgado, detecta tutela o actuación, encuentra el radicado y el juzgado, exige anexos, deduplica y radica en SGDEA.",
     trabajador: resolve(raiz, "puente", "trabajador_tutelas.py"),
   },
-];
+].map((f) => ({ ...f, tipo: "codigo" as const, base: f.id, original: true, disparador: "buzon_real", correspondencia: true }));
 
 const declarativos = new Map<string, Flujo>();
+/** Las copias de pqrd y tutelas: instancias propias (su entorno, compuerta, programación y corridas) del mismo motor. */
+const copiasDeCodigo = new Map<string, Flujo>();
+/** Nombre y descripción propios de los originales (si alguien los renombró). */
+let originales: Record<string, { nombre?: string; descripcion?: string }> = {};
+
+interface CopiaGuardada {
+  id: string;
+  base: string;
+  nombre: string;
+  descripcion: string;
+  copia_de: string;
+  creado: number;
+  actualizado: number;
+}
+
+function aCopia(g: CopiaGuardada): Flujo | null {
+  const b = DE_CODIGO.find((f) => f.id === g.base);
+  if (!b) return null;
+  return { ...b, id: g.id, nombre: g.nombre, descripcion: g.descripcion, original: false, copia_de: g.copia_de, creado: g.creado, actualizado: g.actualizado };
+}
+
+async function guardarCopia(f: Flujo): Promise<void> {
+  await mkdir(carpetaCodigo(), { recursive: true });
+  const g: CopiaGuardada = { id: f.id, base: f.base!, nombre: f.nombre, descripcion: f.descripcion, copia_de: f.copia_de ?? f.base!, creado: f.creado ?? Date.now(), actualizado: f.actualizado ?? Date.now() };
+  await writeFile(join(carpetaCodigo(), `${f.id}.json`), JSON.stringify(g, null, 2), "utf8");
+}
+
+async function cargarCopias(): Promise<void> {
+  copiasDeCodigo.clear();
+  await mkdir(carpetaCodigo(), { recursive: true });
+  try {
+    originales = JSON.parse(await readFile(join(carpetaCodigo(), "_originales.json"), "utf8")) as typeof originales;
+  } catch {
+    originales = {};
+  }
+  for (const a of (await readdir(carpetaCodigo())).filter((x) => x.endsWith(".json") && !x.startsWith("_"))) {
+    try {
+      const f = aCopia(JSON.parse(await readFile(join(carpetaCodigo(), a), "utf8")) as CopiaGuardada);
+      if (f && /^[a-z][a-z0-9-]{1,40}$/.test(f.id) && !DE_CODIGO.some((x) => x.id === f.id)) copiasDeCodigo.set(f.id, f);
+    } catch {
+      /* archivo dañado: se ignora */
+    }
+  }
+}
+
+/** De qué motor de código es instancia un flujo (pqrd, tutelas o null si es declarativo o no existe). */
+export function baseDe(id: string): string | null {
+  return DE_CODIGO.find((f) => f.id === id)?.id ?? copiasDeCodigo.get(id)?.base ?? null;
+}
+
+export const esOriginal = (id: string) => DE_CODIGO.some((f) => f.id === id);
 
 interface Guardado {
   definicion: unknown;
@@ -510,6 +591,11 @@ interface Guardado {
 }
 
 export async function cargar(): Promise<void> {
+  await cargarCopias();
+  // Cada almacén por flujo sabe de qué motor es una copia (nombres del job, compuerta, programación).
+  entornos.enlace.baseDe = (id) => baseDe(id) ?? id;
+  compuerta.enlace.tieneCompuerta = (id) => baseDe(id) !== null;
+  programadorEnlace.baseDe = (id) => baseDe(id);
   await mkdir(carpetaDeclarativos(), { recursive: true });
   for (const a of (await readdir(carpetaDeclarativos())).filter((x) => x.endsWith(".json"))) {
     try {
@@ -523,21 +609,27 @@ export async function cargar(): Promise<void> {
 }
 
 function aFlujo(d: Definicion, version: number, actualizado: number, nota?: string): Flujo {
+  const disparador = disparadorDe(d)?.tipo;
+  const copia = /^copia de ([a-z][a-z0-9-]{1,40}) v\d+$/.exec(nota ?? "")?.[1];
   return {
     id: d.id, nombre: d.nombre, descripcion: d.descripcion, tipo: "declarativo", buzonReal: false, lote: false,
     trabajador: resolve(raiz, "puente", "flujo_declarativo.py"), version, actualizado, definicion: d, ...(nota ? { nota } : {}),
+    ...(disparador ? { disparador } : {}), correspondencia: DISPARADORES_DE_CORREO.has(disparador ?? ""), ...(copia ? { copia_de: copia } : {}),
   };
 }
 
 export function listar(): Flujo[] {
-  return [...DE_CODIGO.filter((f) => existsSync(f.trabajador)), ...[...declarativos.values()].sort((a, b) => a.nombre.localeCompare(b.nombre))];
+  const propios = DE_CODIGO.filter((f) => existsSync(f.trabajador)).map((f) => ({ ...f, ...(originales[f.id] ?? {}) }));
+  const copias = [...copiasDeCodigo.values()].filter((f) => existsSync(f.trabajador)).sort((a, b) => a.nombre.localeCompare(b.nombre));
+  return [...propios, ...copias, ...[...declarativos.values()].sort((a, b) => a.nombre.localeCompare(b.nombre))];
 }
 
 export function obtener(id: string): Flujo | undefined {
   return listar().find((f) => f.id === id);
 }
 
-export const esDeCodigo = (id: string) => DE_CODIGO.some((f) => f.id === id);
+/** pqrd, tutelas y sus copias. */
+export const esDeCodigo = (id: string) => baseDe(id) !== null;
 
 /** El disparador de una definición (el único nodo de tipo disparador). */
 export function disparadorDe(d: Definicion): Definicion["nodos"][number] | undefined {
@@ -602,6 +694,13 @@ export async function guardar(entrada: unknown, nota?: string, nombresExtra: str
 }
 
 export async function borrar(id: string): Promise<boolean> {
+  if (copiasDeCodigo.has(id)) {
+    // una copia de pqrd o tutelas: su registro y su entorno (lo demás lo limpia el servidor)
+    copiasDeCodigo.delete(id);
+    await unlink(join(carpetaCodigo(), `${id}.json`)).catch(() => undefined);
+    await entornos.borrarTodo(id);
+    return true;
+  }
   if (!declarativos.has(id)) return false;
   declarativos.delete(id);
   await unlink(join(carpetaDeclarativos(), `${id}.json`)).catch(() => undefined);
@@ -683,13 +782,66 @@ export async function duplicar(id: string, idNuevo: unknown, nombre: unknown): P
       if (v.secreto) await entornos.declararSecreto(idNuevo, v.nombre, v.descripcion);
       else await entornos.poner(idNuevo, v.nombre, { valor: v.valor ?? "", descripcion: v.descripcion }, false);
     }
+    // los archivos que eligió en sus nodos (archivo_leer) van con la copia: es independiente
+    await espacio.copiarArchivos(id, idNuevo);
   }
   return r.ok ? { ok: true, flujo: r.flujo! } : { ok: false, codigo: 400, error: "la copia no es válida", problemas: r.problemas };
 }
 
+/** Un id libre a partir de un nombre («Radicación de PQRD (copia)» → «radicacion-de-pqrd-copia», o con -2, -3…). */
+export function idLibre(nombre: string): string {
+  const base = nombre.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 36) || "flujo";
+  const limpio = /^[a-z]/.test(base) ? base : `f-${base}`.slice(0, 36);
+  let id = limpio.length >= 2 ? limpio : `${limpio}-1`;
+  for (let i = 2; obtener(id) || existsSync(join(config.archivos, id)); i++) id = `${limpio}-${i}`;
+  return id;
+}
+
+/**
+ * Clona cualquier flujo y deja la copia lista para abrir:
+ * - declarativo: su definición y su diseño, el entorno no secreto (los secretos quedan declarados sin valor:
+ *   «falta valor») y sus archivos; nace apagado (programado/correo_nuevo) y con webhook nuevo;
+ * - de código (pqrd, tutelas o una copia): una instancia nueva del MISMO motor con lo suyo: id y nombre propios,
+ *   su entorno (copiado del original; los secretos se copian cifrados, marcados copiado_de), sus conexiones
+ *   (las del alcance del original no pasan), su compuerta (apagada), su programación (apagada) y sus corridas.
+ */
+export async function clonar(id: string, nombre: unknown, idNuevo?: unknown): Promise<Operacion> {
+  const f = obtener(id);
+  if (!f) return { ok: false, codigo: 404, error: "ese flujo no existe" };
+  const n = typeof nombre === "string" && nombre.trim().length >= 2 ? nombre.trim().slice(0, 80) : `${f.nombre} (copia)`;
+  const nuevo = typeof idNuevo === "string" && idNuevo ? idNuevo : idLibre(n);
+  if (!/^[a-z][a-z0-9-]{1,40}$/.test(nuevo)) return { ok: false, codigo: 400, error: "id_nuevo: minúsculas con guiones" };
+  if (obtener(nuevo)) return { ok: false, codigo: 409, error: `ya existe un flujo «${nuevo}»` };
+  if (f.tipo === "declarativo") return duplicar(id, nuevo, n);
+  const base = baseDe(id)!;
+  const ahora = Date.now();
+  const copia = aCopia({ id: nuevo, base, nombre: n, descripcion: f.descripcion, copia_de: id, creado: ahora, actualizado: ahora })!;
+  await guardarCopia(copia);
+  copiasDeCodigo.set(nuevo, copia);
+  await entornos.copiar(id, nuevo);
+  return { ok: true, flujo: copia };
+}
+
 /** Cambia nombre o descripción sin mandar toda la definición. */
 export async function renombrar(id: string, cambios: { nombre?: unknown; descripcion?: unknown }): Promise<Operacion> {
-  if (esDeCodigo(id)) return { ok: false, codigo: 400, error: "el nombre y la descripción de un flujo de código no se editan" };
+  if (esDeCodigo(id)) {
+    // pqrd, tutelas y sus copias: el nombre y la descripción son de la plataforma (el código no cambia)
+    if (cambios.nombre === undefined && cambios.descripcion === undefined) return { ok: false, codigo: 400, error: "manda nombre o descripcion" };
+    if (cambios.nombre !== undefined && (typeof cambios.nombre !== "string" || cambios.nombre.trim().length < 2)) return { ok: false, codigo: 400, error: "nombre: entre 2 y 80 caracteres" };
+    if (cambios.descripcion !== undefined && typeof cambios.descripcion !== "string") return { ok: false, codigo: 400, error: "descripcion tiene que ser texto" };
+    const extra = { ...(typeof cambios.nombre === "string" ? { nombre: cambios.nombre.trim().slice(0, 80) } : {}), ...(typeof cambios.descripcion === "string" ? { descripcion: cambios.descripcion.slice(0, 800) } : {}) };
+    const copia = copiasDeCodigo.get(id);
+    if (copia) {
+      const sig = { ...copia, ...extra, actualizado: Date.now() };
+      await guardarCopia(sig);
+      copiasDeCodigo.set(id, sig);
+      return { ok: true, flujo: sig };
+    }
+    originales = { ...originales, [id]: { ...(originales[id] ?? {}), ...extra } };
+    await mkdir(carpetaCodigo(), { recursive: true });
+    await writeFile(join(carpetaCodigo(), "_originales.json"), JSON.stringify(originales, null, 2), "utf8");
+    return { ok: true, flujo: obtener(id)! };
+  }
   const f = declarativos.get(id);
   if (!f?.definicion) return { ok: false, codigo: 404, error: "ese flujo no existe" };
   const d = structuredClone(f.definicion);
@@ -738,14 +890,17 @@ export function ordenPara(id: string, corrida: Corrida): Record<string, unknown>
   const f = obtener(id);
   if (!f) return {};
   if (f.tipo === "codigo") {
-    const permitidas = id === "pqrd" ? ajustables().entorno : new Set<string>();
+    const pqrd = baseDe(id) === "pqrd";
+    const permitidas = pqrd ? ajustables().entorno : new Set<string>();
     const propias = Object.fromEntries(Object.entries(entornos.paraCorrida(id).valores).filter(([k]) => permitidas.has(k)));
-    return { entorno: { ...(id === "pqrd" ? corrida.configuracion.entorno : {}), ...propias } };
+    return { entorno: { ...(pqrd ? corrida.configuracion.entorno : {}), ...propias } };
   }
   if (!f.definicion) return {};
   const ent = entornos.paraCorrida(id);
   return {
     definicion: f.definicion, flujo: id, entrada: corrida.entrada ?? {}, origen: corrida.origen ?? "bandeja",
+    // los archivos subidos para esta corrida, solo del espacio de ESTE flujo
+    archivos: espacio.resolverArchivos(id, corrida.entrada, f.definicion).map(({ id: a, nombre, tipo, tamano, sha256, ruta }) => ({ id: a, nombre, tipo, tamano, sha256, ruta })),
     credenciales: credenciales.paraCorrida(id, credencialesUsadas(f.definicion)), entorno: ent.valores, entorno_secretos: ent.secretos, ia_global: ia.obtenerGlobal(),
     subflujos: subflujosDe(f.definicion, [id]),
   };
@@ -755,6 +910,14 @@ export function ordenPara(id: string, corrida: Corrida): Record<string, unknown>
 export function ordenDeSondeo(id: string): Record<string, unknown> | null {
   const f = declarativos.get(id);
   if (!f?.definicion) return null;
+  return { flujo: id, definicion: f.definicion, credenciales: credenciales.paraCorrida(id, credencialesUsadas(f.definicion)) };
+}
+
+/** Para leer el «Buzón del flujo» (entrada_correo con credencial): la definición y sus credenciales. */
+export function ordenDeBuzon(id: string): Record<string, unknown> | null {
+  const f = declarativos.get(id);
+  const c = f?.definicion ? (disparadorDe(f.definicion)?.config as { credencial?: string } | undefined) : undefined;
+  if (!f?.definicion || disparadorDe(f.definicion)?.tipo !== "entrada_correo" || !c?.credencial) return null;
   return { flujo: id, definicion: f.definicion, credenciales: credenciales.paraCorrida(id, credencialesUsadas(f.definicion)) };
 }
 
@@ -808,7 +971,7 @@ export async function manifiesto(id: string): Promise<Record<string, unknown> | 
   const variables = (await entornos.listar(id)).map((v) => ({ nombre: v.nombre, secreto: v.secreto, definido: v.definido, descripcion: v.descripcion }));
   const base = { manifiesto: 1, generado: new Date().toISOString(), flujo: { id: f.id, nombre: f.nombre, descripcion: f.descripcion, tipo: f.tipo, version: f.version ?? null, actualizado: f.actualizado ?? null } };
   if (f.tipo === "codigo" || !f.definicion) {
-    const prod = PRODUCCION[f.id];
+    const prod = PRODUCCION[baseDe(f.id) ?? f.id];
     const c = compuerta.obtener(f.id);
     const real = compuerta.radicacionReal(f.id);
     const p = programacionDe(f.id);
@@ -822,7 +985,8 @@ export async function manifiesto(id: string): Promise<Record<string, unknown> | 
         como_se_enciende: "Una persona la enciende en la web con confirmación explícita (X-Confirmado-Por-Persona: si) y solo si el contenedor tiene PERMITIR_RADICACION_REAL=si.",
       },
       ...(p ? { programacion: { ...p, como_el_job: true, tope_por_corrida_s: 3600, sin_solapes: true, ultima_ejecucion: estadoDelProgramador()[`j:${f.id}`] ?? null } } : {}),
-      lecturas_con_la_compuerta_apagada: LECTURAS_EN_SIMULACION[f.id] ?? [],
+      lecturas_con_la_compuerta_apagada: LECTURAS_EN_SIMULACION[baseDe(f.id) ?? f.id] ?? [],
+      ...(f.copia_de ? { copia_de: f.copia_de, instancia: `copia de «${f.copia_de}»: el mismo motor de ${baseDe(f.id)}, con su entorno, su compuerta y su programación propios` } : {}),
       ...(prod?.ia ? { ia: prod.ia } : {}),
       ejecucion: prod?.ejecucion,
       // Las variables propias del flujo en esta plataforma y las que usa el job en producción (sin valores).
@@ -868,6 +1032,8 @@ export async function manifiesto(id: string): Promise<Record<string, unknown> | 
       ...(disp?.tipo === "webhook" ? { webhook: { ruta: `/api/ganchos/${id}/<secreto>`, metodo: "POST", secreto_definido: typeof cd.secreto === "string", responder: cd.responder === true, esperar_ms: cd.esperar_ms ?? 10000 } } : {}),
       ...(disp?.tipo === "correo_nuevo" ? { correo_nuevo: { credencial: cd.credencial, carpeta: cd.carpeta ?? "INBOX", cada_minutos: cd.cada_minutos ?? 5, activo: cd.activo === true, solo_lectura: true } } : {}),
       ...(disp?.tipo === "entrada_manual" ? { campos: cd.campos ?? [] } : {}),
+      ...(disp?.tipo === "entrada_archivos" ? { archivos: { ...(() => { const r = espacio.reglasDe(d); return { tipos_permitidos: [...r.tipos], max_mb: r.maxMb, max_archivos: r.maxArchivos }; })(), video_y_audio: "siempre rechazados (extensión y contenido)" } } : {}),
+      ...(disp?.tipo === "entrada_correo" ? { correo: { bandeja_de_prueba: cd.bandeja_prueba !== false, buzon: cd.credencial ? { credencial: cd.credencial, carpeta: cd.carpeta ?? "INBOX", solo_lectura: true } : null } } : {}),
     },
     nodos: d.nodos.map((n) => ({ id: n.id, tipo: n.tipo, nombre: n.nombre, escritura: TIPOS_ESCRITURA.has(n.tipo), ...((n.config as { credencial?: unknown }).credencial ? { credencial: (n.config as { credencial?: unknown }).credencial } : {}) })),
     conexiones,
@@ -877,7 +1043,7 @@ export async function manifiesto(id: string): Promise<Record<string, unknown> | 
     entorno_sin_definir: usadasEntorno.filter((n) => !variables.some((v) => v.nombre === n)),
     escrituras,
     flujos_llamados: [...new Set(d.nodos.filter((n) => n.tipo === "llamar_flujo").map((n) => String((n.config as { flujo?: unknown }).flujo)))],
-    archivos: d.nodos.filter((n) => n.tipo === "archivo_leer" || n.tipo === "archivo_guardar").map((n) => ({ nodo: n.id, tipo: n.tipo, ruta: (n.config as { ruta?: unknown }).ruta })),
+    archivos: d.nodos.filter((n) => n.tipo === "archivo_leer" || n.tipo === "archivo_guardar").map((n) => ({ nodo: n.id, tipo: n.tipo, ...((n.config as { archivo?: string }).archivo ? { archivo: (n.config as { archivo?: string }).archivo } : { ruta: (n.config as { ruta?: unknown }).ruta }) })),
     tablas: d.nodos.filter((n) => n.tipo === "tabla_guardar" || n.tipo === "tabla_consultar").map((n) => ({ nodo: n.id, tabla: (n.config as { tabla?: unknown }).tabla, ambito: (n.config as { ambito?: unknown }).ambito ?? "flujo" })),
     limites: [
       "Las escrituras afuera solo salen si una persona habilitó la escritura de la credencial (X-Confirmado-Por-Persona).",
@@ -895,7 +1061,7 @@ const CATEGORIA: Record<TipoDeNodo, string> = {
   ia_extraer: "ia", extraer_regex: "busqueda", validar: "validacion", transformar: "datos", buscar_en_tabla: "datos",
   bifurcar_por_valor: "ruta", ia_generar: "ia", resumir: "ia", ia_redactar: "ia", notificar: "integracion", enviar: "integracion",
   http: "integracion", salida: "salida",
-  entrada_manual: "entrada", programado: "entrada", webhook: "entrada", correo_nuevo: "entrada",
+  entrada_manual: "entrada", programado: "entrada", webhook: "entrada", correo_nuevo: "entrada", entrada_archivos: "entrada",
   para_cada: "logica", fin_ciclo: "logica", paralelo: "logica", unir: "logica", esperar: "logica", llamar_flujo: "logica",
   expresion: "datos", json: "datos", fecha: "datos", tabla_guardar: "datos", tabla_consultar: "datos", archivo_leer: "datos", archivo_guardar: "datos",
   correo_leer: "conector", correo_enviar: "conector", drive_listar: "conector", drive_leer: "conector", drive_subir: "conector", hoja_leer: "conector",
@@ -907,7 +1073,7 @@ const NOMBRE_TIPO: Record<TipoDeNodo, string> = {
   validar: "Validación", transformar: "Transformar", buscar_en_tabla: "Buscar en tabla", bifurcar_por_valor: "Bifurcar por valor",
   ia_generar: "IA · generar", resumir: "IA · resumir", ia_redactar: "IA · redactar", notificar: "Notificar (simulado)",
   enviar: "Enviar respuesta (simulado)", http: "Petición HTTP", salida: "Salida",
-  entrada_manual: "Entrada manual", programado: "Programado", webhook: "Webhook", correo_nuevo: "Correo nuevo",
+  entrada_manual: "Entrada manual", programado: "Programado", webhook: "Webhook", correo_nuevo: "Correo nuevo", entrada_archivos: "Entrada de archivos",
   para_cada: "Para cada", fin_ciclo: "Fin del ciclo", paralelo: "Ramas", unir: "Unir ramas", esperar: "Esperar", llamar_flujo: "Llamar flujo",
   expresion: "Expresión", json: "JSON", fecha: "Fecha", tabla_guardar: "Guardar en tabla", tabla_consultar: "Consultar tabla",
   archivo_leer: "Leer archivo", archivo_guardar: "Guardar archivo", correo_leer: "Leer correos", correo_enviar: "Enviar correo",
@@ -954,6 +1120,11 @@ function describirConfig(n: Definicion["nodos"][number], aristas: Definicion["ar
   switch (n.tipo) {
     case "entrada_correo":
       add(`Lee asunto, cuerpo y remitente${c.leer_adjuntos === false ? " (los adjuntos se leen aparte o no se leen)" : `, y los adjuntos${c.ocr === false ? " sin OCR" : " con OCR y visión"}`}`);
+      add(c.credencial ? `Sus correos: los de su buzón «${String(c.credencial)}» (${String(c.carpeta ?? "INBOX")}, solo lectura) y su bandeja de prueba` : "Sus correos: su bandeja de prueba (.eml o .msg que subes); ponle una credencial para leer su buzón");
+      break;
+    case "entrada_archivos":
+      add(`Se corre con archivos subidos (hasta ${String(c.max_archivos ?? 20)}, ${String(c.max_mb ?? 25)} MB cada uno): ${lista(c.tipos_permitidos).length ? lista(c.tipos_permitidos).join(", ") : "imágenes, PDF, Word, Excel, PowerPoint, texto, correos y ZIP"}; nunca video ni audio`);
+      add(c.leer === false ? "Los archivos se leen en un nodo leer_adjuntos" : `Los lee aquí${c.ocr === false ? " sin OCR" : " con OCR y visión"} → {{archivos.texto}}`);
       break;
     case "leer_adjuntos":
       add(`Lee ${lista(c.tipos).length ? `solo ${lista(c.tipos).join(", ")}` : "todos los adjuntos"}${c.nombre_patron ? ` cuyo nombre coincide con «${String(c.nombre_patron)}»` : ""}`);
@@ -1082,7 +1253,7 @@ function describirConfig(n: Definicion["nodos"][number], aristas: Definicion["ar
       break;
     case "archivo_leer":
     case "archivo_guardar":
-      add(`${n.tipo === "archivo_leer" ? "Lee" : "Guarda"} /datos/archivos/${String(c.ruta)} (${String(c.formato ?? (n.tipo === "archivo_leer" ? "auto" : "texto"))})`);
+      add(c.archivo ? `Lee el archivo guardado en el flujo (${String(c.formato ?? "auto")})` : `${n.tipo === "archivo_leer" ? "Lee" : "Guarda"} /datos/archivos/${String(c.ruta)} (${String(c.formato ?? (n.tipo === "archivo_leer" ? "auto" : "texto"))})`);
       break;
     case "correo_leer":
     case "drive_listar":
@@ -1158,8 +1329,9 @@ let catalogoTutelas: Catalogo | null = null;
 export function catalogoDe(id: string): Catalogo | null {
   const f = obtener(id);
   if (!f) return null;
-  if (f.id === "pqrd") return catalogoDePqrd();
-  if (f.id === "tutelas") {
+  const base = baseDe(f.id);
+  if (base === "pqrd") return catalogoDePqrd();
+  if (base === "tutelas") {
     const ruta = resolve(raiz, "catalogo", "tutelas.json");
     if (!catalogoTutelas && existsSync(ruta)) catalogoTutelas = JSON.parse(readFileSync(ruta, "utf8")) as Catalogo;
     return catalogoTutelas;

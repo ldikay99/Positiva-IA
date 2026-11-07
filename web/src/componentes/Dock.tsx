@@ -164,12 +164,13 @@ export function Dock({ plegado, alternar }: { plegado: boolean; alternar: () => 
 
   // Sin corrida a la vista: una barra delgada que dice qué hacer.
   if (!corrida) {
+    const conCorreo = usar.getState().flujos.find((f) => f.id === usar.getState().flujo)?.correspondencia !== false;
     return (
       <section className="dock dock-reposo" aria-label="Proceso en vivo">
         <span className="dock-reposo-icono"><Icono n="rayo" tam={14} /></span>
         <p className="dock-reposo-texto">
           <b>Proceso en vivo</b>
-          <span>Elige correos en la correspondencia y pulsa «Correr»: aquí verás cada paso del motor y cómo queda la solicitud.</span>
+          <span>{conCorreo ? "Elige correos en la correspondencia y pulsa «Correr»: aquí verás cada paso del motor y cómo queda la solicitud." : "Pulsa «Correr»: aquí verás cada paso del flujo y lo que deja."}</span>
         </p>
         {orden.length > 0 && (
           <Selector valor={null} opciones={opcionesCorrida} alCambiar={(v) => verCorrida(v)} etiqueta="Ver una corrida anterior" placeholder="Ver una corrida anterior…" tamano="chico" ancho={260} />

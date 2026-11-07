@@ -6,6 +6,7 @@ import { usarEditor } from "../editor/almacen.ts";
 import { Selector } from "./Selector.tsx";
 import { EditorJson, Interruptor } from "./Editores.tsx";
 import { FormularioCredencial } from "./Conexiones.tsx";
+import { CampoArchivoFlujo } from "./Archivos.tsx";
 
 /**
  * Un formulario que se arma solo a partir del esquema de configuración de un
@@ -559,7 +560,11 @@ export function Campo({ clave, esquema, valor, alCambiar, ctx, ruta, obligatorio
     const texto = typeof valor === "string" ? valor : valor === undefined || valor === null ? "" : tipo === "" ? "" : String(valor);
     if (tipo === "" && valor !== undefined && typeof valor !== "string") return envolver(<EditorJson valor={valor} alCambiar={(v) => alCambiar(v, g)} />, true);
     const poner = (t: string) => alCambiar(t === "" ? undefined : t, g);
+    // Una ruta escrita a mano solo se muestra en los flujos de antes que ya la tienen: lo nuevo es subir el archivo.
+    if (esquema["x-legado"] === true && !texto) return null;
     switch (esquema.format) {
+      case "archivo-flujo":
+        return envolver(<CampoArchivoFlujo valor={texto} alCambiar={(t) => alCambiar(t || undefined)} />, true);
       case "plantilla":
         return envolver(<CampoPlantilla id={id} valor={texto} variables={ctx.variables} largo={esquema["x-largo"] === true || texto.length > 70 || /cuerpo|mensaje|plantilla|instrucciones/.test(clave)} placeholder={esquema.default !== undefined ? String(esquema.default) : "Texto con {{variables}}"} alCambiar={poner} />, true);
       case "texto-largo":

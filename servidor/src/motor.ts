@@ -1,6 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { appendFile, mkdir, readdir, readFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { config } from "./config.ts";
@@ -394,4 +394,40 @@ export class Motor extends EventEmitter {
     this.deseados = 0;
     for (const t of this.trabajadores) t.proceso.kill();
   }
+}
+
+/**
+ * Borra del historial guardado TODAS las corridas de un flujo (al borrar el flujo).
+ * Reescribe cada archivo del día sin sus líneas, de forma atómica. Devuelve cuántas quitó.
+ */
+export async function borrarCorridasDe(flujo: string): Promise<number> {
+  const carpeta = join(config.datos, "corridas");
+  let n = 0;
+  for (const a of (await readdir(carpeta).catch(() => [] as string[])).filter((x) => x.endsWith(".jsonl"))) {
+    const ruta = join(carpeta, a);
+    const lineas = (await readFile(ruta, "utf8")).split("\n").filter(Boolean);
+    const quedan = lineas.filter((l) => {
+      try {
+        return ((JSON.parse(l) as { flujo?: string }).flujo ?? "pqrd") !== flujo;
+      } catch {
+        return true;
+      }
+    });
+    if (quedan.length === lineas.length) continue;
+    n += lineas.length - quedan.length;
+    const tmp = `${ruta}.${Date.now()}.tmp`;
+    await writeFile(tmp, quedan.length ? quedan.join("\n") + "\n" : "", "utf8");
+    await rename(tmp, ruta);
+  }
+  return n;
+}
+
+/** Cuántas corridas guardadas tiene un flujo (para decir qué se borra). */
+export async function contarCorridasDe(flujo: string): Promise<number> {
+  const carpeta = join(config.datos, "corridas");
+  let n = 0;
+  const marca = `"flujo":${JSON.stringify(flujo)}`;
+  for (const a of (await readdir(carpeta).catch(() => [] as string[])).filter((x) => x.endsWith(".jsonl")))
+    for (const l of (await readFile(join(carpeta, a), "utf8")).split("\n")) if (l.includes(marca)) n++;
+  return n;
 }

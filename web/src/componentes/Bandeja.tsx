@@ -1,7 +1,8 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { usar } from "../estado.ts";
+import { pedir, usar } from "../estado.ts";
 import { Icono } from "../iconos.tsx";
+import { ZonaArchivos } from "./Archivos.tsx";
 import { NOMBRES_CORTOS_DESENLACE, NOMBRES_DESENLACE, TONO_DESENLACE, motivoLegible } from "../progreso.ts";
 import { Selector } from "./Selector.tsx";
 import type { Correo, CorreoDelBuzon, Corrida } from "../tipos.ts";
@@ -359,8 +360,18 @@ function PanelBuzon({ porCaso, verDescargados }: { porCaso: Record<string, Corri
 
 type Filtro = "todos" | "sin_procesar" | "procesados" | "del_buzon" | "radicado" | "manual" | string;
 
-function PanelDescargados({ porCaso, conLote }: { porCaso: Record<string, Corrida>; conLote: boolean }) {
-  const bandeja = usar((s) => s.bandeja);
+function PanelDescargados({ porCaso, conLote, fuentes, produccion = true, antes, vacio }: {
+  porCaso: Record<string, Corrida>;
+  conLote: boolean;
+  /** Solo los correos de estas fuentes (la correspondencia ya es del flujo; esto separa sus pestañas). */
+  fuentes?: NonNullable<Correo["fuente"]>[];
+  /** Los filtros por lo que pasó en producción solo tienen sentido con el universo de PQRD. */
+  produccion?: boolean;
+  antes?: ReactNode;
+  vacio?: ReactNode;
+}) {
+  const todos = usar((s) => s.bandeja);
+  const bandeja = useMemo(() => (fuentes ? todos.filter((c) => c.fuente && fuentes.includes(c.fuente)) : todos), [todos, fuentes]);
   const seleccion = usar((s) => s.seleccion);
   const fijar = usar((s) => s.fijarSeleccion);
   const alternar = usar((s) => s.alternarSeleccion);
@@ -449,6 +460,7 @@ function PanelDescargados({ porCaso, conLote }: { porCaso: Record<string, Corrid
 
   return (
     <>
+      {antes}
       <div className="bandeja-herramientas">
         <label className="buscador-sobres">
           <Icono n="buscar" tam={15} />
@@ -461,7 +473,7 @@ function PanelDescargados({ porCaso, conLote }: { porCaso: Record<string, Corrid
               {f.nombre}<span>{f.n}</span>
             </button>
           ))}
-          <Selector
+          {produccion && <Selector
             className={`filtro-produccion ${["radicado", "manual"].includes(filtro) || motivos.includes(filtro) ? "activo" : ""}`}
             valor={["radicado", "manual"].includes(filtro) || motivos.includes(filtro) ? filtro : null}
             placeholder="En producción…"
@@ -476,7 +488,7 @@ function PanelDescargados({ porCaso, conLote }: { porCaso: Record<string, Corrid
             tamano="chico"
             tono="plano"
             ancho={280}
-          />
+          />}
         </div>
         <div className="bandeja-seleccion">
           <span>{visibles.length} de {bandeja.length}</span>
@@ -506,6 +518,8 @@ function PanelDescargados({ porCaso, conLote }: { porCaso: Record<string, Corrid
                 fichas={
                   <>
                     {c.origen === "buzon" && <span className="ficha tono-azul" title="Traído del buzón real, con sus etiquetas de hoy">Buzón real</span>}
+                    {c.fuente === "buzon_flujo" && <span className="ficha tono-azul" title="Traído del buzón de este flujo (solo lectura)">Buzón del flujo</span>}
+                    {c.fuente === "prueba" && fuentes && fuentes.length > 1 && <span className="ficha" title="Subido a la bandeja de prueba">De prueba</span>}
                     {adjuntos > 0 && <span className="ficha"><Icono n="adjunto" tam={11} />{adjuntos}</span>}
                     {c.desenlaceProduccion && (
                       <span className={`ficha tono-${TONO_DESENLACE[c.desenlaceProduccion] ?? "gris"}`} title={`En producción: ${NOMBRES_DESENLACE[c.desenlaceProduccion] ?? c.desenlaceProduccion}${c.motivoProduccion ? ` · ${c.motivoProduccion}` : ""}`}>
@@ -528,10 +542,12 @@ function PanelDescargados({ porCaso, conLote }: { porCaso: Record<string, Corrid
                 <button className="boton chico" onClick={() => { setBusqueda(""); setFiltro("todos"); }}>Ver todos los correos</button>
               </>
             ) : (
-              <>
-                <b>Aún no hay correos descargados</b>
-                <p>Los correos que se descarguen del buzón aparecerán aquí para correrlos cuantas veces quieras.</p>
-              </>
+              vacio ?? (
+                <>
+                  <b>Aún no hay correos descargados</b>
+                  <p>Los correos que se descarguen del buzón aparecerán aquí para correrlos cuantas veces quieras.</p>
+                </>
+              )
             )}
           </div>
         )}
@@ -552,7 +568,178 @@ function PanelDescargados({ porCaso, conLote }: { porCaso: Record<string, Corrid
 
 // -------------------------------------------------------------- la bandeja
 
+/** La bandeja de prueba de un flujo declarativo: los .eml/.msg que se suben, solo suyos. */
+function PanelPrueba({ porCaso }: { porCaso: Record<string, Corrida> }) {
+  const flujo = usar((s) => s.flujo);
+  const cargarBandeja = usar((s) => s.cargarBandeja);
+  const avisar = usar((s) => s.avisar);
+  return (
+    <PanelDescargados
+      porCaso={porCaso}
+      conLote={false}
+      fuentes={["prueba"]}
+      produccion={false}
+      antes={
+        <div className="bandeja-prueba arch-ambito">
+          <ZonaArchivos
+            flujo={flujo}
+            valor={[]}
+            alCambiar={() => undefined}
+            destino={`/api/bandeja/prueba?flujo=${encodeURIComponent(flujo)}`}
+            tipos={["eml", "msg"]}
+            texto="Suelta aquí correos .eml o .msg"
+            ayuda="Quedan en la bandeja de prueba de este flujo, con sus adjuntos. Nada sale de aquí."
+            alSubirCorreos={(r) => { void cargarBandeja(); avisar(`${r.correos.length === 1 ? "Correo agregado" : `${r.correos.length} correos agregados`} a la bandeja de prueba`); }}
+          />
+        </div>
+      }
+      vacio={<><b>La bandeja de prueba está vacía</b><p>Sube correos .eml o .msg (los exportas desde Outlook o Gmail) para correr este flujo con ellos.</p></>}
+    />
+  );
+}
+
+/** «Buzón del flujo»: lee su propio buzón (la credencial de su «Entrada de correo», solo lectura). */
+function PanelBuzonDelFlujo({ porCaso }: { porCaso: Record<string, Corrida> }) {
+  const flujo = usar((s) => s.flujo);
+  const cargarBandeja = usar((s) => s.cargarBandeja);
+  const [estado, setEstado] = useState<{ cargando: boolean; error?: string; carpeta?: string }>({ cargando: true });
+  const leer = async () => {
+    setEstado({ cargando: true });
+    try {
+      const r = await pedir<{ carpeta: string }>(`/api/bandeja/buzon?flujo=${encodeURIComponent(flujo)}&n=20`);
+      await cargarBandeja();
+      setEstado({ cargando: false, carpeta: r.carpeta });
+    } catch (e) {
+      setEstado({ cargando: false, error: (e as Error).message });
+    }
+  };
+  useEffect(() => {
+    void leer();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flujo]);
+  return (
+    <PanelDescargados
+      porCaso={porCaso}
+      conLote={false}
+      fuentes={["buzon_flujo"]}
+      produccion={false}
+      antes={
+        <div className="buzon-controles">
+          <span className="fuente-propia">{estado.carpeta ? `Carpeta «${estado.carpeta}», solo lectura: nada se marca ni se mueve.` : "Su buzón, solo lectura."}</span>
+          <button className="boton fantasma chico" disabled={estado.cargando} onClick={() => void leer()} aria-label="Volver a leer el buzón del flujo">
+            {estado.cargando ? <span className="girando" /> : <Icono n="reordenar" tam={13} />}Leer de nuevo
+          </button>
+        </div>
+      }
+      vacio={
+        estado.error ? (
+          <><b>No se pudo leer el buzón del flujo</b><p>{estado.error}</p></>
+        ) : estado.cargando ? (
+          <><b>Leyendo el buzón…</b><p>Solo se leen los correos; nada se marca ni se mueve.</p></>
+        ) : (
+          <><b>No hay correos en su buzón</b><p>Cuando lleguen correos a la carpeta configurada aparecerán aquí.</p></>
+        )
+      }
+    />
+  );
+}
+
+/**
+ * El panel de la izquierda de un flujo que NO arranca con un correo (manual, archivos,
+ * webhook, programado): sus corridas recientes y «Correr» con su formulario.
+ */
+export function PanelSinCorreo() {
+  const f = usar((s) => s.flujos.find((x) => x.id === s.flujo));
+  const corridas = usar((s) => s.corridas);
+  const orden = usar((s) => s.orden);
+  const visible = usar((s) => s.corridaVisible);
+  const verCorrida = usar((s) => s.verCorrida);
+  const lista = orden.map((id) => corridas[id]).filter((c): c is Corrida => Boolean(c)).slice(0, 60);
+  const QUE: Record<string, string> = {
+    entrada_archivos: "Arranca con los archivos que subes en «Correr»: imágenes y documentos, que lee como adjuntos.",
+    entrada_manual: "Arranca con los datos que escribes en «Correr».",
+    webhook: "Arranca cuando otro sistema llama a su webhook; también puedes probarlo con «Correr».",
+    programado: "Corre solo en su horario; con «Correr» lo pruebas ahora.",
+  };
+  const abrirCorrer = () => window.dispatchEvent(new CustomEvent("positiva:control", { detail: { accion: "editor", op: "abrir_correr" } }));
+  const hace = (t: number) => {
+    const s = (Date.now() - t) / 1000;
+    return s < 60 ? "ahora" : s < 3600 ? `${Math.round(s / 60)} min` : s < 86400 ? `${Math.round(s / 3600)} h` : new Date(t).toLocaleDateString("es-CO", { day: "numeric", month: "short" });
+  };
+  return (
+    <section className="panel-corridas" aria-label="Corridas del flujo">
+      <header>
+        <h2>Corridas</h2>
+        <p>{QUE[f?.disparador ?? ""] ?? "Corre este flujo y revisa aquí cada resultado."}</p>
+        <button className="boton primario chico" onClick={abrirCorrer}><Icono n="play" tam={13} />Correr</button>
+      </header>
+      {lista.length ? (
+        <ul className="pc-lista">
+          {lista.map((c) => {
+            const accion = String(c.resultado?.accion ?? (c.estado === "en_cola" ? "en cola" : c.estado === "procesando" ? "corriendo" : c.estado));
+            return (
+              <li key={c.id}>
+                <button className={visible === c.id ? "activa" : ""} onClick={() => void verCorrida(c.id)}>
+                  <span className={`punto tono-${c.resultado ? TONO_DESENLACE[accion] ?? "gris" : "azul"}`} />
+                  <span className="pc-texto">
+                    <b>{NOMBRES_CORTOS_DESENLACE[accion] ?? accion}</b>
+                    <small>{c.resultado?.motivo ? motivoLegible(String(c.resultado.motivo)) : c.caso}</small>
+                  </span>
+                  <span className="pc-cuando">{hace(c.creada)}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="pc-vacio">Todavía no tiene corridas. Pulsa «Correr» para la primera: verás cada paso en el lienzo y en el panel de abajo.</p>
+      )}
+    </section>
+  );
+}
+
 export function Bandeja() {
+  const flujo = usar((s) => s.flujos.find((f) => f.id === s.flujo));
+  if (flujo?.tipo === "declarativo") return <BandejaDeclarativa />;
+  return <BandejaDeCodigo />;
+}
+
+/** Correspondencia de un flujo declarativo: su bandeja de prueba y su buzón, nunca la de PQRD. */
+function BandejaDeclarativa() {
+  const corridas = usar((s) => s.corridas);
+  const orden = usar((s) => s.orden);
+  const flujo = usar((s) => s.flujos.find((f) => f.id === s.flujo));
+  const porCaso = useMemo(() => ultimas(corridas, orden), [corridas, orden]);
+  const [fuente, setFuente] = useState<"prueba" | "buzon">("prueba");
+  const recibe = flujo?.disparador === "correo_nuevo";
+  return (
+    <section className="bandeja" aria-label="Correspondencia del flujo">
+      <header className="bandeja-titulo">
+        <div>
+          <h2>Correspondencia</h2>
+          <p className="bandeja-ayuda">{recibe ? "Los correos que trajo su revisión del buzón. Elige uno o varios y pulsa «Correr»." : "Solo los correos de este flujo. Elige uno o varios y pulsa «Correr»."}</p>
+        </div>
+        {!recibe && (
+          <div className="fuentes" role="tablist" aria-label="De dónde salen los correos">
+            {([["prueba", "Bandeja de prueba", "bandeja"], ["buzon", "Buzón del flujo", "correo"]] as const).map(([id, nombre, icono]) => (
+              <button key={id} role="tab" aria-selected={fuente === id} className={fuente === id ? "activo" : ""} onClick={() => setFuente(id)}>
+                {fuente === id && <motion.span layoutId="fuente-activa" className="fuente-fondo" transition={{ type: "spring", stiffness: 520, damping: 38 }} />}
+                <Icono n={icono} tam={13} />
+                <span>{nombre}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </header>
+      {recibe ? (
+        <PanelDescargados porCaso={porCaso} conLote={false} fuentes={["recibido"]} produccion={false}
+          vacio={<><b>Aún no llegan correos</b><p>Cuando su revisión del buzón traiga correos nuevos aparecerán aquí.</p></>} />
+      ) : fuente === "prueba" ? <PanelPrueba porCaso={porCaso} /> : <PanelBuzonDelFlujo porCaso={porCaso} />}
+    </section>
+  );
+}
+
+function BandejaDeCodigo() {
   const corridas = usar((s) => s.corridas);
   const orden = usar((s) => s.orden);
   const flujo = usar((s) => s.flujos.find((f) => f.id === s.flujo));
@@ -590,7 +777,7 @@ export function Bandeja() {
           ))}
         </div>}
       </header>
-      {fuente === "buzon" ? <PanelBuzon porCaso={porCaso} verDescargados={() => setFuente("local")} /> : <PanelDescargados porCaso={porCaso} conLote={flujo?.lote ?? false} />}
+      {fuente === "buzon" ? <PanelBuzon porCaso={porCaso} verDescargados={() => setFuente("local")} /> : <PanelDescargados porCaso={porCaso} conLote={flujo?.lote ?? false} produccion={(flujo?.base ?? flujo?.id) === "pqrd"} />}
     </section>
   );
 }

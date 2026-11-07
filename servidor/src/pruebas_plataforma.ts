@@ -7,11 +7,15 @@
  */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 process.env.RUTA_DATOS = mkdtempSync(join(tmpdir(), "positiva-prueba-"));
+// el espacio de archivos, la bandeja de PQRD (universo) y lo traído del buzón: todo de prueba
+process.env.RUTA_ARCHIVOS = mkdtempSync(join(tmpdir(), "positiva-archivos-"));
+process.env.RUTA_BANDEJA = mkdtempSync(join(tmpdir(), "positiva-bandeja-"));
+process.env.RUTA_VIVO = mkdtempSync(join(tmpdir(), "positiva-vivo-"));
 delete process.env.CLAVE_CREDENCIALES;
 
 const credenciales = await import("./credenciales.ts");
@@ -348,4 +352,185 @@ test("programación como el job: valores del Cloud Scheduler, apagada por defect
   programador.reiniciarCodigo();
   await programador.ponerProgramacion("pqrd", { activo: false }, flujos.problemaCron);
   await programador.ponerProgramacion("tutelas", { activo: false }, flujos.problemaCron);
+});
+
+// ------------------------------------- cada flujo independiente: correspondencia, archivos, copias y borrado
+
+const bandeja = await import("./bandeja.ts");
+const espacio = await import("./espacio.ts");
+const motorMod = await import("./motor.ts");
+
+function caso(base: string, nombre: string, extra: Record<string, unknown> = {}): void {
+  mkdirSync(join(base, nombre, "adj"), { recursive: true });
+  writeFileSync(join(base, nombre, "mensaje.json"), JSON.stringify({ subject: `Asunto ${nombre}`, receivedDateTime: "2026-11-05T10:00:00Z", from: { emailAddress: { name: "X", address: "x@ejemplo.test" } }, body: { contentType: "text", content: "hola" }, _adjuntos: [], ...extra }));
+}
+
+test("correspondencia por flujo: un flujo nuevo nunca ve la bandeja de PQRD", async () => {
+  caso(process.env.RUTA_BANDEJA!, "universo-1");
+  caso(process.env.RUTA_VIVO!, "vivo-pqrd-1", { _vivo: true });
+  caso(process.env.RUTA_VIVO!, "vivo-tutela-1", { _vivo: true, _flujo: "tutelas" });
+  caso(join(process.env.RUTA_ARCHIVOS!, "flujo-nuevo", "bandeja"), "prueba-abc", { _origen: "bandeja_de_prueba" });
+  caso(join(process.env.RUTA_ARCHIVOS!, "flujo-nuevo", "bandeja"), "buzon-def", { _origen: "buzon_del_flujo:flujo-nuevo" });
+  caso(join(process.env.RUTA_ARCHIVOS!, "otro-flujo", "bandeja"), "prueba-ajena");
+  bandeja.olvidarDe();
+  const ver = async (f: Parameters<typeof bandeja.listarDe>[0]) => (await bandeja.listarDe(f)).map((c) => `${c.caso}:${c.fuente}`).sort();
+  assert.deepEqual(await ver({ id: "pqrd", tipo: "codigo", base: "pqrd" }), ["universo-1:universo", "vivo-pqrd-1:buzon_real"]);
+  assert.deepEqual(await ver({ id: "copia-pqrd", tipo: "codigo", base: "pqrd" }), ["universo-1:universo", "vivo-pqrd-1:buzon_real"]);
+  assert.deepEqual(await ver({ id: "tutelas", tipo: "codigo", base: "tutelas" }), ["vivo-tutela-1:buzon_real"]);
+  assert.deepEqual(await ver({ id: "flujo-nuevo", tipo: "declarativo" }), ["buzon-def:buzon_flujo", "prueba-abc:prueba"]);
+  const nuevo = { id: "flujo-nuevo", tipo: "declarativo" as const };
+  assert.equal(await bandeja.esDe(nuevo, "universo-1"), false, "el universo de PQRD no es suyo");
+  assert.equal(await bandeja.esDe(nuevo, "prueba-ajena"), false, "lo de otro flujo tampoco");
+  assert.equal(await bandeja.esDe(nuevo, "prueba-abc"), true);
+  assert.equal(await bandeja.detalleDe(nuevo, "universo-1"), null);
+  assert.equal(await bandeja.rutaAdjuntoDe(nuevo, "prueba-abc", "../../otro-flujo/bandeja/x"), null);
+  assert.equal(await bandeja.esDe({ id: "tutelas", tipo: "codigo", base: "tutelas" }, "vivo-pqrd-1"), false);
+});
+
+/** Unos bytes con la firma de un formato (lo demás, relleno). */
+const firma = (inicio: number[] | string, n = 64) => Buffer.concat([typeof inicio === "string" ? Buffer.from(inicio, "latin1") : Buffer.from(inicio), Buffer.alloc(n, 0x20)]);
+
+test("archivos: video y audio rechazados por extensión, por tipo y por su contenido", async () => {
+  const reglas = espacio.reglasDe(undefined);
+  const malo = (nombre: string, tipo: string, d: Buffer) => assert.ok(espacio.problemaDeArchivo(nombre, tipo, d, reglas), `${nombre} debió rechazarse`);
+  malo("clase.mp4", "video/mp4", firma("....ftypisom"));
+  malo("nota.mp3", "", firma("ID3"));
+  malo("informe.pdf", "application/pdf", firma([0, 0, 0, 0x18, ...Buffer.from("ftypmp42")]));  // un MP4 disfrazado de PDF
+  malo("foto.png", "image/png", firma("RIFF\x00\x00\x00\x00WAVEfmt "));                      // un WAV disfrazado
+  malo("voz.jpg", "image/jpeg", firma([0xff, 0xfb, 0x90, 0x00]));                             // trama de MP3
+  malo("pelicula.webm", "", firma([0x1a, 0x45, 0xdf, 0xa3]));
+  malo("algo.txt", "audio/ogg", firma("hola"));
+  malo("programa.exe", "application/octet-stream", firma("MZ"));                              // fuera de los tipos permitidos
+  const bien = (nombre: string, tipo: string, d: Buffer) => assert.equal(espacio.problemaDeArchivo(nombre, tipo, d, reglas), null, nombre);
+  bien("acta.pdf", "application/pdf", firma("%PDF-1.7"));
+  bien("foto.heic", "image/heic", firma([0, 0, 0, 0x18, ...Buffer.from("ftypheic")]));        // HEIC también es «ftyp», pero es imagen
+  bien("escaneo.JPG", "image/jpeg", firma([0xff, 0xd8, 0xff, 0xe0]));
+  bien("notas.txt", "text/plain", Buffer.from("﻿hola", "utf16le"));                       // UTF-16 (FF FE) no es audio
+  const solo = espacio.reglasDe({ nodos: [{ tipo: "entrada_archivos", config: { tipos_permitidos: ["pdf", "mp4"], max_mb: 1 } }] });
+  assert.deepEqual([...solo.tipos], ["pdf"], "video nunca entra aunque el flujo lo pida");
+  assert.ok(espacio.problemaDeArchivo("grande.pdf", "application/pdf", Buffer.concat([firma("%PDF"), Buffer.alloc(1024 * 1024 + 1)]), solo));
+  assert.ok(espacio.problemaDeArchivo("foto.png", "image/png", firma([0x89, 0x50]), solo), "tipo fuera de los permitidos");
+});
+
+test("archivos: se guardan como objetos del flujo y solo ese flujo los resuelve", async () => {
+  const a = await espacio.guardarArchivo("flujo-nuevo", "Certificación médica.pdf", "application/pdf", firma("%PDF-1.4"));
+  assert.match(a.id, /^a-[0-9a-f]{18}$/);
+  assert.equal(a.nombre, "Certificación médica.pdf");
+  assert.equal(a.sha256.length, 64);
+  assert.ok(existsSync(join(process.env.RUTA_ARCHIVOS!, "flujo-nuevo", "entradas", a.id, "Certificación médica.pdf")));
+  assert.equal(espacio.nombreSeguro("../../etc/passwd"), "passwd");
+  const defi = { nodos: [{ tipo: "entrada_manual", config: { campos: [{ nombre: "soporte", tipo: "archivo" }] } }] };
+  assert.deepEqual(espacio.resolverArchivos("flujo-nuevo", { archivos: [a.id] }, defi).map((x) => x.nombre), ["Certificación médica.pdf"]);
+  assert.deepEqual(espacio.resolverArchivos("flujo-nuevo", { soporte: a.id }, defi).map((x) => x.id), [a.id]);
+  assert.deepEqual(espacio.resolverArchivos("otro-flujo", { archivos: [a.id] }), [], "otro flujo no lo ve");
+  assert.deepEqual(espacio.archivosQueFaltan("flujo-nuevo", { archivos: [a.id, "a-noexiste000"] }), ["a-noexiste000"]);
+  // multipart: campos y archivos (nombre con tildes)
+  const limite = "----limite123";
+  const cuerpo = Buffer.concat([
+    Buffer.from(`--${limite}\r\nContent-Disposition: form-data; name="nota"\r\n\r\nurgente\r\n`),
+    Buffer.from(`--${limite}\r\nContent-Disposition: form-data; name="archivo"; filename="Cédula.png"\r\nContent-Type: image/png\r\n\r\n`), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]),
+    Buffer.from(`\r\n--${limite}--\r\n`),
+  ]);
+  const partes = espacio.multipart(cuerpo, `multipart/form-data; boundary=${limite}`);
+  assert.deepEqual(partes.map((p) => [p.campo, p.archivo, p.tipo, p.datos.length]), [["nota", undefined, "text/plain", 7], ["archivo", "Cédula.png", "image/png", 6]]);
+});
+
+test("clonar: declarativo y de código, cada copia independiente", async () => {
+  await flujos.cargar();
+  const d = {
+    id: "con-archivos", nombre: "Con archivos", modelo: "gemini-2.5-flash",
+    nodos: [{ id: "inicio", tipo: "entrada_archivos", nombre: "Archivos", config: { max_archivos: 3 } }, { id: "fin", tipo: "salida", nombre: "Fin", config: { desenlace: "manual" } }],
+    aristas: [{ desde: "inicio", hacia: "fin" }], disenio: { inicio: { x: 10, y: 20 }, fin: { x: 300, y: 20 } },
+  };
+  assert.equal((await entornos.poner("con-archivos", "REGION", { valor: "caribe" }, false)).ok, true);
+  assert.equal((await entornos.poner("con-archivos", "CLAVE_API", { valor: TOKEN, secreto: true }, true)).ok, true);
+  const g = await flujos.guardar(d, "primera");
+  assert.equal(g.ok, true, g.problemas.join("\n"));
+  assert.equal(g.flujo!.disparador, "entrada_archivos");
+  assert.equal(g.flujo!.correspondencia, false, "un flujo de archivos no tiene correspondencia");
+  const c = await flujos.clonar("con-archivos", "Con archivos (copia)");
+  assert.equal(c.ok, true, JSON.stringify(c));
+  const copia = c.ok ? c.flujo : null!;
+  assert.equal(copia.id, "con-archivos-copia");
+  assert.deepEqual(copia.definicion!.disenio, d.disenio, "el diseño va con la copia");
+  const ent = await entornos.listar(copia.id);
+  assert.deepEqual(ent.map((v) => [v.nombre, v.secreto, v.definido]), [["CLAVE_API", true, false], ["REGION", false, true]], "el secreto queda declarado sin valor");
+  assert.equal(entornos.paraCorrida(copia.id).valores.CLAVE_API, undefined);
+
+  // pqrd: una instancia propia del mismo motor
+  assert.equal((await entornos.poner("pqrd", "OPENAI_API_KEY", { valor: SECRETO_JOB, secreto: true }, true)).ok, true);
+  const k = await flujos.clonar("pqrd", "PQRD de pruebas");
+  assert.equal(k.ok, true, JSON.stringify(k));
+  const pq = k.ok ? k.flujo : null!;
+  assert.equal(pq.tipo, "codigo");
+  assert.equal(pq.base, "pqrd");
+  assert.equal(pq.copia_de, "pqrd");
+  assert.ok(flujos.esDeCodigo(pq.id) && !flujos.esOriginal(pq.id));
+  assert.ok(existsSync(join(process.env.RUTA_DATOS!, "flujos_codigo", `${pq.id}.json`)));
+  assert.equal(flujos.catalogoDe(pq.id) !== null, true);
+  // su entorno: copiado (el secreto cifrado, nunca en claro en disco) y marcado
+  const e2 = await entornos.listar(pq.id);
+  assert.ok(e2.find((v) => v.nombre === "OPENAI_API_KEY")?.copiado_de === "pqrd");
+  assert.equal(entornos.paraCorrida(pq.id).valores.OPENAI_API_KEY, SECRETO_JOB);
+  assert.ok(!readFileSync(join(process.env.RUTA_DATOS!, "entornos", `${pq.id}.json`), "utf8").includes(SECRETO_JOB));
+  // cambiarlo en la copia no toca el original
+  assert.equal((await entornos.poner(pq.id, "OPENAI_API_KEY", { valor: "otro-valor-de-la-copia", secreto: true }, true)).ok, true);
+  assert.equal(entornos.paraCorrida("pqrd").valores.OPENAI_API_KEY, SECRETO_JOB);
+  // los nombres del job valen en la copia (es el mismo motor)
+  assert.equal(entornos.problemaDeNombre(pq.id, "OUTLOOK_FOLDER_ID"), null);
+  // su compuerta: propia y apagada
+  assert.equal(compuerta.enlace.tieneCompuerta(pq.id), true);
+  assert.equal(compuerta.obtener(pq.id).radicacion_real, false);
+  assert.equal(compuerta.radicacionReal(pq.id), false);
+  // su programación: la del job, apagada, y la suya aparte
+  assert.equal(programador.programacionDe(pq.id)?.activo, false);
+  assert.equal((await programador.ponerProgramacion(pq.id, { activo: true }, flujos.problemaCron)).ok, true);
+  assert.equal(programador.programacionDe("pqrd")?.activo, false, "la del original no cambia");
+  await programador.ponerProgramacion(pq.id, { activo: false }, flujos.problemaCron);
+  // renombrar: la copia y también el original (solo su nombre en la plataforma)
+  assert.equal((await flujos.renombrar(pq.id, { nombre: "PQRD de ensayo" })).ok, true);
+  assert.equal(flujos.obtener(pq.id)?.nombre, "PQRD de ensayo");
+  assert.equal((await flujos.renombrar("tutelas", { nombre: "Tutelas en producción" })).ok, true);
+  assert.equal(flujos.obtener("tutelas")?.nombre, "Tutelas en producción");
+  await flujos.renombrar("tutelas", { nombre: "Radicación de tutelas" });
+  // tutelas también se clona y su copia lee lo de tutelas
+  const t = await flujos.clonar("tutelas", "Tutelas B");
+  assert.equal(t.ok && t.flujo.base, "tutelas");
+  // las corridas son de cada uno
+  const orden = flujos.ordenPara(pq.id, { id: "x", flujo: pq.id, caso: "c", estado: "en_cola", creada: 0, eventos: [], configuracion: { entorno: {} } } as unknown as Parameters<typeof flujos.ordenPara>[1]);
+  assert.ok("entorno" in orden);
+  // al recargar, las copias siguen ahí
+  await flujos.cargar();
+  assert.ok(flujos.obtener(pq.id) && flujos.obtener(t.ok ? t.flujo.id : "")?.base === "tutelas");
+});
+
+test("borrar: los originales no; una copia se va con sus corridas, su entorno y sus archivos", async () => {
+  const carpeta = join(process.env.RUTA_DATOS!, "corridas");
+  mkdirSync(carpeta, { recursive: true });
+  writeFileSync(join(carpeta, "2026-11-05.jsonl"), [
+    JSON.stringify({ id: "1", flujo: "con-archivos-copia", caso: "a", eventos: [] }),
+    JSON.stringify({ id: "2", flujo: "pqrd", caso: "b", eventos: [] }),
+    JSON.stringify({ id: "3", caso: "viejo-sin-flujo", eventos: [] }),
+    JSON.stringify({ id: "4", flujo: "con-archivos-copia", caso: "c", eventos: [] }),
+  ].join("\n") + "\n");
+  assert.equal(await motorMod.contarCorridasDe("con-archivos-copia"), 2);
+  await espacio.guardarArchivo("con-archivos-copia", "a.pdf", "application/pdf", firma("%PDF"));
+  assert.equal((await espacio.uso("con-archivos-copia")).archivos, 1);
+  assert.equal(await flujos.borrar("pqrd"), false, "pqrd no se borra");
+  assert.equal(await flujos.borrar("con-archivos-copia"), true);
+  assert.equal(await motorMod.borrarCorridasDe("con-archivos-copia"), 2);
+  await espacio.borrarTodo("con-archivos-copia");
+  const quedan = readFileSync(join(carpeta, "2026-11-05.jsonl"), "utf8").trim().split("\n").map((l) => (JSON.parse(l) as { id: string }).id);
+  assert.deepEqual(quedan, ["2", "3"], "las de pqrd y las viejas (de pqrd) quedan");
+  assert.equal(existsSync(join(process.env.RUTA_ARCHIVOS!, "con-archivos-copia")), false);
+  assert.deepEqual(await entornos.listar("con-archivos-copia"), []);
+  assert.equal(flujos.obtener("con-archivos-copia"), undefined);
+  // una copia de código también se borra y no deja registro
+  const copia = flujos.listar().find((f) => f.copia_de === "pqrd")!;
+  await compuerta.olvidar(copia.id);
+  await programador.olvidar(copia.id);
+  assert.equal(await flujos.borrar(copia.id), true);
+  assert.equal(existsSync(join(process.env.RUTA_DATOS!, "flujos_codigo", `${copia.id}.json`)), false);
+  assert.equal(flujos.esDeCodigo(copia.id), false);
+  assert.equal(compuerta.enlace.tieneCompuerta(copia.id), false);
 });

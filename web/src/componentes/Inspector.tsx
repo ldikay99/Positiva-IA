@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "motion/react";
-import { pedir, usar } from "../estado.ts";
+import { pedir, urlCorreo, usar } from "../estado.ts";
 import { narrar, solicitud } from "../eventos.ts";
 import { ACCIONES, ANCLA_DEL_PUNTO, CAMPOS, CAMPOS_DE_ENTRADA, CATEGORIAS, OPERADORES, PUNTOS, alternativas, categoria, fraseDeRegla, nombreCampo, type Categoria } from "../flujo.ts";
 import { Icono, type NombreIcono } from "../iconos.tsx";
@@ -619,11 +619,13 @@ function InspectorCorreo({ caso }: { caso: string }) {
   const seleccion = usar((s) => s.seleccion);
   const alternar = usar((s) => s.alternarSeleccion);
   const avisar = usar((s) => s.avisar);
+  const flujo = usar((s) => s.flujo);
   const [c, setC] = useState<Correo | null>(null);
   useEffect(() => {
     setC(null);
-    void pedir<Correo>(`/api/bandeja/${encodeURIComponent(caso)}`).then(setC).catch(() => undefined);
-  }, [caso]);
+    // solo un correo de la correspondencia de ESTE flujo
+    void pedir<Correo>(urlCorreo(flujo, caso)).then(setC).catch(() => undefined);
+  }, [caso, flujo]);
   if (!c) return <div className="vacio"><span className="girando" /> Cargando correo…</div>;
   return (
     <div className="inspector">
@@ -640,7 +642,7 @@ function InspectorCorreo({ caso }: { caso: string }) {
         <section className="seccion">
           <h3>Adjuntos <span>{c.adjuntos.length}</span></h3>
           {c.adjuntos.map((a) => (
-            <a key={a.archivo || a.nombre} className="adjunto" href={a.archivo ? `/api/bandeja/${encodeURIComponent(c.caso)}/adjuntos/${encodeURIComponent(a.archivo)}` : undefined} target="_blank" rel="noreferrer">
+            <a key={a.archivo || a.nombre} className="adjunto" href={a.archivo ? urlCorreo(flujo, c.caso, a.archivo) : undefined} target="_blank" rel="noreferrer">
               <span className="mini-icono t-turquesa"><Icono n="documento" tam={12} /></span><span className="crece">{a.nombre}</span><span className="texto-3 diminuto">{Math.max(1, Math.round(a.tamano / 1024))} KB{a.enLinea ? " · en línea" : ""}</span>
             </a>
           ))}

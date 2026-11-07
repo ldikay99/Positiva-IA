@@ -43,7 +43,8 @@ MAX_RECONEXIONES = 20
 TOPE_HERRAMIENTA = 45
 TOPE_LARGA = 300
 # Estas corren en segundo plano durante la llamada: Vera sigue hablando y haciendo otras cosas.
-LARGAS = {"responder_por_escrito", "probar_flujo", "correr_flujo", "correr_buzon", "ver_buzon", "listar_correos", "ver_logs"}
+LARGAS = {"responder_por_escrito", "probar_flujo", "correr_flujo", "correr_buzon", "ver_buzon", "listar_correos", "ver_logs",
+          "subir_adjuntos_a_flujo", "leer_buzon_flujo", "clonar_flujo"}
 VOZ_POR_DEFECTO = "Laomedeia"
 
 NOTA_VOZ = """
@@ -152,6 +153,7 @@ async def principal() -> None:
         enviar("error", texto="La llamada no empezó bien.")
         return
     asistente.CONVERSACION["id"] = cid
+    asistente.PANTALLA["flujo"] = inicio.get("flujo") or "pqrd"
     voz = inicio.get("voz") or VOZ_POR_DEFECTO
     flujo = inicio.get("flujo") or "pqrd"
     conv = api("GET", f"/api/chats/{cid}") if cid else {}
@@ -332,6 +334,7 @@ async def llamada(primera: Any, abrir: Any, types: Any, cid: str, flujo: str, pr
             elif m.get("tipo") == "pantalla":
                 pantalla_actual["p"] = m.get("pantalla") or {}
                 pantalla_actual["flujo"] = (m.get("pantalla") or {}).get("flujo") or flujo
+                asistente.PANTALLA["flujo"] = pantalla_actual["flujo"]
                 nota = asistente.describir_pantalla(m.get("pantalla") or {}, (m.get("pantalla") or {}).get("flujo") or flujo)
                 await sesion.send_client_content(turns=types.Content(role="user", parts=[types.Part(text=f"[Aviso del sistema, no respondas a esto: la persona cambió de pantalla.]\n{nota}")]), turn_complete=False)
             elif m.get("tipo") == "mic_off":

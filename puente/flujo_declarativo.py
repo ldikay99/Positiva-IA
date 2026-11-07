@@ -30,8 +30,12 @@ o de su credencial (nunca a IP privadas, de loopback o de metadatos, ni a
 Positiva o SGDEA, y sin seguir redirecciones); los demás métodos solo salen
 con una credencial guardada cuya escritura habilitó una persona.
 
-Disparadores: entrada_correo (un correo de la bandeja), entrada_manual,
+Disparadores: entrada_correo (un correo de la bandeja PROPIA del flujo: su
+bandeja de prueba o lo traído de su buzón), entrada_manual, entrada_archivos,
 programado, webhook y correo_nuevo; las corridas sin correo reciben `entrada`.
+Los archivos subidos a una corrida (`orden.archivos`, ya resueltos por el
+servidor en <archivos>/<flujo>/entradas/) se leen como adjuntos de correo y
+quedan en {{archivos.*}}. Video y audio nunca entran.
 Conectores (correo, Drive, SQL, hojas, archivos, tabla integrada) en
 `conectores/`. Todo nodo que escribe afuera solo escribe si su credencial
 tiene `permitir_escritura` (la pone una persona, nunca el flujo ni Vera); si
@@ -112,7 +116,7 @@ _salida = sys.stdout
 _cerrojo = threading.Lock()
 _corrida: contextvars.ContextVar = contextvars.ContextVar("corrida", default=None)
 
-DISPARADORES = {"entrada_correo", "entrada_manual", "programado", "webhook", "correo_nuevo"}
+DISPARADORES = {"entrada_correo", "entrada_manual", "programado", "webhook", "correo_nuevo", "entrada_archivos"}
 CONECTORES = {"correo_leer", "correo_enviar", "drive_listar", "drive_leer", "drive_subir", "hoja_leer", "sql_consulta", "sql_ejecutar"}
 TIPOS = DISPARADORES | CONECTORES | {
     "leer_adjuntos", "filtro", "condicion", "ia_clasificar", "ia_decidir", "ia_extraer", "extraer_regex", "validar", "transformar",
@@ -128,13 +132,15 @@ TIPOS_ESCRITURA = {"correo_enviar", "drive_subir", "sql_ejecutar", "http", "envi
 NO_DESHABILITABLES = DISPARADORES | {"salida", "fin_ciclo", "para_cada", "paralelo", "unir"}
 # Donde termina un camino: la salida (el flujo) y fin_ciclo (la vuelta).
 TERMINALES = {"salida", "fin_ciclo"}
-CREDENCIALES_DE = {"correo_leer": ("imap", "microsoft_graph"), "correo_nuevo": ("imap", "microsoft_graph"),
+CREDENCIALES_DE = {"correo_leer": ("imap", "microsoft_graph"), "correo_nuevo": ("imap", "microsoft_graph"), "entrada_correo": ("imap", "microsoft_graph"),
                    "correo_enviar": ("smtp", "microsoft_graph"), "drive_listar": ("google_servicio",), "drive_leer": ("google_servicio",),
                    "drive_subir": ("google_servicio",), "hoja_leer": ("google_servicio",), "sql_consulta": ("postgres", "mysql", "sqlite"),
                    "sql_ejecutar": ("postgres", "mysql", "sqlite"), "http": ("http_bearer", "http_basico")}
 NOMBRE_CREDENCIAL = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,62}$")
 NOMBRE_ENTORNO = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 ID_FLUJO = re.compile(r"^[a-z][a-z0-9-]{1,40}$")
+# Un archivo guardado en el espacio de un flujo: <archivos>/<flujo>/entradas/<id>/<nombre> (el id lo pone el servidor).
+ID_ARCHIVO = re.compile(r"a-[0-9a-z]{6,40}")
 MAX_ITERACIONES, MAX_ITERACIONES_TOPE = 100, 1000
 MAX_PASOS_TOTALES = 20000
 MAX_SEGUNDOS = 1800
@@ -163,6 +169,17 @@ OPS_CON_DE = {"mayusculas", "minusculas", "titulo", "limpiar", "solo_digitos", "
 # Lo que siempre existe: los datos del correo y de sus adjuntos.
 INTEGRADAS = {"correo": {"asunto", "cuerpo", "remitente", "remitente_correo", "remitente_nombre", "recibido"},
               "adjuntos": {"texto", "nombres", "cantidad", "leidos"}}
+# {{archivos.*}}: los archivos subidos para la corrida (entrada_archivos, campos archivo de entrada_manual, webhook multipart).
+# No es palabra reservada (flujos de antes usan «archivos» como variable, p. ej. drive_listar): si un nodo deja una
+# variable «archivos», manda ella; si no, son los archivos de la corrida.
+ARCHIVOS_CAMPOS = {"texto", "nombres", "cantidad", "leidos", "lista"}
+# Lo que nunca entra como archivo de una corrida: video y audio (por extensión y por su contenido).
+EXT_VIDEO_AUDIO = {"mp4", "m4v", "mov", "avi", "mkv", "webm", "wmv", "flv", "mpg", "mpeg", "3gp", "3g2", "ogv", "ts", "mts", "m2ts", "vob",
+                   "mp3", "wav", "ogg", "oga", "opus", "m4a", "aac", "flac", "wma", "aiff", "aif", "amr", "mid", "midi", "weba", "caf"}
+# Lo que acepta entrada_archivos si no se dice otra cosa (imágenes, documentos, hojas, presentaciones, texto, correos y ZIP).
+TIPOS_PERMITIDOS_DEFECTO = ["jpg", "jpeg", "png", "webp", "tif", "tiff", "bmp", "gif", "heic", "pdf", "doc", "docx", "xls", "xlsx", "csv",
+                            "ppt", "pptx", "txt", "md", "json", "xml", "html", "eml", "msg", "zip", "rtf", "odt", "ods"]
+TIPOS_CAMPO_ENTRADA = ("texto", "numero", "booleano", "fecha", "lista", "objeto", "archivo", "archivos")
 # Los nombres cortos de antes, que siguen valiendo en filtro y condición.
 LEGADO = {"asunto": "correo.asunto", "cuerpo": "correo.cuerpo", "remitente": "correo.remitente",
           "adjuntos": "adjuntos.nombres", "texto": "texto"}
@@ -595,6 +612,10 @@ def _problema_ref(ref: str, disponibles: Set[str], entorno: Optional[Set[str]] =
         if sub and (sub[0] != "clave" or sub[1] not in FALLO_CAMPOS):
             return f"«{ref}» no existe (de fallo hay: {', '.join(sorted(FALLO_CAMPOS))})"
         return None
+    if raiz == "archivos" and raiz not in disponibles:
+        if sub and (sub[0] != "clave" or sub[1] not in ARCHIVOS_CAMPOS):
+            return f"«{ref}» no existe (de archivos hay: {', '.join(sorted(ARCHIVOS_CAMPOS))})"
+        return None
     if raiz not in disponibles:
         hay = ", ".join(sorted(x for x in disponibles if not x.startswith("_"))) or "ninguna"
         return f"usa «{ref}» pero ningún nodo anterior produce la variable «{raiz}» (disponibles: {hay})"
@@ -784,12 +805,29 @@ def _validar_nuevos(t: str, c: dict, q) -> None:
             for f in campos:
                 if not _es_var(f.get("nombre")):
                     q(f"el campo «{f.get('nombre')}» necesita un nombre válido (letras, números y _)")
-                if f.get("tipo", "texto") not in ("texto", "numero", "booleano", "fecha", "lista", "objeto"):
-                    q(f"campo {f.get('nombre')}: tipo «{f.get('tipo')}» (válidos: texto, numero, booleano, fecha, lista, objeto)")
+                if f.get("tipo", "texto") not in TIPOS_CAMPO_ENTRADA:
+                    q(f"campo {f.get('nombre')}: tipo «{f.get('tipo')}» (válidos: {', '.join(TIPOS_CAMPO_ENTRADA)})")
                 if "obligatorio" in f and not isinstance(f["obligatorio"], bool):
                     q(f"campo {f.get('nombre')}: obligatorio tiene que ser true o false")
             if len(set(map(str, nombres))) != len(nombres):
                 q("hay campos con el mismo nombre")
+    elif t == "entrada_archivos":
+        tp = c.get("tipos_permitidos")
+        if tp is not None:
+            if not (isinstance(tp, list) and tp and all(isinstance(x, str) and re.fullmatch(r"\.?[a-z0-9]{1,6}", x.strip().lower()) for x in tp)):
+                q("tipos_permitidos tiene que ser una lista de extensiones (p. ej. [\"pdf\", \"jpg\", \"docx\"])")
+            else:
+                vetadas = sorted({x.strip().lower().lstrip(".") for x in tp} & EXT_VIDEO_AUDIO)
+                if vetadas:
+                    q(f"tipos_permitidos: {', '.join(vetadas)} es video o audio, y esos nunca se aceptan")
+        entero_en("max_archivos", 1, 50)
+        entero_en("max_mb", 1, 25)
+        bools("leer", "ocr")
+        campos = c.get("campos_extra", [])
+        if not isinstance(campos, list) or not all(isinstance(f, dict) and _es_var(f.get("nombre")) for f in campos):
+            q("campos_extra tiene que ser una lista [{nombre, tipo, obligatorio, descripcion}] con nombres válidos")
+        elif any(f.get("tipo", "texto") not in TIPOS_CAMPO_ENTRADA for f in campos):
+            q(f"campos_extra: tipo inválido (válidos: {', '.join(TIPOS_CAMPO_ENTRADA)})")
     elif t == "programado":
         tiene_cron, tiene_cada = c.get("cron") not in (None, ""), c.get("cada_minutos") is not None
         if tiene_cron == tiene_cada:
@@ -949,7 +987,14 @@ def _validar_nuevos(t: str, c: dict, q) -> None:
         opcion("orden", ["-creada", "creada", "-actualizada", "actualizada", "clave", "-clave"])
         opcion("ambito", ["flujo", "compartida"])
     elif t in ("archivo_leer", "archivo_guardar"):
-        texto_req("ruta", "ruta relativa dentro del espacio de archivos")
+        if t == "archivo_leer" and c.get("archivo") not in (None, ""):
+            # un archivo guardado en el espacio del flujo (subido desde el editor), no una ruta escrita a mano
+            if not (isinstance(c["archivo"], str) and ID_ARCHIVO.fullmatch(c["archivo"])):
+                q("archivo tiene que ser el id de un archivo subido al flujo")
+            if c.get("ruta") not in (None, ""):
+                q("usa archivo o ruta, no los dos")
+        else:
+            texto_req("ruta", "ruta relativa dentro del espacio de archivos" if t == "archivo_guardar" else "un archivo subido al flujo (archivo) o una ruta relativa")
         r = c.get("ruta")
         if isinstance(r, str) and "{{" not in r:
             try:
@@ -1000,9 +1045,15 @@ def _validar_config(n: dict) -> List[str]:
                 q(m)
 
     if t == "entrada_correo":
-        for k in ("leer_adjuntos", "ocr"):
+        for k in ("leer_adjuntos", "ocr", "bandeja_prueba"):
             if k in c and not isinstance(c[k], bool):
                 q(f"{k} tiene que ser true o false")
+        # su propio buzón (opcional, solo lectura): credencial imap o microsoft_graph y carpeta
+        _validar_credencial(t, c, q, obligatoria=False)
+        if "carpeta" in c and not isinstance(c["carpeta"], str):
+            q("carpeta tiene que ser texto")
+        if "filtro" in c and not isinstance(c["filtro"], dict):
+            q("filtro tiene que ser un objeto {remitente, asunto, texto, no_leidos}")
     elif t == "leer_adjuntos":
         for k in ("ocr", "vision"):
             if k in c and not isinstance(c[k], bool):
@@ -1442,10 +1493,20 @@ def validar(defi: Dict[str, Any], al_ejecutar: bool = False, entorno: Optional[I
 
 # ------------------------------------------------------------------- el correo
 
-def _carpeta(caso: str) -> Path:
+def bandeja_del_flujo(flujo: str) -> Path:
+    """Los correos propios de un flujo: su bandeja de prueba (.eml/.msg subidos) y lo traído de SU buzón."""
+    if not ID_FLUJO.match(flujo or ""):
+        raise ErrorDeNegocio("id de flujo inválido")
+    from conectores.base import ruta_archivos
+    return ruta_archivos() / flujo / "bandeja"
+
+
+def _carpeta(caso: str, flujo: str = "") -> Path:
     if not re.fullmatch(r"[\w.-]{1,200}", caso or "") or ".." in caso:
         raise FileNotFoundError(f"caso inválido {caso!r}")
-    for base in (VIVO, BANDEJA, RECIBIDOS):
+    # Primero lo del propio flujo; la bandeja descargada de PQRD solo la eligen el servidor y las pruebas.
+    propias = [bandeja_del_flujo(flujo)] if ID_FLUJO.match(flujo or "") else []
+    for base in (*propias, VIVO, BANDEJA, RECIBIDOS):
         if (base / caso / "mensaje.json").exists():
             return base / caso
     raise FileNotFoundError(f"no existe el caso {caso}")
@@ -1769,6 +1830,7 @@ class Ejecucion:
         self.correo: Dict[str, Any] = {}
         self.msg: Dict[str, Any] = {}
         self.carpeta: Optional[Path] = None
+        self.archivos: List[dict] = []
         self._tablas: Dict[str, List[Dict[str, str]]] = {}
         self._pasos = 0
         self._inicio = time.time()
@@ -1787,6 +1849,42 @@ class Ejecucion:
         return {"texto": c.get("adjuntos_texto", ""), "nombres": ", ".join(c.get("adjuntos_nombres") or []),
                 "cantidad": len(c.get("adjuntos_nombres") or []), "leidos": ", ".join(c.get("adjuntos_leidos") or [])}
 
+    def _vista_archivos(self) -> dict:
+        """{{archivos.*}}: los archivos subidos para esta corrida (se leen como adjuntos: conversión, OCR y visión)."""
+        c = self.correo
+        nombres = [a.get("nombre", "") for a in self.archivos]
+        leidos = [x for x in c.get("adjuntos_leidos") or [] if x in nombres]
+        return {"texto": c.get("adjuntos_texto", "") if self.archivos else "", "nombres": ", ".join(nombres), "cantidad": len(nombres),
+                "leidos": ", ".join(leidos), "lista": [{k: a.get(k) for k in ("id", "nombre", "tipo", "tamano", "sha256")} for a in self.archivos]}
+
+    def cargar_archivos(self, archivos: Any) -> None:
+        """Los archivos de la corrida (los resolvió el servidor desde el espacio del flujo) quedan como adjuntos:
+        leer_adjuntos los lee igual que los de un correo, con sus filtros por tipo y nombre."""
+        from conectores.base import ruta_archivos
+        base = (ruta_archivos() / self.flujo / "entradas").resolve() if ID_FLUJO.match(self.flujo or "") else None
+        buenos = []
+        for a in archivos if isinstance(archivos, list) else []:
+            if not isinstance(a, dict) or not ID_ARCHIVO.fullmatch(str(a.get("id") or "")):
+                continue
+            ruta = Path(str(a.get("ruta") or "")).resolve()
+            # solo archivos del espacio de ESTE flujo: un flujo nunca lee los de otro
+            if base is None or base not in ruta.parents or not ruta.is_file():
+                self.avisos.append(f"archivo {a.get('nombre') or a.get('id')}: no está en el espacio de este flujo, se omite")
+                continue
+            ext = str(a.get("nombre") or "").lower().rsplit(".", 1)[-1] if "." in str(a.get("nombre") or "") else ""
+            if ext in EXT_VIDEO_AUDIO or str(a.get("tipo") or "").lower().startswith(("video/", "audio/")):
+                self.avisos.append(f"archivo {a.get('nombre')}: video o audio, no se lee")
+                continue
+            buenos.append({**a, "ruta": str(ruta)})
+        self.archivos = buenos
+        if buenos:
+            self.carpeta = self.carpeta or (base or Path("."))
+            self.msg = {**(self.msg or {}), "_adjuntos": [*(self.msg or {}).get("_adjuntos", []),
+                        *({"name": a.get("nombre") or a["id"], "archivo": a["id"], "_ruta": a["ruta"], "contentType": a.get("tipo") or ""} for a in buenos)]}
+            self.correo.setdefault("adjuntos_texto", "")
+            self.correo.setdefault("adjuntos_leidos", [])
+            self.correo["adjuntos_nombres"] = [*(self.correo.get("adjuntos_nombres") or []), *(a.get("nombre") or a["id"] for a in buenos)]
+
     def resolver(self, ref: str) -> Any:
         ref = _ref_limpia(ref)
         if ref == "texto":
@@ -1799,6 +1897,8 @@ class Ejecucion:
             return navegar(self._vista_correo(), segs[1:])
         if segs[0][1] == "adjuntos":
             return navegar(self._vista_adjuntos(), segs[1:])
+        if segs[0][1] == "archivos" and "archivos" not in self.vars:
+            return navegar(self._vista_archivos(), segs[1:])
         if segs[0][1] == "entorno":
             return navegar(self.entorno, segs[1:]) if len(segs) > 1 else None
         return navegar(self.vars, segs)
@@ -1966,7 +2066,7 @@ class Ejecucion:
 
     # ------------------------------------------------------------- los nodos
     def entrada_correo(self, n: dict) -> str:
-        carpeta = _carpeta(self.caso)
+        carpeta = _carpeta(self.caso, self.flujo)
         msg = json.loads((carpeta / "mensaje.json").read_text(encoding="utf-8"))
         self.carpeta, self.msg = carpeta, msg
         de = (msg.get("from") or {}).get("emailAddress") or {}
@@ -2016,7 +2116,8 @@ class Ejecucion:
             if patron_nombre and not patron_nombre.search(nombre):
                 _paso(nodo, f"{nombre}: se omite", "info", f"el nombre no coincide con «{nombre_patron}»")
                 continue
-            datos = (self.carpeta / "adj" / a["archivo"]).read_bytes()
+            # un archivo subido a la corrida trae su ruta en el espacio del flujo; un adjunto de correo vive en adj/
+            datos = (Path(a["_ruta"]) if a.get("_ruta") else self.carpeta / "adj" / a["archivo"]).read_bytes()
             tipo = conversion.detectar_tipo(datos, nombre)
             ext = "." + nombre.lower().rsplit(".", 1)[-1] if "." in nombre else ""
             if quiero and tipo not in quiero and ext not in quiero:
@@ -2648,6 +2749,15 @@ class Ejecucion:
         for f in c.get("campos") or []:
             k, tipo = f.get("nombre"), f.get("tipo", "texto")
             v = entrada.get(k)
+            if tipo in ("archivo", "archivos"):
+                v = self._archivos_del_campo(v)
+                if not v:
+                    if f.get("obligatorio"):
+                        faltan.append(k)
+                    entrada[k] = [] if tipo == "archivos" else None
+                    continue
+                entrada[k] = v if tipo == "archivos" else v[0]
+                continue
             if v in (None, ""):
                 if f.get("obligatorio"):
                     faltan.append(k)
@@ -2655,8 +2765,56 @@ class Ejecucion:
             entrada[k] = _de_tipo(v, tipo, k)
         if faltan:
             raise ErrorDeNegocio(f"faltan en la entrada: {', '.join(faltan)}")
+        if self.archivos and "archivos" not in entrada:
+            entrada["archivos"] = self._vista_archivos()["lista"]
         self.vars["entrada"] = entrada
-        _paso(n["id"], "Entrada recibida", "info", _a_texto(entrada)[:900], campos=list(entrada))
+        _paso(n["id"], "Entrada recibida", "info", _a_texto(entrada)[:900], campos=list(entrada), archivos=len(self.archivos))
+        # sus archivos se leen aquí salvo que el flujo tenga su propio leer_adjuntos (como entrada_correo)
+        if self.archivos and not any(x.get("tipo") == "leer_adjuntos" for x in self.defi.get("nodos") or []):
+            self._leer(n["id"])
+        return "ok"
+
+    def _archivos_del_campo(self, v: Any) -> List[dict]:
+        """Lo que trae un campo archivo/archivos: ids (o {id}) de archivos subidos, como su ficha {id, nombre, tipo, tamano}."""
+        ids = [x.get("id") if isinstance(x, dict) else x for x in (v if isinstance(v, list) else [v] if v not in (None, "") else [])]
+        fichas = {a["id"]: {k: a.get(k) for k in ("id", "nombre", "tipo", "tamano", "sha256")} for a in self.archivos}
+        return [fichas[i] for i in ids if isinstance(i, str) and i in fichas]
+
+    def entrada_archivos(self, n: dict) -> str:
+        c = n.get("config") or {}
+        entrada = dict(self.entrada) if isinstance(self.entrada, dict) else {}
+        maximo = int(c.get("max_archivos") or 20)
+        if not self.archivos:
+            raise ErrorDeNegocio("la corrida no trae archivos: súbelos en «Correr» (arrastrar y soltar) o en el webhook")
+        if len(self.archivos) > maximo:
+            raise ErrorDeNegocio(f"llegaron {len(self.archivos)} archivos y este flujo acepta hasta {maximo}")
+        permitidos = {x.strip().lower().lstrip(".") for x in c.get("tipos_permitidos") or TIPOS_PERMITIDOS_DEFECTO}
+        tope = int(c.get("max_mb") or 25) * 1024 * 1024
+        for a in self.archivos:
+            nombre = str(a.get("nombre") or "")
+            ext = nombre.lower().rsplit(".", 1)[-1] if "." in nombre else ""
+            if ext not in permitidos:
+                raise ErrorDeNegocio(f"«{nombre}»: este flujo no acepta archivos .{ext or '(sin extensión)'} (acepta {', '.join(sorted(permitidos))})")
+            if int(a.get("tamano") or 0) > tope:
+                raise ErrorDeNegocio(f"«{nombre}» pasa de {tope // (1024 * 1024)} MB")
+        faltan = []
+        for f in c.get("campos_extra") or []:
+            k, tipo = f.get("nombre"), f.get("tipo", "texto")
+            v = entrada.get(k)
+            if v in (None, ""):
+                if f.get("obligatorio"):
+                    faltan.append(k)
+                continue
+            entrada[k] = self._archivos_del_campo(v) if tipo in ("archivo", "archivos") else _de_tipo(v, tipo, k)
+        if faltan:
+            raise ErrorDeNegocio(f"faltan en la entrada: {', '.join(faltan)}")
+        entrada["archivos"] = self._vista_archivos()["lista"]
+        self.vars["entrada"] = entrada
+        _paso(n["id"], f"{len(self.archivos)} archivo(s) recibido(s)", "info", ", ".join(a.get("nombre", "") for a in self.archivos)[:900],
+              archivos=len(self.archivos))
+        hay_lector = any(x.get("tipo") == "leer_adjuntos" for x in self.defi.get("nodos") or [])
+        if c.get("leer", not hay_lector):
+            self._leer(n["id"], ocr=c.get("ocr", True), vision=c.get("ocr", True))
         return "ok"
 
     def programado(self, n: dict) -> str:
@@ -2666,7 +2824,11 @@ class Ejecucion:
 
     def webhook(self, n: dict) -> str:
         self.vars["entrada"] = self.entrada if isinstance(self.entrada, dict) else {"cuerpo": self.entrada}
-        _paso(n["id"], "Llegó un webhook", "info", _a_texto(self.vars["entrada"].get("cuerpo"))[:900])
+        if self.archivos:  # multipart: los archivos llegan como los de entrada_archivos
+            self.vars["entrada"] = {**self.vars["entrada"], "archivos": self._vista_archivos()["lista"]}
+        _paso(n["id"], "Llegó un webhook", "info", _a_texto(self.vars["entrada"].get("cuerpo"))[:900], archivos=len(self.archivos))
+        if self.archivos and not any(x.get("tipo") == "leer_adjuntos" for x in self.defi.get("nodos") or []):
+            self._leer(n["id"])
         return "ok"
 
     def correo_nuevo(self, n: dict) -> str:
@@ -2866,10 +3028,29 @@ class Ejecucion:
         _paso(n["id"], f"{len(filas)} fila(s) de {c['tabla']}", "ok" if filas else "info", _a_texto(filas[:5])[:600], total=len(filas))
         return "encontrado" if filas else "vacio"
 
+    def _ruta_de_archivo(self, c: dict) -> str:
+        """La ruta relativa de archivo_leer/guardar: el archivo subido al flujo (config.archivo) o la ruta de antes.
+        Lo privado de otro flujo (<otro>/entradas, <otro>/bandeja) nunca se toca."""
+        if c.get("archivo"):
+            from conectores.base import ruta_archivos
+            aid = str(c["archivo"])
+            if not ID_ARCHIVO.fullmatch(aid) or not ID_FLUJO.match(self.flujo or ""):
+                raise ErrorDeNegocio("archivo: el id no es de un archivo del flujo")
+            carpeta = ruta_archivos() / self.flujo / "entradas" / aid
+            nombres = [p.name for p in carpeta.iterdir() if p.is_file() and p.name != "meta.json"] if carpeta.is_dir() else []
+            if not nombres:
+                raise ErrorDeNegocio("el archivo elegido ya no está en el espacio del flujo: súbelo de nuevo")
+            return f"{self.flujo}/entradas/{aid}/{nombres[0]}"
+        ruta = self.render(c.get("ruta") or "").strip()
+        partes = [p for p in ruta.replace("\\", "/").split("/") if p not in ("", ".")]
+        if len(partes) >= 2 and partes[1] in ("entradas", "bandeja") and partes[0] != self.flujo and ID_FLUJO.match(partes[0]):
+            raise ErrorDeNegocio(f"«{ruta[:120]}» es del espacio privado de otro flujo")
+        return ruta
+
     def archivo_leer(self, n: dict) -> str:
         from conectores.base import ruta_segura
         c = n.get("config") or {}
-        ruta = self.render(c.get("ruta") or "").strip()
+        ruta = self._ruta_de_archivo(c)
         if not ruta_segura(ruta).is_file():
             self.vars[c.get("salida") or n["id"]] = {}
             _paso(n["id"], f"No existe {ruta}", "aviso", "en el espacio de archivos")
@@ -2883,14 +3064,14 @@ class Ejecucion:
     def archivo_guardar(self, n: dict) -> str:
         c = n.get("config") or {}
         valor, formato = self._contenido_a_guardar(c)
-        r = c_archivos.guardar(self.render(c.get("ruta") or "").strip(), valor, formato, c.get("modo") or "reemplazar")
+        r = c_archivos.guardar(self._ruta_de_archivo(c), valor, formato, c.get("modo") or "reemplazar")
         self.vars[c.get("salida") or n["id"]] = r
         _paso(n["id"], f"Guardado {r['ruta']}", "ok", f"{r['bytes']:,} bytes · {r['modo']}")
         return "ok"
 
     def expresion(self, n: dict) -> str:
         c = n.get("config") or {}
-        variables = {**self.vars, "correo": self._vista_correo(), "adjuntos": self._vista_adjuntos(), "entorno": dict(self.entorno)}
+        variables = {"archivos": self._vista_archivos(), **self.vars, "correo": self._vista_correo(), "adjuntos": self._vista_adjuntos(), "entorno": dict(self.entorno)}
         v = c_expresion.evaluar(c.get("expresion"), variables)
         if c.get("salida") or c.get("como_condicion") is not True:
             self.vars[c.get("salida") or n["id"]] = v
@@ -3092,7 +3273,9 @@ class Ejecucion:
         if n.get("tipo") in ("entrada_correo", "correo_nuevo"):
             r = {"correo": self._vista_correo(), "adjuntos": self._vista_adjuntos(), **r}
         elif n.get("tipo") == "leer_adjuntos":
-            r = {"adjuntos": self._vista_adjuntos(), **r}
+            r = {"adjuntos": self._vista_adjuntos(), **({"archivos": self._vista_archivos()} if self.archivos else {}), **r}
+        elif self.archivos and n.get("tipo") in DISPARADORES:
+            r = {"archivos": self._vista_archivos(), **r}
         return muestra(r, 0)
 
     @staticmethod
@@ -3315,6 +3498,7 @@ async def procesar(orden: dict) -> None:
     _vueltas.clear()
     e = Ejecucion(defi, caso, modelo, entrada=orden.get("entrada"), credenciales=orden.get("credenciales") or {}, entorno=entorno,
                   subflujos=orden.get("subflujos") or {}, flujo=str(orden.get("flujo") or defi.get("id") or ""), ia_global=orden.get("ia_global"))
+    e.cargar_archivos(orden.get("archivos") or [])
     modelo = e.modelo
     e.avisos += [f"flujo: {x}" for x in validar(defi) if x not in problemas]
     evento("inicio", caso=caso, asunto="", modelo=modelo, proveedor=e.ia.get("proveedor"), ia_origen=e.ia.get("origen"), flujo=defi.get("id"), origen=orden.get("origen") or "",
@@ -3404,6 +3588,60 @@ def sondear(orden: dict) -> dict:
         _secretos_activos.clear()
 
 
+def guardar_correo(dest: Path, m: dict, origen: str) -> List[dict]:
+    """Guarda un correo leído por un conector (correo.leer) como un caso: mensaje.json y adj/. Devuelve sus adjuntos."""
+    (dest / "adj").mkdir(parents=True, exist_ok=True)
+    adjuntos = []
+    for i, a in enumerate(m.get("adjuntos") or []):
+        datos = a.pop("_datos", None)
+        if datos is None:
+            continue
+        nombre = a.get("nombre") or ""
+        ext = re.sub(r"[^A-Za-z0-9]", "", nombre.rsplit(".", 1)[-1])[:8] if "." in nombre else "bin"
+        archivo = f"a{i + 1}.{ext or 'bin'}"
+        (dest / "adj" / archivo).write_bytes(datos)
+        adjuntos.append({"name": nombre or archivo, "archivo": archivo, "contentType": a.get("tipo") or "", "size": len(datos)})
+    (dest / "mensaje.json").write_text(json.dumps({
+        "id": str(m.get("id") or ""), "subject": m.get("asunto") or "", "receivedDateTime": m.get("fecha") or "",
+        "from": {"emailAddress": {"name": m.get("remitente_nombre") or "", "address": m.get("remitente_correo") or ""}},
+        "toRecipients": [{"emailAddress": {"address": x.strip()}} for x in (m.get("para") or "").split(",") if x.strip()],
+        "body": {"contentType": "text", "content": m.get("cuerpo") or ""}, "_adjuntos": adjuntos, "_origen": origen},
+        ensure_ascii=False), encoding="utf-8")
+    return adjuntos
+
+
+def buzon_del_flujo(orden: dict) -> dict:
+    """«Buzón del flujo»: lee (solo lectura, sin marcar nada) el buzón que el disparador entrada_correo tiene configurado
+    (credencial imap o microsoft_graph y carpeta) y deja cada correo como un caso de la bandeja de ESE flujo."""
+    preparar_secretos(orden)
+    try:
+        defi, flujo = orden.get("definicion") or {}, str(orden.get("flujo") or "")
+        n = next((x for x in defi.get("nodos") or [] if x.get("tipo") == "entrada_correo"), None)
+        c = (n or {}).get("config") or {}
+        if not n or not c.get("credencial"):
+            raise ErrorDeNegocio("el disparador de este flujo no tiene un buzón: ponle una credencial (imap o microsoft_graph) y una carpeta")
+        e = Ejecucion(defi, "buzon", "", credenciales=orden.get("credenciales") or {}, flujo=flujo)
+        cred = e.cred(c.get("credencial"), CREDENCIALES_DE["entrada_correo"])
+        carpeta = c.get("carpeta") or ("INBOX" if cred["tipo"] == "imap" else "inbox")
+        maximo = max(1, min(50, int(orden.get("n") or 20)))
+        correos = c_correo.leer(cred["tipo"], cred["valores"], carpeta, c.get("filtro") or {}, "", maximo, True, timeout_de(c))
+        base = bandeja_del_flujo(flujo)
+        casos = []
+        for m in correos:
+            mid = str(m.get("id") or "")
+            if not mid:
+                continue
+            caso = f"buzon-{hashlib.sha1(mid.encode()).hexdigest()[:16]}"
+            if not (base / caso / "mensaje.json").exists():
+                guardar_correo(base / caso, m, f"buzon_del_flujo:{flujo}")
+            casos.append(caso)
+        return {"ok": True, "carpeta": carpeta, "casos": casos}
+    except Exception as ex:
+        return {"ok": False, "error": enmascarar(f"{describir_fallo({'tipo': 'entrada_correo', 'id': 'buzon'}, ex)}"[:400]), "casos": []}
+    finally:
+        _secretos_activos.clear()
+
+
 async def principal() -> None:
     evento("listo", pid=os.getpid(), motor="declarativo")
     while True:
@@ -3441,5 +3679,7 @@ if __name__ == "__main__":
         _real.write(json.dumps(_validar_cli(json.loads(sys.stdin.read())), ensure_ascii=False) + "\n")
     elif sys.argv[1:2] == ["sondear"]:
         _real.write(json.dumps(sondear(json.loads(sys.stdin.read())), ensure_ascii=False) + "\n")
+    elif sys.argv[1:2] == ["buzon"]:
+        _real.write(json.dumps(buzon_del_flujo(json.loads(sys.stdin.read())), ensure_ascii=False) + "\n")
     else:
         asyncio.run(principal())

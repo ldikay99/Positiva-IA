@@ -21,10 +21,13 @@ import copy
 import json
 from typing import Any, Dict, List, Optional, Sequence
 
-VERSION = 5
+VERSION = 6
 
 DESENLACES = ["radicar", "manual", "reenviar", "descartar", "responder", "duplicado"]
-DISPARADORES = ["entrada_correo", "entrada_manual", "programado", "webhook", "correo_nuevo"]
+DISPARADORES = ["entrada_correo", "entrada_manual", "programado", "webhook", "correo_nuevo", "entrada_archivos"]
+# Lo que acepta entrada_archivos por defecto (video y audio nunca).
+TIPOS_PERMITIDOS = ["jpg", "jpeg", "png", "webp", "tif", "tiff", "bmp", "gif", "heic", "pdf", "doc", "docx", "xls", "xlsx", "csv",
+                    "ppt", "pptx", "txt", "md", "json", "xml", "html", "eml", "msg", "zip", "rtf", "odt", "ods"]
 TIPOS_CREDENCIAL_IA = ["ia_gemini", "ia_openai", "ia_azure_openai", "ia_anthropic", "ia_deepseek", "ia_mistral", "ia_groq", "ia_openrouter",
                        "ia_ollama", "ia_compatible", "ia_cohere", "ia_personalizado"]
 TIPOS_CREDENCIAL = ["imap", "smtp", "microsoft_graph", "google_servicio", "postgres", "mysql", "sqlite", "http_bearer", "http_basico", *TIPOS_CREDENCIAL_IA]
@@ -174,7 +177,9 @@ PLANTILLAS = {
     "correo.remitente_correo": "solo la dirección", "correo.remitente_nombre": "solo el nombre", "correo.recibido": "fecha de recepción",
     "adjuntos.texto": "texto leído de los adjuntos (con OCR si se pidió)", "adjuntos.nombres": "nombres de los adjuntos, separados por coma",
     "adjuntos.cantidad": "cuántos adjuntos trae", "adjuntos.leidos": "nombres de los adjuntos que sí se leyeron",
-    "entrada.<campo>": "lo que trae el disparador (entrada_manual, programado, webhook, correo_nuevo)",
+    "archivos.texto": "texto leído de los archivos subidos a la corrida (con OCR y visión)", "archivos.nombres": "nombres de los archivos subidos",
+    "archivos.cantidad": "cuántos archivos se subieron", "archivos.lista": "la ficha de cada archivo [{id, nombre, tipo, tamano, sha256}]",
+    "entrada.<campo>": "lo que trae el disparador (entrada_manual, entrada_archivos, programado, webhook, correo_nuevo)",
     "<variable>": "una variable de un nodo anterior", "<variable>.<campo>": "un campo de una variable JSON (p. ej. la fila de buscar_en_tabla)",
     "<lista>.0.<campo>": "un elemento de una lista por su posición (desde 0); también <lista>[0]",
     "<lista>[campo=valor].<otro>": "el primer elemento cuyo campo vale eso (sin distinguir mayúsculas ni tildes); con espacios: [campo=\"dos palabras\"]",
@@ -183,7 +188,8 @@ PLANTILLAS = {
 }
 
 _CAMPO_ENTRADA = objeto({"nombre": variable("nombre del campo (queda en {{entrada.<nombre>}})"),
-                         "tipo": opcion(["texto", "numero", "booleano", "fecha", "lista", "objeto"], "tipo del valor", "texto"),
+                         "tipo": opcion(["texto", "numero", "booleano", "fecha", "lista", "objeto", "archivo", "archivos"],
+                                        "tipo del valor; archivo y archivos se suben en «Correr» (nunca video ni audio)", "texto"),
                          "obligatorio": booleano("si falta, la corrida termina en error", False),
                          "descripcion": texto("para qué sirve")}, ["nombre"])
 _FILTRO_CORREO = objeto({"remitente": plantilla("contiene este remitente"), "asunto": plantilla("el asunto contiene"),
@@ -310,9 +316,14 @@ TIPOS: Dict[str, Dict[str, Any]] = {
     # ------------------------------------------------------------ disparadores
     "entrada_correo": {
         "nombre": "Entrada de correo", "categoria": "entrada",
-        "descripcion": "Corre sobre un correo descargado de la bandeja: lee asunto, cuerpo, remitente y fecha. Puede leer también los adjuntos; si el flujo tiene un nodo leer_adjuntos, por defecto no los lee aquí.",
+        "descripcion": "Corre sobre un correo de la bandeja propia del flujo: su bandeja de prueba (correos .eml o .msg que subes) o los que trae de su buzón "
+                       "(credencial imap o microsoft_graph y carpeta, solo lectura). Lee asunto, cuerpo, remitente y fecha, y puede leer los adjuntos; "
+                       "si el flujo tiene un nodo leer_adjuntos, por defecto no los lee aquí.",
         "config": conf({"leer_adjuntos": booleano("leer los adjuntos aquí (por defecto sí, salvo que haya un nodo leer_adjuntos)"),
-                        "ocr": booleano("OCR (tesseract y visión) al leerlos", True)}),
+                        "ocr": booleano("OCR (tesseract y visión) al leerlos", True),
+                        "credencial": credencial(["imap", "microsoft_graph"], "el buzón propio del flujo (solo lectura); sin ella, solo la bandeja de prueba"),
+                        "carpeta": texto("carpeta del buzón", "INBOX"), "filtro": _FILTRO_CORREO,
+                        "bandeja_prueba": booleano("aceptar correos de prueba subidos como .eml o .msg", True)}),
         "salidas": ["ok"], "produce": "correo.*, adjuntos.*",
         "ejemplo": {"id": "correo", "tipo": "entrada_correo", "nombre": "Correo recibido", "config": {"leer_adjuntos": False}},
     },
@@ -323,6 +334,20 @@ TIPOS: Dict[str, Dict[str, Any]] = {
         "salidas": ["ok"], "produce": "entrada",
         "ejemplo": {"id": "inicio", "tipo": "entrada_manual", "nombre": "Datos de entrada", "config": {
             "campos": [{"nombre": "documento", "tipo": "texto", "obligatorio": True, "descripcion": "cédula a consultar"}]}},
+    },
+    "entrada_archivos": {
+        "nombre": "Entrada de archivos", "categoria": "entrada",
+        "descripcion": "Se corre con archivos que subes en «Correr» (arrastrar y soltar o pegar), por webhook (multipart) o desde el chat: imágenes y documentos, "
+                       "nunca video ni audio. Se guardan en el espacio del flujo y se leen como los adjuntos de un correo (conversión, OCR y visión); "
+                       "quedan en {{archivos.nombres}}, {{archivos.texto}} y {{archivos.cantidad}}.",
+        "config": conf({"tipos_permitidos": lista(texto(), "extensiones aceptadas (por defecto imágenes, PDF, Word, Excel, PowerPoint, texto, correos y ZIP)"),
+                        "max_archivos": entero("cuántos archivos por corrida", 1, 50, 20),
+                        "max_mb": entero("tamaño máximo de cada archivo, en MB", 1, 25, 25),
+                        "leer": booleano("leer los archivos aquí (por defecto sí, salvo que haya un nodo leer_adjuntos)"),
+                        "ocr": booleano("OCR (tesseract y visión) al leerlos", True),
+                        "campos_extra": lista(_CAMPO_ENTRADA, "otros datos que se piden junto con los archivos")}),
+        "salidas": ["ok"], "produce": "archivos.*, adjuntos.*, entrada (archivos y campos_extra)",
+        "ejemplo": {"id": "archivos", "tipo": "entrada_archivos", "nombre": "Archivos recibidos", "config": {"max_archivos": 10}},
     },
     "programado": {
         "nombre": "Programado", "categoria": "entrada",
@@ -613,10 +638,12 @@ TIPOS: Dict[str, Dict[str, Any]] = {
     },
     "archivo_leer": {
         "nombre": "Leer archivo", "categoria": "datos",
-        "descripcion": "Lee un archivo del espacio de archivos (/datos/archivos): texto (PDF y Word con la conversión del motor), JSON o filas (CSV/XLSX). "
-                       "Nunca fuera de esa carpeta.",
-        "config": conf({"ruta": plantilla("ruta relativa, p. ej. «entradas/lista.csv»"), "formato": opcion(["auto", "texto", "json", "filas"], "", "auto"),
-                        "hoja": texto("hoja de un XLSX"), "max_caracteres": entero("", 1, 500000, 60000), "max_filas": MAX_FILAS, "salida": SALIDA()}, ["ruta"]),
+        "descripcion": "Lee un archivo guardado en el flujo (súbelo en el panel del nodo) o, en los flujos de antes, una ruta del espacio de archivos: "
+                       "texto (PDF y Word con la conversión del motor), JSON o filas (CSV/XLSX). Nunca fuera de esa carpeta ni lo privado de otro flujo.",
+        "config": conf({"archivo": {**texto("el archivo subido a este flujo (su id)", None, "Archivo", "archivo-flujo")},
+                        # la ruta escrita a mano solo la ven los flujos de antes que ya la tienen (x-legado)
+                        "ruta": {**plantilla("solo flujos de antes: ruta relativa, p. ej. «entradas/lista.csv»"), "x-legado": True}, "formato": opcion(["auto", "texto", "json", "filas"], "", "auto"),
+                        "hoja": texto("hoja de un XLSX"), "max_caracteres": entero("", 1, 500000, 60000), "max_filas": MAX_FILAS, "salida": SALIDA()}),
         "salidas": ["ok", "no_existe"], "produce": "salida ({texto} | {datos} | {filas})",
         "ejemplo": {"id": "lista", "tipo": "archivo_leer", "nombre": "Leer la lista", "config": {"ruta": "entradas/lista.csv", "salida": "lista"}},
     },
@@ -809,9 +836,16 @@ TERMINALES = {"salida", "fin_ciclo"}
 # La ayuda de cada tipo: configs para copiar (ejemplos) y consejos cortos.
 AYUDA: Dict[str, Dict[str, Any]] = {
     "entrada_correo": {
-        "ejemplos": [{"leer_adjuntos": False}, {"leer_adjuntos": True, "ocr": False}],
-        "consejos": ["Si vas a filtrar antes de leer los adjuntos, pon leer_adjuntos: false y un nodo leer_adjuntos después del filtro.",
+        "ejemplos": [{"leer_adjuntos": False}, {"leer_adjuntos": True, "credencial": "buzon-soporte", "carpeta": "INBOX"}],
+        "consejos": ["Los correos salen de la bandeja propia del flujo: sube .eml o .msg de prueba, o ponle una credencial para leer su buzón (solo lectura).",
+                     "Si vas a filtrar antes de leer los adjuntos, pon leer_adjuntos: false y un nodo leer_adjuntos después del filtro.",
                      "Es un disparador: cada flujo tiene exactamente uno."],
+    },
+    "entrada_archivos": {
+        "ejemplos": [{"max_archivos": 5, "max_mb": 10}, {"tipos_permitidos": ["pdf", "jpg", "png"], "leer": False}],
+        "consejos": ["Se corre con POST /api/flujos/<id>/correr {entrada: {archivos: [ids]}} después de subirlos a /api/flujos/<id>/archivos.",
+                     "Con leer: false pon un nodo leer_adjuntos para elegir tipos o nombres (sin distinguir mayúsculas ni tildes).",
+                     "Video y audio se rechazan siempre, por extensión y por su contenido."],
     },
     "entrada_manual": {
         "ejemplos": [{"campos": [{"nombre": "documento", "tipo": "texto", "obligatorio": True}]}, {"campos": []}],
@@ -962,7 +996,8 @@ AYUDA: Dict[str, Dict[str, Any]] = {
     },
     "archivo_leer": {
         "ejemplos": [{"ruta": "entradas/lista.csv", "salida": "lista"}, {"ruta": "contratos/{{entrada.nombre}}.pdf", "formato": "texto", "salida": "contrato"}],
-        "consejos": ["Las rutas son relativas a /datos/archivos; «..» se rechaza.", "Sale por «no_existe» si el archivo no está."],
+        "consejos": ["Sube el archivo en el panel del nodo: queda guardado en el flujo (config.archivo); no escribas rutas a mano.",
+                     "Las rutas de antes siguen valiendo, relativas a /datos/archivos; «..» se rechaza.", "Sale por «no_existe» si el archivo no está."],
     },
     "archivo_guardar": {
         "ejemplos": [{"ruta": "reportes/resultado.json", "de": "resultados", "formato": "json"}, {"ruta": "logs/envios.csv", "de": "filas", "formato": "csv", "modo": "anexar"}],
@@ -1111,7 +1146,7 @@ EJEMPLO_AUTOMATIZACION: Dict[str, Any] = {
 
 REGLAS = """Un flujo declarativo es {id, nombre, descripcion, ia, nodos: [{id, tipo, nombre, descripcion, config}], aristas: [{desde, hacia, cuando}]}.
 - id del flujo: minúsculas con guiones (ej. "derechos-de-peticion"); id de nodo: minúsculas con guion bajo.
-- Exactamente un DISPARADOR (entrada_correo, entrada_manual, programado, webhook o correo_nuevo) y al menos una salida. Todo nodo alcanzable desde el disparador;
+- Exactamente un DISPARADOR (entrada_correo, entrada_manual, entrada_archivos, programado, webhook o correo_nuevo) y al menos una salida. Todo nodo alcanzable desde el disparador;
   sin ciclos (los bucles se hacen con para_cada); las salidas no tienen aristas que salgan.
 - Una arista se toma si "cuando" es igual a la salida del nodo (sin distinguir mayúsculas ni tildes); una arista sin "cuando" (o "*") es la de por defecto.
   Cada salida posible del nodo necesita su arista o una por defecto (p. ej. ia_clasificar: una por categoría o una por defecto).
@@ -1120,7 +1155,8 @@ REGLAS = """Un flujo declarativo es {id, nombre, descripcion, ia, nodos: [{id, t
 - Paso de datos: cada nodo puede declarar en config "entradas" (lo que recibe) y "salida" (la variable donde deja su resultado).
   En los nodos de IA, con "entradas" el modelo ve SOLO eso; sin "entradas" ve el correo, los adjuntos y las variables.
 - Plantillas {{...}} en instrucciones, textos, motivos, destinos y mensajes: {{correo.asunto}}, {{correo.cuerpo}}, {{correo.remitente}},
-  {{correo.remitente_correo}}, {{correo.remitente_nombre}}, {{adjuntos.texto}}, {{adjuntos.nombres}}, {{entrada.<campo>}}, {{<variable>}}, {{<variable>.<campo>}},
+  {{correo.remitente_correo}}, {{correo.remitente_nombre}}, {{adjuntos.texto}}, {{adjuntos.nombres}}, {{archivos.texto}}, {{archivos.nombres}}, {{archivos.cantidad}},
+  {{entrada.<campo>}}, {{<variable>}}, {{<variable>.<campo>}},
   {{<lista>.0.<campo>}}, {{<lista>[campo=valor].<otro>}}, {{<variable>["clave.con.puntos"]}}.
   Toda variable usada tiene que salir de un nodo anterior en algún camino; si en la corrida no tiene valor, queda vacía.
 - Fallos: cualquier nodo (salvo salida y fin_ciclo) puede tener una arista con cuando "error": si el nodo falla, el flujo sigue por ella con

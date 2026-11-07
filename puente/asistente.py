@@ -94,6 +94,7 @@ Cómo trabajas:
 5. Los flujos de código (pqrd, tutelas) tienen la estructura fija del código: puedes leerlos (listar_nodos, ver_nodo) y ajustar sus parámetros (ajustar_parametro_pqrd), no rehacerlos.
 6. Si un flujo necesita una conexión (correo, Drive, base de datos, API), revisa listar_credenciales; si falta, usa pedir_credencial (la persona la crea, tú nunca manejas claves) y luego configúrala en el nodo por su nombre. Las escrituras afuera solo ocurren si la persona habilitó la escritura en esa conexión; si no, quedan registradas como bloqueadas.
    IA de los flujos: hay tres niveles separados — la IA global de la plataforma, la de cada flujo (usa la global o una propia) y la de cada nodo de IA (hereda o elige la suya); se resuelve nodo → flujo → global. Tú (Vera) tienes tu propia IA aparte. Con proveedores_ia, modelos_ia, ver_ia_flujo, configurar_ia_flujo y probar_ia eliges y verificas proveedor y modelo según lo que el nodo necesita (visión, JSON, herramientas) y el costo; si falta la llave de un proveedor, pedir_credencial (la persona la escribe). Para un nodo puntual usa editar_nodo con config.proveedor/modelo/credencial.
+   Cada flujo es independiente: su correspondencia (si arranca con correo), sus archivos, su entorno, sus conexiones, su compuerta y sus corridas. Nunca mezcles: los correos de PQRD son de PQRD. Un flujo nuevo que arranca con correo usa su bandeja de prueba (sube .eml con subir_adjuntos_a_flujo destino=bandeja_prueba) o su buzón propio (configura la conexión y carpeta del disparador con editar_nodo y léelo con leer_buzon_flujo). Para procesar documentos o imágenes que te adjunten en el chat, usa un flujo con disparador entrada_archivos (o un campo de tipo archivo en entrada_manual) y subir_adjuntos_a_flujo con correr=true; nunca pidas rutas. Para editar un flujo sin tocar el original, clonar_flujo; renombrar_flujo y proponer_borrado sirven para cualquier flujo salvo borrar los originales PQRD y tutelas.
    Cada flujo tiene su propio entorno (variables y secretos, no globales): en los nodos se usan como {{entorno.NOMBRE}}. Revisa con ver_entorno; define o quita las que NO son secretas con definir_variable / quitar_variable; los secretos los escribe la persona (pedir_secreto). Para la revisión antes de producción, ver_manifiesto.
    En el editor del flujo abierto usa controlar_editor (seleccionar o centrar un nodo, abrir su panel, zoom, ordenar, resaltar, abrir la paleta o el diálogo de correr). Renombra, duplica, versiona y corre flujos con renombrar_flujo, duplicar_flujo, versiones_flujo, restaurar_version y correr_flujo.
    Moverte por la plataforma: navegar (vistas), abrir_correspondencia, filtrar_correos, abrir_correo, seleccionar_correos, abrir_corrida, abrir_adjuntos, abrir_proceso, ajustar_lienzo (ver todo, acercar, alejar), centrar_nodo, enfocar_flujo. Si piden «muéstrame», «ábreme», «llévame», «aléjalo», hazlo con estas.
@@ -111,8 +112,10 @@ HERRAMIENTAS = [
     {"name": "leer_flujo", "description": "La definición completa de un flujo declarativo, o el resumen de nodos de uno de código.", "parameters": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}},
     {"name": "validar_flujo", "description": "Valida una definición de flujo declarativo sin guardarla. Devuelve los problemas.", "parameters": {"type": "object", "properties": {"definicion": {"type": "object"}}, "required": ["definicion"]}},
     {"name": "guardar_flujo", "description": "Crea o reemplaza un flujo declarativo (queda la versión anterior). Solo si validar_flujo no dio problemas.", "parameters": {"type": "object", "properties": {"definicion": {"type": "object"}}, "required": ["definicion"]}},
-    {"name": "listar_correos", "description": "Los correos descargados de la correspondencia (para correr o probar). filtro: todos | sin_procesar | procesados | radicado | manual (estos dos, según lo que hizo producción). texto busca en asunto, remitente y vista previa.", "parameters": {"type": "object", "properties": {"texto": {"type": "string"}, "filtro": {"type": "string"}, "n": {"type": "integer"}}}},
-    {"name": "ver_correo", "description": "Un correo descargado: asunto, remitente, fecha, cuerpo (recortado), adjuntos y lo que hizo producción con él.", "parameters": {"type": "object", "properties": {"caso": {"type": "string"}}, "required": ["caso"]}},
+    {"name": "listar_correos", "description": "Los correos de la correspondencia DE UN FLUJO (cada flujo tiene la suya: PQRD su buzón y descargados, tutelas los suyos, un flujo nuevo su bandeja de prueba o su buzón propio; los flujos que no arrancan con correo no tienen). filtro: todos | sin_procesar | procesados | radicado | manual. texto busca en asunto, remitente y vista previa. Sin flujo, el de la pantalla.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "texto": {"type": "string"}, "filtro": {"type": "string"}, "n": {"type": "integer"}}}},
+    {"name": "ver_correo", "description": "Un correo de la correspondencia de un flujo: asunto, remitente, fecha, cuerpo (recortado), adjuntos y lo que hizo producción con él.", "parameters": {"type": "object", "properties": {"caso": {"type": "string"}, "flujo": {"type": "string"}}, "required": ["caso"]}},
+    {"name": "leer_buzon_flujo", "description": "Lee (solo lectura) el buzón propio de un flujo declarativo que arranca con correo (la conexión y carpeta de su disparador) y deja los correos en su correspondencia.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "n": {"type": "integer"}}, "required": ["flujo"]}},
+    {"name": "subir_adjuntos_a_flujo", "description": "Sube al flujo los archivos que la persona adjuntó en este chat: destino «archivos» (entrada del flujo: imágenes y documentos, no video ni audio) o «bandeja_prueba» (correos .eml/.msg para su correspondencia). adjuntos: nombres de los adjuntos del chat, o vacío para todos los del último mensaje. Con correr=true lo corre de una vez con esos archivos y espera el resultado.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "destino": {"type": "string"}, "adjuntos": {"type": "array", "items": {"type": "string"}}, "correr": {"type": "boolean"}, "campo": {"type": "string"}, "entrada": {"type": "object"}}, "required": ["flujo"]}},
     {"name": "ver_buzon", "description": "Los próximos correos del buzón REAL de producción (solo lectura) que tomaría el job de ese flujo, en su orden. Solo pqrd y tutelas tienen buzón.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "n": {"type": "integer"}}, "required": ["flujo"]}},
     {"name": "resumen_tablero", "description": "Las cifras de cada flujo: corridas, radicados, a manual, errores, mediana de tiempo y lo último corrido.", "parameters": {"type": "object", "properties": {}}},
     {"name": "ver_logs", "description": "Los últimos eventos del motor de un flujo (qué hizo cada etapa), opcionalmente de una corrida.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "n": {"type": "integer"}, "corrida": {"type": "string"}}, "required": ["flujo"]}},
@@ -137,7 +140,7 @@ HERRAMIENTAS = [
     {"name": "ayuda_nodo", "description": "La ficha completa de un tipo de nodo: qué hace, cada parámetro (tipo, si es obligatorio, valor por defecto, para qué sirve), sus salidas, lo que produce, ejemplos y consejos. Úsala para explicar cómo funciona un nodo y SIEMPRE antes de configurar uno que no hayas usado en esta conversación.", "parameters": {"type": "object", "properties": {"tipo": {"type": "string"}}, "required": ["tipo"]}},
     {"name": "reglas_de_flujos", "description": "Las reglas generales de los flujos: estructura, aristas, plantillas {{...}}, opciones comunes de todos los nodos (deshabilitado, continuar_si_falla, reintentos, rama de error, entradas/salida) y desenlaces.", "parameters": {"type": "object", "properties": {}}},
     {"name": "renombrar_flujo", "description": "Cambia el nombre y/o la descripción de un flujo declarativo.", "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "nombre": {"type": "string"}, "descripcion": {"type": "string"}}, "required": ["id"]}},
-    {"name": "duplicar_flujo", "description": "Crea una copia de un flujo declarativo con otro id y nombre.", "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "id_nuevo": {"type": "string"}, "nombre": {"type": "string"}}, "required": ["id", "id_nuevo", "nombre"]}},
+    {"name": "clonar_flujo", "description": "Clona cualquier flujo (también PQRD y tutelas): la copia es independiente, con su propio entorno (los secretos de un flujo declarativo quedan sin valor), conexiones, compuerta y programación apagadas y sus propias corridas. Luego se puede editar sin tocar el original.", "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "nombre": {"type": "string"}, "id_nuevo": {"type": "string"}}, "required": ["id"]}},
     {"name": "versiones_flujo", "description": "Las versiones guardadas de un flujo declarativo.", "parameters": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}},
     {"name": "restaurar_version", "description": "Vuelve un flujo declarativo a una versión anterior (queda como versión nueva).", "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "version": {"type": "integer"}}, "required": ["id", "version"]}},
     {"name": "correr_flujo", "description": "Corre un flujo con datos de entrada (disparador manual, webhook o programado) o sobre un correo (caso). Devuelve la corrida creada; con esperar=true espera el resultado (hasta 3 minutos).", "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "entrada": {"type": "object"}, "caso": {"type": "string"}, "esperar": {"type": "boolean"}}, "required": ["id"]}},
@@ -249,8 +252,8 @@ def ejecutar(nombre: str, a: Dict[str, Any]) -> Any:
         f = api("GET", f"/api/flujos/{a['id']}")
         if not isinstance(f, dict) or f.get("error"):
             return {"error": f"no existe el flujo {a['id']}"}
-        if f.get("tipo") != "declarativo":
-            return {"error": "los flujos de código no se borran"}
+        if f.get("borrable") is False or (f.get("tipo") != "declarativo" and f.get("borrable") is None):
+            return {"error": "ese flujo es un original (PQRD o tutelas) y no se borra; sus copias sí"}
         propuesta = {"accion": "borrar_flujo", "id": a["id"], "etiqueta": f"Borrar «{f.get('nombre') or a['id']}»", "descripcion": a.get("motivo") or ""}
         emitir("propuesta", propuesta=propuesta)
         return {"propuesto": True, "nota": "La persona ve un botón para confirmar el borrado. NO está borrado: no digas que se borró."}
@@ -303,9 +306,14 @@ def ejecutar(nombre: str, a: Dict[str, Any]) -> Any:
         d = a["definicion"]
         return api("PUT", f"/api/flujos/{d.get('id')}", {"definicion": d})
     if nombre == "listar_correos":
+        flujo = a.get("flujo") or PANTALLA.get("flujo") or "pqrd"
         texto, n, filtro = (a.get("texto") or "").lower(), int(a.get("n") or 15), a.get("filtro") or "todos"
-        todos = api("GET", "/api/bandeja")
-        corridos = {c.get("caso") for f in api("GET", "/api/flujos") for c in api("GET", f"/api/corridas?flujo={f['id']}")}
+        todos = api("GET", f"/api/bandeja?flujo={flujo}")
+        if not isinstance(todos, list):
+            return todos
+        if not todos:
+            return {"flujo": flujo, "total": 0, "correos": [], "nota": "Este flujo no tiene correos en su correspondencia (o no arranca con correo)."}
+        corridos = {c.get("caso") for c in api("GET", f"/api/corridas?flujo={flujo}") or []}
 
         def pasa(c: dict) -> bool:
             if texto and texto not in f"{c.get('asunto')} {c.get('remitente')} {c.get('remitenteCorreo')} {c.get('vistaPrevia')}".lower():
@@ -318,12 +326,13 @@ def ejecutar(nombre: str, a: Dict[str, Any]) -> Any:
                 return c.get("desenlaceProduccion") == filtro
             return True
         elegidos = [c for c in todos if pasa(c)]
-        return {"total": len(elegidos), "correos": [{"caso": c["caso"], "asunto": c.get("asunto"), "remitente": c.get("remitenteCorreo"), "fecha": c.get("recibido"),
+        return {"flujo": flujo, "total": len(elegidos), "correos": [{"caso": c["caso"], "fuente": c.get("fuente"), "asunto": c.get("asunto"), "remitente": c.get("remitenteCorreo"), "fecha": c.get("recibido"),
                  "adjuntos": len(c.get("adjuntos") or []), "en_produccion": c.get("desenlaceProduccion"), "corrido_aqui": c["caso"] in corridos} for c in elegidos[:n]]}
     if nombre == "ver_correo":
-        d = api("GET", f"/api/bandeja/{a['caso']}")
+        flujo = a.get("flujo") or PANTALLA.get("flujo") or "pqrd"
+        d = api("GET", f"/api/bandeja/{a['caso']}?flujo={flujo}")
         if not isinstance(d, dict) or d.get("error"):
-            return {"error": f"no existe el correo {a['caso']}"}
+            return {"error": f"el correo {a['caso']} no está en la correspondencia de «{flujo}»"}
         cuerpo = d.get("cuerpo") or d.get("texto") or d.get("vistaPrevia") or ""
         return {k: v for k, v in {**{k: d.get(k) for k in ("caso", "asunto", "remitente", "remitenteCorreo", "recibido", "desenlaceProduccion", "motivoProduccion")},
                                   "cuerpo": str(cuerpo)[:2500], "adjuntos": [x.get("nombre") for x in d.get("adjuntos") or []][:20]}.items() if v not in (None, "")}
@@ -413,13 +422,16 @@ def ejecutar(nombre: str, a: Dict[str, Any]) -> Any:
             r = _guardar(d)
         emitir("control", accion="editor", op="recargar")
         return r
-    if nombre == "duplicar_flujo":
-        r = api("POST", f"/api/flujos/{a['id']}/duplicar", {"id_nuevo": a["id_nuevo"], "nombre": a["nombre"]})
-        if not isinstance(r, dict) or r.get("error"):
-            d = _definicion(a["id"])
-            d.update({"id": a["id_nuevo"], "nombre": a["nombre"]})
-            r = _guardar(d)
+    if nombre in ("clonar_flujo", "duplicar_flujo"):
+        r = api("POST", f"/api/flujos/{a['id']}/clonar", {k: a[k] for k in ("nombre", "id_nuevo") if a.get(k)})
+        nuevo = ((r or {}).get("flujo") or {}).get("id") if isinstance(r, dict) else None
+        if nuevo:
+            emitir("enfocar", flujo=nuevo)
         return r
+    if nombre == "leer_buzon_flujo":
+        return api("GET", f"/api/bandeja/buzon?flujo={a['flujo']}&n={int(a.get('n') or 20)}")
+    if nombre == "subir_adjuntos_a_flujo":
+        return _subir_adjuntos(a)
     if nombre == "versiones_flujo":
         return api("GET", f"/api/flujos/{a['id']}/versiones")
     if nombre == "restaurar_version":
@@ -557,7 +569,7 @@ def ejecutar(nombre: str, a: Dict[str, Any]) -> Any:
         return {"ok": True, "modo": m}
     if nombre == "buscar_correos":
         texto, n = (a.get("texto") or "").lower(), int(a.get("n") or 8)
-        todos = api("GET", "/api/bandeja")
+        todos = api("GET", f"/api/bandeja?flujo={a.get('flujo') or PANTALLA.get('flujo') or 'pqrd'}") or []
         elegidos = [c for c in todos if not texto or texto in f"{c.get('asunto')} {c.get('remitente')} {c.get('remitenteCorreo')} {c.get('vistaPrevia')}".lower()]
         return [{"caso": c["caso"], "asunto": c.get("asunto"), "remitente": c.get("remitenteCorreo"), "adjuntos": [x.get("nombre") for x in c.get("adjuntos", [])][:5],
                  "en_produccion": c.get("desenlaceProduccion")} for c in elegidos[:n]]
@@ -588,6 +600,55 @@ def ejecutar(nombre: str, a: Dict[str, Any]) -> Any:
 
 
 CONVERSACION: Dict[str, Any] = {"id": None}
+PANTALLA: Dict[str, Any] = {"flujo": None}
+
+
+def _subir_adjuntos(a: Dict[str, Any]) -> Any:
+    """Los adjuntos del chat pasan al flujo como archivos (o como correos de su bandeja de prueba)."""
+    import base64
+    if not CONVERSACION["id"]:
+        return {"error": "no hay conversación"}
+    conv = api("GET", f"/api/chats/{CONVERSACION['id']}") or {}
+    mensajes = [m for m in conv.get("mensajes") or [] if m.get("rol") == "usuario" and m.get("adjuntos")]
+    if not mensajes:
+        return {"error": "en esta conversación no hay adjuntos; pídele a la persona que los adjunte con el clip"}
+    pedidos = [x.lower() for x in a.get("adjuntos") or []]
+    candidatos = [adj for m in mensajes for adj in m["adjuntos"]] if pedidos else mensajes[-1]["adjuntos"]
+    elegidos = [adj for adj in candidatos if not pedidos or adj.get("nombre", "").lower() in pedidos]
+    if not elegidos:
+        return {"error": "no encontré esos adjuntos", "disponibles": [adj.get("nombre") for m in mensajes for adj in m["adjuntos"]]}
+    archivos = []
+    for adj in elegidos:
+        q = urllib.request.Request(API + f"/api/chats/{CONVERSACION['id']}/adjuntos/{adj['id']}")
+        with urllib.request.urlopen(q, timeout=60) as r:
+            datos = r.read()
+        archivos.append({"nombre": adj.get("nombre"), "tipo": adj.get("tipo") or "application/octet-stream", "datos": base64.b64encode(datos).decode()})
+    flujo = a["flujo"]
+    if (a.get("destino") or "archivos") == "bandeja_prueba":
+        resultados = [api("POST", f"/api/bandeja/prueba?flujo={flujo}", x) for x in archivos]
+        emitir("control", accion="correspondencia", fuente="prueba", flujo=flujo)
+        return {"subidos": resultados}
+    r = api("POST", f"/api/flujos/{flujo}/archivos", {"archivos": archivos})
+    if not isinstance(r, dict) or not r.get("archivos"):
+        return r
+    ids = [x["id"] for x in r["archivos"]]
+    salida: Dict[str, Any] = {"archivos": [{k: x.get(k) for k in ("id", "nombre", "tipo", "tamano")} for x in r["archivos"]], "rechazados": r.get("rechazados")}
+    if not a.get("correr"):
+        salida["nota"] = "Quedaron subidos al flujo. Para correrlo pasa estos ids en la entrada (archivos, o el campo de tipo archivo del disparador)."
+        return salida
+    entrada = dict(a.get("entrada") or {})
+    f = api("GET", f"/api/flujos/{flujo}") or {}
+    disp = next((n for n in (f.get("definicion") or {}).get("nodos", []) if n.get("tipo") in ("entrada_archivos", "entrada_manual", "webhook")), None)
+    campo = a.get("campo")
+    if not campo and disp and disp.get("tipo") == "entrada_manual":
+        campo = next((c.get("nombre") for c in (disp.get("config") or {}).get("campos") or [] if c.get("tipo") in ("archivo", "archivos")), None)
+    if campo:
+        tipo = next((c.get("tipo") for c in ((disp or {}).get("config") or {}).get("campos") or [] if c.get("nombre") == campo), "archivos")
+        entrada[campo] = ids[0] if tipo == "archivo" else ids
+    else:
+        entrada["archivos"] = ids
+    salida["corrida"] = ejecutar("correr_flujo", {"id": flujo, "entrada": entrada, "esperar": True})
+    return salida
 
 
 def _esquema_local() -> Dict[str, Any]:
@@ -663,6 +724,7 @@ def conversar(entrada: Dict[str, Any], aviso: Any = None) -> Dict[str, Any]:
     flujo = entrada.get("flujo") or "pqrd"
     if entrada.get("conversacion"):
         CONVERSACION["id"] = entrada.get("conversacion")
+    PANTALLA["flujo"] = flujo
     cred, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
     cliente = genai.Client(vertexai=True, project=PROYECTO, location="global", credentials=cred)
     herramientas = types.Tool(function_declarations=[types.FunctionDeclaration(**h) for h in HERRAMIENTAS])
@@ -739,6 +801,7 @@ def _conversar_con_proveedor(entrada: Dict[str, Any], ia: Dict[str, Any], avisar
     flujo = entrada.get("flujo") or "pqrd"
     if entrada.get("conversacion"):
         CONVERSACION["id"] = entrada.get("conversacion")
+    PANTALLA["flujo"] = flujo
     sistema = SISTEMA + "\n\n" + describir_pantalla(entrada.get("pantalla") or {}, flujo)
     mensajes: List[Dict[str, Any]] = []
     todos = entrada.get("mensajes") or []
