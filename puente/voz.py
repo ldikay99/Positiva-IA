@@ -38,6 +38,9 @@ MODELOS = [  # (modelo, región): el primero que conecte
 ]
 MAX_SEGUNDOS = int(os.environ.get("VOZ_MAX_SEGUNDOS", "900"))
 TOPE_HERRAMIENTA = 45
+TOPE_LARGA = 300
+# Estas corren en segundo plano durante la llamada: Vera sigue hablando y haciendo otras cosas.
+LARGAS = {"responder_por_escrito", "probar_flujo", "correr_flujo", "correr_buzon", "ver_buzon", "correr_correos", "listar_correos", "ver_logs"}
 VOZ_POR_DEFECTO = "Laomedeia"
 
 NOTA_VOZ = """
@@ -53,15 +56,15 @@ ESTÁS EN UNA LLAMADA DE VOZ. Así hablas:
 Cómo trabajas en la llamada (dos manos):
 - «Ver», «muéstrame», «ábreme», «dónde está» = ábrelo EN PANTALLA con la herramienta de navegación que corresponda (por ejemplo, correos → abrir_correspondencia; una corrida → abrir_corrida; un documento → abrir_adjuntos) y di un dato concreto de lo que quedó a la vista («Ahí están: 389 correos, el más reciente es de Seguros Bolívar»).
 - Lo rápido lo haces tú directamente: moverte por la plataforma (navegar, abrir_*, ajustar_lienzo, centrar_nodo, filtrar_correos, seleccionar_correos), consultas cortas (resumen_tablero, listar_flujos, ultimas_corridas, estado_motor, listar_correos, ver_buzon) y acciones (correr_correos, correr_buzon, cancelar_cola).
-- Lo que necesita pensar o escribir bien —crear o cambiar un flujo, cualquier «¿por qué…?», analizar fallas, explicar resultados, comparar, cualquier lista o tabla de más de tres cosas— se lo pasas SIEMPRE a responder_por_escrito con un pedido claro y completo. Esa herramienta lo resuelve y lo deja escrito en el chat; tú dices en una frase lo esencial («Te lo dejé en el chat: fueron tres a manual por falta de cédula»).
-- Si algo va a tardar, avisa en tres o cuatro palabras antes («Dame un segundo»).
+- Lo que necesita pensar o escribir bien —crear o cambiar un flujo, cualquier «¿por qué…?», analizar fallas, explicar resultados, comparar, cualquier lista o tabla de más de tres cosas— se lo pasas SIEMPRE a responder_por_escrito con un pedido claro y completo, SIN consultar ni concluir nada antes (no llames otras herramientas primero ni adelantes una respuesta): delega de una vez y espera su resultado. Lo que digas después sale SOLO de lo que devolvió responder_por_escrito. Esa herramienta lo resuelve y lo deja escrito en el chat; tú dices en una frase lo esencial («Te lo dejé en el chat: fueron tres a manual por falta de cédula»).
+- Trabajas en paralelo: las tareas largas (responder_por_escrito, probar o correr flujos, el buzón real, listar correos) corren en segundo plano y te responden «en_curso». Di en pocas palabras que ya estás en eso («Lo estoy revisando») y SIGUE atendiendo: puedes responder otras preguntas y lanzar otras herramientas mientras tanto. Cuando llegue «[Resultado de la tarea N]», cuéntalo en una o dos frases y continúa.
 - Después de una herramienta nunca te quedes callada.
 - Si solo oyes ruido o algo sin sentido, no respondas.
-- Cuando la persona se despida, despídete en una frase corta en español y llama a terminar_llamada. Después de terminar_llamada no digas nada más.
+- Cuando la persona se despida, di primero tu despedida en una frase corta en español («Con gusto, hablamos.») y SOLO después llama a terminar_llamada.
 """
 
 # En la llamada, lo pesado (crear, editar, validar, probar, leer definiciones) va por responder_por_escrito.
-SOLO_POR_ESCRITO = {"validar_flujo", "guardar_flujo", "editar_nodo", "agregar_nodo", "eliminar_nodo", "editar_aristas", "probar_flujo", "leer_flujo",
+SOLO_POR_ESCRITO = {"reglas_de_flujos", "validar_flujo", "guardar_flujo", "editar_nodo", "agregar_nodo", "eliminar_nodo", "editar_aristas", "probar_flujo", "leer_flujo",
                     "ver_nodo", "ver_configuracion", "historial_configuracion", "ajustar_parametro_pqrd", "aplicar_perfil", "guardar_perfil", "ver_logs", "ver_correo"}
 
 HERRAMIENTAS_VOZ = [
@@ -196,6 +199,12 @@ async def llamada(sesion: Any, types: Any, cid: str, flujo: str) -> None:
     inicio = time.monotonic()
     pantalla_actual: Dict[str, Any] = {"p": dict(PANTALLA_INICIAL), "flujo": flujo}
     despedida = {"hecha": False}
+    contador = {"n": 0}
+    tareas_vivas: Dict[int, Any] = {}
+    pendientes: List[Any] = []
+    actividad = {"salida": 0.0, "entrada": 0.0}
+    # Si tras devolver una herramienta Vera no dice nada en unos segundos, se le recuerda.
+    silencio = {"desde": 0.0}
 
     def por_escrito(pedido: str) -> Dict[str, Any]:
         """El segundo proceso: el chat escrito, con toda la conversación y todas las herramientas."""
@@ -260,33 +269,31 @@ async def llamada(sesion: Any, types: Any, cid: str, flujo: str) -> None:
                 colgar.set()
                 return
 
-    async def herramienta(ll: Any) -> Any:
-        args = dict(ll.args or {})
-        nombre = ll.name
-        resumen = {k: (v if k != "definicion" else {"id": (v or {}).get("id"), "nodos": len((v or {}).get("nodos", []))}) for k, v in args.items()}
-        enviar("paso", nombre=nombre, argumentos=resumen)
+    async def correr_herramienta(nombre: str, args: Dict[str, Any], resumen: Dict[str, Any]) -> Any:
+        """Ejecuta una herramienta y anota lo que deja en el turno que esté en curso al terminar."""
         if nombre == "responder_por_escrito":
             try:
-                r = await asyncio.wait_for(asyncio.to_thread(por_escrito, str(args.get("pedido") or "")), 240)
+                r = await asyncio.wait_for(asyncio.to_thread(por_escrito, str(args.get("pedido") or "")), 300)
             except asyncio.TimeoutError:
                 r = {"texto": "No alcancé a terminarlo por escrito; pídemelo de nuevo en el chat.", "pasos": [], "cambiados": [], "propuestas": []}
             turno.escrito.append(r["texto"])
-            turno.pasos += r.get("pasos") or []
+            turno.pasos.extend(r.get("pasos") or [])
             turno.cambiados.update(r.get("cambiados") or [])
-            turno.propuestas += r.get("propuestas") or []
+            turno.propuestas.extend(r.get("propuestas") or [])
             enviar("chat", texto=r["texto"], cambiados=r.get("cambiados") or [])
             res: Any = {"escrito_en_el_chat": r["texto"][:4000], "nota": "Ya está en el chat. Di en una frase lo esencial; no lo leas completo."}
         elif nombre == "escribir_en_chat":
             turno.escrito.append(str(args.get("texto") or ""))
             enviar("chat", texto=args.get("texto") or "")
-            res: Any = {"ok": True, "nota": "Ya está en el chat; en voz di solo lo esencial."}
+            res = {"ok": True, "nota": "Ya está en el chat; en voz di solo lo esencial."}
         elif nombre == "terminar_llamada":
-            res = {"ok": True, "nota": "La llamada se cierra ya. No digas nada más."}
             despedida["hecha"] = True
-            asyncio.get_running_loop().call_later(2.5, colgar.set)
+            asyncio.get_running_loop().call_later(4, colgar.set)
+            res = {"ok": True, "nota": "Si dejaste la despedida a medias, termínala en español en pocas palabras. Nada más."}
         else:
+            tope = TOPE_LARGA if nombre in LARGAS else TOPE_HERRAMIENTA
             try:
-                res = await asyncio.wait_for(asyncio.to_thread(asistente.ejecutar, nombre, args), TOPE_HERRAMIENTA)
+                res = await asyncio.wait_for(asyncio.to_thread(asistente.ejecutar, nombre, args), tope)
             except asyncio.TimeoutError:
                 res = {"error": "tardó demasiado; sigue en curso o vuelve a intentarlo"}
             except Exception as e:
@@ -302,25 +309,56 @@ async def llamada(sesion: Any, types: Any, cid: str, flujo: str) -> None:
         enviar("resultado_paso", nombre=nombre, resultado=texto_res[:1500])
         if len(texto_res) > 20000:
             res = {"resultado_recortado": texto_res[:20000]}
+        return res
+
+    async def en_segundo_plano(numero: int, nombre: str, args: Dict[str, Any], resumen: Dict[str, Any]) -> None:
+        try:
+            res = await correr_herramienta(nombre, args, resumen)
+        except Exception as e:
+            res = {"error": f"{type(e).__name__}: {e}"}
+        enviar("tarea_lista", tarea=numero, nombre=nombre)
+        pendientes.append((numero, nombre, res))
+        tareas_vivas.pop(numero, None)
+
+    async def herramienta(ll: Any) -> Any:
+        args = dict(ll.args or {})
+        nombre = ll.name
+        resumen = {k: (v if k != "definicion" else {"id": (v or {}).get("id"), "nodos": len((v or {}).get("nodos", []))}) for k, v in args.items()}
+        enviar("paso", nombre=nombre, argumentos=resumen)
+        if nombre in LARGAS:
+            # Lo largo corre aparte: Vera sigue la conversación y el resultado llega cuando esté.
+            contador["n"] += 1
+            numero = contador["n"]
+            tareas_vivas[numero] = asyncio.create_task(en_segundo_plano(numero, nombre, args, resumen))
+            enviar("tarea_iniciada", tarea=numero, nombre=nombre)
+            res: Any = {"estado": "en_curso", "tarea": numero,
+                        "nota": "Corre en segundo plano. Di en pocas palabras que ya estás en eso y sigue atendiendo a la persona; cuando termine te llegará «[Resultado de la tarea " + str(numero) + "]» y ahí lo cuentas."}
+        else:
+            res = await correr_herramienta(nombre, args, resumen)
         return types.FunctionResponse(id=ll.id, name=nombre, response={"resultado": res})
 
     async def bajada() -> None:
         while not colgar.is_set():
             async for m in sesion.receive():
                 if m.tool_call and m.tool_call.function_calls:
-                    respuestas = await asyncio.gather(*(herramienta(ll) for ll in m.tool_call.function_calls))
-                    await sesion.send_tool_response(function_responses=list(respuestas))
+                    respuestas = list(await asyncio.gather(*(herramienta(ll) for ll in m.tool_call.function_calls)))
+                    await sesion.send_tool_response(function_responses=respuestas)
+                    if not despedida["hecha"]:
+                        silencio["desde"] = time.monotonic()
                 sc = m.server_content
                 if sc:
                     if sc.model_turn:
                         for p in sc.model_turn.parts or []:
-                            if p.inline_data and p.inline_data.data and not despedida["hecha"]:
+                            if p.inline_data and p.inline_data.data:
+                                actividad["salida"] = time.monotonic()
                                 enviar_audio(p.inline_data.data)
                     if sc.input_transcription and sc.input_transcription.text:
                         turno.escuchado += sc.input_transcription.text
+                        actividad["entrada"] = time.monotonic()
                         enviar("escuchado", texto=sc.input_transcription.text, total=turno.escuchado)
-                    if sc.output_transcription and sc.output_transcription.text and not despedida["hecha"]:
+                    if sc.output_transcription and sc.output_transcription.text:
                         turno.dicho += sc.output_transcription.text
+                        silencio["desde"] = 0.0
                         enviar("dicho", texto=sc.output_transcription.text, total=turno.dicho)
                     if sc.interrupted:
                         enviar("interrumpido")
@@ -328,7 +366,9 @@ async def llamada(sesion: Any, types: Any, cid: str, flujo: str) -> None:
                         enviar("turno")
                         # Si usó herramientas y aún no dijo nada, lo que diga después
                         # pertenece a esta misma pregunta: se guarda junto.
-                        if not (turno.pasos and not turno.dicho.strip() and not turno.escrito):
+                        # Si devolvió una herramienta y todavía no habló de su resultado, lo que
+                        # diga después pertenece a esta misma pregunta: se guarda junto.
+                        if not silencio["desde"] and not (turno.pasos and not turno.dicho.strip()):
                             await guardar()
                 if m.go_away:
                     enviar("terminando", motivo="tiempo")
@@ -339,7 +379,25 @@ async def llamada(sesion: Any, types: Any, cid: str, flujo: str) -> None:
 
     async def reloj() -> None:
         while not colgar.is_set():
-            await asyncio.sleep(2)
+            await asyncio.sleep(0.5)
+            ahora = time.monotonic()
+            # Un resultado listo se entrega en una pausa: ni la persona ni Vera hablando.
+            if pendientes and ahora - actividad["salida"] > 1.5 and ahora - actividad["entrada"] > 1.5 and not despedida["hecha"]:
+                numero, nombre, res = pendientes.pop(0)
+                texto = json.dumps(res, ensure_ascii=False, default=str)[:12000]
+                try:
+                    await sesion.send_client_content(turns=types.Content(role="user", parts=[types.Part(text=(
+                        f"[Resultado de la tarea {numero} ({nombre})]: {texto}\n"
+                        "[Aviso del sistema: cuéntale a la persona en una o dos frases lo esencial (si quedó en el chat, dilo) y sigue con lo que estaban hablando.]"))]), turn_complete=True)
+                    silencio["desde"] = 0.0
+                except Exception:
+                    pendientes.insert(0, (numero, nombre, res))
+            if silencio["desde"] and time.monotonic() - silencio["desde"] > 6 and not despedida["hecha"]:
+                silencio["desde"] = 0.0
+                try:
+                    await sesion.send_client_content(turns=types.Content(role="user", parts=[types.Part(text="[Aviso del sistema: la herramienta ya terminó. Di ahora, en una frase y en español, lo esencial del resultado.]")]), turn_complete=True)
+                except Exception:
+                    pass
             if time.monotonic() - inicio > MAX_SEGUNDOS:
                 enviar("terminando", motivo="tiempo")
                 colgar.set()
@@ -348,6 +406,10 @@ async def llamada(sesion: Any, types: Any, cid: str, flujo: str) -> None:
     await colgar.wait()
     for t in tareas:
         t.cancel()
+    # Lo que quedó corriendo al colgar sigue hasta terminar (máx. 2 min) y queda en el chat.
+    vivas = list(tareas_vivas.values())
+    if vivas:
+        await asyncio.wait(vivas, timeout=120)
     await guardar()
     enviar("terminando", motivo="colgado")
 

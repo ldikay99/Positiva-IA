@@ -208,6 +208,10 @@ async function aplicarEnPantalla(d: { tipo: string; [k: string]: unknown }) {
     x.irA("adjuntos");
   } else if (d.tipo === "control" && typeof d.accion === "string") {
     // Lo que vive dentro de un panel (lienzo, correspondencia, proceso) se pide al panel.
+    if (d.accion === "vista_conexiones") {
+      window.dispatchEvent(new CustomEvent("positiva:control", { detail: d }));
+      return;
+    }
     if (typeof d.flujo === "string" && d.flujo && d.flujo !== s.flujo) await s.cambiarFlujo(d.flujo);
     if (usar.getState().vista !== "flujo") {
       usar.getState().irA("flujo");
@@ -250,6 +254,7 @@ export function Chat() {
   const [confirmando, setConfirmando] = useState<string | null>(null);
   const [arrastrando, setArrastrando] = useState(false);
   const [escritoEnLlamada, setEscritoEnLlamada] = useState<string[]>([]);
+  const [tareasEnCurso, setTareasEnCurso] = useState(0);
   const caja = useRef<HTMLDivElement>(null);
   const entrada = useRef<HTMLTextAreaElement>(null);
   const archivo = useRef<HTMLInputElement>(null);
@@ -292,7 +297,10 @@ export function Chat() {
       if (c) void abrirConversacion(c.id);
       void cargarLista();
       if (Array.isArray(e.cambiados) && e.cambiados.length) void cargarFlujos();
-    } else if (e.tipo === "colgada") {
+    } else if (e.tipo === "tarea_iniciada") setTareasEnCurso((n) => n + 1);
+    else if (e.tipo === "tarea_lista") setTareasEnCurso((n) => Math.max(0, n - 1));
+    else if (e.tipo === "colgada") {
+      setTareasEnCurso(0);
       setPensando("");
       setEscritoEnLlamada([]);
     } else enPantalla(e);
@@ -623,7 +631,7 @@ export function Chat() {
                   {enLlamada && (
                     <div className="llamada" role="group" aria-label="Llamada con Vera">
                       <Indicador analizadores={llamada.analizadores} />
-                      <span className="llamada-estado" aria-live="polite">{llamada.estado === "conectando" ? "Conectando…" : llamada.estado === "terminando" ? "Colgando…" : llamada.micMudo ? "Micrófono apagado" : pensando ? pensando : "Te escucho"}</span>
+                      <span className="llamada-estado" aria-live="polite">{llamada.estado === "conectando" ? "Conectando…" : llamada.estado === "terminando" ? "Colgando…" : llamada.micMudo ? "Micrófono apagado" : pensando ? pensando : "Te escucho"}{tareasEnCurso > 0 && <em className="llamada-tareas">{tareasEnCurso === 1 ? "1 tarea en curso" : `${tareasEnCurso} tareas en curso`}</em>}</span>
                       <button className={`llamada-boton ${llamada.micMudo ? "apagado" : ""}`} aria-pressed={llamada.micMudo} aria-label={llamada.micMudo ? "Encender el micrófono" : "Apagar el micrófono"} title={llamada.micMudo ? "Encender el micrófono" : "Apagar el micrófono"} onClick={llamada.alternarMic}><Icono n={llamada.micMudo ? "micMudo" : "mic"} tam={16} /></button>
                       <button className={`llamada-boton ${llamada.vozMuda ? "apagado" : ""}`} aria-pressed={llamada.vozMuda} aria-label={llamada.vozMuda ? `Oír a ${NOMBRE}` : `Silenciar a ${NOMBRE}`} title={llamada.vozMuda ? `Oír a ${NOMBRE}` : `Silenciar a ${NOMBRE}`} onClick={llamada.alternarVoz}><Icono n={llamada.vozMuda ? "altavozMudo" : "altavoz"} tam={16} /></button>
                       <button className="llamada-boton colgar" aria-label="Colgar" title="Colgar" onClick={llamada.colgar}><Icono n="colgar" tam={16} /></button>

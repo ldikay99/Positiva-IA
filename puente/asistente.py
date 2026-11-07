@@ -88,9 +88,12 @@ Cómo trabajas:
 1. Antes de crear o cambiar un flujo, entiende qué necesita la persona; si falta algo esencial, pregunta una sola cosa concreta.
 2. Para crear o cambiar un flujo declarativo: arma la definición completa, validar_flujo, corrige hasta que no haya problemas, guardar_flujo y enfocar_flujo.
 3. Después de guardar, pruébalo con probar_flujo sobre un correo real que encaje (listar_correos) y revisa el resultado. Si algo sale mal, corrígelo y vuelve a probar.
-4. Para cambios puntuales usa editar_nodo, agregar_nodo, eliminar_nodo y editar_aristas: cada una valida y guarda una versión nueva.
+4. Conoces cada nodo por su ficha: antes de configurar un tipo que no hayas usado en esta conversación, llama a ayuda_nodo; para saber qué hay, tipos_de_nodo; para las reglas generales (plantillas, rama de error, reintentos), reglas_de_flujos. Si te preguntan cómo funciona un nodo, responde desde su ficha, con un ejemplo.
+   Para cambios puntuales usa editar_nodo, agregar_nodo, eliminar_nodo y editar_aristas: cada una valida y guarda una versión nueva.
 5. Los flujos de código (pqrd, tutelas) tienen la estructura fija del código: puedes leerlos (listar_nodos, ver_nodo) y ajustar sus parámetros (ajustar_parametro_pqrd), no rehacerlos.
-6. Moverte por la plataforma: navegar (vistas), abrir_correspondencia, filtrar_correos, abrir_correo, seleccionar_correos, abrir_corrida, abrir_adjuntos, abrir_proceso, ajustar_lienzo (ver todo, acercar, alejar), centrar_nodo, enfocar_flujo. Si piden «muéstrame», «ábreme», «llévame», «aléjalo», hazlo con estas.
+6. Si un flujo necesita una conexión (correo, Drive, base de datos, API), revisa listar_credenciales; si falta, usa pedir_credencial (la persona la crea, tú nunca manejas claves) y luego configúrala en el nodo por su nombre. Las escrituras afuera solo ocurren si la persona habilitó la escritura en esa conexión; si no, quedan registradas como bloqueadas.
+   En el editor del flujo abierto usa controlar_editor (seleccionar o centrar un nodo, abrir su panel, zoom, ordenar, resaltar, abrir la paleta o el diálogo de correr). Renombra, duplica, versiona y corre flujos con renombrar_flujo, duplicar_flujo, versiones_flujo, restaurar_version y correr_flujo.
+   Moverte por la plataforma: navegar (vistas), abrir_correspondencia, filtrar_correos, abrir_correo, seleccionar_correos, abrir_corrida, abrir_adjuntos, abrir_proceso, ajustar_lienzo (ver todo, acercar, alejar), centrar_nodo, enfocar_flujo. Si piden «muéstrame», «ábreme», «llévame», «aléjalo», hazlo con estas.
 7. Consultar: resumen_tablero, listar_flujos, leer_flujo, listar_correos, ver_correo, ver_buzon, ultimas_corridas, ver_corrida, ver_logs, estado_motor, listar_nodos, ver_nodo, ver_configuracion, historial_configuracion, listar_perfiles, listar_chats.
 8. Actuar (en modo prueba): correr_correos (correos descargados), correr_buzon (los próximos del buzón real, en el orden del job, solo lectura), cancelar_cola, probar_flujo, ajustar_parametro_pqrd, aplicar_perfil, guardar_perfil. Antes de correr muchos correos (más de 10), confirma cuántos.
 9. Tienes la conversación completa: lo que dijo la persona antes (también lo hablado en llamadas), los adjuntos que mandó (imágenes y documentos, que puedes ver) y lo que hiciste en turnos anteriores. Úsalo; no pidas que repitan lo ya dicho.
@@ -127,6 +130,18 @@ HERRAMIENTAS = [
     {"name": "seleccionar_correos", "description": "Marca en pantalla los correos descargados indicados, listos para correr.", "parameters": {"type": "object", "properties": {"casos": {"type": "array", "items": {"type": "string"}}}, "required": ["casos"]}},
     {"name": "abrir_adjuntos", "description": "Abre la vista de Adjuntos de una corrida: cada documento leído, su OCR y lo que se sacó de él.", "parameters": {"type": "object", "properties": {"corrida": {"type": "string"}}, "required": ["corrida"]}},
     {"name": "abrir_proceso", "description": "Abre el panel inferior del lienzo en una pestaña: vivo (proceso en vivo), logs o consola.", "parameters": {"type": "object", "properties": {"pestana": {"type": "string"}}, "required": ["pestana"]}},
+    {"name": "tipos_de_nodo", "description": "El catálogo de tipos de nodo que existen (disparadores, IA, conectores, lógica, datos, salidas), con su categoría y para qué sirve. Úsalo antes de armar un flujo o cuando pregunten qué se puede hacer.", "parameters": {"type": "object", "properties": {"categoria": {"type": "string"}}}},
+    {"name": "ayuda_nodo", "description": "La ficha completa de un tipo de nodo: qué hace, cada parámetro (tipo, si es obligatorio, valor por defecto, para qué sirve), sus salidas, lo que produce, ejemplos y consejos. Úsala para explicar cómo funciona un nodo y SIEMPRE antes de configurar uno que no hayas usado en esta conversación.", "parameters": {"type": "object", "properties": {"tipo": {"type": "string"}}, "required": ["tipo"]}},
+    {"name": "reglas_de_flujos", "description": "Las reglas generales de los flujos: estructura, aristas, plantillas {{...}}, opciones comunes de todos los nodos (deshabilitado, continuar_si_falla, reintentos, rama de error, entradas/salida) y desenlaces.", "parameters": {"type": "object", "properties": {}}},
+    {"name": "renombrar_flujo", "description": "Cambia el nombre y/o la descripción de un flujo declarativo.", "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "nombre": {"type": "string"}, "descripcion": {"type": "string"}}, "required": ["id"]}},
+    {"name": "duplicar_flujo", "description": "Crea una copia de un flujo declarativo con otro id y nombre.", "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "id_nuevo": {"type": "string"}, "nombre": {"type": "string"}}, "required": ["id", "id_nuevo", "nombre"]}},
+    {"name": "versiones_flujo", "description": "Las versiones guardadas de un flujo declarativo.", "parameters": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}},
+    {"name": "restaurar_version", "description": "Vuelve un flujo declarativo a una versión anterior (queda como versión nueva).", "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "version": {"type": "integer"}}, "required": ["id", "version"]}},
+    {"name": "correr_flujo", "description": "Corre un flujo con datos de entrada (disparador manual, webhook o programado) o sobre un correo (caso). Devuelve la corrida creada; con esperar=true espera el resultado (hasta 3 minutos).", "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "entrada": {"type": "object"}, "caso": {"type": "string"}, "esperar": {"type": "boolean"}}, "required": ["id"]}},
+    {"name": "listar_credenciales", "description": "Las conexiones (credenciales) guardadas: nombre, tipo, campos y si pueden escribir. Nunca muestra valores.", "parameters": {"type": "object", "properties": {}}},
+    {"name": "tipos_de_credencial", "description": "Los tipos de conexión que se pueden crear (correo IMAP/SMTP, Microsoft Graph, Google, Postgres, MySQL, SQLite, HTTP…) y qué campos piden.", "parameters": {"type": "object", "properties": {}}},
+    {"name": "pedir_credencial", "description": "Abre a la persona la pantalla de Conexiones para que ELLA cree una credencial (tú nunca recibes ni escribes contraseñas). Indica el tipo y para qué.", "parameters": {"type": "object", "properties": {"tipo": {"type": "string"}, "nombre_sugerido": {"type": "string"}, "para_que": {"type": "string"}}, "required": ["tipo"]}},
+    {"name": "controlar_editor", "description": "Maneja el editor del flujo abierto en pantalla. op: seleccionar_nodo (lo selecciona, centra y abre su panel), abrir_panel_nodo, cerrar_panel, zoom_nodo, zoom (nivel 0.2–2), auto_ordenar, resaltar (nodos), recargar, abrir_paleta (busqueda), abrir_correr.", "parameters": {"type": "object", "properties": {"op": {"type": "string"}, "nodo": {"type": "string"}, "nodos": {"type": "array", "items": {"type": "string"}}, "nivel": {"type": "number"}, "busqueda": {"type": "string"}, "seccion": {"type": "string"}}, "required": ["op"]}},
     {"name": "ajustar_lienzo", "description": "Mueve la vista del lienzo del flujo: ver_todo (encuadra el flujo completo), acercar, alejar o restablecer.", "parameters": {"type": "object", "properties": {"modo": {"type": "string"}}, "required": ["modo"]}},
     {"name": "probar_flujo", "description": "Corre un flujo sobre un correo real (modo prueba) y espera el resultado: desenlace, campos, avisos y pasos.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "caso": {"type": "string"}}, "required": ["flujo", "caso"]}},
     {"name": "ultimas_corridas", "description": "Las últimas corridas de un flujo con su desenlace y motivo.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "n": {"type": "integer"}}, "required": ["flujo"]}},
@@ -169,6 +184,7 @@ def _guardar(d: Dict[str, Any]) -> Any:
     if not v.get("ok"):
         return {"guardado": False, "problemas": v.get("problemas")}
     r = api("PUT", f"/api/flujos/{d['id']}", {"definicion": d})
+    emitir("control", accion="editor", op="recargar")
     return {"guardado": True, "version": (r.get("flujo") or {}).get("version")} if r.get("flujo") else r
 
 
@@ -357,6 +373,71 @@ def ejecutar(nombre: str, a: Dict[str, Any]) -> Any:
         return r
     if nombre == "cancelar_cola":
         return api("DELETE", f"/api/corridas/cola?flujo={a['flujo']}")
+    if nombre in ("tipos_de_nodo", "ayuda_nodo", "reglas_de_flujos"):
+        tipos = api("GET", "/api/nodos/tipos")
+        local = _esquema_local()
+        if not isinstance(tipos, list) or not tipos:
+            tipos = [{"tipo": k, **v} for k, v in (local.get("tipos") or {}).items()]
+        if nombre == "tipos_de_nodo":
+            cat = (a.get("categoria") or "").lower()
+            return [{"tipo": t.get("tipo"), "nombre": t.get("nombre"), "categoria": t.get("categoria"), "disparador": t.get("disparador"), "escritura": t.get("escritura"),
+                     "para_que": (t.get("descripcion") or "")[:180]} for t in tipos if not cat or cat in str(t.get("categoria", "")).lower()]
+        if nombre == "ayuda_nodo":
+            t = next((x for x in tipos if x.get("tipo") == a["tipo"]), None)
+            if not t:
+                return {"error": f"no existe el tipo {a['tipo']}", "tipos": [x.get("tipo") for x in tipos]}
+            extra = (local.get("tipos") or {}).get(a["tipo"]) or {}
+            return {**extra, **t}
+        return {k: local.get(k) for k in ("reglas", "comunes", "plantillas", "desenlaces", "ejemplo_flujo")}
+    if nombre == "renombrar_flujo":
+        cuerpo = {k: a[k] for k in ("nombre", "descripcion") if a.get(k)}
+        r = api("PATCH", f"/api/flujos/{a['id']}", cuerpo)
+        if not isinstance(r, dict) or r.get("error"):
+            d = _definicion(a["id"])
+            d.update(cuerpo)
+            r = _guardar(d)
+        emitir("control", accion="editor", op="recargar")
+        return r
+    if nombre == "duplicar_flujo":
+        r = api("POST", f"/api/flujos/{a['id']}/duplicar", {"id_nuevo": a["id_nuevo"], "nombre": a["nombre"]})
+        if not isinstance(r, dict) or r.get("error"):
+            d = _definicion(a["id"])
+            d.update({"id": a["id_nuevo"], "nombre": a["nombre"]})
+            r = _guardar(d)
+        return r
+    if nombre == "versiones_flujo":
+        return api("GET", f"/api/flujos/{a['id']}/versiones")
+    if nombre == "restaurar_version":
+        r = api("POST", f"/api/flujos/{a['id']}/restaurar", {"version": a["version"]})
+        emitir("control", accion="editor", op="recargar")
+        return r
+    if nombre == "correr_flujo":
+        cuerpo = {k: a[k] for k in ("entrada", "caso") if a.get(k) is not None}
+        r = api("POST", f"/api/flujos/{a['id']}/correr", cuerpo)
+        if not isinstance(r, dict) or not r.get("id"):
+            return r
+        emitir("corridas_creadas", flujo=a["id"], corridas=[r["id"]])
+        if not a.get("esperar"):
+            return {"corrida": r["id"], "nota": "Está corriendo; míralo con ver_corrida o abrir_corrida."}
+        for _ in range(60):
+            c = api("GET", f"/api/corridas/{r['id']}")
+            if c.get("estado") in ("terminada", "fallida"):
+                return _resumen_corrida(c)
+            time.sleep(3)
+        return {"corrida": r["id"], "estado": "sigue corriendo"}
+    if nombre == "listar_credenciales":
+        return api("GET", "/api/credenciales")
+    if nombre == "tipos_de_credencial":
+        return api("GET", "/api/credenciales/tipos")
+    if nombre == "pedir_credencial":
+        emitir("control", accion="vista_conexiones", tipo=a.get("tipo"), nombre=a.get("nombre_sugerido"), para_que=a.get("para_que"))
+        return {"ok": True, "nota": "La persona ve la pantalla de Conexiones para crearla. Pídele que te avise cuando la guarde; tú no recibes la clave."}
+    if nombre == "controlar_editor":
+        ops = ("seleccionar_nodo", "abrir_panel_nodo", "cerrar_panel", "zoom_nodo", "zoom", "auto_ordenar", "resaltar", "recargar", "abrir_paleta", "abrir_correr")
+        if a.get("op") not in ops:
+            return {"error": f"op desconocida; usa una de {', '.join(ops)}"}
+        emitir("control", accion="editor", **{k: v for k, v in a.items() if v is not None})
+        return {"ok": True}
     if nombre == "abrir_correspondencia":
         fuente = "buzon" if a.get("fuente") in ("buzon", "buzón", "real") else "descargados"
         emitir("control", accion="correspondencia", fuente=fuente, flujo=a.get("flujo"))
@@ -417,6 +498,14 @@ def ejecutar(nombre: str, a: Dict[str, Any]) -> Any:
 
 
 CONVERSACION: Dict[str, Any] = {"id": None}
+
+
+def _esquema_local() -> Dict[str, Any]:
+    try:
+        import nodos_declarativos
+        return nodos_declarativos.esquema()
+    except Exception:
+        return {}
 
 IMAGENES_Y_PDF = ("image/png", "image/jpeg", "image/webp", "image/heic", "image/heif", "application/pdf")
 

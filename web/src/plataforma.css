@@ -80,6 +80,7 @@
 .llamada-indicador[data-habla="tu"] i { background: var(--azul); }
 .llamada-indicador[data-habla="vera"] i { background: var(--lacre); }
 .llamada-estado { flex: 1; min-width: 0; font-size: 12px; font-weight: 600; color: var(--texto-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.llamada-tareas { margin-left: 8px; padding: 2px 8px; border-radius: 999px; font-style: normal; font-size: 11px; font-weight: 650; color: var(--azul); background: rgba(48, 71, 209, 0.1); }
 .llamada-boton { display: grid; place-items: center; flex: none; width: 34px; height: 34px; border-radius: 50%; color: var(--texto-2); background: var(--superficie-2); transition: background 0.15s, color 0.15s; }
 .llamada-boton:hover { background: var(--linea); color: var(--tinta); }
 .llamada-boton:focus-visible { outline: 2px solid var(--azul); outline-offset: 2px; }
