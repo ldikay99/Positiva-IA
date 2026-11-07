@@ -160,6 +160,10 @@ CASOS = [
      "pedido": "Ábreme el flujo de tutelas.",
      "espera_eventos": lambda evs: any(e.get("tipo") in ("enfocar", "navegar") for e in evs)
      and not AFIRMA.search(" ".join(e.get("texto", "") for e in evs if e.get("tipo") == "texto").lower())},
+    {"nombre": "notificaciones", "flujo": None,
+     "pedido": "¿Qué notificaciones tengo? Resúmemelas en dos líneas y ábreme esa pantalla.",
+     "espera_eventos": lambda evs: any(e.get("tipo") == "herramienta" and e.get("nombre") == "notificaciones" for e in evs)
+     and any(e.get("tipo") == "control" and e.get("accion") == "vista" and e.get("vista") == "notificaciones" for e in evs)},
     {"nombre": "navegar", "flujo": None,
      "pedido": "Llévame a las corridas de tutelas.",
      "espera_eventos": lambda evs: any(e.get("tipo") == "navegar" and e.get("vista") == "corridas" and e.get("flujo") == "tutelas" for e in evs)},
