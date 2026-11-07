@@ -326,9 +326,34 @@ def instalar_ganchos() -> None:
 
     grabador.registrar_radicacion, grabador.registrar = _radicacion, _registrar
 
+    instalar_cache_conversion()
     adjuntos.instalar(evento)
     instalar_observadores()
     instalar_reglas()
+
+
+def instalar_cache_conversion() -> None:
+    """La conversión de cada adjunto pasa por la caché por huella (cache_conversion.py), por debajo de los
+    observadores: el visor anuncia lo mismo. Un acierto descuenta del presupuesto del correo lo que costó la
+    primera vez, así el orquestador decide igual que sin caché. Solo con la compuerta apagada (simulación):
+    con la radicación real, el motor corre exactamente como el job."""
+    if REAL:
+        return
+    import cache_conversion
+    from pipeline import conversion
+
+    original = conversion.convertir
+
+    def convertir(datos, nombre, claves_candidatas=None, _profundidad_sobre=0, presupuesto=None):
+        if _profundidad_sobre:
+            return original(datos, nombre, claves_candidatas, _profundidad_sobre, presupuesto)
+        c, como = cache_conversion.convertir(conversion, original, datos, nombre, claves_candidatas, presupuesto=presupuesto)
+        if como == "acierto":
+            evento("consola", linea=f"[caché] {nombre}: ya se había leído (misma huella y opciones): no se repite la conversión ni el OCR")
+        return c
+
+    conversion.convertir = convertir
+    _reemplazar_en_modulos(original, convertir)
 
 
 # --------------------------------------------------------------- observadores

@@ -25,6 +25,8 @@ from pathlib import Path
 
 AQUI = Path(__file__).resolve().parent
 sys.path.insert(0, str(AQUI))
+# la caché de conversión (por huella) solo en sus propias pruebas, con su carpeta temporal
+os.environ["CACHE_CONVERSION"] = "no"
 
 import flujo_declarativo as fd  # noqa: E402
 import nodos_declarativos as nd  # noqa: E402
@@ -2739,6 +2741,295 @@ class BandejaPropia(Plataforma):
         # con credencial en la config, la validación la acepta (solo el nombre)
         d["nodos"][0]["config"] = {"credencial": "buzon-soporte", "carpeta": "INBOX"}
         self.assertEqual(fd._validar_config(d["nodos"][0]), [])
+
+
+# ------------------------------------------------- vueltas y ramas a la vez (llamadas a la IA en paralelo)
+
+class ModeloLento(ModeloFalso):
+    """Como el falso, pero cada llamada tarda (como la red) y se anota cuántas iban a la vez."""
+
+    def __init__(self, segundos=0.3, **r):
+        super().__init__(**r)
+        self.segundos, self.en_curso, self.max_a_la_vez = segundos, 0, 0
+        self._c = threading.Lock()
+
+    def __call__(self, *a, **k):
+        with self._c:
+            self.en_curso += 1
+            self.max_a_la_vez = max(self.max_a_la_vez, self.en_curso)
+        try:
+            time.sleep(self.segundos)
+            return super().__call__(*a, **k)
+        finally:
+            with self._c:
+                self.en_curso -= 1
+
+
+class ALaVez(Plataforma):
+    def setUp(self):
+        super().setUp()
+        self.modelo = ModeloLento(0.3)
+        fd._llamar_modelo = self.modelo
+
+    def bucle(self, **conf):
+        cuerpo = [nodo("cada", "para_cada", lista="entrada.items", variable="x", salida="res", **conf),
+                  nodo("gen", "ia_generar", instrucciones="Resume en una línea", entradas=["x"], salida="resumen"),
+                  nodo("largo", "expresion", expresion="len(resumen)", salida="largo")]
+        aristas = [{"desde": "inicio", "hacia": "cada"}, {"desde": "cada", "hacia": "gen", "cuando": "cada"}, {"desde": "gen", "hacia": "largo"},
+                   {"desde": "cada", "hacia": "fin", "cuando": "listo"}]
+        return manual(*cuerpo, aristas=aristas, campos=[{"nombre": "items", "tipo": "lista"}])
+
+    def test_vueltas_con_ia_a_la_vez_dan_lo_mismo_que_una_tras_otra(self):
+        items = [f"tarea {i}" for i in range(6)]
+        d = self.bucle()
+        self.assertEqual(self.problemas(d), [])
+        t = time.monotonic()
+        r, ev = self.correr_orden(d, entrada={"items": items})
+        juntas = time.monotonic() - t
+        self.assertGreater(self.modelo.max_a_la_vez, 1, "las llamadas a la IA fueron a la vez")
+        self.assertLessEqual(self.modelo.max_a_la_vez, fd.A_LA_VEZ_DEFECTO)
+        self.assertTrue(any(e.get("titulo", "").startswith("6 vueltas, de a 4") for e in ev if e["tipo"] == "paso"))
+        # lo mismo una tras otra (concurrencia 1)
+        self.modelo = ModeloLento(0.3)
+        fd._llamar_modelo = self.modelo
+        t = time.monotonic()
+        r1, ev1 = self.correr_orden(self.bucle(concurrencia=1), entrada={"items": items})
+        una = time.monotonic() - t
+        self.assertEqual(self.modelo.max_a_la_vez, 1)
+        self.assertEqual(r["variables"]["res"], r1["variables"]["res"], "mismo resultado, en el mismo orden")
+        self.assertEqual([x["resumen"].split(chr(10))[-1] for x in r["variables"]["res"]], [f"tarea {i}" for i in range(6)])
+        self.assertEqual(r["consumo"]["llamadas"], 6)
+        self.assertLess(juntas, una * 0.7, f"a la vez {juntas:.2f} s, una tras otra {una:.2f} s")
+        # los eventos salen en el orden de las vueltas, como una tras otra
+        orden = [e["etapa"] for e in ev if e["tipo"] == "etapa_inicio" and e["etapa"] in ("gen", "largo")]
+        self.assertEqual(orden, [e["etapa"] for e in ev1 if e["tipo"] == "etapa_inicio" and e["etapa"] in ("gen", "largo")])
+        # el tope del nodo manda
+        self.modelo = ModeloLento(0.1)
+        fd._llamar_modelo = self.modelo
+        self.correr_orden(self.bucle(concurrencia=2), entrada={"items": items})
+        self.assertEqual(self.modelo.max_a_la_vez, 2)
+
+    def test_lo_que_no_es_independiente_va_una_tras_otra(self):
+        items = ["URGENTE revisar", "normal", "Úrgente pagar"]
+        # el caso de Vera: el cuerpo escribe en una tabla → una tras otra
+        d = manual(nodo("cada", "para_cada", lista="entrada.tareas", variable="t", salida="res"),
+                   nodo("es", "filtro", campo="{{t.titulo}}", operador="contiene", valor="urgente"),
+                   nodo("guardar", "tabla_guardar", tabla="urgentes", datos={"titulo": "{{t.titulo}}"}),
+                   aristas=[{"desde": "inicio", "hacia": "cada"}, {"desde": "cada", "hacia": "es", "cuando": "cada"},
+                            {"desde": "es", "hacia": "guardar", "cuando": "si"}, {"desde": "cada", "hacia": "fin", "cuando": "listo"}],
+                   campos=[{"nombre": "tareas", "tipo": "lista"}])
+        self.assertEqual(self.problemas(d), [])
+        e = fd.Ejecucion(d, "x", "m", flujo="prueba")
+        e._nodos = {n["id"]: n for n in d["nodos"]}
+        self.assertEqual(e._a_la_vez(d["nodos"][1], "es", False, 3), 1, "escribe en una tabla")
+        r, _ = self.correr_orden(d, entrada={"tareas": [{"titulo": x} for x in items]})
+        self.assertEqual(len(fd.c_tablas.consultar("flujo-prueba", "urgentes")), 2)
+        # IA sin entradas propias: lee todo el contexto (que incluye lo de otras vueltas)
+        d2 = self.bucle()
+        del d2["nodos"][2]["config"]["entradas"]
+        e2 = fd.Ejecucion(d2, "x", "m", flujo="prueba")
+        e2._nodos = {n["id"]: n for n in d2["nodos"]}
+        self.assertEqual(e2._a_la_vez(d2["nodos"][1], "gen", False, 3), 1)
+        # una vuelta que lee lo que dejó la anterior (un acumulado)
+        d3 = self.bucle()
+        d3["nodos"][3]["config"]["expresion"] = "len(resumen) + largo"
+        e3 = fd.Ejecucion(d3, "x", "m", flujo="prueba")
+        e3._nodos = {n["id"]: n for n in d3["nodos"]}
+        self.assertEqual(e3._a_la_vez(d3["nodos"][1], "gen", False, 3), 1)
+        # y la normal sí
+        d4 = self.bucle()
+        e4 = fd.Ejecucion(d4, "x", "m", flujo="prueba")
+        e4._nodos = {n["id"]: n for n in d4["nodos"]}
+        self.assertEqual(e4._a_la_vez(d4["nodos"][1], "gen", False, 3), 3)
+
+    def test_una_vuelta_que_falla_detiene_como_una_tras_otra(self):
+        self.modelo.fallos = [ValueError("se cayó")]
+        r, ev = self.correr_orden(self.bucle(), exigir_ok=False, entrada={"items": ["a", "b", "c", "d"]})
+        self.assertEqual(r["accion"], "error")
+        d = self.bucle(al_fallar="continuar")
+        self.modelo = ModeloLento(0.05)
+        self.modelo.fallos = [ValueError("se cayó")]
+        fd._llamar_modelo = self.modelo
+        r, _ = self.correr_orden(d, entrada={"items": ["a", "b", "c", "d"]})
+        res = r["variables"]["res"]
+        self.assertEqual(sum(1 for x in res if "error" in x), 1)
+        self.assertEqual(sum(1 for x in res if "resumen" in x), 3)
+
+    def test_ramas_independientes_a_la_vez(self):
+        nodos = [nodo("ramas", "paralelo", ramas=["a", "b", "c"]),
+                 nodo("ga", "ia_generar", instrucciones="A", entradas=["entrada.texto"], salida="ra"),
+                 nodo("gb", "ia_generar", instrucciones="B", entradas=["entrada.texto"], salida="rb"),
+                 nodo("gc", "ia_generar", instrucciones="C", entradas=["entrada.texto"], salida="rc"),
+                 nodo("junta", "unir", salida="todo")]
+        aristas = [{"desde": "inicio", "hacia": "ramas"}, {"desde": "ramas", "hacia": "ga", "cuando": "a"}, {"desde": "ramas", "hacia": "gb", "cuando": "b"},
+                   {"desde": "ramas", "hacia": "gc", "cuando": "c"}, {"desde": "ga", "hacia": "junta"}, {"desde": "gb", "hacia": "junta"},
+                   {"desde": "gc", "hacia": "junta"}, {"desde": "junta", "hacia": "fin"}]
+        d = manual(*nodos, aristas=aristas, campos=[{"nombre": "texto", "tipo": "texto"}])
+        self.assertEqual(self.problemas(d), [])
+        t = time.monotonic()
+        r, _ = self.correr_orden(d, entrada={"texto": "hola"})
+        self.assertLess(time.monotonic() - t, 0.8, "tres llamadas de 0,3 s a la vez")
+        self.assertEqual(self.modelo.max_a_la_vez, 3)
+        self.assertEqual(sorted(r["variables"]["todo"]), ["a", "b", "c"])
+        self.assertIn("ra", r["variables"]["todo"]["a"])
+        # una rama que escribe (o el nodo pide una tras otra): una tras otra
+        d["nodos"][1]["config"]["concurrencia"] = 1
+        self.modelo = ModeloLento(0.05)
+        fd._llamar_modelo = self.modelo
+        r, _ = self.correr_orden(d, entrada={"texto": "hola"})
+        self.assertEqual(self.modelo.max_a_la_vez, 1)
+
+
+# ------------------------------------------------- caché de conversión y OCR por huella
+
+import cache_conversion as cc  # noqa: E402
+
+
+class _ConversionFalsa:
+    """Un módulo de conversión de mentira: cuenta las conversiones y deja elegir lo que devuelve."""
+    __file__ = __file__
+    LIMITE_PAGINAS_PDF = 60
+    LIMITE_CARACTERES = 200_000
+    TRANSCRIPTOR_IA = None
+
+    def __init__(self):
+        from pipeline import conversion
+        self.Conversion = conversion.Conversion
+        self.PresupuestoDeOcr = conversion.PresupuestoDeOcr
+        self.llamadas = 0
+        self.aviso = ""
+        self.imagenes = 0
+
+    def convertir(self, datos, nombre, claves_candidatas=None, presupuesto=None, **_):
+        self.llamadas += 1
+        if presupuesto is not None:
+            presupuesto.gastar(1.5)
+            presupuesto.imagenes_ia -= self.imagenes
+        return self.Conversion(markdown=f"# {nombre}\n\n{datos.decode()} (lectura {self.llamadas})", tipo_real="texto", aviso=self.aviso, paginas=1)
+
+
+class CacheDeConversion(Plataforma):
+    def setUp(self):
+        super().setUp()
+        self._cache_env = {k: os.environ.get(k) for k in ("CACHE_CONVERSION", "RUTA_CACHE_CONVERSION", "CACHE_CONVERSION_MB")}
+        os.environ["CACHE_CONVERSION"] = "si"
+        os.environ["RUTA_CACHE_CONVERSION"] = str(self.estado / "cache")
+        os.environ.pop("CACHE_CONVERSION_MB", None)
+        self.conv = _ConversionFalsa()
+
+    def tearDown(self):
+        for k, v in self._cache_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        super().tearDown()
+
+    def leer(self, datos=b"hola", nombre="a.txt", presupuesto=None, claves=None):
+        p = presupuesto or self.conv.PresupuestoDeOcr()
+        return cc.convertir(self.conv, self.conv.convertir, datos, nombre, claves, presupuesto=p) + (p,)
+
+    def test_acierto_y_fallo_por_huella(self):
+        c1, como1, p1 = self.leer()
+        c2, como2, p2 = self.leer()
+        self.assertEqual((como1, como2), ("fallo", "acierto"))
+        self.assertEqual(self.conv.llamadas, 1, "la segunda no se convirtió")
+        self.assertEqual(c1.markdown, c2.markdown)
+        self.assertEqual(p2.gastado_s, p1.gastado_s, "el acierto descuenta lo mismo del presupuesto")
+        # otro contenido u otro nombre: otra clave
+        self.assertEqual(self.leer(b"chao")[1], "fallo")
+        self.assertEqual(self.leer(nombre="b.txt")[1], "fallo")
+        self.assertEqual(self.conv.llamadas, 3)
+
+    def test_opciones_distintas_nunca_se_mezclan(self):
+        self.leer()
+        sin_ocr = self.conv.PresupuestoDeOcr()
+        sin_ocr.total_s = 0.0
+        self.assertEqual(self.leer(presupuesto=sin_ocr)[1], "fallo", "sin OCR es otra lectura")
+        # con visión: cada proveedor y modelo es otra clave; un transcriptor sin nombre no usa la caché
+        def t_a(jpeg): return "a"
+        t_a.clave_cache = "vertex:gemini-2.5-flash:-"
+        def t_b(jpeg): return "b"
+        t_b.clave_cache = "openai:gpt-4o:abc"
+        self.conv.TRANSCRIPTOR_IA = t_a
+        self.assertEqual(self.leer()[1], "fallo")
+        self.assertEqual(self.leer()[1], "acierto")
+        self.conv.TRANSCRIPTOR_IA = t_b
+        self.assertEqual(self.leer()[1], "fallo")
+        self.conv.TRANSCRIPTOR_IA = lambda jpeg: "x"
+        self.assertEqual(self.leer()[1], "sin_cache")
+        self.conv.TRANSCRIPTOR_IA = None
+        # otro tope de páginas y otras claves de PDF: otra clave (la clave del PDF no queda en disco)
+        self.conv.LIMITE_PAGINAS_PDF = 5
+        self.assertEqual(self.leer()[1], "fallo")
+        self.assertEqual(self.leer(claves=["1023456789"])[1], "fallo")
+        texto = "".join(p.read_text(encoding="utf-8") for p in (self.estado / "cache").glob("*/*.json"))
+        self.assertNotIn("1023456789", texto)
+        # y otra versión del motor de conversión
+        cc._version[self.conv.__file__] = "otra-version"
+        try:
+            self.assertEqual(self.leer()[1], "fallo")
+        finally:
+            cc._version.pop(self.conv.__file__, None)
+
+    def test_lo_que_quedo_a_medias_no_se_guarda(self):
+        self.conv.aviso = "se agoto el presupuesto de OCR del correo"
+        self.leer()
+        self.assertEqual(self.leer()[1], "fallo")
+        self.assertEqual(self.conv.llamadas, 2)
+        # sin cupo de visión suficiente hoy, no se usa lo que costó más imágenes
+        self.conv.aviso = ""
+        def t(jpeg): return "x"
+        t.clave_cache = "vertex:m:-"
+        self.conv.TRANSCRIPTOR_IA = t
+        self.conv.imagenes = 2
+        self.leer(b"escaneo")
+        poco = self.conv.PresupuestoDeOcr()
+        poco.imagenes_ia = 1
+        self.assertEqual(self.leer(b"escaneo", presupuesto=poco)[1], "fallo")
+        mucho = self.conv.PresupuestoDeOcr()
+        c, como, p = self.leer(b"escaneo", presupuesto=mucho)
+        self.assertEqual(como, "acierto")
+        self.assertEqual(p.imagenes_ia, mucho.imagenes_ia)
+        self.assertEqual(p.imagenes_ia, self.conv.PresupuestoDeOcr().imagenes_ia - 2, "el acierto gasta las imágenes que costó")
+        # una visión que falla (la conversión se lo calla) tampoco se guarda
+        def falla(jpeg): raise RuntimeError("503")
+        falla.clave_cache = "vertex:m2:-"
+        self.conv.TRANSCRIPTOR_IA = falla
+        orig = self.conv.convertir
+
+        def con_vision(datos, nombre, claves=None, presupuesto=None, **k):
+            try:
+                self.conv.TRANSCRIPTOR_IA(b"jpeg")
+            except RuntimeError:
+                pass
+            return orig(datos, nombre, claves, presupuesto=presupuesto)
+        cc.convertir(self.conv, con_vision, b"otro", "o.txt", presupuesto=self.conv.PresupuestoDeOcr())
+        self.assertEqual(cc.convertir(self.conv, con_vision, b"otro", "o.txt", presupuesto=self.conv.PresupuestoDeOcr())[1], "fallo")
+
+    def test_tope_de_tamano_borra_lo_menos_usado(self):
+        os.environ["CACHE_CONVERSION_MB"] = "0.004"  # ~4 KB
+        for i in range(12):
+            self.leer(f"contenido {i} ".encode() * 20, f"{i}.txt")
+            time.sleep(0.01)
+        self.assertLessEqual(cc.tamano(), cc.tope_bytes())
+        self.assertEqual(self.leer(b"contenido 11 " * 20, "11.txt")[1], "acierto", "lo último sigue")
+        self.assertEqual(self.leer(b"contenido 0 " * 20, "0.txt")[1], "fallo", "lo más viejo se borró")
+
+    def test_leer_adjuntos_del_motor_usa_la_cache(self):
+        d = cadena()
+        _, ev1 = self.correr_orden(d, caso=CASO)
+        _, ev2 = self.correr_orden(d, caso=CASO)
+        leidos = lambda ev: {e["titulo"]: e.get("cache") for e in ev if e["tipo"] == "paso" and e.get("titulo", "").endswith(": leído")}
+        self.assertTrue(leidos(ev1) and all(v == "fallo" for v in leidos(ev1).values()), leidos(ev1))
+        self.assertTrue(all(v == "acierto" for v in leidos(ev2).values()), leidos(ev2))
+        r1 = next(e for e in ev1 if e["tipo"] == "resultado")
+        r2 = next(e for e in ev2 if e["tipo"] == "resultado")
+        self.assertEqual(r1["solicitud"], r2["solicitud"])
+        # con la caché apagada se lee de nuevo
+        os.environ["CACHE_CONVERSION"] = "no"
+        _, ev3 = self.correr_orden(d, caso=CASO)
+        self.assertTrue(all(v == "sin_cache" for v in leidos(ev3).values()))
 
 
 if __name__ == "__main__":

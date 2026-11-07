@@ -16,7 +16,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 API = os.environ.get("API_INTERNA", f"http://127.0.0.1:{os.environ.get('PUERTO', '8080')}")
 PROYECTO = os.environ.get("GCP_PROJECT", "positiva-sgda-prd-416417")
@@ -186,6 +186,18 @@ def _resumen_corrida(c: dict) -> dict:
     return {"id": c.get("id"), "flujo": c.get("flujo"), "caso": c.get("caso"), "estado": c.get("estado"),
             "desenlace": r.get("accion"), "motivo": r.get("motivo"), "campos": hall, "sin_resolver": r.get("sin_resolver"),
             "avisos": (r.get("avisos") or [])[:12], "pasos": pasos, "segundos": r.get("segundos")}
+
+
+def _esperar_corrida(cid: str, tope_s: int) -> Optional[Dict[str, Any]]:
+    """Espera a que termine una corrida: el servidor responde apenas termina (?esperar=), sin preguntar cada pocos segundos."""
+    limite = time.monotonic() + tope_s
+    while time.monotonic() < limite:
+        c = api("GET", f"/api/corridas/{cid}?esperar={min(55, max(1, int(limite - time.monotonic())))}")
+        if isinstance(c, dict) and c.get("estado") in ("terminada", "fallida"):
+            return c
+        if not isinstance(c, dict) or c.get("error"):
+            time.sleep(2)
+    return None
 
 
 def _definicion(flujo: str) -> Dict[str, Any]:
@@ -462,12 +474,8 @@ def ejecutar(nombre: str, a: Dict[str, Any]) -> Any:
         emitir("corridas_creadas", flujo=a["id"], corridas=[r["id"]])
         if not a.get("esperar"):
             return {"corrida": r["id"], "nota": "Está corriendo; míralo con ver_corrida o abrir_corrida."}
-        for _ in range(60):
-            c = api("GET", f"/api/corridas/{r['id']}")
-            if c.get("estado") in ("terminada", "fallida"):
-                return _resumen_corrida(c)
-            time.sleep(3)
-        return {"corrida": r["id"], "estado": "sigue corriendo"}
+        c = _esperar_corrida(r["id"], 180)
+        return _resumen_corrida(c) if c else {"corrida": r["id"], "estado": "sigue corriendo"}
     if nombre == "listar_credenciales":
         return api("GET", "/api/credenciales")
     if nombre == "tipos_de_credencial":
@@ -579,12 +587,8 @@ def ejecutar(nombre: str, a: Dict[str, Any]) -> Any:
             return creadas
         cid = creadas[0]["id"]
         emitir("progreso", texto=f"Corriendo {a['flujo']} sobre {a['caso']}…", corrida=cid)
-        for _ in range(120):
-            c = api("GET", f"/api/corridas/{cid}")
-            if c.get("estado") in ("terminada", "fallida"):
-                return _resumen_corrida(c)
-            time.sleep(3)
-        return {"id": cid, "estado": "sigue corriendo"}
+        c = _esperar_corrida(cid, 360)
+        return _resumen_corrida(c) if c else {"id": cid, "estado": "sigue corriendo"}
     if nombre == "ultimas_corridas":
         lista = api("GET", f"/api/corridas?flujo={a['flujo']}")[: int(a.get("n") or 10)]
         return [{"id": c["id"], "caso": c["caso"], "estado": c["estado"], "desenlace": (c.get("resultado") or {}).get("accion"),
@@ -726,7 +730,8 @@ def conversar(entrada: Dict[str, Any], aviso: Any = None) -> Dict[str, Any]:
         CONVERSACION["id"] = entrada.get("conversacion")
     PANTALLA["flujo"] = flujo
     cred, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-    cliente = genai.Client(vertexai=True, project=PROYECTO, location="global", credentials=cred)
+    cliente = genai.Client(vertexai=True, project=PROYECTO, location="global", credentials=cred,
+                           http_options=types.HttpOptions(timeout=int(os.environ.get("VERA_TOPE_MS", "75000"))))
     herramientas = types.Tool(function_declarations=[types.FunctionDeclaration(**h) for h in HERRAMIENTAS])
     config = types.GenerateContentConfig(system_instruction=SISTEMA + "\n\n" + describir_pantalla(entrada.get("pantalla") or {}, flujo),
                                          tools=[herramientas], temperature=0.2,
@@ -753,7 +758,13 @@ def conversar(entrada: Dict[str, Any], aviso: Any = None) -> Dict[str, Any]:
     for vuelta in range(MAX_VUELTAS):
         if vuelta == MAX_VUELTAS - 1:  # la última vuelta obliga a responder con texto
             config.tool_config = types.ToolConfig(function_calling_config=types.FunctionCallingConfig(mode="NONE"))
-        r = cliente.models.generate_content(model=modelo, contents=contenidos, config=config)
+        try:
+            r = cliente.models.generate_content(model=modelo, contents=contenidos, config=config)
+        except Exception as e:  # tiempo agotado o error pasajero: un reintento
+            if "timeout" not in type(e).__name__.lower() and "timed out" not in str(e).lower() and "503" not in str(e) and "429" not in str(e):
+                raise
+            avisar("progreso", texto="El modelo tardó demasiado; lo intento de nuevo…")
+            r = cliente.models.generate_content(model=modelo, contents=contenidos, config=config)
         cand = r.candidates[0].content if r.candidates else None
         partes = list(cand.parts or []) if cand else []
         llamadas = [p.function_call for p in partes if getattr(p, "function_call", None)]

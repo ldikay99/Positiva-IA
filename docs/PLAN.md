@@ -91,7 +91,7 @@ Al buscar, el nodo encuentra lo que se busca sin importar mayúsculas, tildes, e
 
 - [x] Batería `scripts/evaluar_vera.py`: pedidos realistas medidos por su resultado (el flujo se guarda, valida y corre con lo esperado).
 - [x] Evaluación en 6 de 6: el caso que fallaba era que «texto» estaba reservado como nombre de campo; los campos de entrada viven en `{{entrada.<nombre>}}` y ahora aceptan cualquier nombre (Python y zod).
-- [ ] Un caso tardó 233 s («filtro sin tildes en lista»): ver por qué y bajarlo.
+- [x] Un caso tardó 233 s («filtro sin tildes en lista»): la primera llamada a `gemini-3-flash-preview` tardó 226,7 s (latencia de Vertex; en otras 7 corridas tardó 7–21 s); el flujo corre en 0,02 s. Del lado del servidor y del motor: `GET /api/corridas/:id?esperar=N` (la evaluación ya no pregunta cada 2 s) y errores de validación que dicen cómo arreglarse (`datos` de `tabla_guardar`, cálculos en plantillas, `expresion`). Ahora 28–44 s de punta a punta (4 de 4), el 85–90 % es el modelo. Queda para `puente/asistente.py` (de Jonathan): `correr_flujo` con `?esperar=` (ahorra 3 s) y tope de tiempo en el cliente de Vertex. Ver `docs/RENDIMIENTO.md`.
 
 ### 2c. Proveedores y modelos de IA por flujo (pedido 2026-11-07)
 
@@ -130,11 +130,18 @@ Cada flujo, y cada nodo de IA, elige su proveedor y su modelo. Hoy todo usa Vert
 
 ### 2d. Recursos y rendimiento (pedido 2026-11-07)
 
-- [ ] Límites por flujo: trabajadores, corridas simultáneas, cola y tiempo máximo por corrida; que varios flujos a la vez no se ahoguen entre sí.
-- [ ] Llamadas a proveedores asíncronas, con conexiones reutilizadas y sin bloquear al trabajador.
-- [ ] Caché de conversión y OCR por huella del archivo, para no repetir el trabajo pesado.
-- [ ] Medición de CPU y memoria por trabajador y alertas en el tablero.
-- [ ] Revisar qué conviene en cada lenguaje: Node para el servidor y los eventos, Python para el motor y la IA, y lo que haga falta en código nativo solo si una medición lo justifica.
+Mediciones y detalle en `docs/RENDIMIENTO.md`.
+
+- [x] Límites por flujo: trabajadores, corridas simultáneas, cola y tiempo máximo por corrida; que varios flujos a la vez no se ahoguen entre sí.
+  - [x] `GET/PUT /api/flujos/:id/recursos` y «Entorno › Ejecución» (ahora en todos los flujos), guardados en `<estado>/recursos.json`; PQRD sigue tomando sus trabajadores de la concurrencia de Ajustes y sus lotes «como el job» van enteros a un trabajador.
+  - [x] Tope global `TRABAJADORES_MAX` repartido con justicia max-min (`servidor/src/planificador.ts`). Medido: A encola 30 (la 31 recibe 429), B llega después con 4 y espera 1,8 s, no los 30 de A; nunca más de 8 procesos.
+  - [x] Tiempo máximo: el trabajador que se pasa se detiene, su corrida queda en error con el motivo y otro sigue con la cola; reinicio a mano desde el tablero.
+  - [x] Los declarativos arrancan trabajadores al llegar trabajo (0,25 s) y los retiran tras 10 min sin él.
+- [x] Llamadas a proveedores sin bloquear al trabajador: vueltas de `para_cada` y ramas de `paralelo` a la vez (de a 4, `concurrencia` 1–8) cuando se prueba que no cambia el resultado, con los semáforos de cada proveedor. 8 vueltas con IA: de 6,8–19,6 s a 2,1–2,4 s, mismos resultados. Conexiones reutilizadas (un cliente por proveedor y credencial en cada proceso).
+- [x] Caché de conversión, OCR y visión por huella del archivo (`puente/cache_conversion.py`), LRU de 2 GB, nunca entre opciones distintas. Declarativo: 27,2 s → 0,02 s. PQRD y tutelas con la compuerta apagada; A/B en PQRD con el mismo correo (c0295, c0107, c0116): mismo desenlace, hallazgos, solicitud y texto; c0295 de 29,9 s a 6,3 s.
+- [x] Medición de CPU y memoria por trabajador (`/proc`) en `GET /api/salud?flujo=` y en cada tarjeta del tablero, con avisos suaves (memoria > 80 % de su límite, corrida cerca de su tiempo máximo, arranque trabado) y reciclado de un trabajador libre que pasa su límite.
+- [x] Revisado qué conviene en cada lenguaje: Node para el servidor, los eventos y el planificador; Python para el motor, la IA y el OCR. Ninguna medición justifica código nativo: el tiempo es tesseract (ya nativo) o la red del modelo.
+- [x] Pruebas: reparto justo, límites y cola, trabajador trabado y reinicio, medición (`servidor/src/pruebas_plataforma.ts`, 22); vueltas y ramas a la vez, caché (aciertos, fallos, opciones aisladas, nada a medias, tope LRU) (`puente/pruebas_declarativo.py`, 141).
 
 ### 2e. Cada flujo independiente, nada quemado de PQRD (pedido 2026-11-07)
 

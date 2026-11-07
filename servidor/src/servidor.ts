@@ -12,7 +12,9 @@ import * as buzon from "./buzon.ts";
 import * as chats from "./chats.ts";
 import * as buzonTutelas from "./buzon_tutelas.ts";
 import * as configuracion from "./configuracion.ts";
-import { Motor, borrarCorridasDe, contarCorridasDe, type Corrida, type Evento } from "./motor.ts";
+import { Motor, borrarCorridasDe, contarCorridasDe, planificador, type Corrida, type Evento } from "./motor.ts";
+import * as recursos from "./recursos.ts";
+import { limiteTrabajadorMb, memoriaDelSistema } from "./medicion.ts";
 import * as espacio from "./espacio.ts";
 import * as flujos from "./flujos.ts";
 import * as credenciales from "./credenciales.ts";
@@ -65,6 +67,8 @@ function motorDe(id: string, arrancar = true): Motor | null {
     m.secretosDeProceso = () => entornos.valoresSecretos(f.id);
     m.radicacionReal = () => compuerta.radicacionReal(f.id);
   }
+  // Sus límites (trabajadores, corridas a la vez, cola, tiempo máximo): los guardados o los de su tipo.
+  m.recursos = () => recursos.de(deRecursos(id));
   m.on("evento", (e: Evento) => bus.emit("evento", e));
   motores.set(id, m);
   void m.cargarHistorial();
@@ -72,11 +76,24 @@ function motorDe(id: string, arrancar = true): Motor | null {
   return m;
 }
 
+/** Lo que recursos.ts necesita de un flujo para darle sus valores por defecto. */
+function deRecursos(id: string): recursos.FlujoDeRecursos {
+  const f = flujos.obtener(id);
+  return { id, tipo: f?.tipo === "codigo" ? "codigo" : "declarativo", ...(f?.tipo === "codigo" ? { base: flujos.baseDe(id) ?? "pqrd" } : {}) };
+}
+
+/**
+ * Los flujos de código tienen sus trabajadores calientes (arrancar el motor de PQRD tarda);
+ * los declarativos los arrancan cuando llega trabajo y los retiran tras un rato sin él.
+ */
 function arrancarMotor(m: Motor): void {
   if (arrancados.has(m.flujo)) return;
   arrancados.add(m.flujo);
-  m.ajustar(flujos.baseDe(m.flujo) === "pqrd" ? configuracion.obtener().concurrencia : 2);
+  m.ajustar(flujos.esDeCodigo(m.flujo) ? m.recursos().trabajadores : 0);
 }
+
+/** La cola de un flujo está llena: el pedido se rechaza con 429 y el porqué. */
+const colaLlena = (m: Motor) => ({ error: `la cola de este flujo está llena (${m.enEspera()} en espera; su límite es ${m.recursos().cola_max}, en Entorno › Ejecución)` });
 
 /** Lo que bandeja.ts necesita saber de un flujo para darle SU correspondencia. */
 const deBandeja = (f: flujos.Flujo): bandeja.FlujoDeBandeja => ({ id: f.id, tipo: f.tipo, ...(f.base ? { base: f.base } : {}) });
@@ -85,9 +102,53 @@ const flujoDe = (q: unknown): string => (typeof q === "string" && q ? q : "pqrd"
 
 await app.register(websocket);
 
+/**
+ * La salud de un flujo: sus trabajadores (CPU, memoria, cuánto llevan, alertas), su cola,
+ * sus límites y su parte del tope global; y la de la plataforma (todos los flujos).
+ */
 app.get<{ Querystring: { flujo?: string } }>("/api/salud", async (req) => {
   const m = motorDe(flujoDe(req.query.flujo)) ?? motor;
-  return { ok: true, ...m.estado(), flujo: m.flujo };
+  const cuotas = planificador.cuotas();
+  const tope = recursos.topeGlobal();
+  return {
+    ok: true, ...m.estado(), flujo: m.flujo,
+    recursos: recursos.de(deRecursos(m.flujo)),
+    cuota: cuotas.get(m.flujo) ?? 0,
+    incidentes: m.incidentes.slice(-10),
+    plataforma: {
+      tope_trabajadores: tope,
+      vivos: planificador.vivos(),
+      limite_trabajador_mb: limiteTrabajadorMb(tope),
+      ...memoriaDelSistema(),
+      flujos: [...motores.values()].filter((x) => x.procesos() || x.enEspera()).map((x) => ({ flujo: x.flujo, procesos: x.procesos(), en_cola: x.enEspera(), cuota: cuotas.get(x.flujo) ?? 0 })),
+    },
+  };
+});
+
+app.get<{ Params: { id: string } }>("/api/flujos/:id/recursos", async (req, res) => {
+  if (!flujos.obtener(req.params.id)) return res.code(404).send({ error: "ese flujo no existe" });
+  return recursos.de(deRecursos(req.params.id));
+});
+
+/** {trabajadores?, corridas_simultaneas?, cola_max?, tiempo_max_s?}; null vuelve al valor por defecto. Rige desde ya. */
+app.put<{ Params: { id: string } }>("/api/flujos/:id/recursos", async (req, res) => {
+  const id = req.params.id;
+  if (!flujos.obtener(id)) return res.code(404).send({ error: "ese flujo no existe" });
+  const r = await recursos.poner(deRecursos(id), req.body);
+  if (!r.ok) return res.code(r.codigo).send({ error: r.error });
+  const m = motores.get(id);
+  // los de código siguen calientes con su nuevo número de trabajadores; los que sobran se retiran al quedar libres
+  if (m && arrancados.has(id) && flujos.esDeCodigo(id)) m.ajustar(r.recursos.trabajadores);
+  else planificador.pedir();
+  avisarFlujo(id, { recursos: true });
+  return r.recursos;
+});
+
+/** Reinicia un trabajador de un flujo (uno trabado): si está ocupado, sus corridas quedan en error con el motivo. */
+app.post<{ Params: { id: string; trabajador: string } }>("/api/flujos/:id/trabajadores/:trabajador/reiniciar", async (req, res) => {
+  const m = motores.get(req.params.id);
+  if (!m || !m.reiniciarTrabajador(Number(req.params.trabajador), "reiniciado por una persona desde el tablero")) return res.code(404).send({ error: "ese trabajador no existe" });
+  return { ok: true };
 });
 
 app.get<{ Querystring: { flujo?: string } }>("/api/catalogo", async (req, res) => {
@@ -130,9 +191,28 @@ app.get("/api/tablero", async () =>
       enCurso: lista.filter((c) => !c.resultado).length,
       ultimas: lista.slice(0, 6).map((c) => ({ id: c.id, caso: c.caso, accion: String(c.resultado?.accion ?? c.estado), motivo: String(c.resultado?.motivo ?? ""), t: c.creada })),
       porDia: [...porDia.entries()].sort().slice(-14).map(([dia, v]) => ({ dia, ...v })),
+      salud: m ? saludResumida(m) : null,
     };
   }),
 );
+
+/** Lo que el tablero muestra de los trabajadores de un flujo: cuántos, CPU y memoria, y sus alertas. */
+function saludResumida(m: Motor) {
+  const e = m.estado();
+  const r = m.recursos();
+  return {
+    procesos: e.trabajadores.length,
+    ocupados: e.trabajadores.filter((t) => t.corrida).length,
+    en_cola: e.enCola.length,
+    trabajadores_max: r.trabajadores,
+    cola_max: r.cola_max,
+    tiempo_max_s: r.tiempo_max_s,
+    cpu: e.trabajadores.some((t) => t.cpu != null) ? Math.round(e.trabajadores.reduce((a, t) => a + (t.cpu ?? 0), 0)) : null,
+    memoria_mb: e.trabajadores.some((t) => t.memoria_mb != null) ? e.trabajadores.reduce((a, t) => a + (t.memoria_mb ?? 0), 0) : null,
+    alertas: e.trabajadores.flatMap((t) => t.alertas.map((texto) => ({ trabajador: t.id, texto, ocupado: !!t.corrida }))),
+    error_inicio: e.errorInicio || null,
+  };
+}
 
 app.get<{ Params: { id: string } }>("/api/flujos/:id", async (req, res) => {
   const f = flujos.obtener(req.params.id);
@@ -195,6 +275,7 @@ app.delete<{ Params: { id: string } }>("/api/flujos/:id", async (req, res) => {
   const corridas = await borrarCorridasDe(id);
   await compuerta.olvidar(id);
   await programador.olvidar(id);
+  await recursos.olvidar(id);
   for (const c of resumen.credenciales) await credenciales.borrar(c);
   await espacio.borrarTodo(id);
   bandeja.olvidarDe(id);
@@ -212,13 +293,11 @@ const confirmadoPorPersona = (req: { headers: Record<string, unknown> }) => Stri
 // Rótulo de una corrida sin correo: fecha y hora más 4 caracteres al azar, para que dos corridas del mismo segundo se distingan.
 const sello = () => `${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "")}-${Math.random().toString(36).slice(2, 6)}`;
 const avisarFlujo = (id: string, extra: Record<string, unknown> = {}) => bus.emit("evento", { tipo: "flujo_guardado", corrida: null, t: Date.now() / 1000, flujo: id, ...extra });
-const MAX_EN_ESPERA = 50;
-
-/** Encola una corrida de un flujo declarativo sin correo (o con el caso de un correo_nuevo). */
+/** Encola una corrida de un flujo declarativo sin correo (o con el caso de un correo_nuevo). Null si no existe o su cola está llena. */
 function dispararFlujo(id: string, origen: string, datos: { entrada?: unknown; caso?: string }): Corrida | null {
   const f = flujos.obtener(id);
   const m = f?.tipo === "declarativo" ? motorDe(id) : null;
-  if (!m || m.enCurso() >= MAX_EN_ESPERA) return null;
+  if (!m || !m.cabe(1)) return null;
   return m.encolar(datos.caso ?? `${origen}-${sello()}`, configuracion.obtener(), { origen, entrada: datos.entrada ?? {} });
 }
 
@@ -241,7 +320,7 @@ app.post<{ Params: { id: string } }>("/api/flujos/:id/correr", async (req, res) 
   if (!r.success) return res.code(400).send({ error: "pedido inválido: {entrada?: objeto, caso?: texto}" });
   const disp = flujos.disparadorDe(f.definicion);
   const m = motorDe(f.id)!;
-  if (m.enCurso() >= MAX_EN_ESPERA) return res.code(429).send({ error: "hay demasiadas corridas en espera para este flujo" });
+  if (!m.cabe(1)) return res.code(429).send(colaLlena(m));
   if (disp?.tipo === "entrada_correo" || disp?.tipo === "correo_nuevo") {
     if (!r.data.caso || !bandeja.casoValido(r.data.caso)) return res.code(400).send({ error: `este flujo empieza con ${disp.tipo}: manda caso (un correo de SU correspondencia: GET /api/bandeja?flujo=${f.id})` });
     // solo un correo de su propia correspondencia (nunca el universo de PQRD ni lo de otro flujo)
@@ -657,6 +736,7 @@ app.post("/api/corridas", async (req, res) => {
   const ajenos = [];
   for (const caso of r.data.casos) if (!(await bandeja.esDe(deBandeja(f), caso))) ajenos.push(caso);
   if (ajenos.length) return res.code(400).send({ error: `no son de la correspondencia de «${f.nombre}»: ${ajenos.slice(0, 10).join(", ")}` });
+  if (!m.cabe(r.data.casos.length)) return res.code(429).send(colaLlena(m));
   if (r.data.comoElJob && f.lote && r.data.casos.length > 1) {
     const { lote, corridas } = m.encolarLote(r.data.casos, conf, r.data.concurrencia ?? 0);
     return corridas.map((c) => ({ id: c.id, caso: c.caso, lote, flujo: f.id }));
@@ -968,7 +1048,7 @@ const pedidoDelBuzon = z.object({
  * Corre ahora lo que tomaría el job: trae del buzón real (solo lectura) los
  * correos de AUTOMATIZACION en su orden y los corre juntos con un orquestador.
  */
-type CorridaDelBuzon = { lote: string | null; corridas: { id: string; caso: string }[] } | { vacio: string };
+type CorridaDelBuzon = { lote: string | null; corridas: { id: string; caso: string }[] } | { vacio: string } | { lleno: string };
 
 /**
  * Lo que hace el job en cada corrida: toma del buzón real (solo lectura) el siguiente
@@ -977,6 +1057,9 @@ type CorridaDelBuzon = { lote: string | null; corridas: { id: string; caso: stri
 async function correrBuzon(flujo: string, pedidoDe: { n?: number; ids?: string[]; concurrencia?: number }, origen?: string): Promise<CorridaDelBuzon> {
   const conf = configuracion.obtener();
   const extra = origen ? { origen } : {};
+  // antes de bajar nada: si no caben en su cola, no se traen
+  const pool = motorDe(flujo)!;
+  if (!pool.cabe(pedidoDe.ids?.length || pedidoDe.n || 10)) return { lleno: colaLlena(pool).error };
   if (flujos.baseDe(flujo) === "tutelas") {
     // El job de tutelas toma el hilo como unidad: se pide el correo principal de cada hilo.
     const ids = pedidoDe.ids?.length ? pedidoDe.ids : (await buzonTutelas.listar(pedidoDe.n ?? 10, true, flujo)).correos.filter((c) => c.principal).map((c) => c.id);
@@ -1008,6 +1091,7 @@ app.post<{ Querystring: { flujo?: string } }>("/api/buzon/correr", async (req, r
   try {
     const x = await correrBuzon(flujo, r.data);
     if ("vacio" in x) return res.code(404).send({ error: x.vacio });
+    if ("lleno" in x) return res.code(429).send({ error: x.lleno });
     return x;
   } catch (e) {
     return res.code(502).send({ error: e instanceof Error ? e.message : String(e) });
@@ -1022,12 +1106,38 @@ app.get<{ Querystring: { flujo?: string } }>("/api/corridas", async (req) =>
     .sort((a, b) => b.creada - a.creada),
 );
 
-app.get<{ Params: { id: string } }>("/api/corridas/:id", async (req, res) => {
-  for (const m of motores.values()) {
-    const c = m.corridas.get(req.params.id);
-    if (c) return c;
+/**
+ * Una corrida. Con ?esperar=N (hasta 120 s) la respuesta llega apenas la corrida termine
+ * (o a los N s, como esté): quien espera un resultado no tiene que preguntar cada pocos segundos.
+ */
+app.get<{ Params: { id: string }; Querystring: { esperar?: string } }>("/api/corridas/:id", async (req, res) => {
+  const buscar = () => {
+    for (const m of motores.values()) {
+      const c = m.corridas.get(req.params.id);
+      if (c) return { m, c };
+    }
+    return null;
+  };
+  const x = buscar();
+  if (!x) return res.code(404).send({ error: "no existe" });
+  const esperar = Math.min(120, Math.max(0, Number(req.query.esperar) || 0));
+  const terminal = () => x.c.estado === "terminada" || x.c.estado === "fallida";
+  if (esperar && !terminal()) {
+    await new Promise<void>((listo) => {
+      const reloj = setTimeout(fin, esperar * 1000);
+      function oir(e: Evento) {
+        if (e.corrida === x!.c.id && e.tipo === "resultado") setImmediate(fin);
+      }
+      function fin() {
+        clearTimeout(reloj);
+        x!.m.off("evento", oir);
+        listo();
+      }
+      x.m.on("evento", oir);
+      res.raw.once("close", fin);
+    });
   }
-  return res.code(404).send({ error: "no existe" });
+  return x.c;
 });
 
 // Hojas renderizadas y texto por hoja de cada corrida: los escribe el trabajador
@@ -1068,6 +1178,9 @@ if (existsSync(config.web)) {
 }
 
 await configuracion.cargar();
+// PQRD toma sus trabajadores por defecto de la concurrencia de Ajustes, como siempre.
+recursos.enlace.concurrenciaPqrd = () => configuracion.obtener().concurrencia;
+await recursos.cargar();
 await credenciales.cargar();
 await entornos.precargar();
 await compuerta.cargar();
@@ -1099,7 +1212,7 @@ await programador.iniciar({
   // Flujos de código: cada toque toma el siguiente lote del buzón real, como el job (simulado con la compuerta apagada).
   correrBuzon: async (id, n) => {
     const x = await correrBuzon(id, { n }, "programado");
-    return "vacio" in x ? [] : x.corridas.map((c) => c.id);
+    return "vacio" in x || "lleno" in x ? [] : x.corridas.map((c) => c.id);
   },
   cortar: (id, ids, motivo) => void motores.get(id)?.cortar(ids, motivo),
   vivas: (id, ids) => ids.filter((x) => { const c = motores.get(id)?.corridas.get(x); return c && (c.estado === "en_cola" || c.estado === "procesando"); }).length,

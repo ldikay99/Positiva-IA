@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { motion } from "motion/react";
-import { usar } from "../estado.ts";
+import { pedir, usar } from "../estado.ts";
 import { Icono } from "../iconos.tsx";
 import { NOMBRES_CORTOS_DESENLACE, TONO_DESENLACE, motivoLegible } from "../progreso.ts";
 import type { TableroFlujo } from "../tipos.ts";
@@ -41,7 +41,45 @@ function Actividad({ dias }: { dias: TableroFlujo["porDia"] }) {
   );
 }
 
+/**
+ * Los trabajadores del flujo ahora: cuántos, CPU y memoria, y avisos suaves (memoria alta, una corrida
+ * que se acerca a su tiempo máximo, un arranque que no termina). Un trabajador ocupado se puede reiniciar.
+ */
+function SaludDelFlujo({ f, recargar }: { f: TableroFlujo; recargar: () => void }) {
+  const avisar = usar((s) => s.avisar);
+  const s = f.salud;
+  if (!s || (!s.procesos && !s.en_cola && !s.error_inicio)) return null;
+  const reiniciar = async (trabajador: number) => {
+    try {
+      await pedir(`/api/flujos/${encodeURIComponent(f.id)}/trabajadores/${trabajador}/reiniciar`, { method: "POST" });
+      avisar("Trabajador reiniciado: lo que atendía queda con el motivo y otro sigue con la cola");
+      recargar();
+    } catch (e) {
+      avisar((e as Error).message, "error");
+    }
+  };
+  return (
+    <div className="tab-salud" aria-label="Trabajadores del flujo">
+      <div className="tab-salud-cifras">
+        <span><b>{s.procesos}</b> de {s.trabajadores_max} trabajador{s.trabajadores_max === 1 ? "" : "es"}{s.ocupados ? `, ${s.ocupados} ocupado${s.ocupados === 1 ? "" : "s"}` : ""}</span>
+        {s.en_cola > 0 && <span><b>{s.en_cola}</b> en cola (de {s.cola_max})</span>}
+        {s.cpu != null && <span title="Suma de sus trabajadores; 100 % es un núcleo entero">CPU <b>{s.cpu} %</b></span>}
+        {s.memoria_mb != null && <span>Memoria <b>{s.memoria_mb.toLocaleString("es-CO")} MB</b></span>}
+      </div>
+      {s.error_inicio && <div className="tab-salud-alerta rojo"><Icono n="alerta" tam={13} /><span>El motor no arrancó: {s.error_inicio.slice(0, 160)}</span></div>}
+      {s.alertas.slice(0, 3).map((a) => (
+        <div key={`${a.trabajador}-${a.texto}`} className="tab-salud-alerta">
+          <Icono n="alerta" tam={13} />
+          <span>Trabajador {a.trabajador}: {a.texto}</span>
+          {a.ocupado && <button className="boton chico fantasma" onClick={() => void reiniciar(a.trabajador)} title="Lo detiene: lo que atendía queda en error con el motivo y arranca otro">Reiniciar</button>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function TarjetaFlujo({ f, i }: { f: TableroFlujo; i: number }) {
+  const recargar = usar((s) => s.cargarTablero);
   const cambiarFlujo = usar((s) => s.cambiarFlujo);
   const irA = usar((s) => s.irA);
   const verCorrida = usar((s) => s.verCorrida);
@@ -79,6 +117,7 @@ function TarjetaFlujo({ f, i }: { f: TableroFlujo; i: number }) {
           <div title="Costo estimado con precios publicados aproximados"><dt>IA</dt><dd>{textoConsumo(f.consumo ?? { tokens_entrada: f.tokens, tokens_salida: 0 }) || "—"}</dd></div>
         </dl>
       </div>
+      <SaludDelFlujo f={f} recargar={() => void recargar()} />
       <Actividad dias={f.porDia} />
       {!!f.ultimas.length && (
         <ul className="tab-ultimas" aria-label="Últimas corridas">

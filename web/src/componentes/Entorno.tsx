@@ -9,12 +9,14 @@ import { Interruptor } from "./Editores.tsx";
 import { FormularioCredencial } from "./Conexiones.tsx";
 import { CampoCron, CampoNumero } from "./Formulario.tsx";
 import { describirCron } from "../editor/modelo.ts";
+import type { RecursosFlujo } from "../tipos.ts";
 
 /**
  * El entorno de un flujo (de código o declarativo): sus variables y secretos,
  * sus conexiones propias junto a las globales que usa, y el manifiesto que se
  * revisa antes de llevarlo a producción. Los flujos de código (pqrd, tutelas)
- * tienen además «Ejecución»: la compuerta de radicación y la programación del job.
+ * tienen además, en «Ejecución», la compuerta de radicación y la programación del job;
+ * todos tienen ahí sus recursos (trabajadores, corridas a la vez, cola y tiempo máximo).
  */
 
 export type SeccionEntorno = "variables" | "conexiones" | "manifiesto" | "ejecucion";
@@ -630,11 +632,80 @@ function ProgramacionDelJob({ flujo }: { flujo: string }) {
   );
 }
 
-function Ejecucion({ flujo }: { flujo: string }) {
+type CampoRecurso = "trabajadores" | "corridas_simultaneas" | "cola_max" | "tiempo_max_s";
+
+const CAMPOS_RECURSOS: { k: CampoRecurso; titulo: string; ayuda: string; min: number; max: (r: RecursosFlujo) => number; paso?: number }[] = [
+  { k: "trabajadores", titulo: "Trabajadores", ayuda: "Procesos que puede tener a la vez. Entre todos los flujos no pasan del tope de la plataforma, que se reparte por igual entre los que tienen trabajo.", min: 1, max: (r) => r.tope_global },
+  { k: "corridas_simultaneas", titulo: "Corridas a la vez", ayuda: "Cuántas corridas (o lotes del job, que van enteros a un trabajador) atiende al mismo tiempo. No pasa de sus trabajadores.", min: 1, max: (r) => r.trabajadores },
+  { k: "cola_max", titulo: "Cola", ayuda: "Corridas que pueden esperar turno; las de más se rechazan con un aviso.", min: 1, max: () => 2000 },
+  { k: "tiempo_max_s", titulo: "Tiempo máximo por corrida (s)", ayuda: "Pasado este tiempo, la corrida (o el lote) se detiene con el motivo y otro trabajador sigue con la cola.", min: 30, max: () => 7200, paso: 30 },
+];
+
+/** Los límites del flujo: trabajadores, corridas a la vez, cola y tiempo máximo. Rigen desde la siguiente corrida. */
+function RecursosDelFlujo({ flujo }: { flujo: string }) {
+  const avisar = usar((s) => s.avisar);
+  const [r, setR] = useState<RecursosFlujo | null | undefined>(undefined);
+  const [borrador, setBorrador] = useState<Partial<Record<CampoRecurso, number>>>({});
+  const [ocupado, setOcupado] = useState(false);
+  const cargar = useCallback(async () => {
+    try {
+      setR(await pedir<RecursosFlujo>(`/api/flujos/${encodeURIComponent(flujo)}/recursos`));
+      setBorrador({});
+    } catch {
+      setR(null);
+    }
+  }, [flujo]);
+  useEffect(() => void cargar(), [cargar]);
+
+  const guardar = async (cuerpo: Partial<Record<CampoRecurso, number | null>>) => {
+    setOcupado(true);
+    try {
+      setR(await pedir<RecursosFlujo>(`/api/flujos/${encodeURIComponent(flujo)}/recursos`, { method: "PUT", body: JSON.stringify(cuerpo) }));
+      setBorrador({});
+      avisar("Recursos guardados: rigen desde ya");
+    } catch (e) {
+      avisar((e as Error).message, "error");
+    } finally {
+      setOcupado(false);
+    }
+  };
+
+  if (r === null) return <div className="vacio"><b>No se pudieron leer los recursos.</b><button className="boton chico" onClick={() => void cargar()}>Volver a intentar</button></div>;
+  if (r === undefined) return <div className="vacio"><span className="girando" />Leyendo los recursos…</div>;
+  const cambios = Object.keys(borrador).length > 0;
+  return (
+    <section className="seccion">
+      <h3>Recursos</h3>
+      <div className="ent-caja pila">
+        <div className="ent-recursos">
+          {CAMPOS_RECURSOS.map((c) => (
+            <div key={c.k} style={{ display: "contents" }}>
+              <label htmlFor={`rec-${c.k}`}>
+                {c.titulo}
+                {r.propios.includes(c.k) ? <span className="ficha tono-azul">propio · por defecto {r.por_defecto[c.k]}</span> : null}
+                <small>{c.ayuda}</small>
+              </label>
+              <CampoNumero id={`rec-${c.k}`} valor={borrador[c.k] ?? r[c.k]} min={c.min} max={c.max(r)} paso={c.paso ?? 1} alCambiar={(v) => setBorrador({ ...borrador, [c.k]: v ?? r[c.k] })} />
+            </div>
+          ))}
+        </div>
+        <div className="fila envuelve">
+          <span className="texto-3 chico">Tope de la plataforma: {r.tope_global} trabajadores entre todos los flujos (TRABAJADORES_MAX).</span>
+          <span className="espacio" />
+          {r.propios.length > 0 && <button type="button" className="boton chico" disabled={ocupado} onClick={() => void guardar(Object.fromEntries(r.propios.map((k) => [k, null])))}>Volver a los valores por defecto</button>}
+          {cambios && <button type="button" className="boton chico primario" disabled={ocupado} onClick={() => void guardar(borrador)}>{ocupado ? <span className="girando" /> : <Icono n="guardar" tam={13} />}Guardar</button>}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function Ejecucion({ flujo, codigo }: { flujo: string; codigo: boolean }) {
   return (
     <div className="pila">
-      <Compuerta flujo={flujo} />
-      <ProgramacionDelJob flujo={flujo} />
+      <RecursosDelFlujo flujo={flujo} />
+      {codigo && <Compuerta flujo={flujo} />}
+      {codigo && <ProgramacionDelJob flujo={flujo} />}
     </div>
   );
 }
@@ -642,16 +713,15 @@ function Ejecucion({ flujo }: { flujo: string }) {
 // ---------------------------------------------------------------- panel
 
 export function PanelEntorno({ abierto, seccion: pedida, cambiarSeccion, cerrar }: { abierto: boolean; seccion: SeccionEntorno; cambiarSeccion: (s: SeccionEntorno) => void; cerrar: () => void }) {
-  const tipoActual = usar((s) => s.flujos.find((f) => f.id === s.flujo)?.tipo);
-  // «Ejecución» es solo de los flujos de código: en un declarativo se muestran las variables.
-  const seccion: SeccionEntorno = pedida === "ejecucion" && tipoActual !== "codigo" ? "variables" : pedida;
+  // «Ejecución» es de todos: los recursos del flujo; en los de código, además la compuerta y la programación del job.
+  const seccion: SeccionEntorno = pedida;
   const flujo = usar((s) => s.flujo);
   const nombre = usar((s) => s.flujos.find((f) => f.id === s.flujo)?.nombre ?? s.flujo);
   const tipo = usar((s) => s.flujos.find((f) => f.id === s.flujo)?.tipo);
   return (
     <Dialogo abierto={abierto} cerrar={cerrar} titulo={`Entorno de «${nombre}»`} sub={tipo === "codigo" ? "Flujo de código: estas variables y conexiones son solo suyas." : "Variables, secretos y conexiones solo de este flujo."} ancho={760}>
       <nav className="pestanas ent-pestanas" role="tablist" aria-label="Secciones del entorno">
-        {(tipo === "codigo" ? (["variables", "conexiones", "ejecucion", "manifiesto"] as const) : (["variables", "conexiones", "manifiesto"] as const)).map((s) => (
+        {(["variables", "conexiones", "ejecucion", "manifiesto"] as const).map((s) => (
           <button key={s} role="tab" aria-selected={seccion === s} className={seccion === s ? "activa" : ""} onClick={() => cambiarSeccion(s)}>
             {s === "variables" ? "Variables" : s === "conexiones" ? "Conexiones" : s === "ejecucion" ? "Ejecución" : "Manifiesto"}
             {seccion === s && <motion.i layoutId="pestana-entorno" className="pestana-linea" />}
@@ -661,7 +731,7 @@ export function PanelEntorno({ abierto, seccion: pedida, cambiarSeccion, cerrar 
       <div className="ent-cuerpo">
         {seccion === "variables" && <Variables flujo={flujo} />}
         {seccion === "conexiones" && <ConexionesDelFlujo flujo={flujo} />}
-        {seccion === "ejecucion" && tipo === "codigo" && <Ejecucion flujo={flujo} />}
+        {seccion === "ejecucion" && <Ejecucion flujo={flujo} codigo={tipo === "codigo"} />}
         {seccion === "manifiesto" && <Manifiesto flujo={flujo} />}
       </div>
     </Dialogo>

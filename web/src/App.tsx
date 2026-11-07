@@ -201,8 +201,10 @@ function BarraSuperior({ alternarBandeja, bandejaVisible, abrirEntorno, nuevoFlu
       <div className="estado-barra">
         {motor?.errorInicio ? (
           <span className="pastilla rojo" title={motor.errorInicio}><span className="punto" />El motor no arrancó</span>
-        ) : !listos ? (
+        ) : !listos && motor?.trabajadores.length ? (
           <span className="pastilla ambar" title="El motor se está preparando"><span className="girando" />Preparando el motor</span>
+        ) : !listos ? (
+          <span className="pastilla verde" title="Sus trabajadores arrancan cuando hay algo que correr (en menos de un segundo) y se retiran tras un rato sin trabajo"><span className="punto" />Listo para correr</span>
         ) : ocupados ? (
           <span className="pastilla azul" title={`Corre hasta ${listos} correos a la vez`}><span className="girando" />Corriendo {ocupados} de {listos}</span>
         ) : (

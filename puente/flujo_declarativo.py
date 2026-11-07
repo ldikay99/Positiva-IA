@@ -59,6 +59,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextvars
+import copy
 import csv
 import datetime
 import hashlib
@@ -89,6 +90,7 @@ from conectores import hojas as c_hojas  # noqa: E402
 from conectores import sql as c_sql  # noqa: E402
 from conectores import tablas as c_tablas  # noqa: E402
 import proveedores as ia_proveedores  # noqa: E402  (la capa de proveedores de IA: Vertex, Gemini, OpenAI, Claude…)
+import cache_conversion  # noqa: E402  (conversión, OCR y visión por huella del archivo)
 from conectores.base import (HOSTS_METADATOS, ErrorDeNegocio, ErrorTransitorio, destino_seguro, direccion_vetada,  # noqa: E402,F401
                              host_vetado, ip_bloqueada, ruta_estado, timeout_de)
 from conectores.base import IPS_PERMITIDAS_PRUEBAS as _IPS_PERMITIDAS_PRUEBAS  # noqa: E402
@@ -280,6 +282,23 @@ _secretos_activos: Set[str] = set()
 # Dentro de un bucle largo o de un flujo llamado, los eventos de cada nodo se callan (no las escrituras).
 _callar: contextvars.ContextVar = contextvars.ContextVar("callar", default=False)
 RUIDOSOS = {"etapa_inicio", "etapa_fin", "paso", "busqueda", "modelo_inicio", "modelo_fin"}
+# Los eventos de una vuelta o rama que corre a la vez que otras: se guardan y salen en su orden.
+_en_espera: contextvars.ContextVar = contextvars.ContextVar("en_espera", default=None)
+
+
+def soltar_eventos(lineas: List[str]) -> None:
+    with _cerrojo:
+        for linea in lineas:
+            _salida.write(MARCA + linea + "\n")
+        _salida.flush()
+
+
+# Lo que puede correr a la vez en vueltas o ramas: nodos que solo calculan o preguntan a la IA,
+# sin escribir afuera, sin leer adjuntos (la visión es global) y sin terminar el flujo.
+SEGUROS_A_LA_VEZ = TIPOS_IA | {"filtro", "condicion", "extraer_regex", "validar", "transformar", "expresion", "json", "fecha",
+                               "bifurcar_por_valor", "fin_ciclo"}
+# Vueltas o ramas a la vez, si el nodo no lo dice (las llamadas a la IA las limita además el semáforo del proveedor).
+A_LA_VEZ_DEFECTO, A_LA_VEZ_TOPE = 4, 8
 
 
 def enmascarar(texto: str) -> str:
@@ -333,6 +352,11 @@ def evento(tipo: str, **datos: Any) -> None:
         return
     linea = enmascarar(json.dumps({"tipo": tipo, "corrida": _corrida.get(), "t": time.time(), **datos},
                                   ensure_ascii=False, default=str))
+    # una vuelta (o rama) que corre a la vez que otras guarda sus eventos y salen en orden al terminar
+    guardados = _en_espera.get()
+    if guardados is not None:
+        guardados.append(linea)
+        return
     with _cerrojo:
         _salida.write(MARCA + linea + "\n")
         _salida.flush()
@@ -589,8 +613,11 @@ def _problema_ref(ref: str, disponibles: Set[str], entorno: Optional[Set[str]] =
     ref = ref.strip()
     segs = segmentos(ref)
     if not segs or segs[0][0] != "clave" or not NOMBRE_VAR.match(segs[0][1]):
+        calcula = any(x in ref for x in ("(", "|", "+", "*", " "))
         return (f"la referencia «{ref}» no es válida (usa nombre, nombre.campo, lista.0.campo, "
-                "lista[campo=valor].otro o datos[\"a.b\"])")
+                "lista[campo=valor].otro o datos[\"a.b\"])"
+                + ("; las plantillas no calculan: pon el cálculo en un nodo expresion (p. ej. len(entrada.tareas), salida «cantidad») "
+                   "y usa {{cantidad}}" if calcula else ""))
     if ref in LEGADO:
         return None
     raiz = segs[0][1]
@@ -910,7 +937,9 @@ def _validar_nuevos(t: str, c: dict, q) -> None:
                 q(f"{k} «{c[k]}» no es un nombre de variable válido")
         entero_en("max_iteraciones", 1, MAX_ITERACIONES_TOPE)
         opcion("al_fallar", ["detener", "continuar"])
+        entero_en("concurrencia", 1, A_LA_VEZ_TOPE)
     elif t == "paralelo":
+        entero_en("concurrencia", 1, A_LA_VEZ_TOPE)
         ramas = c.get("ramas")
         if not (isinstance(ramas, list) and ramas and all(isinstance(x, str) and x.strip() for x in ramas)):
             q("paralelo necesita ramas: [nombres]")
@@ -961,7 +990,7 @@ def _validar_nuevos(t: str, c: dict, q) -> None:
         opcion("modo", c_tablas.MODOS)
         opcion("ambito", ["flujo", "compartida"])
         if "datos" in c and not isinstance(c["datos"], dict):
-            q("datos tiene que ser un objeto {campo: plantilla o valor}")
+            q('datos tiene que ser un objeto {campo: plantilla o valor}, p. ej. {"titulo": "{{t.titulo}}"}; para guardar una variable entera usa de: "t"')
         if not (c.get("datos") or c.get("de")):
             q("tabla_guardar necesita datos ({campo: plantilla}) o de (una variable)")
     elif t == "tabla_consultar":
@@ -1525,6 +1554,7 @@ def _texto_plano(html: str) -> str:
 
 _cliente: Dict[str, Any] = {}
 _vueltas: Dict[str, int] = {}
+_cerrojo_vueltas = threading.Lock()
 
 
 def _genai():
@@ -1588,21 +1618,23 @@ def preguntar(modelo: str, nodo: str, sistema: str, tarea: str, esquema: Optiona
     `modelo_fin` lleva proveedor, modelo, tokens y costo estimado; los tokens devueltos también."""
     ia = {k: v for k, v in (ia or {}).items() if v is not None}
     proveedor = ia.get("proveedor") or "vertex"
-    _vueltas[nodo] = _vueltas.get(nodo, 0) + 1
-    evento("modelo_inicio", vuelta=_vueltas[nodo], quien=nodo, modelo=modelo, proveedor=proveedor, temperatura=temperatura,
+    with _cerrojo_vueltas:  # vueltas de un para_cada pueden preguntar a la vez
+        _vueltas[nodo] = _vueltas.get(nodo, 0) + 1
+        vuelta = _vueltas[nodo]
+    evento("modelo_inicio", vuelta=vuelta, quien=nodo, modelo=modelo, proveedor=proveedor, temperatura=temperatura,
            sistema=sistema[:6000], ultimo=tarea[:1500], con_esquema=bool(esquema), json=bool(esquema or json_libre))
     t = time.time()
     try:
         texto, tokens = _llamar_modelo(modelo, sistema, tarea, esquema, temperatura, json_libre, nodo=nodo, **ia)
     except Exception as e:
-        evento("modelo_fin", vuelta=_vueltas[nodo], quien=nodo, modelo=modelo, proveedor=proveedor, ms=int((time.time() - t) * 1000), ok=False,
+        evento("modelo_fin", vuelta=vuelta, quien=nodo, modelo=modelo, proveedor=proveedor, ms=int((time.time() - t) * 1000), ok=False,
                error=f"{type(e).__name__}: {e}"[:400])
         raise
     tokens = {"proveedor": proveedor, "modelo": modelo, **(tokens or {})}
     if "costo_estimado_usd" not in tokens:
         c = ia_proveedores.catalogo.costo(proveedor, modelo, int(tokens.get("entrada", 0)), int(tokens.get("salida", 0)))
         tokens["costo_estimado_usd"], tokens["costo_conocido"] = (c or 0.0), c is not None
-    evento("modelo_fin", vuelta=_vueltas[nodo], quien=nodo, ms=int((time.time() - t) * 1000), ok=True, proveedor=proveedor, modelo=modelo,
+    evento("modelo_fin", vuelta=vuelta, quien=nodo, ms=int((time.time() - t) * 1000), ok=True, proveedor=proveedor, modelo=modelo,
            tokens_entrada=tokens.get("entrada", 0), tokens_salida=tokens.get("salida", 0), costo_estimado_usd=tokens.get("costo_estimado_usd", 0),
            costo_conocido=tokens.get("costo_conocido", False), texto=texto[:3000], respuesta=texto[:3000], llamadas=[],
            **({"reparado": True} if tokens.get("reparado") else {}))
@@ -1630,6 +1662,8 @@ def _transcriptor(ia: Optional[dict] = None, al_terminar: Any = None):
         if al_terminar:
             al_terminar(r)
         return r["texto"]
+    # para la caché de conversión: quién transcribe (otro proveedor, modelo o llave es otra lectura)
+    transcribir.clave_cache = f"{proveedor}:{modelo}:{ia_proveedores.base.huella(ia.get('credencial'))}"  # type: ignore[attr-defined]
     return transcribir
 
 
@@ -1835,6 +1869,8 @@ class Ejecucion:
         self._tablas: Dict[str, List[Dict[str, str]]] = {}
         self._pasos = 0
         self._inicio = time.time()
+        # el tiempo máximo de la corrida (recursos del flujo); el servidor corta al trabajador si se pasa
+        self.max_segundos: float = MAX_SEGUNDOS
         self._siguiente_forzado: Optional[str] = None
         self._union: Dict[str, Any] = {}
 
@@ -2131,7 +2167,8 @@ class Ejecucion:
                     if max_paginas:
                         conversion.LIMITE_PAGINAS_PDF = int(max_paginas)
                     try:
-                        c = conversion.convertir(datos, nombre, presupuesto=presupuesto)
+                        # el mismo archivo con las mismas opciones no se vuelve a leer (cache_conversion.py)
+                        c, de_cache = cache_conversion.convertir(conversion, conversion.convertir, datos, nombre, presupuesto=presupuesto)
                     finally:
                         conversion.LIMITE_PAGINAS_PDF = previo
                 if c.error:
@@ -2147,10 +2184,12 @@ class Ejecucion:
                     detalle += " · con OCR"
                 if c.paginas_ilegibles:
                     detalle += f" · {c.paginas_ilegibles} ilegible(s)"
+                if de_cache == "acierto":
+                    detalle += " · ya leído antes (caché)"
                 if c.aviso:
                     detalle += f"\n{c.aviso[:300]}"
                 _paso(nodo, f"{nombre}: leído", "ok" if not c.vacio else "aviso", detalle, tipo_archivo=tipo, ocr=c.ocr_aplicado,
-                      caracteres=len(md), truncado=len(c.markdown) > max_caracteres or c.truncado)
+                      caracteres=len(md), truncado=len(c.markdown) > max_caracteres or c.truncado, cache=de_cache)
             except Exception as e:
                 _paso(nodo, f"{nombre}: no se pudo leer", "aviso", f"{type(e).__name__}: {e}"[:300])
         self.correo["adjuntos_texto"] = "\n\n".join(x for x in [self.correo.get("adjuntos_texto")] + textos if x)
@@ -2737,7 +2776,7 @@ class Ejecucion:
         if not ocr:
             presupuesto.total_s = 0.0
         with _paginas:
-            c = conversion.convertir(datos, nombre, presupuesto=presupuesto)
+            c, _ = cache_conversion.convertir(conversion, conversion.convertir, datos, nombre, presupuesto=presupuesto)
         if c.error:
             raise ErrorDeNegocio(f"no se pudo leer {nombre}: {c.error[:200]}")
         return c.markdown
@@ -3166,6 +3205,7 @@ class Ejecucion:
         entrada = {k: self.render_profundo(v) for k, v in (c.get("entrada") or {}).items()}
         hijo = Ejecucion(defi, self.caso, defi.get("modelo") or ia_proveedores.GLOBAL_DEFECTO["modelo"], entrada=entrada, credenciales=sub.get("credenciales") or {},
                          entorno=sub.get("entorno") or {}, subflujos=self.subflujos, pila=self.pila + [fid], flujo=fid, ia_global=self.ia_global)
+        hijo.max_segundos = max(1.0, self.max_segundos - (time.time() - self._inicio))
         marca = _callar.set(True)
         try:
             r = hijo.correr()
@@ -3182,6 +3222,200 @@ class Ejecucion:
                                                  "variables": {k: v for k, v in hijo.vars.items() if not k.startswith("_")}}
         _paso(n["id"], f"«{fid}» terminó: {r['accion']}", "ok" if r["accion"] != "error" else "error", _a_texto(r["motivo"])[:600])
         return "ok"
+
+    # ------------------------------------------- vueltas y ramas a la vez
+    def _subgrafo(self, inicio: str, parar_en_unir: bool) -> Optional[List[str]]:
+        """Los nodos que alcanza un cuerpo o una rama desde `inicio` (sin pasar el unir de un paralelo)."""
+        aristas = self.defi.get("aristas") or []
+        orden: List[str] = []
+        pila = [inicio]
+        while pila:
+            x = pila.pop()
+            if x in orden:
+                continue
+            n = self._nodos.get(x)
+            if n is None:
+                return None
+            if parar_en_unir and n.get("tipo") == "unir":
+                continue
+            orden.append(x)
+            pila += [a["hacia"] for a in aristas if a.get("desde") == x]
+        return orden
+
+    def _independiente(self, ids: List[str], ajenas: Set[str] = frozenset()) -> bool:
+        """Si estos nodos pueden correr a la vez que otra copia suya (otra vuelta) o que otra rama, sin cambiar el resultado:
+        hay al menos una llamada a la IA (si no, no vale la pena), todos son de los que solo calculan o preguntan, cada nodo de IA
+        declara sus entradas (sin ellas lee todo el contexto, que incluye lo de las otras vueltas) y nadie lee algo que el cuerpo
+        deja sin que lo deje antes, en su mismo camino (eso sería lo de la vuelta anterior) ni lo que deja otra rama (`ajenas`)."""
+        nodos = [self._nodos[i] for i in ids]
+        if not any(n.get("tipo") in TIPOS_IA for n in nodos) or any(n.get("tipo") not in SEGUROS_A_LA_VEZ for n in nodos):
+            return False
+        internas = [a for a in self.defi.get("aristas") or [] if a.get("desde") in ids and a.get("hacia") in ids]
+        dejan: Dict[str, Set[str]] = {}
+        for n in nodos:
+            for v in produce(n):
+                dejan.setdefault(v, set()).add(n["id"])
+
+        def antes_de(nid: str) -> Set[str]:
+            vistos: Set[str] = set()
+            pila = [a["desde"] for a in internas if a["hacia"] == nid]
+            while pila:
+                x = pila.pop()
+                if x not in vistos:
+                    vistos.add(x)
+                    pila += [a["desde"] for a in internas if a["hacia"] == x]
+            return vistos
+
+        for n in nodos:
+            if n.get("tipo") in TIPOS_IA and not (n.get("config") or {}).get("entradas"):
+                return False
+            previos = antes_de(n["id"])
+            for ref, _ in referencias(n):
+                segs = segmentos(_ref_limpia(ref))
+                raiz = segs[0][1] if segs and segs[0][0] == "clave" else _ref_limpia(ref)
+                if raiz == "texto" or raiz in ajenas:
+                    return False
+                if raiz in dejan and not (dejan[raiz] & previos):
+                    return False
+        return True
+
+    def _a_la_vez(self, n: dict, inicio: str, parar_en_unir: bool, total: int) -> int:
+        """Cuántas vueltas de un para_cada corren a la vez: 1 si no se puede (o si el nodo pide concurrencia 1)."""
+        pedido = (n.get("config") or {}).get("concurrencia")
+        if total < 2 or (isinstance(pedido, int) and not isinstance(pedido, bool) and pedido <= 1):
+            return 1
+        ids = self._subgrafo(inicio, parar_en_unir)
+        if not ids or not self._independiente(ids):
+            return 1
+        tope = pedido if isinstance(pedido, int) and not isinstance(pedido, bool) and pedido > 1 else A_LA_VEZ_DEFECTO
+        return max(1, min(A_LA_VEZ_TOPE, tope, total))
+
+    def _ramas_a_la_vez(self, n: dict, inicios: List[str]) -> int:
+        """Cuántas ramas de un paralelo corren a la vez: ninguna puede leer lo que deja otra."""
+        pedido = (n.get("config") or {}).get("concurrencia")
+        if len(inicios) < 2 or (isinstance(pedido, int) and not isinstance(pedido, bool) and pedido <= 1):
+            return 1
+        grafos = [self._subgrafo(i, True) for i in inicios]
+        if any(not g for g in grafos) or len({x for g in grafos for x in g}) != sum(len(g) for g in grafos):  # ramas que comparten nodos
+            return 1
+        dejan = [{v for x in g for v in produce(self._nodos[x])} for g in grafos]  # type: ignore[union-attr]
+        for k, g in enumerate(grafos):
+            otras = set().union(*(d for j, d in enumerate(dejan) if j != k))
+            if not self._independiente(g, otras):  # type: ignore[arg-type]
+                return 1
+        tope = pedido if isinstance(pedido, int) and not isinstance(pedido, bool) and pedido > 1 else A_LA_VEZ_DEFECTO
+        return max(1, min(A_LA_VEZ_TOPE, tope, len(inicios)))
+
+    def _clon(self) -> "Ejecucion":
+        """Una copia para correr una vuelta o una rama a la vez que otras: sus variables y sus listas propias;
+        el consumo (tokens y costo) es el mismo, con su candado."""
+        c = copy.copy(self)
+        c.vars, c.hallazgos = dict(self.vars), dict(self.hallazgos)
+        c.avisos, c.mensajes, c.peticiones, c.escrituras = [], [], [], []
+        c._union, c._siguiente_forzado, c._pasos = {}, None, 0
+        return c
+
+    def _juntar(self, c: "Ejecucion", base: Dict[str, Any], base_hallazgos: Dict[str, Any]) -> Dict[str, Any]:
+        """Lo que dejó una copia vuelve a la corrida, en el orden en que se juntan (el mismo que una tras otra)."""
+        cambios = {k: v for k, v in c.vars.items() if k not in base or base[k] is not v}
+        self.vars.update(cambios)
+        self.hallazgos.update({k: v for k, v in c.hallazgos.items() if k not in base_hallazgos or base_hallazgos[k] is not v})
+        self.avisos += c.avisos
+        self.mensajes += c.mensajes
+        self.peticiones += c.peticiones
+        self.escrituras += c.escrituras
+        self._pasos += c._pasos
+        return cambios
+
+    def _correr_juntas(self, tareas: List[Any], a_la_vez: int, detener_al_fallar: bool) -> List[Tuple[Any, Optional[BaseException], List[str]]]:
+        """Corre cada tarea (una función sin argumentos) en un hilo, hasta `a_la_vez` juntas, con sus eventos guardados.
+        Devuelve, en el orden de las tareas, (resultado, error, eventos). Si una falla y hay que detenerse, las que no
+        empezaron no corren (como una tras otra: lo de después de la que falló no pasa)."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        fallo_en = [len(tareas)]
+        cerrojo = threading.Lock()
+
+        def correr(k: int, fn: Any) -> Tuple[Any, Optional[BaseException], List[str]]:
+            if detener_al_fallar and k > fallo_en[0]:
+                return None, None, []
+            lineas: List[str] = []
+            marca = _en_espera.set(lineas)
+            try:
+                return fn(), None, lineas
+            except Exception as e:  # noqa: BLE001 - se devuelve y decide quien llama
+                with cerrojo:
+                    fallo_en[0] = min(fallo_en[0], k)
+                return None, e, lineas
+            finally:
+                _en_espera.reset(marca)
+
+        with ThreadPoolExecutor(max_workers=a_la_vez, thread_name_prefix="vuelta") as pool:
+            futuros = [pool.submit(contextvars.copy_context().run, correr, k, fn) for k, fn in enumerate(tareas)]
+            return [f.result() for f in futuros]
+
+    def _vueltas_a_la_vez(self, n: dict, c: dict, lista: List[Any], inicio: str, var: str, ind: str, prof: int,
+                          a_la_vez: int) -> Tuple[List[Any], int]:
+        """Las vueltas de un para_cada, de a `a_la_vez`. Lo que deja cada una y sus eventos se juntan en orden."""
+        base, base_h = dict(self.vars), dict(self.hallazgos)
+        continuar = c.get("al_fallar") == "continuar"
+
+        def vuelta(i: int, x: Any):
+            e = self._clon()
+            e.vars[var], e.vars[ind] = x, i
+            visible = i < VUELTAS_VISIBLES or i == len(lista) - 1
+            marca = None if visible else _callar.set(True)
+            try:
+                e._recorrer(inicio, prof, False)
+            finally:
+                if marca is not None:
+                    _callar.reset(marca)
+            return e
+
+        _paso(n["id"], f"{len(lista)} vueltas, de a {a_la_vez} a la vez", "info",
+              "el cuerpo solo calcula y pregunta a la IA con sus propias entradas: las vueltas no dependen entre sí", a_la_vez=a_la_vez)
+        hechos = self._correr_juntas([lambda i=i, x=x: vuelta(i, x) for i, x in enumerate(lista)], a_la_vez, not continuar)
+        resultados: List[Any] = []
+        fallidas = 0
+        for i, (e, error, lineas) in enumerate(hechos):
+            soltar_eventos(lineas)
+            if error is not None:
+                if not continuar:
+                    raise error
+                fallidas += 1
+                resultados.append({"indice": i, "error": describir_fallo(n, error)})
+                _paso(n["id"], f"Vuelta {i + 1} falló: sigue", "aviso", describir_fallo(n, error))
+                continue
+            # lo que cambió, como una tras otra: lo que tocó esta vuelta y es distinto de lo que dejó la anterior
+            antes = dict(self.vars)
+            self._juntar(e, base, base_h)
+            if c.get("recoger"):
+                resultados.append(e.valor_de(c["recoger"]))
+            else:
+                cambios = {k: v for k, v in e.vars.items() if k not in (var, ind) and not k.startswith("_")
+                           and (k not in base or base[k] is not v) and (k not in antes or antes[k] is not v)}
+                resultados.append(cambios or lista[i])
+        return resultados, fallidas
+
+    def _ramas_juntas(self, ramas: List[Tuple[str, dict]], prof: int, a_la_vez: int) -> List[Tuple[str, Any, Dict[str, Any]]]:
+        """Las ramas de un paralelo a la vez: (fin, valor, lo que dejó cada una), en el orden de las ramas."""
+        base, base_h = dict(self.vars), dict(self.hallazgos)
+        _paso(ramas[0][1]["desde"], f"{len(ramas)} ramas a la vez", "info", "ninguna usa lo que deja otra", a_la_vez=a_la_vez)
+
+        def rama(a: dict):
+            e = self._clon()
+            return e, e._recorrer(a["hacia"], prof, True)
+
+        hechos = self._correr_juntas([lambda a=a: rama(a) for _, a in ramas], a_la_vez, True)
+        salida = []
+        for r, error, lineas in hechos:
+            soltar_eventos(lineas)
+            if error is not None:
+                raise error
+            e, (fin, valor) = r
+            cambios = self._juntar(e, base, base_h)
+            salida.append((fin, valor, cambios))
+        return salida
 
     # ------------------------------------------------------- bucles y ramas
     def para_cada(self, n: dict) -> str:
@@ -3208,7 +3442,13 @@ class Ejecucion:
         var, ind = c.get("variable") or "elemento", c.get("indice") or "indice"
         prof = self._prof + 1
         resultados, fallidas = [], 0
-        for i, x in enumerate(lista):
+        a_la_vez = self._a_la_vez(n, cuerpo["hacia"], False, len(lista))
+        if a_la_vez > 1:
+            resultados, fallidas = self._vueltas_a_la_vez(n, c, lista, cuerpo["hacia"], var, ind, prof, a_la_vez)
+            lista_corrida: List[Any] = []
+        else:
+            lista_corrida = lista
+        for i, x in enumerate(lista_corrida):
             visible = i < VUELTAS_VISIBLES or i == len(lista) - 1
             marca = None if visible else _callar.set(True)
             antes = dict(self.vars)
@@ -3242,13 +3482,19 @@ class Ejecucion:
         aristas = [a for a in self.defi.get("aristas") or [] if a.get("desde") == n["id"]]
         resultados: Dict[str, Any] = {}
         union = None
-        for rama in _lista_valores(c.get("ramas")):
-            a = next((a for a in aristas if _norm(_cuando(a)) == _norm(rama)), None)
-            if not a:
-                continue
-            antes = dict(self.vars)
-            fin, valor = self._recorrer(a["hacia"], prof, True)
-            resultados[rama] = {k: v for k, v in self.vars.items() if not k.startswith("_") and (k not in antes or antes[k] is not v)}
+        ramas = [(rama, a) for rama in _lista_valores(c.get("ramas"))
+                 for a in [next((a for a in aristas if _norm(_cuando(a)) == _norm(rama)), None)] if a]
+        a_la_vez = self._ramas_a_la_vez(n, [a["hacia"] for _, a in ramas])
+        finales = self._ramas_juntas(ramas, prof, a_la_vez) if a_la_vez > 1 else None
+        for k, (rama, a) in enumerate(ramas):
+            if finales is not None:
+                fin, valor, cambios = finales[k]
+                self.vars.update(cambios)
+                resultados[rama] = {x: v for x, v in cambios.items() if not x.startswith("_")}
+            else:
+                antes = dict(self.vars)
+                fin, valor = self._recorrer(a["hacia"], prof, True)
+                resultados[rama] = {k: v for k, v in self.vars.items() if not k.startswith("_") and (k not in antes or antes[k] is not v)}
             if fin == "unir":
                 if union and union != valor:
                     raise ErrorDeNegocio(f"las ramas de {n['id']} terminan en nodos unir distintos ({union} y {valor})")
@@ -3345,8 +3591,8 @@ class Ejecucion:
             self._pasos += 1
             if self._pasos > MAX_PASOS_TOTALES:
                 raise ErrorDeNegocio(f"la corrida pasó de {MAX_PASOS_TOTALES:,} pasos en total")
-            if time.time() - self._inicio > MAX_SEGUNDOS:
-                raise ErrorDeNegocio(f"la corrida pasó de {MAX_SEGUNDOS // 60} minutos")
+            if time.time() - self._inicio > self.max_segundos:
+                raise ErrorDeNegocio(f"la corrida pasó su tiempo máximo ({self.max_segundos:g} s, en Entorno › Ejecución)")
             n = self._nodos[actual]
             tipo = n["tipo"]
             if tipo == "salida":
@@ -3500,6 +3746,8 @@ async def procesar(orden: dict) -> None:
     e = Ejecucion(defi, caso, modelo, entrada=orden.get("entrada"), credenciales=orden.get("credenciales") or {}, entorno=entorno,
                   subflujos=orden.get("subflujos") or {}, flujo=str(orden.get("flujo") or defi.get("id") or ""), ia_global=orden.get("ia_global"))
     e.cargar_archivos(orden.get("archivos") or [])
+    if isinstance(orden.get("tiempo_max_s"), (int, float)) and orden["tiempo_max_s"] > 0:
+        e.max_segundos = float(min(orden["tiempo_max_s"], 7200))
     modelo = e.modelo
     e.avisos += [f"flujo: {x}" for x in validar(defi) if x not in problemas]
     evento("inicio", caso=caso, asunto="", modelo=modelo, proveedor=e.ia.get("proveedor"), ia_origen=e.ia.get("origen"), flujo=defi.get("id"), origen=orden.get("origen") or "",

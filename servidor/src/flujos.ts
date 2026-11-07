@@ -242,7 +242,7 @@ const sqlTexto = (que: string) => z.string({ error: `falta ${que}` }).trim().min
   .refine((s) => !esqueletoSql(s).trim().replace(/;\s*$/, "").includes(";"), `${que}: solo se permite UNA sentencia SQL`);
 const expresionTexto = z.string({ error: "falta expresion" }).trim().min(1, "falta expresion").max(2000, "la expresión pasa de 2000 caracteres")
   .refine((s) => !/(^|[^A-Za-z0-9_])_/.test(s), "expresion: nada que empiece por _ (ni __import__, ni __class__…)")
-  .refine((s) => !/\blambda\b|\bfor\b.+\bin\b|:=|\bf['"]/.test(s), "expresion: sin lambdas, comprensiones, := ni f-strings");
+  .refine((s) => !/\blambda\b|\bfor\b.+\bin\b|:=|\bf['"]/.test(s), "expresion: sin lambdas, comprensiones (for … in), := ni f-strings. Para contar o sumar lo de una lista usa len(x), sum(x), min(x) o max(x) sobre la salida de un para_cada (con recoger = lo que cuenta de cada vuelta, p. ej. 1 o 0) o sobre filas de tabla_consultar");
 const CAMPO_ENTRADA = z.looseObject({
   // Los campos viven en {{entrada.<nombre>}}: los nombres reservados de variables no aplican aquí.
   nombre: z.string({ error: "tiene que ser un nombre" }).regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "nombre: letras, números y guion bajo, sin espacios"), tipo: z.enum(["texto", "numero", "booleano", "fecha", "lista", "objeto", "archivo", "archivos"], { error: "tipo: texto, numero, booleano, fecha, lista, objeto, archivo o archivos" }).optional(),
@@ -316,7 +316,7 @@ export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
     formato: z.enum(["texto", "json", "csv"], { error: "formato: texto, json o csv" }).optional(), modo: z.enum(["crear", "reemplazar", "anexar"], { error: "modo: crear, reemplazar o anexar" }).optional(),
   }).refine((c) => c.contenido !== undefined || c.de, { message: "archivo_guardar necesita contenido (plantilla) o de (variable)", path: ["contenido"] }),
   tabla_guardar: conf({
-    tabla: nombreTabla, clave: z.string().optional(), datos: z.record(z.string(), z.unknown(), { error: "datos tiene que ser un objeto {campo: plantilla o valor}" }).optional(),
+    tabla: nombreTabla, clave: z.string().optional(), datos: z.record(z.string(), z.unknown(), { error: "datos tiene que ser un objeto {campo: plantilla o valor}, p. ej. {\"titulo\": \"{{t.titulo}}\"}; para guardar una variable entera usa de: \"t\"" }).optional(),
     de: z.string().optional(), modo: z.enum(["reemplazar", "combinar", "insertar"], { error: "modo: reemplazar, combinar o insertar" }).optional(), ambito: AMBITO.optional(),
   }).refine((c) => (c.datos && Object.keys(c.datos).length) || c.de, { message: "tabla_guardar necesita datos ({campo: plantilla}) o de (una variable)", path: ["datos"] }),
   tabla_consultar: conf({
@@ -332,11 +332,13 @@ export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
   para_cada: conf({
     lista: textoReq("lista"), variable: variable.optional(), indice: variable.optional(), recoger: z.string().optional(),
     max_iteraciones: entre("max_iteraciones", 1, 1000).optional(), al_fallar: z.enum(["detener", "continuar"], { error: "al_fallar: detener o continuar" }).optional(),
+    concurrencia: entre("concurrencia", 1, 8).optional(),
   }),
   fin_ciclo: conf({}),
   paralelo: conf({
     ramas: z.array(z.string().trim().min(1), { error: "faltan ramas: [nombres]" }).min(1, "faltan ramas").max(10, "hasta 10 ramas")
       .refine(unicos, "hay ramas repetidas").refine((xs) => !xs.some((x) => ["error", "listo"].includes(x.trim().toLowerCase())), "«error» y «listo» no pueden ser nombres de rama"),
+    concurrencia: entre("concurrencia", 1, 8).optional(),
   }),
   unir: conf({}),
   esperar: conf({ segundos: entre("segundos", 0, 60, false) }),

@@ -17,6 +17,9 @@ process.env.RUTA_ARCHIVOS = mkdtempSync(join(tmpdir(), "positiva-archivos-"));
 process.env.RUTA_BANDEJA = mkdtempSync(join(tmpdir(), "positiva-bandeja-"));
 process.env.RUTA_VIVO = mkdtempSync(join(tmpdir(), "positiva-vivo-"));
 delete process.env.CLAVE_CREDENCIALES;
+// la vigilancia de los trabajadores (topes de tiempo, memoria) en décimas, para no esperar en las pruebas
+process.env.MOTOR_VIGILANCIA_MS = "150";
+process.env.MOTOR_GRACIA_MS = "0";
 
 const credenciales = await import("./credenciales.ts");
 const entornos = await import("./entornos.ts");
@@ -533,4 +536,157 @@ test("borrar: los originales no; una copia se va con sus corridas, su entorno y 
   assert.equal(existsSync(join(process.env.RUTA_DATOS!, "flujos_codigo", `${copia.id}.json`)), false);
   assert.equal(flujos.esDeCodigo(copia.id), false);
   assert.equal(compuerta.enlace.tieneCompuerta(copia.id), false);
+});
+
+// ------------------------------------- recursos: límites por flujo, reparto justo y trabajadores trabados
+
+const recursosMod = await import("./recursos.ts");
+const { repartoJusto } = await import("./planificador.ts");
+
+/** Un trabajador de mentira: cada caso «nombre_segundos» duerme eso; «trabado…» no termina nunca. */
+function trabajadorDePrueba(): string {
+  const dir = mkdtempSync(join(tmpdir(), "positiva-pool-"));
+  const script = join(dir, "trabajador_pool.py");
+  writeFileSync(script, [
+    "import json, sys, time",
+    "M = '\\x1eEVT '",
+    "def ev(**d): print(M + json.dumps(d), flush=True)",
+    "ev(tipo='listo')",
+    "for linea in sys.stdin:",
+    "    o = json.loads(linea)",
+    "    c, caso = o['corrida'], o['caso']",
+    "    ev(tipo='inicio', corrida=c, tiempo_max_s=o.get('tiempo_max_s'))",
+    "    time.sleep(10000 if caso.startswith('trabado') else float(caso.rsplit('_', 1)[1]) if '_' in caso else 0.2)",
+    "    ev(tipo='resultado', corrida=c, caso=caso, accion='manual', motivo='ok')",
+    "    ev(tipo='libre')",
+  ].join("\n"), "utf8");
+  return script;
+}
+
+const confDePrueba = { parametros: {}, entorno: {}, ia: { modelo: "x" }, topeSegundos: 60, reglas: [] } as unknown as Parameters<InstanceType<typeof Motor>["encolar"]>[1];
+const esperarQue = async (cond: () => boolean, ms = 20000) => {
+  const fin = Date.now() + ms;
+  while (!cond()) {
+    if (Date.now() > fin) throw new Error("no se cumplió a tiempo");
+    await new Promise((r) => setTimeout(r, 30));
+  }
+};
+
+test("reparto justo: el tope se reparte por igual y lo que uno no usa pasa a los demás", () => {
+  const r = repartoJusto(8, [{ id: "a", quiere: 20, espera: 1 }, { id: "b", quiere: 3, espera: 5 }, { id: "c", quiere: 1, espera: 0 }]);
+  assert.deepEqual(Object.fromEntries(r), { a: 4, b: 3, c: 1 });
+  // sin demanda, nada; con menos tope que flujos, primero el que más espera
+  assert.deepEqual(Object.fromEntries(repartoJusto(2, [{ id: "a", quiere: 5, espera: 10 }, { id: "b", quiere: 5, espera: 30 }, { id: "c", quiere: 5, espera: 20 }, { id: "d", quiere: 0, espera: 99 }])), { a: 0, b: 1, c: 1, d: 0 });
+  assert.deepEqual(Object.fromEntries(repartoJusto(4, [{ id: "a", quiere: 9, espera: 0 }])), { a: 4 }, "solo, se lleva todo el tope");
+});
+
+test("recursos por flujo: por defecto, propios, topes y vuelta al defecto con null", async () => {
+  await recursosMod.cargar();
+  const decl = { id: "flujo-r", tipo: "declarativo" as const };
+  assert.deepEqual((({ trabajadores, corridas_simultaneas, cola_max, tiempo_max_s }) => ({ trabajadores, corridas_simultaneas, cola_max, tiempo_max_s }))(recursosMod.de(decl)), { trabajadores: 2, corridas_simultaneas: 2, cola_max: 50, tiempo_max_s: 1800 });
+  assert.equal(recursosMod.de({ id: "tutelas", tipo: "codigo", base: "tutelas" }).tiempo_max_s, 3600);
+  const tope = recursosMod.topeGlobal();
+  assert.equal((await recursosMod.poner(decl, { trabajadores: tope + 1 })).ok, false, "no pasa del tope global");
+  assert.equal((await recursosMod.poner(decl, { trabajadores: 2, corridas_simultaneas: 3 })).ok, false, "no más corridas a la vez que trabajadores");
+  assert.equal((await recursosMod.poner(decl, { tiempo_max_s: 5 })).ok, false);
+  assert.equal((await recursosMod.poner(decl, { raro: 1 })).ok, false);
+  const r = await recursosMod.poner(decl, { trabajadores: 3, cola_max: 7, tiempo_max_s: 90 });
+  assert.equal(r.ok && r.recursos.cola_max, 7);
+  assert.deepEqual(r.ok && r.recursos.propios.sort(), ["cola_max", "tiempo_max_s", "trabajadores"]);
+  assert.ok(readFileSync(join(process.env.RUTA_DATOS!, "recursos.json"), "utf8").includes("flujo-r"), "se guarda en el estado");
+  await recursosMod.cargar();
+  assert.equal(recursosMod.de(decl).trabajadores, 3, "sobrevive a un reinicio");
+  const v = await recursosMod.poner(decl, { cola_max: null });
+  assert.equal(v.ok && v.recursos.cola_max, 50, "null vuelve al valor por defecto");
+  await recursosMod.olvidar("flujo-r");
+  assert.equal(recursosMod.de(decl).trabajadores, 2);
+});
+
+test("límites de un flujo: cola_max rechaza lo que no cabe y nunca hay más corridas a la vez que las suyas", async () => {
+  const script = trabajadorDePrueba();
+  const m = new Motor("limites", script);
+  m.recursos = () => ({ trabajadores: 3, corridas_simultaneas: 2, cola_max: 5, tiempo_max_s: 60 });
+  let max = 0;
+  m.on("evento", () => { max = Math.max(max, m.estado().trabajadores.filter((t) => t.corrida).length); });
+  const cs: ReturnType<typeof m.encolar>[] = [];
+  for (let i = 0; i < 5; i++) {
+    assert.ok(m.cabe(1), `cabe la ${i + 1}`);
+    cs.push(m.encolar(`l${i}_0.3`, confDePrueba));
+  }
+  // ya hay 5 esperando: la sexta no cabe hasta que empiece alguna
+  assert.equal(m.cabe(1), false);
+  await esperarQue(() => cs.every((c) => c.estado === "terminada"));
+  m.detener();
+  assert.ok(max <= 2, `a lo más 2 a la vez (hubo ${max})`);
+  assert.equal(cs[0]!.eventos.find((e) => e.tipo === "inicio")?.tiempo_max_s, 60, "el tiempo máximo va en la orden");
+});
+
+test("reparto justo entre flujos: uno que inunda su cola no se lleva todos los trabajadores", async () => {
+  const script = trabajadorDePrueba();
+  const tope = motorMod.planificador.tope;
+  motorMod.planificador.tope = () => 4;
+  try {
+    const a = new Motor("inunda", script);
+    const b = new Motor("llega-despues", script);
+    for (const m of [a, b]) m.recursos = () => ({ trabajadores: 4, corridas_simultaneas: 4, cola_max: 100, tiempo_max_s: 60 });
+    let maxVivos = 0;
+    const asignadas: { flujo: string; t: number }[] = [];
+    for (const m of [a, b]) m.on("evento", (e: { tipo: string }) => {
+      maxVivos = Math.max(maxVivos, motorMod.planificador.vivos());
+      if (e.tipo === "asignada") asignadas.push({ flujo: m.flujo, t: Date.now() });
+    });
+    const deA = Array.from({ length: 12 }, (_, i) => a.encolar(`a${i}_1.0`, confDePrueba));
+    await esperarQue(() => a.estado().trabajadores.filter((t) => t.corrida).length === 4);
+    const deB = Array.from({ length: 4 }, (_, i) => b.encolar(`b${i}_1.0`, confDePrueba));
+    await esperarQue(() => [...deA, ...deB].every((c) => c.estado === "terminada"), 40000);
+    a.detener();
+    b.detener();
+    const ultimaDeA = Math.max(...asignadas.filter((x) => x.flujo === "inunda").map((x) => x.t));
+    const finDeB = Math.max(...deB.map((c) => c.fin!));
+    assert.ok(maxVivos <= 4, `nunca más procesos que el tope (hubo ${maxVivos})`);
+    assert.ok(finDeB < ultimaDeA, "las 4 del que llegó después terminan antes de que el que inundó empiece su última");
+    // mientras los dos tenían trabajo, cada uno tuvo su mitad
+    const durante = deB.map((c) => c.inicio!);
+    assert.ok(Math.max(...durante) - Math.min(...durante) < 3500, "las de B no esperan a que A vacíe su cola");
+  } finally {
+    motorMod.planificador.tope = tope;
+  }
+});
+
+test("trabajador trabado: pasado su tiempo máximo se detiene, su corrida queda en error y otro atiende la cola", async () => {
+  const script = trabajadorDePrueba();
+  const m = new Motor("trabados", script);
+  m.recursos = () => ({ trabajadores: 1, corridas_simultaneas: 1, cola_max: 10, tiempo_max_s: 1 });
+  const trabada = m.encolar("trabado-1", confDePrueba);
+  const siguiente = m.encolar("normal_0.1", confDePrueba);
+  await esperarQue(() => siguiente.estado === "terminada", 20000);
+  assert.equal(trabada.estado, "fallida");
+  assert.match(String(trabada.resultado?.motivo), /tiempo máximo de 1 s/);
+  assert.ok(m.incidentes.some((x) => /tiempo máximo/.test(x.que)));
+  // reiniciar a mano uno ocupado: su corrida queda en error con el motivo y el siguiente sigue
+  m.recursos = () => ({ trabajadores: 1, corridas_simultaneas: 1, cola_max: 10, tiempo_max_s: 600 });
+  const otra = m.encolar("trabado-2", confDePrueba);
+  const despues = m.encolar("normal_0.1", confDePrueba);
+  await esperarQue(() => otra.estado === "procesando");
+  const t = m.estado().trabajadores.find((x) => x.corrida === otra.id)!;
+  assert.equal(m.reiniciarTrabajador(t.id, "reiniciado en la prueba"), true);
+  await esperarQue(() => despues.estado === "terminada", 20000);
+  assert.equal(otra.resultado?.motivo, "reiniciado en la prueba");
+  m.detener();
+});
+
+test("salud: cada trabajador trae su CPU y su memoria (en Linux) y las alertas son suaves", async () => {
+  const script = trabajadorDePrueba();
+  const m = new Motor("medido", script);
+  m.recursos = () => ({ trabajadores: 1, corridas_simultaneas: 1, cola_max: 10, tiempo_max_s: 60 });
+  const c = m.encolar("medir_1.0", confDePrueba);
+  await esperarQue(() => c.estado === "terminada");
+  const e = m.estado();
+  m.detener();
+  assert.equal(e.trabajadores.length, 1);
+  if (process.platform === "linux") {
+    assert.ok((e.trabajadores[0]!.memoria_mb ?? 0) > 0, JSON.stringify(e.trabajadores[0]));
+    assert.ok(e.trabajadores[0]!.cpu !== undefined);
+  }
+  assert.deepEqual(e.trabajadores[0]!.alertas, []);
 });

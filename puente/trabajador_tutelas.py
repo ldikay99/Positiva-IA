@@ -647,6 +647,28 @@ def _hallazgos(principal, origen) -> Tuple[dict, dict, list]:
     return hallazgos, atribucion, [k for k, (v, _, _) in campos.items() if not v]
 
 
+def instalar_cache_conversion() -> None:
+    """El texto de cada PDF (texto propio y, si no alcanza, OCR de tesseract) pasa por la caché por huella
+    (cache_conversion.py), con la huella del código del conversor del job como versión: el mismo PDF da el mismo
+    texto sin volver a hacer el OCR. Solo con la compuerta apagada; con la radicación real corre como el job."""
+    if REAL:
+        return
+    import cache_conversion
+    from Tutelas.main import OrquestadorRadicacion
+
+    original = OrquestadorRadicacion._extraer_texto_pdf
+    version = cache_conversion.version_de_funcion(original)
+
+    def _extraer_texto_pdf(self, contenido: bytes, nombre: str = "documento.pdf") -> str:
+        texto, como = cache_conversion.texto_con_cache(lambda: original(self, contenido, nombre), contenido, nombre, version,
+                                                       {"conversor": "tutelas", "paginas_ocr": 10})
+        if como == "acierto":
+            print(f"      [PDF] {nombre}: ya se había leído (caché por huella): no se repite el OCR")
+        return texto
+
+    OrquestadorRadicacion._extraer_texto_pdf = _extraer_texto_pdf
+
+
 def procesar(orden: dict) -> None:
     from Tutelas import operaciones as op
     from Tutelas.main import OrquestadorRadicacion
@@ -778,6 +800,7 @@ async def principal() -> None:
         elif not conf_tutelas.MODO_TEST:
             raise RuntimeError("el motor de tutelas no quedó en MODO_TEST: el visor no arranca")
         instalar_operaciones()
+        instalar_cache_conversion()
         evento("listo", pid=os.getpid(), motor=str(MOTOR), radicacion_real=REAL)
     except Exception as e:
         evento("fallo_inicio", error=f"{type(e).__name__}: {e}", traza=traceback.format_exc()[-2500:])

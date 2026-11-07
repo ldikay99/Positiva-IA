@@ -542,6 +542,8 @@ TIPOS: Dict[str, Dict[str, Any]] = {
                         "recoger": plantilla("qué guardar de cada vuelta (por defecto: las variables que dejó el cuerpo, o el elemento)"),
                         "max_iteraciones": entero("tope de vueltas (tope duro 1000)", 1, 1000, 100),
                         "al_fallar": opcion(["detener", "continuar"], "si una vuelta falla: parar todo o anotarla y seguir", "detener"),
+                        "concurrencia": entero("vueltas a la vez cuando el cuerpo solo calcula y pregunta a la IA (con entradas propias); "
+                                               "1 = una tras otra. Si el cuerpo escribe, lee adjuntos o depende de la vuelta anterior, van siempre una tras otra", 1, 8, 4),
                         "salida": SALIDA()}, ["lista"]),
         "salidas": ["cada", "listo"], "produce": "variable, indice (en el cuerpo), salida (lista de resultados)",
         "ejemplo": {"id": "por_fila", "tipo": "para_cada", "nombre": "Por cada fila", "config": {"lista": "filas", "variable": "fila", "salida": "resultados", "max_iteraciones": 200}},
@@ -554,9 +556,11 @@ TIPOS: Dict[str, Dict[str, Any]] = {
     },
     "paralelo": {
         "nombre": "Ramas", "categoria": "logica",
-        "descripcion": "Corre varias ramas, una tras otra (no a la vez): una arista por rama (cuando = nombre de la rama). Cada rama termina en un nodo unir "
-                       "(el flujo sigue desde ese unir con lo de todas) o en un nodo sin salida (entonces sigue por «listo»).",
-        "config": conf({"ramas": lista(texto(), "los nombres de las ramas (cada uno es una salida)", 1)}, ["ramas"]),
+        "descripcion": "Corre varias ramas: una arista por rama (cuando = nombre de la rama). Cada rama termina en un nodo unir "
+                       "(el flujo sigue desde ese unir con lo de todas) o en un nodo sin salida (entonces sigue por «listo»). Si las ramas solo calculan y "
+                       "preguntan a la IA (con entradas propias) y ninguna usa lo de otra, corren a la vez; si no, una tras otra, en su orden.",
+        "config": conf({"ramas": lista(texto(), "los nombres de las ramas (cada uno es una salida)", 1),
+                        "concurrencia": entero("ramas a la vez cuando se puede; 1 = una tras otra", 1, 8, 4)}, ["ramas"]),
         "salidas": ["<cada rama>", "listo (si ninguna rama llega a un unir)"], "salidas_desde": "ramas[]", "produce": "",
         "ejemplo": {"id": "consultas", "tipo": "paralelo", "nombre": "Consultar en dos sistemas", "config": {"ramas": ["afiliacion", "pagos"]}},
     },

@@ -46,11 +46,11 @@ def correr(flujo, entrada):
     r = api("POST", f"/api/flujos/{flujo}/correr", {"entrada": entrada})
     if not r.get("id"):
         return None
-    for _ in range(90):
-        c = api("GET", f"/api/corridas/{r['id']}")
+    # ?esperar=: el servidor responde apenas termina (sin preguntar cada 2 s)
+    for _ in range(3):
+        c = api("GET", f"/api/corridas/{r['id']}?esperar=60")
         if c.get("estado") in ("terminada", "fallida"):
             return c
-        time.sleep(2)
     return None
 
 

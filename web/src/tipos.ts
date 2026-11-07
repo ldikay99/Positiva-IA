@@ -182,6 +182,32 @@ export interface TableroFlujo {
   enCurso: number;
   ultimas: { id: string; caso: string; accion: string; motivo: string; t: number }[];
   porDia: { dia: string; n: number; radicados: number }[];
+  /** Sus trabajadores ahora: cuántos, CPU (% de un núcleo, sumado) y memoria, y las alertas suaves. */
+  salud?: SaludFlujo | null;
+}
+
+export interface SaludFlujo {
+  procesos: number;
+  ocupados: number;
+  en_cola: number;
+  trabajadores_max: number;
+  cola_max: number;
+  tiempo_max_s: number;
+  cpu: number | null;
+  memoria_mb: number | null;
+  alertas: { trabajador: number; texto: string; ocupado: boolean }[];
+  error_inicio: string | null;
+}
+
+/** Los límites de un flujo (Entorno › Ejecución). */
+export interface RecursosFlujo {
+  trabajadores: number;
+  corridas_simultaneas: number;
+  cola_max: number;
+  tiempo_max_s: number;
+  propios: string[];
+  por_defecto: { trabajadores: number; corridas_simultaneas: number; cola_max: number; tiempo_max_s: number };
+  tope_global: number;
 }
 
 export interface Buzon {
@@ -219,7 +245,7 @@ export interface Corrida {
 }
 
 export interface EstadoMotor {
-  trabajadores: { id: number; listo: boolean; corrida: string | null; caso: string | null }[];
+  trabajadores: { id: number; listo: boolean; corrida: string | null; caso: string | null; cpu?: number | null; memoria_mb?: number | null; ocupado_s?: number; alertas?: string[] }[];
   enCola: string[];
   errorInicio: string;
 }
