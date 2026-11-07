@@ -85,6 +85,11 @@ Al buscar, el nodo encuentra lo que se busca sin importar mayúsculas, tildes, e
 - [ ] Panel del nodo: «Agregar condición» y «Agregar campo» salen del esquema; ayuda y ejemplos de cada operador; Vera los conoce por la ficha del nodo.
 - [ ] Pruebas con textos mixtos («PETICIÓN», «peticion», «Petición  urgente», «peticiòn»).
 
+### 2b-bis. Vera arma flujos (evaluación)
+
+- [x] Batería `scripts/evaluar_vera.py`: pedidos realistas medidos por su resultado (el flujo se guarda, valida y corre con lo esperado).
+- [ ] Primera medición: 5 de 6. Falló «extraer cédula y nombre»: la corrida terminó fallida. Investigar, corregir y llevar a 6 de 6; repetir la batería después de cada cambio grande.
+
 ### 2c. Proveedores y modelos de IA por flujo (pedido 2026-11-07)
 
 Cada flujo, y cada nodo de IA, elige su proveedor y su modelo. Hoy todo usa Vertex, y Vertex queda por defecto en los flujos actuales. Otros flujos pueden usar Gemini directo, OpenAI, Claude, DeepSeek, OpenRouter o cualquier servicio compatible con OpenAI. Cada flujo es independiente aunque corran al mismo tiempo.
@@ -101,6 +106,17 @@ Cada flujo, y cada nodo de IA, elige su proveedor y su modelo. Hoy todo usa Vert
 - [ ] Catálogo de modelos por proveedor, leído de su API cuando la tenga y guardado en caché, con lo que cada modelo acepta (imágenes, PDF, JSON, herramientas) y su precio por millón de tokens para estimar costos.
 - [ ] Proveedor y modelo por defecto en cada flujo (`definicion.ia`) y por nodo (`config.proveedor`, `config.modelo`); validación de que la conexión exista y el modelo acepte lo que el nodo le pide (por ejemplo, visión).
 - [ ] PQRD y tutelas fijos en Vertex (lo que usan hoy), mostrados en su manifiesto.
+- [ ] Cualquier proveedor que funcione, no solo los compatibles con OpenAI:
+  - [ ] adaptadores propios: Vertex, Gemini, OpenAI, Azure OpenAI, Anthropic, DeepSeek, Mistral, Groq, OpenRouter y locales (Ollama);
+  - [ ] adaptador «personalizado» por HTTP (URL, encabezados, plantilla del pedido y rutas de la respuesta) para cualquier otro, sin código;
+  - [ ] registro de proveedores donde agregar uno nuevo es un módulo.
+- [ ] Capacidades declaradas por modelo (texto, imágenes, PDF, JSON, herramientas, voz en vivo, contexto, precio), usadas por la validación y la pantalla.
+- [ ] Tres niveles separados que nunca se mezclan:
+  - [ ] IA global de la plataforma (en Ajustes);
+  - [ ] IA de cada flujo: usa la global o una propia, con anulación por nodo; se resuelve nodo → flujo → global y se muestra en el editor y en el manifiesto;
+  - [ ] IA de Vera, aparte: una para el chat escrito (debe aceptar herramientas) y otra para la voz (debe tener voz en vivo).
+- [ ] Vera funciona con cualquier proveedor que acepte herramientas (chat escrito) y su voz con cualquiera que tenga voz en vivo. Si el proveedor de Vera no tiene voz, el botón de llamar lo muestra y se desactiva con la razón.
+- [ ] Clientes y límites por proveedor, conexión y flujo: dos flujos con proveedores distintos a la vez no comparten estado.
 - [ ] Reintentos, límite de tasa y concurrencia por proveedor y por flujo; un flujo no frena a otro.
 - [ ] Consumo por flujo y por corrida: tokens, costo estimado, tiempo; visible en Corridas, en el tablero y en el manifiesto.
 - [ ] Editor: selector de proveedor y modelo en el flujo y en cada nodo de IA (con lo que acepta cada modelo); «Probar conexión».
