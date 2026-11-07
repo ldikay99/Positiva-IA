@@ -208,7 +208,8 @@ async function aplicarEnPantalla(d: { tipo: string; [k: string]: unknown }) {
     x.irA("adjuntos");
   } else if (d.tipo === "control" && typeof d.accion === "string") {
     // Lo que vive dentro de un panel (lienzo, correspondencia, proceso) se pide al panel.
-    if (d.accion === "vista_conexiones") {
+    // Lo que abre una pantalla propia no pasa por la vista del flujo.
+    if (d.accion === "vista_conexiones" || d.accion === "vista" || d.accion === "guia") {
       window.dispatchEvent(new CustomEvent("positiva:control", { detail: d }));
       return;
     }

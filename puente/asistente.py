@@ -94,6 +94,7 @@ Cómo trabajas:
 5. Los flujos de código (pqrd, tutelas) tienen la estructura fija del código: puedes leerlos (listar_nodos, ver_nodo) y ajustar sus parámetros (ajustar_parametro_pqrd), no rehacerlos.
 6. Si un flujo necesita una conexión (correo, Drive, base de datos, API), revisa listar_credenciales; si falta, usa pedir_credencial (la persona la crea, tú nunca manejas claves) y luego configúrala en el nodo por su nombre. Las escrituras afuera solo ocurren si la persona habilitó la escritura en esa conexión; si no, quedan registradas como bloqueadas.
    IA de los flujos: hay tres niveles separados — la IA global de la plataforma, la de cada flujo (usa la global o una propia) y la de cada nodo de IA (hereda o elige la suya); se resuelve nodo → flujo → global. Tú (Vera) tienes tu propia IA aparte. Con proveedores_ia, modelos_ia, ver_ia_flujo, configurar_ia_flujo y probar_ia eliges y verificas proveedor y modelo según lo que el nodo necesita (visión, JSON, herramientas) y el costo; si falta la llave de un proveedor, pedir_credencial (la persona la escribe). Para un nodo puntual usa editar_nodo con config.proveedor/modelo/credencial.
+   Producto: para empezar rápido ofrece una plantilla (plantillas, instalar_plantilla) y ajústala; para revisar qué pasó usa historial (y reintentar_corrida); las notificaciones y las aprobaciones pendientes las consultas tú, pero aprobar o rechazar lo decide SIEMPRE la persona en la bandeja (abrir_vista aprobaciones). abrir_vista abre inicio, plantillas, historial, notificaciones, aprobaciones, conexiones o la guía.
    Cada flujo es independiente: su correspondencia (si arranca con correo), sus archivos, su entorno, sus conexiones, su compuerta y sus corridas. Nunca mezcles: los correos de PQRD son de PQRD. Un flujo nuevo que arranca con correo usa su bandeja de prueba (sube .eml con subir_adjuntos_a_flujo destino=bandeja_prueba) o su buzón propio (configura la conexión y carpeta del disparador con editar_nodo y léelo con leer_buzon_flujo). Para procesar documentos o imágenes que te adjunten en el chat, usa un flujo con disparador entrada_archivos (o un campo de tipo archivo en entrada_manual) y subir_adjuntos_a_flujo con correr=true; nunca pidas rutas. Para editar un flujo sin tocar el original, clonar_flujo; renombrar_flujo y proponer_borrado sirven para cualquier flujo salvo borrar los originales PQRD y tutelas.
    Cada flujo tiene su propio entorno (variables y secretos, no globales): en los nodos se usan como {{entorno.NOMBRE}}. Revisa con ver_entorno; define o quita las que NO son secretas con definir_variable / quitar_variable; los secretos los escribe la persona (pedir_secreto). Para la revisión antes de producción, ver_manifiesto.
    En el editor del flujo abierto usa controlar_editor (seleccionar o centrar un nodo, abrir su panel, zoom, ordenar, resaltar, abrir la paleta o el diálogo de correr). Renombra, duplica, versiona y corre flujos con renombrar_flujo, duplicar_flujo, versiones_flujo, restaurar_version y correr_flujo.
@@ -159,6 +160,13 @@ HERRAMIENTAS = [
     {"name": "configurar_ia_flujo", "description": "Elige la IA de un flujo declarativo: usar la global (usar_global=true) o una propia {proveedor, modelo, credencial?, temperatura?}. Valida y guarda. Para un nodo usa editar_nodo con config.proveedor/modelo/credencial (o null para heredar).", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "usar_global": {"type": "boolean"}, "proveedor": {"type": "string"}, "modelo": {"type": "string"}, "credencial": {"type": "string"}, "temperatura": {"type": "number"}}, "required": ["flujo"]}},
     {"name": "probar_ia", "description": "Prueba de verdad un proveedor y modelo (con su conexión) con una llamada mínima: dice si responde, cuánto tarda y cuánto costó.", "parameters": {"type": "object", "properties": {"proveedor": {"type": "string"}, "modelo": {"type": "string"}, "credencial": {"type": "string"}, "flujo": {"type": "string"}}, "required": ["proveedor", "modelo"]}},
     {"name": "configurar_ia_global", "description": "Cambia la IA global de la plataforma (la que usan los flujos que dicen «usar la global»). Solo si la persona lo pide.", "parameters": {"type": "object", "properties": {"proveedor": {"type": "string"}, "modelo": {"type": "string"}, "credencial": {"type": "string"}, "temperatura": {"type": "number"}}, "required": ["proveedor", "modelo"]}},
+    {"name": "plantillas", "description": "La galería de plantillas de flujos listas para usar (extraer datos de documentos, clasificar correos, responder con IA, revisar tablas, informes programados, webhooks, aprobaciones…), con lo que necesita cada una. Con id, el detalle de una.", "parameters": {"type": "object", "properties": {"id": {"type": "string"}}}},
+    {"name": "instalar_plantilla", "description": "Instala una plantilla como flujo propio (queda editable) y lo abre en pantalla.", "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "nombre": {"type": "string"}, "id_nuevo": {"type": "string"}}, "required": ["id"]}},
+    {"name": "historial", "description": "El historial de ejecuciones con filtros: flujo, estado (en_curso | bien | revisar | fallo), desenlace, desde/hasta (AAAA-MM-DD) y texto. Con corrida, el detalle legible de una (qué entró, qué hizo cada paso, qué salió y por qué terminó así).", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "estado": {"type": "string"}, "desenlace": {"type": "string"}, "desde": {"type": "string"}, "hasta": {"type": "string"}, "texto": {"type": "string"}, "n": {"type": "integer"}, "corrida": {"type": "string"}}}},
+    {"name": "reintentar_corrida", "description": "Vuelve a correr una ejecución con la misma entrada o el mismo correo.", "parameters": {"type": "object", "properties": {"corrida": {"type": "string"}}, "required": ["corrida"]}},
+    {"name": "notificaciones", "description": "Las notificaciones de la plataforma (fallos, aprobaciones pendientes, conexiones que fallan, recursos, horarios que no corrieron). Con marcar_leidas=true las marca leídas.", "parameters": {"type": "object", "properties": {"marcar_leidas": {"type": "boolean"}}}},
+    {"name": "aprobaciones", "description": "Las aprobaciones humanas pendientes (o con estado dado) de un flujo o de todos: qué hay que decidir y con qué datos. Tú no decides: abre la bandeja (abrir_vista aprobaciones) para que la persona apruebe o rechace.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "estado": {"type": "string"}}}},
+    {"name": "abrir_vista", "description": "Abre una pantalla del producto: inicio, plantillas (plantilla=id para su detalle), historial (corrida=id para una ejecución), notificaciones, aprobaciones, conexiones, tablero, flujo. O la guía de primeros pasos con vista=guia.", "parameters": {"type": "object", "properties": {"vista": {"type": "string"}, "flujo": {"type": "string"}, "corrida": {"type": "string"}, "plantilla": {"type": "string"}}, "required": ["vista"]}},
     {"name": "controlar_editor", "description": "Maneja el editor del flujo abierto en pantalla. op: seleccionar_nodo (lo selecciona, centra y abre su panel), abrir_panel_nodo, cerrar_panel, zoom_nodo, zoom (nivel 0.2–2), auto_ordenar, resaltar (nodos), recargar, abrir_paleta (busqueda), abrir_correr.", "parameters": {"type": "object", "properties": {"op": {"type": "string"}, "nodo": {"type": "string"}, "nodos": {"type": "array", "items": {"type": "string"}}, "nivel": {"type": "number"}, "busqueda": {"type": "string"}, "seccion": {"type": "string"}}, "required": ["op"]}},
     {"name": "ajustar_lienzo", "description": "Mueve la vista del lienzo del flujo: ver_todo (encuadra el flujo completo), acercar, alejar o restablecer.", "parameters": {"type": "object", "properties": {"modo": {"type": "string"}}, "required": ["modo"]}},
     {"name": "probar_flujo", "description": "Corre un flujo sobre un correo real (modo prueba) y espera el resultado: desenlace, campos, avisos y pasos.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "caso": {"type": "string"}}, "required": ["flujo", "caso"]}},
@@ -542,6 +550,59 @@ def ejecutar(nombre: str, a: Dict[str, Any]) -> Any:
         return api("POST", "/api/ia/probar", {k: a[k] for k in ("proveedor", "modelo", "credencial", "flujo") if a.get(k)})
     if nombre == "configurar_ia_global":
         return api("PUT", "/api/ia/global", {k: a[k] for k in ("proveedor", "modelo", "credencial", "temperatura") if a.get(k) is not None})
+    if nombre == "plantillas":
+        if a.get("id"):
+            p = api("GET", f"/api/plantillas/{a['id']}")
+            if isinstance(p, dict) and p.get("definicion"):
+                p["definicion"] = {"nodos": [{k: n.get(k) for k in ("id", "tipo", "nombre")} for n in p["definicion"].get("nodos", [])]}
+            return p
+        return [{k: x.get(k) for k in ("id", "nombre", "resumen", "categoria", "necesita", "disparador", "usa_ia", "disponible", "motivo")} for x in api("GET", "/api/plantillas") or []]
+    if nombre == "instalar_plantilla":
+        r = api("POST", f"/api/plantillas/{a['id']}/instalar", {k: a[k] for k in ("nombre", "id_nuevo") if a.get(k)})
+        fid = ((r or {}).get("flujo") or {}).get("id") if isinstance(r, dict) else None
+        if fid:
+            emitir("enfocar", flujo=fid)
+        return r
+    if nombre == "historial":
+        if a.get("corrida"):
+            return api("GET", f"/api/historial/{a['corrida']}")
+        from urllib.parse import urlencode
+        q = {k: a[k] for k in ("flujo", "estado", "desenlace", "desde", "hasta") if a.get(k)}
+        if a.get("texto"):
+            q["q"] = a["texto"]
+        q["limite"] = int(a.get("n") or 20)
+        r = api("GET", "/api/historial?" + urlencode(q))
+        if isinstance(r, dict) and isinstance(r.get("corridas"), list):
+            r["corridas"] = [{k: c.get(k) for k in ("id", "flujo", "titulo", "estado", "desenlace", "motivo", "creada", "segundos")} for c in r["corridas"]]
+        return r
+    if nombre == "reintentar_corrida":
+        r = api("POST", f"/api/historial/{a['corrida']}/reintentar", {})
+        if isinstance(r, dict) and r.get("id"):
+            emitir("corridas_creadas", flujo=r.get("flujo"), corridas=[r["id"]])
+        return r
+    if nombre == "notificaciones":
+        if a.get("marcar_leidas"):
+            return api("POST", "/api/notificaciones/leidas", {})
+        r = api("GET", "/api/notificaciones")
+        if isinstance(r, dict) and isinstance(r.get("notificaciones"), list):
+            r["notificaciones"] = [{k: x.get(k) for k in ("tipo", "titulo", "texto", "leida", "flujo", "corrida")} for x in r["notificaciones"][:30]]
+        return r
+    if nombre == "aprobaciones":
+        from urllib.parse import urlencode
+        q = {k: a[k] for k in ("flujo", "estado") if a.get(k)}
+        return api("GET", "/api/aprobaciones" + ("?" + urlencode(q) if q else ""))
+    if nombre == "abrir_vista":
+        v = a.get("vista")
+        if v == "guia":
+            emitir("control", accion="guia", abierta=True)
+            return {"ok": True}
+        if v in ("inicio", "plantillas", "historial", "notificaciones", "aprobaciones"):
+            emitir("control", accion="vista", **{k: a[k] for k in ("vista", "flujo", "corrida", "plantilla") if a.get(k)})
+            return {"ok": True, "vista": v}
+        if v == "conexiones":
+            emitir("control", accion="vista_conexiones")
+            return {"ok": True}
+        return ejecutar("navegar", {"vista": v, "flujo": a.get("flujo")})
     if nombre == "controlar_editor":
         ops = ("seleccionar_nodo", "abrir_panel_nodo", "cerrar_panel", "zoom_nodo", "zoom", "auto_ordenar", "resaltar", "recargar", "abrir_paleta", "abrir_correr")
         if a.get("op") not in ops:
