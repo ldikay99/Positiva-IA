@@ -228,6 +228,9 @@ export function obtenerVera(): IaVera {
 
 type Revision = { ok: true; ia: IaElegida } | { ok: false; error: string };
 
+/** Proveedores cuyos modelos no se conocen de antemano: se prueban en vez de exigir el catálogo. */
+const ABIERTOS = new Set(["openai_compatible", "ollama", "personalizado", "openrouter", "azure_openai"]);
+
 /** Revisa una IA elegida para un uso: proveedor, modelo, credencial (existe, tipo y alcance) y lo que el modelo tiene que aceptar. */
 export async function revisar(entrada: unknown, que: string, pide: ("herramientas" | "voz_en_vivo" | "texto")[], alcance = "global"): Promise<Revision> {
   const r = propia.safeParse(entrada);
@@ -250,6 +253,15 @@ export async function revisar(entrada: unknown, que: string, pide: ("herramienta
       continue;
     }
     const nombre = cap === "herramientas" ? "herramientas (function calling)" : "voz en vivo";
+    // Proveedores abiertos (compatible, Ollama, personalizado, OpenRouter…): sus modelos los define quien los
+    // monta. Si no está en el catálogo, se PRUEBA de verdad si sabe usar herramientas antes de aceptarlo.
+    if (!f && cap === "herramientas" && ABIERTOS.has(ia.proveedor)) {
+      const valores = ia.credencial ? credenciales.paraCorrida(alcance === "global" ? "vera" : alcance, [ia.credencial])[ia.credencial]?.valores : {};
+      const p = await pedirAlPython<{ ok?: boolean; error?: string }>("probar_herramientas", { proveedor: ia.proveedor, modelo: ia.modelo, credencial: valores ?? {} }, 90000)
+        .catch((e: unknown) => ({ ok: false, error: e instanceof Error ? e.message : String(e) }));
+      if (p.ok) continue;
+      return { ok: false, error: `${que}: «${ia.modelo}» no está en el catálogo y la prueba de herramientas no pasó${p.error ? `: ${p.error}` : ""}` };
+    }
     if (!f) return { ok: false, error: `${que}: «${ia.modelo}» no está en el catálogo de ${ia.proveedor}: no se sabe si acepta ${nombre}; elige un modelo del catálogo que lo acepte` };
     if (f.acepta[cap] !== true) return { ok: false, error: `${que}: el modelo «${ia.modelo}» no acepta ${nombre}` };
   }

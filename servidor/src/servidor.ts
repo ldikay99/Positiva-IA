@@ -12,7 +12,8 @@ import * as buzon from "./buzon.ts";
 import * as chats from "./chats.ts";
 import * as buzonTutelas from "./buzon_tutelas.ts";
 import * as configuracion from "./configuracion.ts";
-import { Motor, type Corrida, type Evento } from "./motor.ts";
+import { Motor, borrarCorridasDe, contarCorridasDe, type Corrida, type Evento } from "./motor.ts";
+import * as espacio from "./espacio.ts";
 import * as flujos from "./flujos.ts";
 import * as credenciales from "./credenciales.ts";
 import * as entornos from "./entornos.ts";
@@ -20,7 +21,7 @@ import * as programador from "./programador.ts";
 import * as ganchos from "./ganchos.ts";
 import * as compuerta from "./compuerta.ts";
 import * as rutasIa from "./rutas_ia.ts";
-import { consumoDe } from "./ia.ts";
+import { consumoDe, obtenerVera } from "./ia.ts";
 import { EventEmitter } from "node:events";
 
 const app = Fastify({ logger: { level: process.env.NIVEL_LOG ?? "info" }, bodyLimit: 4 * 1024 * 1024 });
@@ -36,6 +37,8 @@ app.addContentTypeParser("application/json", { parseAs: "string" }, (_req, cuerp
     listo(e as Error, undefined);
   }
 });
+// Archivos de un flujo y correos de prueba: multipart/form-data llega entero y se parte en espacio.multipart.
+app.addContentTypeParser("multipart/form-data", { parseAs: "buffer" }, (_req, cuerpo, listo) => listo(null, cuerpo));
 // Un pool de trabajadores por flujo. Los eventos de todos salen por el mismo
 // bus, cada uno con su flujo, y la web muestra solo los del flujo elegido.
 const bus = new EventEmitter();
@@ -72,8 +75,11 @@ function motorDe(id: string, arrancar = true): Motor | null {
 function arrancarMotor(m: Motor): void {
   if (arrancados.has(m.flujo)) return;
   arrancados.add(m.flujo);
-  m.ajustar(m.flujo === "pqrd" ? configuracion.obtener().concurrencia : 2);
+  m.ajustar(flujos.baseDe(m.flujo) === "pqrd" ? configuracion.obtener().concurrencia : 2);
 }
+
+/** Lo que bandeja.ts necesita saber de un flujo para darle SU correspondencia. */
+const deBandeja = (f: flujos.Flujo): bandeja.FlujoDeBandeja => ({ id: f.id, tipo: f.tipo, ...(f.base ? { base: f.base } : {}) });
 
 const flujoDe = (q: unknown): string => (typeof q === "string" && q ? q : "pqrd");
 
@@ -91,7 +97,7 @@ app.get<{ Querystring: { flujo?: string } }>("/api/catalogo", async (req, res) =
 
 // -------------------------------------------------------------------- flujos
 
-const sinDefinicion = (f: flujos.Flujo) => ({ ...f, trabajador: undefined, definicion: undefined, nodos: f.definicion?.nodos.length });
+const sinDefinicion = (f: flujos.Flujo) => ({ ...f, trabajador: undefined, definicion: undefined, nodos: f.definicion?.nodos.length, borrable: !flujos.esOriginal(f.id) });
 
 app.get("/api/flujos", async () => flujos.listar().map(sinDefinicion));
 
@@ -118,7 +124,8 @@ app.get("/api/tablero", async () =>
     }
     segundos.sort((a, b) => a - b);
     return {
-      id: f.id, nombre: f.nombre, tipo: f.tipo, corridas: lista.length, desenlaces,
+      id: f.id, nombre: f.nombre, tipo: f.tipo, ...(f.base ? { base: f.base } : {}), ...(f.copia_de ? { copia_de: f.copia_de } : {}), disparador: f.disparador ?? null, borrable: !flujos.esOriginal(f.id),
+      corridas: lista.length, desenlaces,
       segundosMediana: segundos.length ? segundos[Math.floor(segundos.length / 2)]! : 0, tokens, consumo: consumoDe(lista.map((c) => c.resultado)),
       enCurso: lista.filter((c) => !c.resultado).length,
       ultimas: lista.slice(0, 6).map((c) => ({ id: c.id, caso: c.caso, accion: String(c.resultado?.accion ?? c.estado), motivo: String(c.resultado?.motivo ?? ""), t: c.creada })),
@@ -142,13 +149,57 @@ app.put<{ Params: { id: string } }>("/api/flujos/:id", async (req, res) => {
   return { flujo: { ...r.flujo, trabajador: undefined } };
 });
 
+/** Lo que se borra con un flujo (para que la persona lo vea antes de confirmar). */
+async function loQueSeBorra(id: string) {
+  const f = flujos.obtener(id)!;
+  const variables = await entornos.listar(id);
+  const usoDelEspacio = await espacio.uso(id);
+  return {
+    flujo: { id, nombre: f.nombre, tipo: f.tipo, ...(f.copia_de ? { copia_de: f.copia_de } : {}) },
+    se_puede_borrar: !flujos.esOriginal(id),
+    ...(flujos.esOriginal(id) ? { motivo: `«${f.nombre}» es un flujo de producción original: no se borra (puedes borrar sus copias)` } : {}),
+    corridas: Math.max(await contarCorridasDe(id), motores.get(id)?.corridas.size ?? 0),
+    versiones: f.tipo === "declarativo" ? ((await flujos.versiones(id))?.length ?? 1) : 0,
+    variables: variables.filter((v) => !v.secreto).length,
+    secretos: variables.filter((v) => v.secreto).length,
+    archivos: usoDelEspacio.archivos,
+    bytes: usoDelEspacio.bytes,
+    correos_de_prueba: usoDelEspacio.correos_de_prueba + usoDelEspacio.correos_recibidos,
+    tabla_del_flujo: usoDelEspacio.tabla,
+    credenciales: credenciales.listar(id).filter((c) => c.alcance === id).map((c) => c.nombre),
+    compuerta: flujos.esDeCodigo(id),
+    programacion: flujos.esDeCodigo(id) || ["programado", "correo_nuevo"].includes(f.disparador ?? ""),
+  };
+}
+
+app.get<{ Params: { id: string } }>("/api/flujos/:id/borrado", async (req, res) => {
+  if (!flujos.obtener(req.params.id)) return res.code(404).send({ error: "ese flujo no existe" });
+  return loQueSeBorra(req.params.id);
+});
+
+/**
+ * Borra un flujo con TODO lo suyo: corridas (en memoria y guardadas), versiones, entorno,
+ * compuerta, programación, credenciales de su alcance, archivos, bandeja de prueba, su
+ * tabla y lo que trajo su correo_nuevo. Los originales (pqrd, tutelas) no se borran.
+ */
 app.delete<{ Params: { id: string } }>("/api/flujos/:id", async (req, res) => {
-  const ok = await flujos.borrar(req.params.id);
-  if (!ok) return res.code(404).send({ error: "solo se borran los flujos creados aquí" });
-  motores.get(req.params.id)?.detener();
-  motores.delete(req.params.id);
-  bus.emit("evento", { tipo: "flujo_borrado", corrida: null, t: Date.now() / 1000, flujo: req.params.id });
-  return { ok: true };
+  const id = req.params.id;
+  if (!flujos.obtener(id)) return res.code(404).send({ error: "ese flujo no existe" });
+  if (flujos.esOriginal(id)) return res.code(400).send({ error: "pqrd y tutelas son los flujos de producción originales: no se borran (sus copias sí)" });
+  const resumen = await loQueSeBorra(id);
+  motores.get(id)?.cancelarCola();
+  motores.get(id)?.detener();
+  motores.delete(id);
+  arrancados.delete(id);
+  if (!(await flujos.borrar(id))) return res.code(404).send({ error: "ese flujo no existe" });
+  const corridas = await borrarCorridasDe(id);
+  await compuerta.olvidar(id);
+  await programador.olvidar(id);
+  for (const c of resumen.credenciales) await credenciales.borrar(c);
+  await espacio.borrarTodo(id);
+  bandeja.olvidarDe(id);
+  bus.emit("evento", { tipo: "flujo_borrado", corrida: null, t: Date.now() / 1000, flujo: id });
+  return { ok: true, borrado: { ...resumen, corridas: Math.max(corridas, resumen.corridas) } };
 });
 
 // =====================================================================
@@ -192,11 +243,16 @@ app.post<{ Params: { id: string } }>("/api/flujos/:id/correr", async (req, res) 
   const m = motorDe(f.id)!;
   if (m.enCurso() >= MAX_EN_ESPERA) return res.code(429).send({ error: "hay demasiadas corridas en espera para este flujo" });
   if (disp?.tipo === "entrada_correo" || disp?.tipo === "correo_nuevo") {
-    if (!r.data.caso || !bandeja.casoValido(r.data.caso)) return res.code(400).send({ error: `este flujo empieza con ${disp.tipo}: manda caso (un correo de la bandeja)` });
+    if (!r.data.caso || !bandeja.casoValido(r.data.caso)) return res.code(400).send({ error: `este flujo empieza con ${disp.tipo}: manda caso (un correo de SU correspondencia: GET /api/bandeja?flujo=${f.id})` });
+    // solo un correo de su propia correspondencia (nunca el universo de PQRD ni lo de otro flujo)
+    if (!(await bandeja.esDe(deBandeja(f), r.data.caso))) return res.code(400).send({ error: `el caso «${r.data.caso}» no es de la correspondencia de este flujo (súbelo a su bandeja de prueba o tráelo de su buzón)` });
     const c = m.encolar(r.data.caso, configuracion.obtener(), { origen: "manual", entrada: r.data.entrada ?? {} });
     return { id: c.id, caso: c.caso };
   }
-  const c = m.encolar(r.data.caso ?? `manual-${sello()}`, configuracion.obtener(), { origen: "manual", entrada: r.data.entrada ?? {} });
+  const faltan = espacio.archivosQueFaltan(f.id, r.data.entrada, f.definicion);
+  if (faltan.length) return res.code(400).send({ error: `estos archivos no están en el flujo: ${faltan.join(", ")} (súbelos con POST /api/flujos/${f.id}/archivos)` });
+  if (disp?.tipo === "entrada_archivos" && !espacio.resolverArchivos(f.id, r.data.entrada, f.definicion).length) return res.code(400).send({ error: "este flujo empieza con entrada_archivos: sube al menos un archivo y mándalo en entrada.archivos" });
+  const c = m.encolar(r.data.caso ?? `${disp?.tipo === "entrada_archivos" ? "archivos" : "manual"}-${sello()}`, configuracion.obtener(), { origen: "manual", entrada: r.data.entrada ?? {} });
   return { id: c.id, caso: c.caso };
 });
 
@@ -212,14 +268,20 @@ app.post<{ Params: { id: string } }>("/api/flujos/:id/restaurar", async (req, re
   return { flujo: { ...r.flujo, trabajador: undefined } };
 });
 
-app.post<{ Params: { id: string } }>("/api/flujos/:id/duplicar", async (req, res) => {
+/**
+ * Clona cualquier flujo (también pqrd y tutelas: la copia es una instancia propia del mismo motor).
+ * {nombre?, id_nuevo?} → {flujo}. /duplicar queda como alias (Vera lo usa con id_nuevo).
+ */
+const clonarRuta = async (req: { params: { id: string }; body: unknown }, res: { code: (n: number) => { send: (x: unknown) => unknown } }) => {
   const b = (req.body ?? {}) as { id_nuevo?: unknown; nombre?: unknown };
-  const r = await flujos.duplicar(req.params.id, b.id_nuevo, b.nombre);
+  const r = await flujos.clonar(req.params.id, b.nombre, b.id_nuevo);
   if (!r.ok) return res.code(r.codigo).send({ error: r.error, problemas: r.problemas });
-  motorDe(r.flujo.id, false);
-  avisarFlujo(r.flujo.id, { version: r.flujo.version });
+  motorDe(r.flujo.id, r.flujo.tipo === "codigo");
+  avisarFlujo(r.flujo.id, { version: r.flujo.version ?? null, clonado_de: req.params.id });
   return { flujo: { ...r.flujo, trabajador: undefined } };
-});
+};
+app.post<{ Params: { id: string } }>("/api/flujos/:id/clonar", clonarRuta);
+app.post<{ Params: { id: string } }>("/api/flujos/:id/duplicar", clonarRuta);
 
 app.patch<{ Params: { id: string } }>("/api/flujos/:id", async (req, res) => {
   const r = await flujos.renombrar(req.params.id, (req.body ?? {}) as { nombre?: unknown; descripcion?: unknown });
@@ -295,7 +357,7 @@ app.put<{ Params: { id: string } }>("/api/flujos/:id/compuerta", async (req, res
 app.get<{ Params: { id: string } }>("/api/flujos/:id/programacion", async (req, res) => {
   const p = programador.programacionDe(req.params.id);
   if (!p || !flujos.esDeCodigo(req.params.id)) return res.code(404).send({ error: "solo los flujos de código (pqrd, tutelas) tienen programación como el job" });
-  return { ...p, del_job: programador.PROGRAMACION_DEL_JOB[req.params.id], tope_por_corrida_s: programador.TOPE_DE_CORRIDA_S, en_curso: programador.corridaProgramada(req.params.id), ultima_ejecucion: programador.estado()[`j:${req.params.id}`] ?? null, compuerta: compuerta.rotulo(req.params.id) };
+  return { ...p, del_job: programador.PROGRAMACION_DEL_JOB[flujos.baseDe(req.params.id) ?? req.params.id], tope_por_corrida_s: programador.TOPE_DE_CORRIDA_S, en_curso: programador.corridaProgramada(req.params.id), ultima_ejecucion: programador.estado()[`j:${req.params.id}`] ?? null, compuerta: compuerta.rotulo(req.params.id) };
 });
 
 app.put<{ Params: { id: string } }>("/api/flujos/:id/programacion", async (req, res) => {
@@ -343,19 +405,169 @@ await ganchos.registrar(app, {
     bus.on("evento", f);
     return () => bus.off("evento", f);
   },
+  // multipart: los archivos se guardan en el espacio del flujo, con las mismas reglas que «Correr»
+  guardarArchivos: (id, partes) => guardarArchivos(id, partes, "webhook"),
 });
 
+// ------------------------------------------------------- archivos del flujo
+
+/** Revisa y guarda los archivos que llegan para un flujo. Video y audio nunca (extensión, tipo y contenido). */
+async function guardarArchivos(id: string, partes: { nombre: string; tipo: string; datos: Buffer }[], origen: string) {
+  const f = flujos.obtener(id)!;
+  const reglas = espacio.reglasDe(f.definicion);
+  const archivos: espacio.FichaArchivo[] = [];
+  const rechazados: { nombre: string; error: string }[] = [];
+  for (const p of partes) {
+    const problema = espacio.problemaDeArchivo(p.nombre, p.tipo, p.datos, reglas);
+    if (problema) rechazados.push({ nombre: p.nombre, error: problema });
+    else archivos.push(await espacio.guardarArchivo(id, p.nombre, p.tipo, p.datos, origen));
+  }
+  return { archivos, rechazados };
+}
+
+/** Las partes de un pedido de subida: multipart (campo «archivo» o «archivos») o JSON {nombre, tipo, datos(base64)} / {archivos: [...]}. */
+function partesDeSubida(req: { headers: Record<string, unknown>; body: unknown }): { nombre: string; tipo: string; datos: Buffer }[] {
+  const tipo = String(req.headers["content-type"] ?? "");
+  if (Buffer.isBuffer(req.body) && /multipart\/form-data/i.test(tipo))
+    return espacio.multipart(req.body, tipo).filter((p) => p.archivo !== undefined).map((p) => ({ nombre: p.archivo || "archivo", tipo: p.tipo, datos: p.datos }));
+  const b = (req.body ?? {}) as { nombre?: string; tipo?: string; datos?: string; archivos?: { nombre?: string; tipo?: string; datos?: string }[] };
+  const lista = Array.isArray(b.archivos) ? b.archivos : b.datos ? [b] : [];
+  return lista.filter((x) => typeof x?.datos === "string").slice(0, 50).map((x) => ({ nombre: String(x.nombre ?? "archivo").slice(0, 160), tipo: String(x.tipo ?? "").slice(0, 120), datos: Buffer.from(String(x.datos), "base64") }));
+}
+
+app.get<{ Params: { id: string } }>("/api/flujos/:id/archivos", async (req, res) => {
+  const f = flujos.obtener(req.params.id);
+  if (!f) return res.code(404).send({ error: "ese flujo no existe" });
+  const r = espacio.reglasDe(f.definicion);
+  return { archivos: await espacio.listarArchivos(f.id), reglas: { tipos_permitidos: [...r.tipos], max_mb: r.maxMb, max_archivos: r.maxArchivos } };
+});
+
+/** Sube archivos al espacio del flujo → {archivos: [{id, nombre, tipo, tamano, sha256, subido}], rechazados: [{nombre, error}]}. */
+app.post<{ Params: { id: string } }>("/api/flujos/:id/archivos", { bodyLimit: 130 * 1024 * 1024 }, async (req, res) => {
+  const f = flujos.obtener(req.params.id);
+  if (!f) return res.code(404).send({ error: "ese flujo no existe" });
+  let partes: { nombre: string; tipo: string; datos: Buffer }[];
+  try {
+    partes = partesDeSubida(req);
+  } catch (e) {
+    return res.code(400).send({ error: e instanceof Error ? e.message : String(e) });
+  }
+  if (!partes.length) return res.code(400).send({ error: "falta el archivo (multipart con campo «archivo», o JSON {nombre, tipo, datos en base64})" });
+  const r = await guardarArchivos(f.id, partes, "web");
+  if (!r.archivos.length) return res.code(400).send({ error: r.rechazados.map((x) => x.error).join(" · "), ...r });
+  return r;
+});
+
+app.get<{ Params: { id: string; archivo: string } }>("/api/flujos/:id/archivos/:archivo", async (req, res) => {
+  const a = espacio.archivoDe(req.params.id, req.params.archivo);
+  if (!a) return res.code(404).send({ error: "no existe" });
+  return res.header("Content-Type", a.tipo || "application/octet-stream").header("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(a.nombre)}`).header("Cache-Control", "private, max-age=3600").send(createReadStream(a.ruta));
+});
+
+/** El texto de un archivo que el navegador no muestra (Word, Excel, ZIP…), con la conversión del motor. */
+app.get<{ Params: { id: string; archivo: string } }>("/api/flujos/:id/archivos/:archivo/texto", async (req, res) => {
+  const a = espacio.archivoDe(req.params.id, req.params.archivo);
+  if (!a) return res.code(404).send({ error: "no existe" });
+  const texto = await new Promise<string>((resolver) => {
+    const p = spawn(config.python, [resolve(config.raiz, "puente", "texto_de_archivo.py"), a.ruta, a.nombre], { env: { ...process.env, PYTHONIOENCODING: "utf-8" } });
+    let salida = "";
+    p.stdout.setEncoding("utf8").on("data", (t: string) => (salida += t));
+    p.on("exit", () => resolver(salida));
+  });
+  return { nombre: a.nombre, texto };
+});
+
+app.delete<{ Params: { id: string; archivo: string } }>("/api/flujos/:id/archivos/:archivo", async (req, res) =>
+  (await espacio.borrarArchivo(req.params.id, req.params.archivo)) ? { ok: true } : res.code(404).send({ error: "no existe" }));
+
 // ------------------------------------------------------------------- bandeja
+//
+// La correspondencia es POR FLUJO (?flujo=): pqrd ve su universo descargado y lo traído de
+// su buzón; tutelas, solo lo suyo; un flujo declarativo, su bandeja de prueba y su buzón.
+// Sin ?flujo= se entiende pqrd (como antes).
 
-app.get("/api/bandeja", async () => bandeja.listar());
+const flujoDeBandeja = (q: unknown) => flujos.obtener(flujoDe(q));
 
-app.get<{ Params: { caso: string } }>("/api/bandeja/:caso", async (req, res) => {
-  const d = await bandeja.detalle(req.params.caso);
+app.get<{ Querystring: { flujo?: string } }>("/api/bandeja", async (req, res) => {
+  const f = flujoDeBandeja(req.query.flujo);
+  if (!f) return res.code(404).send({ error: "ese flujo no existe" });
+  return f.correspondencia ? bandeja.listarDe(deBandeja(f)) : [];
+});
+
+/** Sube correos .eml/.msg a la bandeja de prueba de un flujo con entrada_correo → {correos: [{caso, asunto, adjuntos}], rechazados}. */
+app.post<{ Querystring: { flujo?: string } }>("/api/bandeja/prueba", { bodyLimit: 130 * 1024 * 1024 }, async (req, res) => {
+  const f = flujoDeBandeja(req.query.flujo);
+  if (!f) return res.code(404).send({ error: "ese flujo no existe" });
+  if (f.tipo !== "declarativo" || f.disparador !== "entrada_correo") return res.code(400).send({ error: "la bandeja de prueba es de los flujos que arrancan con «Entrada de correo»" });
+  let partes: { nombre: string; tipo: string; datos: Buffer }[];
+  try {
+    partes = partesDeSubida(req);
+  } catch (e) {
+    return res.code(400).send({ error: e instanceof Error ? e.message : String(e) });
+  }
+  if (!partes.length) return res.code(400).send({ error: "falta el correo (.eml o .msg)" });
+  const correos: { caso: string; asunto: string; adjuntos: number }[] = [];
+  const rechazados: { nombre: string; error: string }[] = [];
+  for (const p of partes) {
+    const r = await espacio.correoDePrueba(f.id, p.nombre, p.datos);
+    if (r.ok) correos.push({ caso: r.caso, asunto: r.asunto, adjuntos: r.adjuntos });
+    else rechazados.push({ nombre: p.nombre, error: r.error });
+  }
+  bandeja.olvidarDe(f.id);
+  if (!correos.length) return res.code(400).send({ error: rechazados.map((x) => x.error).join(" · "), correos, rechazados });
+  return { correos, rechazados };
+});
+
+app.delete<{ Params: { caso: string }; Querystring: { flujo?: string } }>("/api/bandeja/prueba/:caso", async (req, res) => {
+  const f = flujoDeBandeja(req.query.flujo);
+  if (!f || f.tipo !== "declarativo") return res.code(404).send({ error: "ese flujo no tiene bandeja de prueba" });
+  const ok = await espacio.borrarCorreoDePrueba(f.id, req.params.caso);
+  bandeja.olvidarDe(f.id);
+  return ok ? { ok: true } : res.code(404).send({ error: "no existe" });
+});
+
+/**
+ * «Buzón del flujo»: lee (solo lectura) el buzón que tiene configurado su entrada_correo y deja cada correo
+ * en SU bandeja → {carpeta, correos: Correo[]} (los traídos, con fuente «buzon_flujo»).
+ */
+app.get<{ Querystring: { flujo?: string; n?: string } }>("/api/bandeja/buzon", async (req, res) => {
+  const f = flujoDeBandeja(req.query.flujo);
+  if (!f) return res.code(404).send({ error: "ese flujo no existe" });
+  const orden = flujos.ordenDeBuzon(f.id);
+  if (!orden) return res.code(404).send({ error: "este flujo no tiene un buzón propio: ponle una credencial (imap o microsoft_graph) a su «Entrada de correo»" });
+  const n = Math.max(1, Math.min(50, Number(req.query.n ?? 20) || 20));
+  const r = await new Promise<{ ok?: boolean; carpeta?: string; casos?: string[]; error?: string }>((resolver) => {
+    const p = spawn(config.python, [resolve(config.raiz, "puente", "flujo_declarativo.py"), "buzon"], { env: { ...process.env, PYTHONIOENCODING: "utf-8" } });
+    let salida = "";
+    p.stdout.setEncoding("utf8").on("data", (t: string) => (salida += t));
+    const reloj = setTimeout(() => p.kill(), 120_000);
+    p.on("exit", () => {
+      clearTimeout(reloj);
+      try {
+        resolver(JSON.parse(salida.trim().split("\n").pop() ?? "{}"));
+      } catch {
+        resolver({ ok: false, error: "el buzón no respondió" });
+      }
+    });
+    p.stdin.end(JSON.stringify({ ...orden, n }));
+  });
+  if (!r.ok) return res.code(502).send({ error: r.error ?? "no se pudo leer el buzón" });
+  bandeja.olvidarDe(f.id);
+  const todos = await bandeja.listarDe(deBandeja(f));
+  const traidos = new Set(r.casos ?? []);
+  return { carpeta: r.carpeta ?? "", correos: todos.filter((c) => traidos.has(c.caso)) };
+});
+
+app.get<{ Params: { caso: string }; Querystring: { flujo?: string } }>("/api/bandeja/:caso", async (req, res) => {
+  // con ?flujo= solo un correo de ESE flujo; sin él, la búsqueda de antes (pqrd y lo traído del buzón)
+  const f = req.query.flujo ? flujos.obtener(req.query.flujo) : undefined;
+  const d = f ? await bandeja.detalleDe(deBandeja(f), req.params.caso) : await bandeja.detalle(req.params.caso);
   return d ?? res.code(404).send({ error: "no existe" });
 });
 
-app.get<{ Params: { caso: string; archivo: string } }>("/api/bandeja/:caso/adjuntos/:archivo", async (req, res) => {
-  const ruta = bandeja.rutaAdjunto(req.params.caso, req.params.archivo);
+app.get<{ Params: { caso: string; archivo: string }; Querystring: { flujo?: string } }>("/api/bandeja/:caso/adjuntos/:archivo", async (req, res) => {
+  const f = req.query.flujo ? flujos.obtener(req.query.flujo) : undefined;
+  const ruta = f ? await bandeja.rutaAdjuntoDe(deBandeja(f), req.params.caso, req.params.archivo) : bandeja.rutaAdjunto(req.params.caso, req.params.archivo);
   if (!ruta || !existsSync(ruta)) return res.code(404).send({ error: "no existe" });
   return res.header("Content-Disposition", `inline; filename="${basename(ruta)}"`).send(createReadStream(ruta));
 });
@@ -441,6 +653,10 @@ app.post("/api/corridas", async (req, res) => {
   const f = flujos.obtener(flujoDe(r.data.flujo));
   const m = f ? motorDe(f.id) : null;
   if (!f || !m) return res.code(404).send({ error: "ese flujo no existe" });
+  // cada flujo corre solo SU correspondencia (un flujo nuevo nunca corre el universo de PQRD)
+  const ajenos = [];
+  for (const caso of r.data.casos) if (!(await bandeja.esDe(deBandeja(f), caso))) ajenos.push(caso);
+  if (ajenos.length) return res.code(400).send({ error: `no son de la correspondencia de «${f.nombre}»: ${ajenos.slice(0, 10).join(", ")}` });
   if (r.data.comoElJob && f.lote && r.data.casos.length > 1) {
     const { lote, corridas } = m.encolarLote(r.data.casos, conf, r.data.concurrencia ?? 0);
     return corridas.map((c) => ({ id: c.id, caso: c.caso, lote, flujo: f.id }));
@@ -583,7 +799,10 @@ app.post<{ Params: { id: string } }>("/api/chats/:id/mensajes", async (req, res)
   res.raw.on("close", () => {
     if (p.exitCode === null) p.kill();
   });
-  p.stdin.end(JSON.stringify({ mensajes: contexto, flujo: r.data.flujo ?? c.flujo, modelo: r.data.modelo, conversacion: c.id, pantalla: r.data.pantalla ?? {} }));
+  // La IA de Vera (aparte de la de los flujos) y, si usa una conexión, sus valores solo para este proceso.
+  const iaVera = obtenerVera().texto;
+  const credVera = iaVera.credencial ? credenciales.paraCorrida("vera", [iaVera.credencial])[iaVera.credencial]?.valores : undefined;
+  p.stdin.end(JSON.stringify({ mensajes: contexto, flujo: r.data.flujo ?? c.flujo, modelo: r.data.modelo, conversacion: c.id, pantalla: r.data.pantalla ?? {}, ia_vera: iaVera, credencial_ia: credVera ?? null }));
 });
 
 /** El resultado de una propuesta (la persona confirmó o descartó el botón). */
@@ -691,7 +910,13 @@ async function iniciarLlamada(
     }
     try {
       const m = JSON.parse(datos.toString("utf8")) as { tipo?: string };
-      if (m.tipo === "inicio") (m as Record<string, unknown>).conversacion = c.id;
+      if (m.tipo === "inicio") {
+        const x = m as Record<string, unknown>;
+        x.conversacion = c.id;
+        const iaVoz = obtenerVera().voz;
+        x.ia_voz = iaVoz;
+        x.credencial_ia = iaVoz.credencial ? (credenciales.paraCorrida("vera", [iaVoz.credencial])[iaVoz.credencial]?.valores ?? null) : null;
+      }
       trama("J", Buffer.from(JSON.stringify(m)));
     } catch {
       /* mensaje inválido */
@@ -718,14 +943,16 @@ async function iniciarLlamada(
 
 // Cada flujo con buzón real lee SU carpeta de producción: PQRD la de AUTOMATIZACION,
 // tutelas la de notificaciones judiciales. Nunca se cruzan.
-const buzonDe = (flujo: string) => (flujo === "tutelas" ? buzonTutelas : flujo === "pqrd" ? buzon : null);
+// Las copias de pqrd y tutelas leen la misma carpeta con SU entorno (sus credenciales).
+const buzonDe = (flujo: string) => { const b = flujos.baseDe(flujo); return b === "tutelas" ? buzonTutelas : b === "pqrd" ? buzon : null; };
 
 app.get<{ Querystring: { n?: string; fresco?: string; flujo?: string } }>("/api/buzon", async (req, res) => {
   const n = Math.max(1, Math.min(150, Number(req.query.n ?? 50) || 50));
-  const b = buzonDe(flujoDe(req.query.flujo));
+  const flujo = flujoDe(req.query.flujo);
+  const b = buzonDe(flujo);
   if (!b) return res.code(404).send({ error: "este flujo no tiene buzón real" });
   try {
-    return await b.listar(n, req.query.fresco === "1");
+    return await b.listar(n, req.query.fresco === "1", flujo);
   } catch (e) {
     return res.code(502).send({ error: e instanceof Error ? e.message : String(e) });
   }
@@ -750,25 +977,26 @@ type CorridaDelBuzon = { lote: string | null; corridas: { id: string; caso: stri
 async function correrBuzon(flujo: string, pedidoDe: { n?: number; ids?: string[]; concurrencia?: number }, origen?: string): Promise<CorridaDelBuzon> {
   const conf = configuracion.obtener();
   const extra = origen ? { origen } : {};
-  if (flujo === "tutelas") {
+  if (flujos.baseDe(flujo) === "tutelas") {
     // El job de tutelas toma el hilo como unidad: se pide el correo principal de cada hilo.
-    const ids = pedidoDe.ids?.length ? pedidoDe.ids : (await buzonTutelas.listar(pedidoDe.n ?? 10, true)).correos.filter((c) => c.principal).map((c) => c.id);
+    const ids = pedidoDe.ids?.length ? pedidoDe.ids : (await buzonTutelas.listar(pedidoDe.n ?? 10, true, flujo)).correos.filter((c) => c.principal).map((c) => c.id);
     if (!ids.length) return { vacio: "la carpeta del job de tutelas está vacía" };
-    const casos = await buzonTutelas.traer(ids);
+    const casos = await buzonTutelas.traer(ids, flujo);
     bandeja.olvidar();
-    const m = motorDe("tutelas")!;
+    const m = motorDe(flujo)!;
     const corridas = casos.map((caso) => m.encolar(caso, conf, extra));
     return { lote: null, corridas: corridas.map((c) => ({ id: c.id, caso: c.caso })) };
   }
-  const ids = pedidoDe.ids?.length ? pedidoDe.ids : (await buzon.listar(pedidoDe.n ?? 10, true)).correos.map((c) => c.id);
+  const ids = pedidoDe.ids?.length ? pedidoDe.ids : (await buzon.listar(pedidoDe.n ?? 10, true, flujo)).correos.map((c) => c.id);
   if (!ids.length) return { vacio: "la carpeta del job está vacía" };
-  const casos = await buzon.traer(ids);
+  const casos = await buzon.traer(ids, flujo);
   bandeja.olvidar();
+  const m = motorDe(flujo)!;
   if (casos.length === 1) {
-    const c = motor.encolar(casos[0]!, conf, extra);
+    const c = m.encolar(casos[0]!, conf, extra);
     return { lote: null, corridas: [{ id: c.id, caso: c.caso }] };
   }
-  const { lote, corridas } = motor.encolarLote(casos, conf, pedidoDe.concurrencia ?? 0, origen);
+  const { lote, corridas } = m.encolarLote(casos, conf, pedidoDe.concurrencia ?? 0, origen);
   return { lote, corridas: corridas.map((c) => ({ id: c.id, caso: c.caso })) };
 }
 
@@ -776,7 +1004,7 @@ app.post<{ Querystring: { flujo?: string } }>("/api/buzon/correr", async (req, r
   const r = pedidoDelBuzon.safeParse(req.body ?? {});
   if (!r.success) return res.code(400).send({ error: "pedido inválido" });
   const flujo = flujoDe(req.query.flujo);
-  if (flujo !== "tutelas" && flujo !== "pqrd") return res.code(404).send({ error: "este flujo no tiene buzón real" });
+  if (!buzonDe(flujo)) return res.code(404).send({ error: "este flujo no tiene buzón real" });
   try {
     const x = await correrBuzon(flujo, r.data);
     if ("vacio" in x) return res.code(404).send({ error: x.vacio });
@@ -844,10 +1072,11 @@ await credenciales.cargar();
 await entornos.precargar();
 await compuerta.cargar();
 // Los scripts del buzón real leen con las credenciales del entorno de su flujo (si las tiene) y nada secreto vuelve sin máscara.
-buzon.enlace.entorno = () => entornos.paraProceso("pqrd");
-buzon.enlace.secretos = () => entornos.valoresSecretos("pqrd");
-buzonTutelas.enlace.entorno = () => entornos.paraProceso("tutelas");
-buzonTutelas.enlace.secretos = () => entornos.valoresSecretos("tutelas");
+// Cada uno con el entorno del flujo que lo pide (pqrd, tutelas o una copia suya).
+buzon.enlace.entorno = (f) => entornos.paraProceso(f);
+buzon.enlace.secretos = (f) => entornos.valoresSecretos(f);
+buzonTutelas.enlace.entorno = (f) => entornos.paraProceso(f);
+buzonTutelas.enlace.secretos = (f) => entornos.valoresSecretos(f);
 for (const id of compuerta.FLUJOS_CON_COMPUERTA) app.log.info({ flujo: id }, compuerta.rotulo(id));
 // Una sola vez: el entorno global de antes pasa a ser el entorno propio de pqrd (sigue llegando igual a sus órdenes).
 const migradas = await entornos.migrarDesdeConfiguracion("pqrd", configuracion.obtener().entorno);
@@ -855,7 +1084,9 @@ if (migradas) app.log.info({ migradas }, "entorno global migrado al flujo pqrd")
 await flujos.cargar();
 catalogo();
 const motor = motorDe("pqrd")!;
-for (const f of flujos.listar()) motorDe(f.id, f.tipo === "codigo");
+// Las copias de código arrancan sus trabajadores cuando se abren o se corren (no todas al iniciar).
+for (const f of flujos.listar()) motorDe(f.id, f.tipo === "codigo" && f.original === true);
+for (const f of flujos.listar().filter((x) => x.copia_de && x.tipo === "codigo")) app.log.info({ flujo: f.id, copia_de: f.copia_de }, compuerta.rotulo(f.id));
 await programador.iniciar({
   flujos: () => flujos.listar(),
   enCurso: (id, origen) => motores.get(id)?.enCurso(origen) ?? 0,

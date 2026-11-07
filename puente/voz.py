@@ -37,7 +37,9 @@ MODELOS = [  # (modelo, región): el primero que conecte
     (os.environ.get("VOZ_MODELO", "gemini-3.8-live"), os.environ.get("VOZ_REGION", "us-central1")),
     ("gemini-live-2.5-flash", "global"),
 ]
-MAX_SEGUNDOS = int(os.environ.get("VOZ_MAX_SEGUNDOS", "900"))
+MAX_SEGUNDOS = int(os.environ.get("VOZ_MAX_SEGUNDOS", "3600"))
+# Una sesión de Gemini Live dura poco; se renueva por dentro con su identificador de reanudación.
+MAX_RECONEXIONES = 20
 TOPE_HERRAMIENTA = 45
 TOPE_LARGA = 300
 # Estas corren en segundo plano durante la llamada: Vera sigue hablando y haciendo otras cosas.
@@ -50,7 +52,7 @@ ESTÁS EN UNA LLAMADA DE VOZ. Así hablas:
 - Una o dos frases por turno, casi siempre una. Nunca repitas lo que la persona dijo, nunca te presentes, nunca vuelvas a saludar, nunca digas «¿en qué más te ayudo?».
 - Cuando hagas algo en pantalla, confírmalo en pocas palabras: «Listo, ahí lo tienes», «Te abrí las corridas».
 - Nada de markdown hablado, ni listas, ni leer ids, códigos o correos letra por letra: di «el primero», «el de Seguros Bolívar».
-- Al saludo respondes con dos o tres palabras («Hola, dime.») y esperas.
+- Tú saludas primero al conectar (el sistema te avisa); si la persona saluda después, contesta con algo breve y distinto, sin repetir tu saludo.
 - Siempre con palabras claras en español; nunca sonidos, murmullos ni palabras en inglés.
 - Cada respuesta trae algo concreto: una cifra, un nombre, un resultado. Nunca respuestas vacías como «sí, aquí los tengo».
 
@@ -61,7 +63,8 @@ Cómo trabajas en la llamada (dos manos):
 - Trabajas en paralelo: las tareas largas (responder_por_escrito, probar o correr flujos, el buzón real, listar correos) corren en segundo plano y te responden «en_curso». Di en pocas palabras que ya estás en eso («Lo estoy revisando») y SIGUE atendiendo: puedes responder otras preguntas y lanzar otras herramientas mientras tanto. Cuando llegue «[Resultado de la tarea N]», cuéntalo en una o dos frases y continúa.
 - Después de una herramienta nunca te quedes callada.
 - Si solo oyes ruido o algo sin sentido, no respondas.
-- Cuando la persona se despida, di primero tu despedida en una frase corta en español («Con gusto, hablamos.») y SOLO después llama a terminar_llamada.
+- Despedida: cuando la persona se despida o pida colgar, despídete en UNA frase cálida, corta y variada, en español y que tenga que ver con lo que hicieron (por ejemplo «Listo, quedó corriendo; cualquier cosa me llamas.» o «Perfecto, te dejo el resumen en el chat. ¡Que te rinda!»). No repitas siempre la misma despedida, no digas «con gusto, hablamos» de memoria, y llama a terminar_llamada SOLO después de terminar la frase.
+- Si la persona te deja la decisión («eso lo sabes tú», «lo que tú digas»), propón algo concreto con valores razonables y hazlo; dilo en una frase. No hagas preguntas en cadena: como mucho una pregunta, y solo si sin ella no puedes avanzar.
 """
 
 # En la llamada, lo pesado (crear, editar, validar, probar, leer definiciones) va por responder_por_escrito.
@@ -163,8 +166,9 @@ async def principal() -> None:
     declaraciones += [types.FunctionDeclaration(**h) for h in HERRAMIENTAS_VOZ]
     cred, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
 
-    def config() -> Any:
+    def config(handle: Any = None) -> Any:
         return types.LiveConnectConfig(
+            session_resumption=types.SessionResumptionConfig(handle=handle),
             response_modalities=[types.Modality.AUDIO],
             system_instruction=sistema,
             tools=[types.Tool(function_declarations=declaraciones)],
@@ -181,20 +185,78 @@ async def principal() -> None:
         )
 
     ultimo_error = ""
-    for modelo, region in MODELOS:
-        cliente = genai.Client(vertexai=True, project=asistente.PROYECTO, location=region, credentials=cred)
+    # La IA de voz de Vera (configurable en Ajustes): Vertex con su región o Gemini directo con su llave.
+    ia_voz = inicio.get("ia_voz") or {}
+    opciones = list(MODELOS)
+    if ia_voz.get("proveedor") in (None, "", "vertex") and ia_voz.get("modelo"):
+        opciones = [(ia_voz["modelo"], ia_voz.get("ubicacion") or "us-central1")] + [o for o in MODELOS if o[0] != ia_voz["modelo"]]
+    elif ia_voz.get("proveedor") == "gemini":
+        opciones = [(ia_voz.get("modelo") or "gemini-live-2.5-flash", "gemini")]
+    elif ia_voz.get("proveedor"):
+        enviar("error", texto=f"La voz de Vera está configurada con «{ia_voz.get('proveedor')}», que no tiene voz en vivo. Cámbiala en Ajustes › IA de Vera.")
+        return
+    for modelo, region in opciones:
+        if region == "gemini":
+            llave = (inicio.get("credencial_ia") or {}).get("api_key")
+            if not llave:
+                ultimo_error = "falta la llave de Gemini en la conexión de la voz de Vera"
+                continue
+            cliente = genai.Client(api_key=llave)
+        else:
+            cliente = genai.Client(vertexai=True, project=asistente.PROYECTO, location=region, credentials=cred)
+
+        async def abrir(handle: Any = None, cliente: Any = cliente, modelo: str = modelo) -> Any:
+            """Abre una sesión (nueva o reanudada) y devuelve (contexto, sesión)."""
+            cm = cliente.aio.live.connect(model=modelo, config=config(handle))
+            return cm, await cm.__aenter__()
+
         try:
-            async with cliente.aio.live.connect(model=modelo, config=config()) as sesion:
-                enviar("listo", voz=voz, modelo=modelo)
-                await llamada(sesion, types, cid, flujo)
-                return
+            primera_sesion = await abrir()
         except Exception as e:  # el siguiente modelo
             ultimo_error = f"{type(e).__name__}: {e}"[:300]
             continue
+        enviar("listo", voz=voz, modelo=modelo)
+        await llamada(primera_sesion, abrir, types, cid, flujo, primera_llamada=not (conv.get("mensajes") or []))
+        return
     enviar("error", texto=f"No pude conectar la voz: {ultimo_error}")
 
 
-async def llamada(sesion: Any, types: Any, cid: str, flujo: str) -> None:
+async def llamada(primera: Any, abrir: Any, types: Any, cid: str, flujo: str, primera_llamada: bool = False) -> None:
+    # La sesión vive en S y se puede renovar sin cortar la llamada (ni perder el turno ni las tareas).
+    S: Dict[str, Any] = {"cm": primera[0], "s": primera[1], "handle": None, "reconexiones": 0, "renovando": False}
+
+    class _Sesion:
+        """Fachada estable: siempre habla con la sesión vigente."""
+        def __getattr__(self, nombre: str) -> Any:
+            return getattr(S["s"], nombre)
+
+    sesion = _Sesion()
+
+    async def renovar(motivo: str) -> bool:
+        if S["renovando"] or S["reconexiones"] >= MAX_RECONEXIONES:
+            return False
+        S["renovando"] = True
+        S["reconexiones"] += 1
+        enviar("reconectando", motivo=motivo)
+        anterior = S["cm"]
+        try:
+            for intento in range(3):
+                try:
+                    S["cm"], S["s"] = await abrir(S["handle"])
+                    break
+                except Exception:
+                    await asyncio.sleep(0.6 * (intento + 1))
+            else:
+                return False
+            try:
+                await anterior.__aexit__(None, None, None)
+            except Exception:
+                pass
+            enviar("reconectado")
+            return True
+        finally:
+            S["renovando"] = False
+
     turno = Turno()
     colgar = asyncio.Event()
     inicio = time.monotonic()
@@ -255,8 +317,11 @@ async def llamada(sesion: Any, types: Any, cid: str, flujo: str) -> None:
                 return
             tipo, datos = trama
             if tipo == "A":
-                if datos and len(datos) % 2 == 0 and len(datos) <= 64 * 1024:
-                    await sesion.send_realtime_input(audio=types.Blob(data=datos, mime_type="audio/pcm;rate=16000"))
+                if datos and len(datos) % 2 == 0 and len(datos) <= 64 * 1024 and not S["renovando"]:
+                    try:
+                        await sesion.send_realtime_input(audio=types.Blob(data=datos, mime_type="audio/pcm;rate=16000"))
+                    except Exception:
+                        pass  # la bajada detecta la caída y renueva la sesión
                 continue
             m = json.loads(datos)
             if m.get("tipo") == "texto" and m.get("texto"):
@@ -296,7 +361,8 @@ async def llamada(sesion: Any, types: Any, cid: str, flujo: str) -> None:
             despedida["hecha"] = True
             # Si la despedida ya quedó completa, después de colgar no se oye nada más.
             despedida["completa"] = bool(re.search(r"[.!?…]\s*$", turno.dicho.strip()))
-            asyncio.get_running_loop().call_later(4, colgar.set)
+            # Se cuelga al terminar el turno de la despedida; el navegador deja sonar lo que falte.
+            asyncio.get_running_loop().call_later(8, colgar.set)
             res = {"ok": True, "nota": "Si dejaste la despedida a medias, termínala en español en pocas palabras. Nada más."}
         else:
             tope = TOPE_LARGA if nombre in LARGAS else TOPE_HERRAMIENTA
@@ -359,7 +425,24 @@ async def llamada(sesion: Any, types: Any, cid: str, flujo: str) -> None:
 
     async def bajada() -> None:
         while not colgar.is_set():
+            try:
+                await _bajada_una()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                if colgar.is_set():
+                    return
+                if not await renovar(f"conexión: {type(e).__name__}"):
+                    enviar("terminando", motivo="conexion")
+                    colgar.set()
+                    return
+
+    async def _bajada_una() -> None:
+        while not colgar.is_set():
             async for m in sesion.receive():
+                upd = getattr(m, "session_resumption_update", None)
+                if upd is not None and getattr(upd, "resumable", False) and getattr(upd, "new_handle", None):
+                    S["handle"] = upd.new_handle
                 if m.tool_call and m.tool_call.function_calls:
                     respuestas = list(await asyncio.gather(*(herramienta(ll) for ll in m.tool_call.function_calls)))
                     await sesion.send_tool_response(function_responses=respuestas)
@@ -385,6 +468,8 @@ async def llamada(sesion: Any, types: Any, cid: str, flujo: str) -> None:
                         enviar("interrumpido")
                     if sc.turn_complete:
                         enviar("turno")
+                        if despedida["hecha"]:
+                            asyncio.get_running_loop().call_later(0.3, colgar.set)
                         if not silencio["desde"]:
                             actividad["turno_abierto"] = False
                         # Si usó herramientas y aún no dijo nada, lo que diga después
@@ -394,8 +479,10 @@ async def llamada(sesion: Any, types: Any, cid: str, flujo: str) -> None:
                         if not silencio["desde"] and not (turno.pasos and not turno.dicho.strip()):
                             await guardar()
                 if m.go_away:
-                    enviar("terminando", motivo="tiempo")
-                    colgar.set()
+                    # La sesión se vence pronto: se renueva por dentro y la llamada sigue.
+                    if not await renovar("la sesión se renueva"):
+                        enviar("terminando", motivo="tiempo")
+                        colgar.set()
                     return
                 if colgar.is_set():
                     return
@@ -431,6 +518,17 @@ async def llamada(sesion: Any, types: Any, cid: str, flujo: str) -> None:
                 colgar.set()
 
     tareas = [asyncio.create_task(x) for x in (subida(), bajada(), reloj())]
+    # Vera saluda primero, corto y natural, según la hora en Bogotá.
+    hora = time.gmtime(time.time() - 5 * 3600).tm_hour
+    franja = "buenos días" if 5 <= hora < 12 else "buenas tardes" if hora < 19 else "buenas noches"
+    try:
+        await sesion.send_client_content(turns=types.Content(role="user", parts=[types.Part(text=(
+            f"[Aviso del sistema: la llamada acaba de conectarse. Saluda tú primero con UNA frase corta y natural, empezando por «{franja.capitalize()}», "
+            + ("y di tu nombre una sola vez («habla Vera»), " if primera_llamada else "sin presentarte, ")
+            + "y deja la puerta abierta para que la persona hable (por ejemplo «¿qué hacemos?» o «cuéntame»). Nada de listas de lo que puedes hacer.]"))]),
+            turn_complete=True)
+    except Exception:
+        pass
     await colgar.wait()
     for t in tareas:
         t.cancel()

@@ -40,7 +40,7 @@ const TASA_VOZ = 24_000;
 
 const CALIBRACION_MS = 500, TECHO_SUELO = -45, SUELO_MIN = -80, SILENCIO = -100;
 const SUBE_MS = 4000, BAJA_MS = 800, MARGEN = 12, MIN_ABRE = -48, ATAQUE_MS = 200;
-const MARGEN_HABLANDO = 24, MIN_HABLANDO = -34, ATAQUE_HABLANDO_MS = 450, COLA_MS = 350, PREVIO_MS = 150;
+const MARGEN_HABLANDO = 28, MIN_HABLANDO = -30, ATAQUE_HABLANDO_MS = 650, COLA_MS = 350, PREVIO_MS = 150;
 
 function nivelDb(t: Float32Array): number {
   let s = 0;
@@ -156,7 +156,7 @@ function tono(ctx: AudioContext, tipo: "inicio" | "fin") {
 
 // --------------------------------------------------------------- la llamada
 
-export type EstadoLlamada = "inactiva" | "conectando" | "en_llamada" | "terminando";
+export type EstadoLlamada = "inactiva" | "conectando" | "en_llamada" | "reconectando" | "terminando";
 export type EventoVoz = { tipo: string; [k: string]: unknown };
 
 export function useVoz(alEvento: (e: EventoVoz) => void) {
@@ -320,13 +320,22 @@ export function useVoz(alEvento: (e: EventoVoz) => void) {
         setDicho("");
       } else if (e.tipo === "error") setError(String(e.texto ?? "La llamada falló."));
       else if (e.tipo === "terminando") setEstado("terminando");
+      else if (e.tipo === "reconectando") setEstado("reconectando");
+      else if (e.tipo === "reconectado") setEstado("en_llamada");
       evento.current(e);
     };
     ws.onclose = (ev) => {
       if (ev.code === 4429) setError("Hay demasiadas llamadas abiertas; cierra alguna e intenta otra vez.");
       else if (ev.code === 4404) setError("Esa conversación ya no existe.");
-      limpiar();
-      evento.current({ tipo: "colgada" });
+      const salida = s.salida;
+      const falta = salida && s.sonando.size ? Math.max(0, s.tocarEn - salida.currentTime) : 0;
+      // El micrófono se apaga ya; la voz de Vera termina su frase y después suena el tono de fin.
+      s.listo = false;
+      s.mic?.getTracks().forEach((t) => t.stop());
+      setTimeout(() => {
+        limpiar();
+        evento.current({ tipo: "colgada" });
+      }, Math.min(15000, falta * 1000 + 250));
     };
   }, [limpiar, vozMuda]);
 
@@ -334,7 +343,8 @@ export function useVoz(alEvento: (e: EventoVoz) => void) {
     const ws = r.current.ws;
     if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ tipo: "fin" }));
     setEstado("terminando");
-    setTimeout(() => r.current.ws && limpiar(), 2500);
+    // Si el servidor no cierra a tiempo, se cierra aquí (dejando sonar lo que falte).
+    setTimeout(() => r.current.ws && r.current.ws.readyState !== WebSocket.CLOSED && r.current.ws.close(), 4000);
   }, [limpiar]);
 
   const alternarMic = useCallback(() => {

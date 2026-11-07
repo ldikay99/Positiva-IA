@@ -93,6 +93,7 @@ Cómo trabajas:
    Para cambios puntuales usa editar_nodo, agregar_nodo, eliminar_nodo y editar_aristas: cada una valida y guarda una versión nueva.
 5. Los flujos de código (pqrd, tutelas) tienen la estructura fija del código: puedes leerlos (listar_nodos, ver_nodo) y ajustar sus parámetros (ajustar_parametro_pqrd), no rehacerlos.
 6. Si un flujo necesita una conexión (correo, Drive, base de datos, API), revisa listar_credenciales; si falta, usa pedir_credencial (la persona la crea, tú nunca manejas claves) y luego configúrala en el nodo por su nombre. Las escrituras afuera solo ocurren si la persona habilitó la escritura en esa conexión; si no, quedan registradas como bloqueadas.
+   IA de los flujos: hay tres niveles separados — la IA global de la plataforma, la de cada flujo (usa la global o una propia) y la de cada nodo de IA (hereda o elige la suya); se resuelve nodo → flujo → global. Tú (Vera) tienes tu propia IA aparte. Con proveedores_ia, modelos_ia, ver_ia_flujo, configurar_ia_flujo y probar_ia eliges y verificas proveedor y modelo según lo que el nodo necesita (visión, JSON, herramientas) y el costo; si falta la llave de un proveedor, pedir_credencial (la persona la escribe). Para un nodo puntual usa editar_nodo con config.proveedor/modelo/credencial.
    Cada flujo tiene su propio entorno (variables y secretos, no globales): en los nodos se usan como {{entorno.NOMBRE}}. Revisa con ver_entorno; define o quita las que NO son secretas con definir_variable / quitar_variable; los secretos los escribe la persona (pedir_secreto). Para la revisión antes de producción, ver_manifiesto.
    En el editor del flujo abierto usa controlar_editor (seleccionar o centrar un nodo, abrir su panel, zoom, ordenar, resaltar, abrir la paleta o el diálogo de correr). Renombra, duplica, versiona y corre flujos con renombrar_flujo, duplicar_flujo, versiones_flujo, restaurar_version y correr_flujo.
    Moverte por la plataforma: navegar (vistas), abrir_correspondencia, filtrar_correos, abrir_correo, seleccionar_correos, abrir_corrida, abrir_adjuntos, abrir_proceso, ajustar_lienzo (ver todo, acercar, alejar), centrar_nodo, enfocar_flujo. Si piden «muéstrame», «ábreme», «llévame», «aléjalo», hazlo con estas.
@@ -149,6 +150,12 @@ HERRAMIENTAS = [
     {"name": "pedir_secreto", "description": "Abre a la persona la sección Entorno del flujo para que ELLA escriba un secreto (clave, token). Tú nunca lo recibes.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "nombre": {"type": "string"}, "para_que": {"type": "string"}}, "required": ["flujo", "nombre"]}},
     {"name": "ver_manifiesto", "description": "El manifiesto de un flujo para revisarlo antes de producción: disparador, nodos, conexiones externas, variables (sin valores), escrituras y si están habilitadas, programación y webhook.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}}, "required": ["flujo"]}},
     {"name": "abrir_entorno", "description": "Abre en pantalla la sección Entorno de un flujo (o su manifiesto con manifiesto=true).", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "manifiesto": {"type": "boolean"}}, "required": ["flujo"]}},
+    {"name": "proveedores_ia", "description": "Los proveedores de IA disponibles (Vertex, Gemini, OpenAI, Azure, Claude, DeepSeek, Mistral, Groq, OpenRouter, Ollama, Cohere, personalizado…), si están configurados (conexión), cuál es la IA global de la plataforma y cuál usa Vera.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}}}},
+    {"name": "modelos_ia", "description": "Los modelos de un proveedor con lo que aceptan (texto, imágenes, PDF, JSON, herramientas, voz en vivo), contexto y precio aproximado por millón de tokens.", "parameters": {"type": "object", "properties": {"proveedor": {"type": "string"}, "credencial": {"type": "string"}, "flujo": {"type": "string"}}, "required": ["proveedor"]}},
+    {"name": "ver_ia_flujo", "description": "Qué IA usa un flujo y cada uno de sus nodos (propia del flujo, la global o la del nodo), y su consumo.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}}, "required": ["flujo"]}},
+    {"name": "configurar_ia_flujo", "description": "Elige la IA de un flujo declarativo: usar la global (usar_global=true) o una propia {proveedor, modelo, credencial?, temperatura?}. Valida y guarda. Para un nodo usa editar_nodo con config.proveedor/modelo/credencial (o null para heredar).", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "usar_global": {"type": "boolean"}, "proveedor": {"type": "string"}, "modelo": {"type": "string"}, "credencial": {"type": "string"}, "temperatura": {"type": "number"}}, "required": ["flujo"]}},
+    {"name": "probar_ia", "description": "Prueba de verdad un proveedor y modelo (con su conexión) con una llamada mínima: dice si responde, cuánto tarda y cuánto costó.", "parameters": {"type": "object", "properties": {"proveedor": {"type": "string"}, "modelo": {"type": "string"}, "credencial": {"type": "string"}, "flujo": {"type": "string"}}, "required": ["proveedor", "modelo"]}},
+    {"name": "configurar_ia_global", "description": "Cambia la IA global de la plataforma (la que usan los flujos que dicen «usar la global»). Solo si la persona lo pide.", "parameters": {"type": "object", "properties": {"proveedor": {"type": "string"}, "modelo": {"type": "string"}, "credencial": {"type": "string"}, "temperatura": {"type": "number"}}, "required": ["proveedor", "modelo"]}},
     {"name": "controlar_editor", "description": "Maneja el editor del flujo abierto en pantalla. op: seleccionar_nodo (lo selecciona, centra y abre su panel), abrir_panel_nodo, cerrar_panel, zoom_nodo, zoom (nivel 0.2–2), auto_ordenar, resaltar (nodos), recargar, abrir_paleta (busqueda), abrir_correr.", "parameters": {"type": "object", "properties": {"op": {"type": "string"}, "nodo": {"type": "string"}, "nodos": {"type": "array", "items": {"type": "string"}}, "nivel": {"type": "number"}, "busqueda": {"type": "string"}, "seccion": {"type": "string"}}, "required": ["op"]}},
     {"name": "ajustar_lienzo", "description": "Mueve la vista del lienzo del flujo: ver_todo (encuadra el flujo completo), acercar, alejar o restablecer.", "parameters": {"type": "object", "properties": {"modo": {"type": "string"}}, "required": ["modo"]}},
     {"name": "probar_flujo", "description": "Corre un flujo sobre un correo real (modo prueba) y espera el resultado: desenlace, campos, avisos y pasos.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "caso": {"type": "string"}}, "required": ["flujo", "caso"]}},
@@ -486,6 +493,35 @@ def ejecutar(nombre: str, a: Dict[str, Any]) -> Any:
     if nombre == "abrir_entorno":
         emitir("control", accion="manifiesto" if a.get("manifiesto") else "entorno", flujo=a["flujo"])
         return {"ok": True}
+    if nombre == "proveedores_ia":
+        r = api("GET", "/api/ia/proveedores" + (f"?flujo={a['flujo']}" if a.get("flujo") else ""))
+        if isinstance(r, dict) and isinstance(r.get("proveedores"), list):
+            r["proveedores"] = [{k: p.get(k) for k in ("id", "nombre", "autenticacion", "tipo_credencial", "requiere_credencial", "configurado", "es_global", "credenciales")} for p in r["proveedores"]]
+        return r
+    if nombre == "modelos_ia":
+        q = f"/api/ia/modelos?proveedor={a['proveedor']}" + "".join(f"&{k}={a[k]}" for k in ("credencial", "flujo") if a.get(k))
+        r = api("GET", q)
+        if isinstance(r, dict) and isinstance(r.get("modelos"), list):
+            r["modelos"] = [{k: m.get(k) for k in ("id", "nombre", "contexto", "acepta", "precio_entrada", "precio_salida", "verificado")} for m in r["modelos"]][:60]
+        return r
+    if nombre == "ver_ia_flujo":
+        m = api("GET", f"/api/flujos/{a['flujo']}/manifiesto")
+        t = api("GET", "/api/tablero")
+        consumo = next((x.get("consumo") for x in (t if isinstance(t, list) else []) if x.get("id") == a["flujo"]), None)
+        return {"ia": (m or {}).get("ia"), "consumo": consumo}
+    if nombre == "configurar_ia_flujo":
+        d = _definicion(a["flujo"])
+        if a.get("usar_global"):
+            d["ia"] = {"usar": "global"}
+        else:
+            if not a.get("proveedor") or not a.get("modelo"):
+                return {"error": "di proveedor y modelo, o usar_global=true"}
+            d["ia"] = {k: a[k] for k in ("proveedor", "modelo", "credencial", "temperatura") if a.get(k) is not None}
+        return _guardar(d)
+    if nombre == "probar_ia":
+        return api("POST", "/api/ia/probar", {k: a[k] for k in ("proveedor", "modelo", "credencial", "flujo") if a.get(k)})
+    if nombre == "configurar_ia_global":
+        return api("PUT", "/api/ia/global", {k: a[k] for k in ("proveedor", "modelo", "credencial", "temperatura") if a.get(k) is not None})
     if nombre == "controlar_editor":
         ops = ("seleccionar_nodo", "abrir_panel_nodo", "cerrar_panel", "zoom_nodo", "zoom", "auto_ordenar", "resaltar", "recargar", "abrir_paleta", "abrir_correr")
         if a.get("op") not in ops:
@@ -620,7 +656,10 @@ def conversar(entrada: Dict[str, Any], aviso: Any = None) -> Dict[str, Any]:
     from google.genai import types
 
     avisar = aviso or (lambda tipo, **d: emitir(tipo, **d))
-    modelo = entrada.get("modelo") or "gemini-3.1-flash-lite"
+    ia = entrada.get("ia_vera") or {}
+    if ia.get("proveedor") and ia.get("proveedor") != "vertex":
+        return _conversar_con_proveedor(entrada, ia, avisar)
+    modelo = entrada.get("modelo") or ia.get("modelo") or "gemini-3-flash-preview"
     flujo = entrada.get("flujo") or "pqrd"
     if entrada.get("conversacion"):
         CONVERSACION["id"] = entrada.get("conversacion")
@@ -688,6 +727,64 @@ def conversar(entrada: Dict[str, Any], aviso: Any = None) -> Dict[str, Any]:
             respuestas.append(types.Part.from_function_response(name=ll.name, response={"resultado": res}))
         contenidos.append(types.Content(role="user", parts=respuestas))
     texto = "Me detuve tras varios pasos sin terminar. Dime cómo seguimos."
+    avisar("texto", texto=texto)
+    avisar("fin", flujos_cambiados=sorted(cambiados))
+    return {"texto": texto, "pasos": pasos, "cambiados": sorted(cambiados), "propuestas": propuestas}
+
+
+def _conversar_con_proveedor(entrada: Dict[str, Any], ia: Dict[str, Any], avisar: Any) -> Dict[str, Any]:
+    """Vera con un proveedor que no es Vertex (OpenAI, Claude, Gemini directo…), por la capa de proveedores."""
+    from proveedores import conversar_con_herramientas
+
+    flujo = entrada.get("flujo") or "pqrd"
+    if entrada.get("conversacion"):
+        CONVERSACION["id"] = entrada.get("conversacion")
+    sistema = SISTEMA + "\n\n" + describir_pantalla(entrada.get("pantalla") or {}, flujo)
+    mensajes: List[Dict[str, Any]] = []
+    todos = entrada.get("mensajes") or []
+    recientes = set(sorted(i for i, m in enumerate(todos) if m.get("rol") == "usuario")[-3:])
+    for i, m in enumerate(todos):
+        if m.get("rol") == "usuario":
+            partes: List[Any] = []
+            for adj in m.get("adjuntos") or []:
+                tipo, ruta = (adj.get("tipo") or "").lower(), adj.get("ruta") or ""
+                if i in recientes and tipo in IMAGENES_Y_PDF and ruta and os.path.exists(ruta) and os.path.getsize(ruta) < 18 * 1024 * 1024:
+                    with open(ruta, "rb") as f:
+                        partes.append({"tipo": "pdf" if tipo == "application/pdf" else "imagen", "datos": f.read(), "mime": tipo})
+                else:
+                    try:
+                        from texto_de_archivo import texto as _texto
+                        partes.append(f"[Adjunto «{adj.get('nombre')}», su texto:]\n{_texto(ruta, adj.get('nombre') or 'archivo')[:20000]}")
+                    except Exception:
+                        partes.append(f"[Adjunto «{adj.get('nombre')}»: no se pudo leer]")
+            partes.append(m.get("texto") or "(sin texto: revisa los adjuntos)")
+            mensajes.append({"rol": "usuario", "partes": partes})
+        else:
+            hechos = "\n".join(f"- {p.get('nombre')} → {(p.get('resultado') or '')[:300]}" for p in m.get("pasos") or [])
+            mensajes.append({"rol": "asistente", "texto": (m.get("texto") or "") + (f"\n\n[Lo que hice en ese turno:\n{hechos}]" if hechos else "")})
+    herramientas = [{"nombre": h["name"], "descripcion": h["description"], "parametros": h["parameters"]} for h in HERRAMIENTAS]
+    cambiados: set = set()
+    propuestas: List[Dict[str, Any]] = []
+    pasos: List[Dict[str, Any]] = []
+
+    def ejecutar_y_anotar(nombre: str, args: Dict[str, Any]) -> Any:
+        resumen = {k: (v if k != "definicion" else {"id": (v or {}).get("id"), "nodos": len((v or {}).get("nodos", []))}) for k, v in args.items()}
+        avisar("herramienta", nombre=nombre, argumentos=resumen)
+        res = ejecutar(nombre, args)
+        if nombre == "guardar_flujo" and isinstance(res, dict) and res.get("flujo"):
+            cambiados.add(res["flujo"]["id"])
+        if nombre in ("editar_nodo", "agregar_nodo", "eliminar_nodo", "editar_aristas", "configurar_ia_flujo") and isinstance(res, dict) and res.get("guardado"):
+            cambiados.add(args.get("flujo"))
+        if nombre == "proponer_borrado" and isinstance(res, dict) and res.get("propuesto"):
+            propuestas.append({"accion": "borrar_flujo", "id": args.get("id")})
+        texto_res = json.dumps(res, ensure_ascii=False, default=str)
+        pasos.append({"nombre": nombre, "argumentos": resumen, "resultado": texto_res[:600]})
+        avisar("resultado_herramienta", nombre=nombre, resultado=texto_res[:1500])
+        return res
+
+    r = conversar_con_herramientas(ia["proveedor"], ia["modelo"], entrada.get("credencial_ia") or {}, sistema, mensajes, herramientas,
+                                   ejecutar_y_anotar, max_vueltas=MAX_VUELTAS, temperatura=ia.get("temperatura"), flujo="vera")
+    texto = r.get("texto") or "(sin respuesta)"
     avisar("texto", texto=texto)
     avisar("fin", flujos_cambiados=sorted(cambiados))
     return {"texto": texto, "pasos": pasos, "cambiados": sorted(cambiados), "propuestas": propuestas}

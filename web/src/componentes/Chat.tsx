@@ -246,6 +246,8 @@ export function Chat() {
   const [texto, setTexto] = useState("");
   const [subiendo, setSubiendo] = useState<Subiendo[]>([]);
   const [modelo, setModelo] = useState(() => leerLocal(`${CLAVE}:modelo`, MODELOS[0]!.id));
+  // La IA de Vera (aparte de la de los flujos): con qué proveedor escribe y si tiene voz en vivo.
+  const [iaVera, setIaVera] = useState<{ texto: { proveedor: string; modelo: string }; voz_disponible: boolean; motivo: string } | null>(null);
   const [voz, setVoz] = useState(() => leerLocal(`${CLAVE}:voz`, VOCES[0]!.id));
   const [pensando, setPensando] = useState("");
   const [ocupado, setOcupado] = useState(false);
@@ -254,7 +256,8 @@ export function Chat() {
   const [confirmando, setConfirmando] = useState<string | null>(null);
   const [arrastrando, setArrastrando] = useState(false);
   const [escritoEnLlamada, setEscritoEnLlamada] = useState<string[]>([]);
-  const [tareasEnCurso, setTareasEnCurso] = useState(0);
+  // Las tareas largas que Vera corre en segundo plano durante la llamada, con su nombre.
+  const [tareas, setTareas] = useState<{ n: number; nombre: string; desde: number; lista?: boolean }[]>([]);
   const caja = useRef<HTMLDivElement>(null);
   const entrada = useRef<HTMLTextAreaElement>(null);
   const archivo = useRef<HTMLInputElement>(null);
@@ -297,10 +300,15 @@ export function Chat() {
       if (c) void abrirConversacion(c.id);
       void cargarLista();
       if (Array.isArray(e.cambiados) && e.cambiados.length) void cargarFlujos();
-    } else if (e.tipo === "tarea_iniciada") setTareasEnCurso((n) => n + 1);
-    else if (e.tipo === "tarea_lista") setTareasEnCurso((n) => Math.max(0, n - 1));
+    } else if (e.tipo === "tarea_iniciada") setTareas((t) => [...t, { n: Number(e.tarea), nombre: String(e.nombre), desde: Date.now() }]);
+    else if (e.tipo === "tarea_lista") {
+      const n = Number(e.tarea);
+      // Se marca lista un momento (para que se vea que terminó) y luego se quita.
+      setTareas((t) => t.map((x) => (x.n === n ? { ...x, lista: true } : x)));
+      setTimeout(() => setTareas((t) => t.filter((x) => x.n !== n)), 2500);
+    }
     else if (e.tipo === "colgada") {
-      setTareasEnCurso(0);
+      setTareas([]);
       setPensando("");
       setEscritoEnLlamada([]);
     } else enPantalla(e);
@@ -325,6 +333,7 @@ export function Chat() {
 
   useEffect(() => {
     if (!abierto) return;
+    void pedir<{ texto: { proveedor: string; modelo: string }; voz_disponible: boolean; motivo: string }>("/api/ia/vera").then(setIaVera).catch(() => setIaVera(null));
     void cargarLista();
     const id = leerLocal<string>(`${CLAVE}:actual`, "");
     if (id && !actual) void abrirConversacion(id);
@@ -526,9 +535,9 @@ export function Chat() {
                 <button
                   className={`chat-icono llamar ${enLlamada ? "activa" : ""}`}
                   aria-label={enLlamada ? "Colgar" : `Llamar a ${NOMBRE}`}
-                  title={enLlamada ? "Colgar" : `Hablar con ${NOMBRE}`}
+                  title={enLlamada ? "Colgar" : iaVera && !iaVera.voz_disponible ? `Sin voz: ${iaVera.motivo}` : `Hablar con ${NOMBRE}`}
                   onClick={() => void llamar()}
-                  disabled={llamada.estado === "terminando"}
+                  disabled={llamada.estado === "terminando" || (!enLlamada && !!iaVera && !iaVera.voz_disponible)}
                 >
                   <Icono n={enLlamada ? "colgar" : "telefono"} tam={16} />
                 </button>
@@ -628,10 +637,21 @@ export function Chat() {
                     {pensando && !enLlamada && <div className="chat-pensando"><span className="chat-puntos"><i /><i /><i /></span>{pensando}</div>}
                   </div>
 
+                  {enLlamada && tareas.length > 0 && (
+                    <ul className="llamada-tareas" aria-live="polite" aria-label="Tareas en segundo plano">
+                      {tareas.map((t) => (
+                        <li key={t.n} className={t.lista ? "lista" : ""}>
+                          {t.lista ? <Icono n="check" tam={12} /> : <span className="girando" />}
+                          <span>{NOMBRE_HERRAMIENTA[t.nombre] ?? t.nombre}</span>
+                          <small>{t.lista ? "listo" : "en curso"}</small>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                   {enLlamada && (
                     <div className="llamada" role="group" aria-label="Llamada con Vera">
                       <Indicador analizadores={llamada.analizadores} />
-                      <span className="llamada-estado" aria-live="polite">{llamada.estado === "conectando" ? "Conectando…" : llamada.estado === "terminando" ? "Colgando…" : llamada.micMudo ? "Micrófono apagado" : pensando ? pensando : "Te escucho"}{tareasEnCurso > 0 && <em className="llamada-tareas">{tareasEnCurso === 1 ? "1 tarea en curso" : `${tareasEnCurso} tareas en curso`}</em>}</span>
+                      <span className="llamada-estado" aria-live="polite">{llamada.estado === "conectando" ? "Conectando…" : llamada.estado === "reconectando" ? "Reconectando…" : llamada.estado === "terminando" ? "Colgando…" : llamada.micMudo ? "Micrófono apagado" : pensando ? pensando : "Te escucho"}</span>
                       <button className={`llamada-boton ${llamada.micMudo ? "apagado" : ""}`} aria-pressed={llamada.micMudo} aria-label={llamada.micMudo ? "Encender el micrófono" : "Apagar el micrófono"} title={llamada.micMudo ? "Encender el micrófono" : "Apagar el micrófono"} onClick={llamada.alternarMic}><Icono n={llamada.micMudo ? "micMudo" : "mic"} tam={16} /></button>
                       <button className={`llamada-boton ${llamada.vozMuda ? "apagado" : ""}`} aria-pressed={llamada.vozMuda} aria-label={llamada.vozMuda ? `Oír a ${NOMBRE}` : `Silenciar a ${NOMBRE}`} title={llamada.vozMuda ? `Oír a ${NOMBRE}` : `Silenciar a ${NOMBRE}`} onClick={llamada.alternarVoz}><Icono n={llamada.vozMuda ? "altavozMudo" : "altavoz"} tam={16} /></button>
                       <button className="llamada-boton colgar" aria-label="Colgar" title="Colgar" onClick={llamada.colgar}><Icono n="colgar" tam={16} /></button>
@@ -683,15 +703,19 @@ export function Chat() {
                     </div>
                     <div className="chat-pie">
                       <span>Respuesta</span>
-                      <Selector
-                        tamano="chico"
-                        tono="plano"
-                        etiqueta="Cómo responde por escrito"
-                        valor={modelo}
-                        ancho={220}
-                        opciones={MODELOS.map((m) => ({ valor: m.id, etiqueta: m.nombre, detalle: m.detalle }))}
-                        alCambiar={(v) => { setModelo(v); guardarLocal(`${CLAVE}:modelo`, v); }}
-                      />
+                      {!iaVera || iaVera.texto.proveedor === "vertex" ? (
+                        <Selector
+                          tamano="chico"
+                          tono="plano"
+                          etiqueta="Cómo responde por escrito"
+                          valor={modelo}
+                          ancho={220}
+                          opciones={MODELOS.map((m) => ({ valor: m.id, etiqueta: m.nombre, detalle: m.detalle }))}
+                          alCambiar={(v) => { setModelo(v); guardarLocal(`${CLAVE}:modelo`, v); }}
+                        />
+                      ) : (
+                        <span className="chat-ia-fija" title="Se cambia en Ajustes › IA de Vera">{iaVera.texto.proveedor} · {iaVera.texto.modelo}</span>
+                      )}
                       <span>Voz</span>
                       <Selector
                         tamano="chico"

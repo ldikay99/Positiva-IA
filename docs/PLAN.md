@@ -95,32 +95,32 @@ Al buscar, el nodo encuentra lo que se busca sin importar mayúsculas, tildes, e
 
 Cada flujo, y cada nodo de IA, elige su proveedor y su modelo. Hoy todo usa Vertex, y Vertex queda por defecto en los flujos actuales. Otros flujos pueden usar Gemini directo, OpenAI, Claude, DeepSeek, OpenRouter o cualquier servicio compatible con OpenAI. Cada flujo es independiente aunque corran al mismo tiempo.
 
-- [ ] Capa de proveedores en el motor (`puente/proveedores/`), con una sola interfaz: texto, JSON con esquema, imágenes y PDF cuando el modelo los acepte, tokens y costo.
-  - [ ] Vertex (Gemini con la identidad del servicio, como hoy).
-  - [ ] Gemini directo (API key).
-  - [ ] OpenAI.
-  - [ ] Anthropic (Claude).
-  - [ ] DeepSeek.
-  - [ ] OpenRouter.
-  - [ ] «Compatible con OpenAI» genérico (URL base y llave), que sirve para servicios propios o locales.
-- [ ] Llaves de cada proveedor como conexiones cifradas (tipos de credencial nuevos), globales o propias de un flujo.
-- [ ] Catálogo de modelos por proveedor, leído de su API cuando la tenga y guardado en caché, con lo que cada modelo acepta (imágenes, PDF, JSON, herramientas) y su precio por millón de tokens para estimar costos.
-- [ ] Proveedor y modelo por defecto en cada flujo (`definicion.ia`) y por nodo (`config.proveedor`, `config.modelo`); validación de que la conexión exista y el modelo acepte lo que el nodo le pide (por ejemplo, visión).
-- [ ] PQRD y tutelas fijos en Vertex (lo que usan hoy), mostrados en su manifiesto.
-- [ ] Cualquier proveedor que funcione, no solo los compatibles con OpenAI:
-  - [ ] adaptadores propios: Vertex, Gemini, OpenAI, Azure OpenAI, Anthropic, DeepSeek, Mistral, Groq, OpenRouter y locales (Ollama);
-  - [ ] adaptador «personalizado» por HTTP (URL, encabezados, plantilla del pedido y rutas de la respuesta) para cualquier otro, sin código;
-  - [ ] registro de proveedores donde agregar uno nuevo es un módulo.
-- [ ] Capacidades declaradas por modelo (texto, imágenes, PDF, JSON, herramientas, voz en vivo, contexto, precio), usadas por la validación y la pantalla.
-- [ ] Tres niveles separados que nunca se mezclan:
-  - [ ] IA global de la plataforma (en Ajustes);
-  - [ ] IA de cada flujo: usa la global o una propia, con anulación por nodo; se resuelve nodo → flujo → global y se muestra en el editor y en el manifiesto;
-  - [ ] IA de Vera, aparte: una para el chat escrito (debe aceptar herramientas) y otra para la voz (debe tener voz en vivo).
-- [ ] Vera funciona con cualquier proveedor que acepte herramientas (chat escrito) y su voz con cualquiera que tenga voz en vivo. Si el proveedor de Vera no tiene voz, el botón de llamar lo muestra y se desactiva con la razón.
-- [ ] Clientes y límites por proveedor, conexión y flujo: dos flujos con proveedores distintos a la vez no comparten estado.
-- [ ] Reintentos, límite de tasa y concurrencia por proveedor y por flujo; un flujo no frena a otro.
-- [ ] Consumo por flujo y por corrida: tokens, costo estimado, tiempo; visible en Corridas, en el tablero y en el manifiesto.
-- [ ] Editor: selector de proveedor y modelo en el flujo y en cada nodo de IA (con lo que acepta cada modelo); «Probar conexión».
+- [x] Capa de proveedores en el motor (`puente/proveedores/`), con una sola interfaz: texto, JSON con esquema, imágenes y PDF cuando el modelo los acepte, tokens y costo.
+  - [x] Vertex (Gemini con la identidad del servicio, como hoy).
+  - [x] Gemini directo (API key).
+  - [x] OpenAI.
+  - [x] Anthropic (Claude).
+  - [x] DeepSeek.
+  - [x] OpenRouter.
+  - [x] «Compatible con OpenAI» genérico (URL base y llave), que sirve para servicios propios o locales.
+- [x] Llaves de cada proveedor como conexiones cifradas (tipos de credencial nuevos), globales o propias de un flujo.
+- [x] Catálogo de modelos por proveedor, leído de su API cuando la tenga y guardado en caché, con lo que cada modelo acepta (imágenes, PDF, JSON, herramientas) y su precio por millón de tokens para estimar costos.
+- [x] Proveedor y modelo por defecto en cada flujo (`definicion.ia`) y por nodo (`config.proveedor`, `config.modelo`); validación de que la conexión exista y el modelo acepte lo que el nodo le pide (por ejemplo, visión).
+- [x] PQRD y tutelas fijos en Vertex (lo que usan hoy), mostrados en su manifiesto.
+- [x] Cualquier proveedor que funcione, no solo los compatibles con OpenAI:
+  - [x] adaptadores propios: Vertex, Gemini, OpenAI, Azure OpenAI, Anthropic, DeepSeek, Mistral, Groq, OpenRouter y locales (Ollama);
+  - [x] adaptador «personalizado» por HTTP (URL, encabezados, plantilla del pedido y rutas de la respuesta) para cualquier otro, sin código;
+  - [x] registro de proveedores donde agregar uno nuevo es un módulo.
+- [x] Capacidades declaradas por modelo (texto, imágenes, PDF, JSON, herramientas, voz en vivo, contexto, precio), usadas por la validación y la pantalla.
+- [x] Tres niveles separados que nunca se mezclan:
+  - [x] IA global de la plataforma (en Ajustes);
+  - [x] IA de cada flujo: usa la global o una propia, con anulación por nodo; se resuelve nodo → flujo → global y se muestra en el editor y en el manifiesto;
+  - [x] IA de Vera, aparte: una para el chat escrito (debe aceptar herramientas) y otra para la voz (debe tener voz en vivo).
+- [~] Vera funciona con cualquier proveedor que acepte herramientas (chat escrito) y su voz con cualquiera que tenga voz en vivo. Si el proveedor de Vera no tiene voz, el botón de llamar lo muestra y se desactiva con la razón.
+- [x] Clientes y límites por proveedor, conexión y flujo: dos flujos con proveedores distintos a la vez no comparten estado.
+- [x] Reintentos, límite de tasa y concurrencia por proveedor y por flujo; un flujo no frena a otro.
+- [x] Consumo por flujo y por corrida: tokens, costo estimado, tiempo; visible en Corridas, en el tablero y en el manifiesto.
+- [x] Editor: selector de proveedor y modelo en el flujo y en cada nodo de IA (con lo que acepta cada modelo); «Probar conexión».
 - [ ] Vera: herramientas para listar proveedores y modelos, configurar el proveedor o el modelo de un flujo o un nodo, probar una conexión y explicar costos. Pide la llave a la persona, nunca la recibe.
 
 ### 2d. Recursos y rendimiento (pedido 2026-11-07)
@@ -147,9 +147,11 @@ El proyecto nació como PQRD y quedan cosas de PQRD que se ven en todos los fluj
 
 ### 2f. Vera, la voz y el chat (pedido 2026-11-07)
 
-- [ ] El saludo, la despedida y la forma de colgar no gustan: rehacerlos (natural, breve, sin cortar).
-- [ ] A veces la llamada se corta o la voz se corta antes de terminar de hablar: encontrar la causa y corregirla.
-- [ ] «Tareas en curso» se tapa con los botones de la llamada: mostrarlas en su propio espacio, legible, con el nombre de cada tarea.
+- [ ] Probar en una llamada real del navegador la renovación de la sesión (más de 10 minutos) y la despedida completa.
+
+- [x] Saludo propio al conectar, según la hora («Buenas noches, habla Vera, cuéntame.»); despedidas variadas y ligadas a lo que se hizo; propone en vez de preguntar en cadena.
+- [x] Cortes corregidos: la sesión de Gemini Live se renueva por dentro con su identificador de reanudación (la llamada sigue, sin perder turno ni tareas); se cuelga al terminar el turno de la despedida y el navegador deja sonar lo que falte; interrumpir a Vera exige voz más clara (eco y ruido no la cortan).
+- [x] Tareas en curso en su propia franja sobre la barra de la llamada, con el nombre de cada una y «listo» al terminar.
 
 ### 3a. Detalles visuales
 
@@ -207,6 +209,16 @@ Pedido de Jonathan (2026-11-07): que desde aquí se puedan hacer TODOS los flujo
 - [x] PQRD, con el motor de `mcp-fix` y su buzón real en solo lectura.
 - [x] Tutelas fiel al job, con buzón real en solo lectura e hilo como unidad.
 - [x] Manifiesto de PQRD y tutelas verificado contra la configuración real de sus jobs, con observaciones de seguridad (`servidor/src/produccion.ts`).
+
+### 5b. Estado de producción verificado (2026-11-07, solo lectura en GCP)
+
+- [x] PQRD en producción radica: 3 nov 210, 4 nov 241, 5 nov 636 y 6 nov 435 radicados (de 571, 590, 1.267 y 1.170 correos); todas las ejecuciones recientes terminan bien, cada 30 min.
+- [x] Tutelas en producción radica: 59 tutelas con IA en las últimas 24 h; 0 advertencias o errores en 4 días; dominios inválidos y «no es tutela» separados como corresponde.
+- [x] Sin errores de autenticación (401/403) en ninguno de los dos jobs.
+- [x] Las llaves `OPENAI_API_KEY` y `GOOGLE_API_KEY` del job de PQRD están vencidas o no son válidas, pero el código del job no las usa (radica con Vertex por la identidad del servicio): no afectan la radicación.
+- [ ] Limpiar del job de PQRD las variables que no usa (`OPENAI_API_KEY`, `GOOGLE_API_KEY`) y del de tutelas `DATABASE_PASSWORD` en texto plano, en el PR de producción (con autorización de Jonathan).
+- [ ] Cloudflare frente a SGDEA rechaza a algunos correos puntuales (`CLOUDFLARE_CHALLENGE`, desde el 5 nov 15:02): 8 correos en ~33 h; cada uno se reintenta 3 veces por ejecución y termina aplazado o en manual. Revisar con quien administra SGDEA y Cloudflare (regla del WAF que dispara con esos correos) y en el código cómo se aplazan (no reintentar cada 30 min sin fin).
+- [ ] Las 3 ejecuciones de PQRD del 25 jun quedaron sin arrancar por un secreto destruido (`PQRD_SGDEA_CLIENT_SECRET` v5); ya no afecta, pero ensucian la lista: se pueden borrar.
 
 ## 6. Paso a producción (cuando aprueben)
 
