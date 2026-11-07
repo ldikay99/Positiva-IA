@@ -1003,7 +1003,7 @@ class Documentacion(unittest.TestCase):
 
     def test_contrato_de_tipos(self):
         """GET /api/nodos/tipos: la forma que esperan el editor y Vera, con JSON Schema del subconjunto acordado."""
-        formatos = {"plantilla", "credencial", "variable", "expresion", "texto-largo", "cron", "proveedor-ia", "modelo-ia", "archivo-flujo"}
+        formatos = {"plantilla", "credencial", "variable", "expresion", "texto-largo", "cron", "proveedor-ia", "modelo-ia", "archivo-flujo", "plantilla-documento"}
         claves = {"type", "properties", "required", "enum", "items", "description", "default", "minimum", "maximum", "title", "format",
                   "x-credencial-tipos", "x-comun", "x-largo", "x-legado", "additionalProperties", "minItems"}
 

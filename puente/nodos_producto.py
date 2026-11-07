@@ -39,6 +39,8 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 import anonimizar as m_anon
 import documentos as m_doc
 import festivos as m_fest
+import nodos_salidas as m_ns
+import salidas as m_sal
 from conectores import busqueda as c_busqueda
 from conectores import correo as c_correo
 from conectores import hojas as c_hojas
@@ -90,7 +92,9 @@ MODOS_ARCHIVOS_WEBHOOK = ("base64", "multipart", "enlace")
 ASPECTOS_IMAGEN = ("1:1", "3:4", "4:3", "9:16", "16:9")
 TAMANOS_IMAGEN = {"cuadrado": "1:1", "vertical": "3:4", "horizontal": "4:3", "historia": "9:16", "panoramica": "16:9"}
 PROVEEDORES_IMAGEN = ("vertex", "gemini", "openai")
-FORMATOS_GENERAR = ("pdf", "docx")
+FORMATOS_GENERAR = ("pdf", "docx", "pptx", "html")
+MIME_GENERAR = {"pdf": "application/pdf", "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation", "html": "text/html"}
 FORMATOS_CONVERTIR = ("pdf", "docx", "txt", "md", "csv", "xlsx", "png")
 OPS_AGRUPAR = ("contar", "sumar", "promedio", "minimo", "maximo", "lista", "unicos")
 TIPOS_MAPEO = ("texto", "numero", "entero", "booleano", "fecha", "lista", "objeto")
@@ -374,12 +378,12 @@ def validar(t: str, c: dict, q: Callable[[str], None]) -> None:
         tiene_texto, tiene_archivo = isinstance(c.get("plantilla"), str) and c["plantilla"].strip(), c.get("plantilla_archivo") not in (None, "")
         tiene_ia = c.get("desde_ia") is not None
         if sum(map(bool, (tiene_texto, tiene_archivo, tiene_ia))) != 1:
-            q("documento_generar necesita plantilla (texto con {{variables}}), plantilla_archivo (un .docx subido al flujo) o desde_ia "
+            q("documento_generar necesita plantilla (texto con {{variables}}), plantilla_archivo (un .docx o .pptx subido al flujo) o desde_ia "
               "({instrucciones}: la IA redacta el documento), una de las tres")
         if tiene_ia:
             problemas_desde_ia(c.get("desde_ia"), q)
         if tiene_archivo and not (isinstance(c["plantilla_archivo"], str) and fd.ID_ARCHIVO.fullmatch(c["plantilla_archivo"])):
-            q("plantilla_archivo tiene que ser el id de un .docx subido al flujo")
+            q("plantilla_archivo tiene que ser el id de un .docx o .pptx subido al flujo")
         for k in ("nombre", "titulo"):
             if k in c and not isinstance(c[k], str):
                 q(f"{k} tiene que ser texto (admite plantillas)")
@@ -1086,14 +1090,37 @@ class NodosProducto:
         c = n.get("config") or {}
         formato = c.get("formato") or "pdf"
         titulo = self.render(c.get("titulo") or "")
+        diapositivas = None
         if c.get("plantilla_archivo"):
             ficha = self._fichas(c["plantilla_archivo"])[0]
             datos = self._bytes(ficha)
-            if self._ext(ficha, datos) != "docx":
-                raise ErrorDeNegocio(f"«{ficha['nombre']}» no es un .docx: la plantilla de archivo tiene que ser Word")
-            lleno, cambiados = m_doc.llenar_docx(datos, self.render)
-            salida_bytes = lleno if formato == "docx" else m_doc.pdf_de_bloques(m_doc.bloques_docx(lleno), titulo)
-            detalle = f"plantilla {ficha['nombre']} · {cambiados} párrafo(s) con variables"
+            ext = m_sal.formato_de(ficha["nombre"], datos)
+            if ext == "pptx":
+                if formato != "pptx":
+                    raise ErrorDeNegocio(f"«{ficha['nombre']}» es un PowerPoint: con una plantilla .pptx el formato tiene que ser pptx")
+                ctx = self._contexto_salidas()
+                salida_bytes = m_sal.llenar_pptx(datos, ctx)
+                detalle = f"plantilla {ficha['nombre']} · {len(ctx.usadas)} variable(s)"
+            elif ext != "docx":
+                raise ErrorDeNegocio(f"«{ficha['nombre']}» no es un .docx ni un .pptx: la plantilla de archivo tiene que ser Word o PowerPoint")
+            else:
+                lleno, cambiados = m_doc.llenar_docx(datos, self.render)
+                salida_bytes = lleno if formato == "docx" else m_ns.bytes_de_bloques(formato, m_doc.bloques_docx(lleno), titulo)
+                detalle = f"plantilla {ficha['nombre']} · {cambiados} párrafo(s) con variables"
+        elif isinstance(c.get("desde_ia"), dict) and formato == "pptx":
+            pres = self._desde_ia(n, c["desde_ia"], m_sal.ESQUEMA_PRESENTACION,
+                                  "Armas presentaciones en español de Colombia, claras y sin inventar datos: usa solo lo que recibes. Devuelve JSON: "
+                                  "titulo, subtitulo y diapositivas; cada diapositiva con su titulo, de 3 a 6 puntos cortos (una idea por punto, sin "
+                                  "punto final), notas para quien presenta y, si sirve, una tabla {columnas, filas}. Sin markdown dentro de los textos. "
+                                  "Si te piden un número de diapositivas, respétalo (sin contar la portada).")
+            pres = m_sal.presentacion_limpia(pres)
+            if not pres["diapositivas"]:
+                raise ErrorDeNegocio("la IA no devolvió una presentación (titulo y diapositivas): revisa las instrucciones o prueba otro modelo")
+            titulo = titulo or pres["titulo"]
+            pres["titulo"] = titulo
+            salida_bytes = m_sal.pptx_de_presentacion(pres, self._imagen_de_ref)
+            diapositivas = len(pres["diapositivas"]) + 1
+            detalle = f"armada por la IA · portada y {len(pres['diapositivas'])} diapositiva(s), {sum(1 for d in pres['diapositivas'] if d['tabla'])} tabla(s)"
         elif isinstance(c.get("desde_ia"), dict):
             doc = self._desde_ia(n, c["desde_ia"], m_doc.ESQUEMA_DOCUMENTO,
                                  "Redactas documentos en español de Colombia, claros, formales y sin inventar datos: usa solo lo que recibes. "
@@ -1103,19 +1130,20 @@ class NodosProducto:
                 raise ErrorDeNegocio("la IA no devolvió un documento (titulo y secciones): revisa las instrucciones o prueba otro modelo")
             titulo = titulo or str(doc.get("titulo") or "")
             bloques = m_doc.bloques_de_estructura(doc)
-            salida_bytes = m_doc.pdf_de_bloques(bloques, titulo) if formato == "pdf" else m_doc.docx_de_bloques(bloques, titulo)
+            salida_bytes = m_ns.bytes_de_bloques(formato, bloques, titulo)
             secciones = doc.get("secciones") or []
             detalle = f"redactado por la IA · {len(secciones)} sección(es), {sum(1 for b in bloques if b[0] == 'tabla')} tabla(s)"
         else:
             texto = self.render(c.get("plantilla") or "")
             bloques = m_doc.bloques_de_texto(texto)
-            salida_bytes = m_doc.pdf_de_bloques(bloques, titulo) if formato == "pdf" else m_doc.docx_de_bloques(bloques, titulo)
+            salida_bytes = m_ns.bytes_de_bloques(formato, bloques, titulo)
             detalle = f"{len(bloques)} bloque(s) de texto"
         nombre = _con_ext(self.render(c.get("nombre") or "") or titulo or "documento", formato)
-        tipo = "application/pdf" if formato == "pdf" else "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        ficha = self._guardar_archivo(nombre, salida_bytes, tipo)
+        ficha = self._guardar_archivo(nombre, salida_bytes, MIME_GENERAR.get(formato, "application/octet-stream"))
         if formato == "pdf":
             ficha["paginas"] = m_doc.cantidad_paginas(salida_bytes)
+        if formato == "pptx":
+            ficha["diapositivas"] = diapositivas or _diapositivas(salida_bytes)
         if isinstance(c.get("desde_ia"), dict):
             ficha["titulo"] = titulo
         self.vars[self._np_salida(n)] = ficha
@@ -2160,6 +2188,14 @@ def _zona():
 
 def _iso(t: float) -> str:
     return datetime.datetime.fromtimestamp(t, _zona()).isoformat(timespec="seconds")
+
+
+def _diapositivas(datos: bytes) -> int:
+    try:
+        from pptx import Presentation  # python-pptx (MIT)
+        return len(Presentation(io.BytesIO(datos)).slides)
+    except Exception:
+        return 0
 
 
 def _con_ext(nombre: str, ext: str) -> str:

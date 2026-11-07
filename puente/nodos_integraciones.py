@@ -43,6 +43,9 @@ from conectores import sheets as c_sheets  # noqa: E402
 from conectores.base import ErrorDeNegocio, ErrorTransitorio, direcciones, host_vetado, timeout_de  # noqa: E402
 from especificacion_integraciones import (CON_REINTENTOS, CREDENCIALES_DE, DISPARADORES, DISPARADORES_DE_CORREO,  # noqa: E402,F401
                                           ESCRITURA, LECTURA, TIPOS)
+import nodos_externos as nx  # noqa: E402  (fase 2: páginas sin API, almacenamiento, datos y mensajería transaccional)
+
+nx.ni = sys.modules[__name__]
 
 fd: Any = None
 _reloj: Callable[[], float] = time.time
@@ -63,6 +66,8 @@ def enlazar(modulo: Any) -> None:
 # =====================================================================
 
 def salidas(t: str, c: dict) -> Tuple[List[str], List[str]]:
+    if t in nx.TIPOS:
+        return nx.salidas(t, c)
     if t in LISTAS:
         return ["ok", "vacio"], []
     if t == "calendar_disponibilidad":
@@ -76,6 +81,8 @@ def salidas(t: str, c: dict) -> Tuple[List[str], List[str]]:
 
 
 def produce(t: str, c: dict, nid: str) -> Set[str]:
+    if t in nx.TIPOS:
+        return nx.produce(t, c, nid)
     if t in DISPARADORES:
         return {"entrada"}
     r = {c.get("salida") or nid}
@@ -85,6 +92,8 @@ def produce(t: str, c: dict, nid: str) -> Set[str]:
 
 
 def referencias(t: str, c: dict, plantillas_en: Callable, ref_de_fuente: Callable) -> List[Tuple[str, Set[str]]]:
+    if t in nx.TIPOS:
+        return nx.referencias(t, c, plantillas_en, ref_de_fuente)
     if t in DISPARADORES:
         return []
     refs: List[Tuple[str, Set[str]]] = [(r, set()) for r in plantillas_en(c)]
@@ -190,6 +199,8 @@ def validar_http(c: dict, q: Callable[[str], None]) -> None:
 
 def validar(t: str, c: dict, q: Callable[[str], None]) -> None:
     _revisar(t, c, _esquema(t), q)
+    if t in nx.TIPOS:
+        return nx.validar(t, c, q)
     for k in ("adjuntos", "archivos"):
         fd.np_.problemas_archivos(c, k, q)
     for k in ("asistentes", "agregar_asistentes", "calendarios"):
@@ -326,7 +337,7 @@ def _nombre_de(url: str, encabezados: Dict[str, str], tipo: str) -> str:
 #   los métodos (Ejecucion hereda de aquí)
 # =====================================================================
 
-class NodosIntegraciones:
+class NodosIntegraciones(nx.NodosExternos):
     # ----------------------------------------------------------- conexiones
     def _cfg(self, n: dict) -> dict:
         return n.get("config") or {}
@@ -1232,6 +1243,8 @@ def _guardar_caso(flujo: str, clave: str, m: dict, origen: str) -> dict:
 
 def sondear(e: Any, n: dict, ruta: Path) -> dict:
     """Revisa un disparador gmail_nuevo, outlook_nuevo o calendar_evento_proximo; guarda lo nuevo y lo devuelve (casos o entradas)."""
+    if n["tipo"] in nx.TIPOS:
+        return nx.sondear(e, n, ruta)
     c = n.get("config") or {}
     estado = json.loads(ruta.read_text(encoding="utf-8")) if ruta.exists() else {}
     t = n["tipo"]
@@ -1342,6 +1355,9 @@ def probar_conexion(entrada: dict) -> dict:
     tipo, v = str(entrada.get("tipo") or ""), dict(entrada.get("valores") or {})
     cred = {"tipo": tipo, "valores": v, "creada_por_persona": entrada.get("creada_por_persona") is True, "nombre": "prueba"}
     try:
+        externa = nx.probar_conexion(tipo, v, cred)  # FTP, S3, MongoDB, SQL Server, Oracle, Telegram, SendGrid, Mailgun, Twilio
+        if externa is not None:
+            return externa
         if tipo == "http_oauth2":
             c_oauth.cliente(str(v.get("token_url") or ""), str(v.get("client_id") or ""), str(v.get("client_secret") or ""), str(v.get("scope") or ""))
             return {"ok": True, "detalle": "el servidor de autorización entregó un token"}
@@ -1377,7 +1393,7 @@ def probar_conexion(entrada: dict) -> dict:
             c_correo.leer_imap(v, "INBOX", {}, "", 1, False, 20)
             return {"ok": True, "detalle": "el buzón IMAP respondió (solo lectura)"}
         return {"ok": False, "detalle": f"para {tipo} no hay una prueba sin escribir: pruébala con un nodo en «Probar este paso»"}
-    except (ErrorDeNegocio, ErrorTransitorio, OSError) as ex:
+    except (ErrorDeNegocio, ErrorTransitorio, OSError, ImportError) as ex:
         return {"ok": False, "detalle": str(ex)[:400]}
 
 
@@ -1414,6 +1430,7 @@ if __name__ == "__main__":
     # nada secreto sale: los valores de la conexión no se repiten en la respuesta
     texto = json.dumps(r, ensure_ascii=False, default=str)
     for k, x in (entrada.get("valores") or {}).items():
-        if isinstance(x, str) and len(x) >= 6 and k in ("client_secret", "token", "clave", "refresh_token", "access_token", "json"):
+        if isinstance(x, str) and len(x) >= 6 and k in ("client_secret", "token", "clave", "refresh_token", "access_token", "json", "secret_key",
+                                                         "api_key", "auth_token"):
             texto = texto.replace(x, "••••")
     print(texto)

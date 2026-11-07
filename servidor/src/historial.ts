@@ -465,6 +465,8 @@ export async function registrar(app: FastifyInstance, deps: Dependencias): Promi
   app.get<{ Params: { id: string; archivo: string }; Querystring: { descargar?: string } }>("/api/corridas/:id/archivos/:archivo", async (req, res) => {
     const a = archivoDeCorrida(req.params.id, req.params.archivo);
     if (!a) return res.code(404).send({ error: "ese archivo no es de esta ejecución o ya no está" });
+    // un HTML (o SVG/XML) generado se ve aislado: sin scripts ni acceso a la plataforma
+    if (/html|svg|xml/i.test(a.tipo || "") || /\.(html?|svg|xml)$/i.test(a.nombre)) res.header("Content-Security-Policy", "sandbox; default-src 'none'; img-src data: https:; style-src 'unsafe-inline'");
     return res.header("Content-Type", a.tipo || "application/octet-stream")
       .header("Content-Disposition", `${req.query.descargar ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(a.nombre)}`)
       .header("Cache-Control", "private, max-age=3600").header("X-Content-Type-Options", "nosniff").send(createReadStream(a.ruta));

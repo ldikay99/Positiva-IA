@@ -95,7 +95,8 @@ function Capsula({ chat, a, alAbrir, alQuitar, cargando, error }: { chat: string
 function Visor({ chat, a, cerrar, url: urlDada }: { chat: string; a: Adjunto; cerrar: () => void; url?: string }) {
   const url = urlDada ?? `/api/chats/${chat}/adjuntos/${a.id}`;
   const [texto, setTexto] = useState<string | null>(null);
-  const comoTexto = !a.tipo.startsWith("image/") && !a.tipo.startsWith("video/") && !a.tipo.startsWith("audio/") && a.tipo !== "application/pdf";
+  const html = a.tipo.startsWith("text/html") || /\.html?$/i.test(a.nombre);  // se ve como página, aislada (sin scripts)
+  const comoTexto = !a.tipo.startsWith("image/") && !a.tipo.startsWith("video/") && !a.tipo.startsWith("audio/") && a.tipo !== "application/pdf" && !html;
   useEffect(() => {
     if (!comoTexto) return;
     void pedir<{ texto: string }>(`${url}/texto`).then((r) => setTexto(r.texto)).catch((e: Error) => setTexto(`No se pudo leer: ${e.message}`));
@@ -112,6 +113,7 @@ function Visor({ chat, a, cerrar, url: urlDada }: { chat: string; a: Adjunto; ce
         <div className="visor-cuerpo">
           {a.tipo.startsWith("image/") && <img src={url} alt={a.nombre} />}
           {a.tipo === "application/pdf" && <iframe src={url} title={a.nombre} />}
+          {html && <iframe src={url} title={a.nombre} sandbox="" style={{ background: "#fff" }} />}
           {a.tipo.startsWith("video/") && <video src={url} controls />}
           {a.tipo.startsWith("audio/") && <audio src={url} controls />}
           {comoTexto && (texto === null ? <div className="vacio"><span className="girando" /> Leyendo el documento…</div> : <pre>{texto || "(el documento no tiene texto)"}</pre>)}

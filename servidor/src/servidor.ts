@@ -25,6 +25,7 @@ import * as compuerta from "./compuerta.ts";
 import * as rutasIa from "./rutas_ia.ts";
 import * as historial from "./historial.ts";
 import * as plantillas from "./plantillas.ts";
+import * as documentos from "./documentos.ts";
 import * as notificaciones from "./notificaciones.ts";
 import * as aprobaciones from "./aprobaciones.ts";
 import * as aplazadas from "./aplazadas.ts";
@@ -491,6 +492,7 @@ await conectores.registrar(app);  // OpenAPI: analizar una especificación (cone
 // Producto: historial por flujo, plantillas y notificaciones (historial.ts, plantillas.ts, notificaciones.ts)
 await historial.registrar(app, { motorDe, motores: () => motores.values() });
 await plantillas.registrar(app, { avisarFlujo });
+await documentos.registrar(app);  // la biblioteca de plantillas de documentos: Word, Excel, PowerPoint y correo HTML (documentos.ts)
 await notificaciones.registrar(app, { motores: () => motores.values(), escuchar: (f) => { bus.on("evento", f); return () => bus.off("evento", f); }, emitir: (e) => bus.emit("evento", e) });
 
 // «Probar este paso», datos de prueba fijados por paso y enlaces de descarga firmados (probar.ts, descargas.ts)
@@ -571,6 +573,8 @@ app.post<{ Params: { id: string } }>("/api/flujos/:id/archivos", { bodyLimit: 13
 app.get<{ Params: { id: string; archivo: string } }>("/api/flujos/:id/archivos/:archivo", async (req, res) => {
   const a = espacio.archivoDe(req.params.id, req.params.archivo);
   if (!a) return res.code(404).send({ error: "no existe" });
+  // un HTML (o SVG/XML) del flujo se ve aislado: sin scripts ni acceso a la plataforma
+  if (/html|svg|xml/i.test(a.tipo || "") || /\.(html?|svg|xml)$/i.test(a.nombre)) res.header("Content-Security-Policy", "sandbox; default-src 'none'; img-src data: https:; style-src 'unsafe-inline'");
   return res.header("Content-Type", a.tipo || "application/octet-stream").header("Content-Disposition", `inline; filename*=UTF-8''${encodeURIComponent(a.nombre)}`).header("Cache-Control", "private, max-age=3600").send(createReadStream(a.ruta));
 });
 

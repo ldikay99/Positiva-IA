@@ -52,6 +52,9 @@ COPY motor/requirements.txt motor/requirements.txt
 COPY puente/requirements.txt puente/requirements.txt
 COPY motores/tutelas/requirements.txt motores/tutelas/requirements.txt
 RUN pip install --no-cache-dir -r motor/requirements.txt -r puente/requirements.txt -r motores/tutelas/requirements.txt
+# pymongo sin dnspython (ISC): ver puente/requirements.txt
+COPY puente/requirements-sin-dependencias.txt puente/requirements-sin-dependencias.txt
+RUN pip install --no-cache-dir --no-deps -r puente/requirements-sin-dependencias.txt
 
 COPY motor/ motor/
 COPY motores/ motores/

@@ -126,6 +126,52 @@ export const TIPOS_CREDENCIAL: TipoDeCredencial[] = [
       { nombre: "client_id", titulo: "Client ID", tipo: "texto", ayuda: "oauth2" }, { nombre: "client_secret", titulo: "Client secret", tipo: "texto", secreto: true, ayuda: "oauth2" },
       { nombre: "scope", titulo: "Alcance", tipo: "texto", ayuda: "oauth2, opcional" },
       { nombre: "red_privada", titulo: "Red privada", tipo: "booleano", defecto: false, ayuda: "aceptar IP privadas (10/8, 172.16/12, 192.168/16): solo si la crea una persona desde la web" }] },
+  // ---- fase 2 (plan 5d): bases de datos, almacenamiento y mensajería transaccional (puente/especificacion_externos.py)
+  { tipo: "sqlserver", nombre: "SQL Server", descripcion: "Consultar (y, si se habilita, escribir) una base SQL Server o Azure SQL (nodos sql_consulta y sql_ejecutar).",
+    ayuda: "Crea un usuario de solo lectura para consultas. Azure SQL exige cifrado. Nunca servidores de Positiva.",
+    campos: [host("p. ej. miservidor.database.windows.net"), puerto(1433), { nombre: "base", titulo: "Base de datos", tipo: "texto", obligatorio: true }, usuario(), clave(),
+      { nombre: "cifrado", titulo: "Cifrado (TLS)", tipo: "booleano", defecto: true }] },
+  { tipo: "oracle", nombre: "Oracle", descripcion: "Consultar (y, si se habilita, escribir) una base Oracle, sin el cliente de Oracle (nodos sql_consulta y sql_ejecutar).",
+    ayuda: "Se conecta con el nombre de servicio (no el SID). Crea un usuario de solo lectura para consultas.",
+    campos: [host(), puerto(1521), { nombre: "servicio", titulo: "Nombre de servicio", tipo: "texto", obligatorio: true, ayuda: "p. ej. ORCLPDB1 o el service_name de la base" },
+      usuario(), clave(), { nombre: "tls", titulo: "TLS (tcps)", tipo: "booleano", defecto: false }] },
+  { tipo: "mongodb", nombre: "MongoDB", descripcion: "Consultar (y, si se habilita, escribir) una base MongoDB (nodos mongo_consulta y mongo_escribir).",
+    ayuda: "Pon el servidor o varios host:puerto separados por coma (la «Standard connection string» de Atlas); mongodb+srv no se admite. Crea un usuario de solo lectura para consultas.",
+    campos: [host("p. ej. cluster0-shard-00-00.abcde.mongodb.net:27017, cluster0-shard-00-01.abcde.mongodb.net:27017"), puerto(27017),
+      { nombre: "base", titulo: "Base de datos", tipo: "texto", obligatorio: true }, usuario(false), clave(false),
+      { nombre: "auth_base", titulo: "Base de autenticación", tipo: "texto", defecto: "admin" }, { nombre: "tls", titulo: "TLS", tipo: "booleano", defecto: true },
+      { nombre: "replica_set", titulo: "Replica set", tipo: "texto", ayuda: "opcional, p. ej. atlas-abc123-shard-0" }] },
+  { tipo: "ftp", nombre: "Servidor FTP / FTPS", descripcion: "Listar, leer y (si se habilita la escritura) subir archivos por FTP o FTPS (nodo ftp_archivos).",
+    ayuda: "Por defecto con TLS explícito (FTPS); «ninguno» solo si el servidor no tiene TLS (la clave viaja en claro). SFTP no está disponible. Nunca servidores de Positiva.",
+    campos: [host("p. ej. ftp.proveedor.com"), puerto(21), usuario(false), clave(false),
+      { nombre: "tls", titulo: "Cifrado", tipo: "opcion", opciones: ["explicito", "ninguno"], defecto: "explicito" },
+      { nombre: "carpeta_base", titulo: "Carpeta base", tipo: "texto", defecto: "/", ayuda: "los nodos no pueden salir de esta carpeta" },
+      { nombre: "red_privada", titulo: "Red privada", tipo: "booleano", defecto: false, ayuda: "aceptar IP privadas: solo si la crea una persona desde la web" }] },
+  { tipo: "s3", nombre: "Almacenamiento S3 (S3, MinIO, GCS)", descripcion: "Listar, leer y (si se habilita la escritura) subir objetos a un bucket compatible con S3 (nodo s3_archivos).",
+    ayuda: "Amazon S3: deja el endpoint vacío. MinIO: su URL https y estilo «ruta». Google Cloud Storage: endpoint https://storage.googleapis.com, región «auto» y una llave HMAC. Usa una llave limitada al bucket.",
+    campos: [{ nombre: "access_key", titulo: "Access key", tipo: "texto", obligatorio: true }, { nombre: "secret_key", titulo: "Secret key", tipo: "texto", secreto: true, obligatorio: true },
+      { nombre: "bucket", titulo: "Bucket", tipo: "texto", obligatorio: true }, { nombre: "region", titulo: "Región", tipo: "texto", defecto: "us-east-1" },
+      { nombre: "endpoint", titulo: "Endpoint", tipo: "texto", ayuda: "https://… (vacío para Amazon S3)" },
+      { nombre: "estilo", titulo: "Estilo de dirección", tipo: "opcion", opciones: ["virtual", "ruta"], defecto: "virtual", ayuda: "ruta para MinIO y compatibles sin subdominios" },
+      { nombre: "prefijo", titulo: "Prefijo", tipo: "texto", ayuda: "opcional: los nodos no salen de esta «carpeta» del bucket" },
+      { nombre: "red_privada", titulo: "Red privada", tipo: "booleano", defecto: false, ayuda: "aceptar IP privadas (MinIO interno): solo si la crea una persona desde la web" }] },
+  { tipo: "telegram_bot", nombre: "Telegram (bot)", descripcion: "Enviar mensajes y archivos a chats, grupos o canales de Telegram (nodo telegram_mensaje; escritura: hay que habilitarla).",
+    ayuda: "Crea el bot con @BotFather y pega su token. El bot solo escribe donde lo agregaron.",
+    campos: [{ nombre: "token", titulo: "Token del bot", tipo: "texto", secreto: true, obligatorio: true, ayuda: "123456789:ABC…" },
+      { nombre: "chat_id", titulo: "Chat por defecto", tipo: "texto", ayuda: "opcional: id del chat o @canal" }] },
+  { tipo: "sendgrid", nombre: "SendGrid", descripcion: "Correo transaccional por SendGrid (nodo correo_transaccional; escritura: hay que habilitarla).",
+    ayuda: "API key con permiso Mail Send y un remitente verificado. Nunca direcciones de Positiva.",
+    campos: [{ nombre: "api_key", titulo: "API key", tipo: "texto", secreto: true, obligatorio: true, ayuda: "SG.…" },
+      { nombre: "remitente", titulo: "Remitente", tipo: "texto", obligatorio: true, ayuda: "la dirección verificada en SendGrid" }, { nombre: "nombre_remitente", titulo: "Nombre del remitente", tipo: "texto" }] },
+  { tipo: "mailgun", nombre: "Mailgun", descripcion: "Correo transaccional por Mailgun (nodo correo_transaccional; escritura: hay que habilitarla).",
+    ayuda: "API key, el dominio de envío (mg.tuempresa.com) y su región. Nunca direcciones ni dominios de Positiva.",
+    campos: [{ nombre: "api_key", titulo: "API key", tipo: "texto", secreto: true, obligatorio: true }, { nombre: "dominio", titulo: "Dominio", tipo: "texto", obligatorio: true, ayuda: "p. ej. mg.tuempresa.com" },
+      { nombre: "region", titulo: "Región", tipo: "opcion", opciones: ["us", "eu"], defecto: "us" },
+      { nombre: "remitente", titulo: "Remitente", tipo: "texto", obligatorio: true, ayuda: "p. ej. avisos@mg.tuempresa.com" }, { nombre: "nombre_remitente", titulo: "Nombre del remitente", tipo: "texto" }] },
+  { tipo: "twilio", nombre: "Twilio (SMS)", descripcion: "Enviar SMS con Twilio (nodo sms_twilio; escritura: hay que habilitarla).",
+    ayuda: "Account SID (AC…) y Auth Token de la consola de Twilio, y el número remitente (+…) o un Messaging Service (MG…).",
+    campos: [{ nombre: "account_sid", titulo: "Account SID", tipo: "texto", obligatorio: true, ayuda: "AC…" }, { nombre: "auth_token", titulo: "Auth token", tipo: "texto", secreto: true, obligatorio: true },
+      { nombre: "remitente", titulo: "Remitente", tipo: "texto", obligatorio: true, ayuda: "+15551234567 o MG…" }] },
   // Proveedores de IA (ia_<proveedor>): ver ia_credenciales.ts.
   ...TIPOS_CREDENCIAL_IA,
 ];
@@ -136,7 +182,8 @@ const ID_FLUJO = /^[a-z][a-z0-9-]{1,40}$/;
 const VETADO = (h: string) => /(^|\.)positiva\.gov\.co$/i.test(h) || /sgdea/i.test(h) || /^(localhost|metadata(\.google\.internal)?)$/i.test(h) || /\.internal$/i.test(h);
 const CORREO_VETADO = (d: string) => /@([\w-]+\.)*positiva\.gov\.co$/i.test(d.trim());
 /** Campos que se pueden mostrar en el manifiesto de un flujo (dónde se conecta), nunca secretos. */
-const CAMPOS_DE_DESTINO = ["host", "puerto", "base", "buzon", "hosts", "ruta", "tenant", "remitente", "usuario", "base_url", "endpoint", "url", "cuenta", "spec_url", "token_url"];
+const CAMPOS_DE_DESTINO = ["host", "puerto", "base", "buzon", "hosts", "ruta", "tenant", "remitente", "usuario", "base_url", "endpoint", "url", "cuenta", "spec_url", "token_url",
+  "bucket", "region", "prefijo", "dominio", "servicio", "carpeta_base", "chat_id"];
 
 interface Cifrado { iv: string; tag: string; datos: string }
 interface Guardada {
@@ -326,12 +373,14 @@ export async function guardar(nombre: string, cuerpo: unknown, porPersona = fals
       return "";
     }
   };
-  for (const k of ["spec_url", "base_url", "token_url"]) {
+  for (const k of ["spec_url", "base_url", "token_url", "endpoint"]) {
     const h = hostDeUrl(valores[k]);
     if (h === "") return { ok: false, error: `${k}: no es una URL válida` };
-    if (h && (k === "spec_url" || k === "token_url") && !String(valores[k]).trim().toLowerCase().startsWith("https://")) return { ok: false, error: `${k}: tiene que ser https://` };
+    if (h && (k === "spec_url" || k === "token_url" || k === "endpoint") && !String(valores[k]).trim().toLowerCase().startsWith("https://")) return { ok: false, error: `${k}: tiene que ser https://` };
   }
-  const destinos = [valores.host, ...String(valores.hosts ?? "").split(/[,\s]+/), ...["spec_url", "base_url", "token_url"].map((k) => hostDeUrl(valores[k]))]
+  // host admite varios «host:puerto» separados por coma (MongoDB); el dominio de Mailgun también se revisa
+  const destinos = [...String(valores.host ?? "").split(/[,\s]+/).map((x) => x.replace(/:\d+$/, "")), ...String(valores.hosts ?? "").split(/[,\s]+/),
+    ...["spec_url", "base_url", "token_url", "endpoint"].map((k) => hostDeUrl(valores[k])), ...(t.tipo === "mailgun" ? [valores.dominio] : [])]
     .filter((x): x is string => typeof x === "string" && x.trim() !== "");
   const malo = destinos.find((h) => VETADO(h.trim().toLowerCase()));
   if (malo) return { ok: false, error: `bloqueado por seguridad: ${malo} es un destino que esta plataforma nunca toca (Positiva, SGDEA, metadatos o interno)` };
@@ -371,6 +420,13 @@ export async function guardar(nombre: string, cuerpo: unknown, porPersona = fals
     if (auth === "oauth2" && (!valores.token_url || !valores.client_id || !valores.client_secret)) return { ok: false, error: "con autenticación oauth2 faltan token_url, client_id y client_secret" };
     if (valores.red_privada === true && !porPersona) return { ok: false, error: "red_privada: solo una persona puede permitir IP privadas, desde la web (X-Confirmado-Por-Persona: si)" };
   }
+  if ((t.tipo === "ftp" || t.tipo === "s3") && valores.red_privada === true && !porPersona) {
+    return { ok: false, error: "red_privada: solo una persona puede permitir IP privadas, desde la web (X-Confirmado-Por-Persona: si)" };
+  }
+  if (t.tipo === "s3" && !/^[a-z0-9][a-z0-9._-]{1,61}[a-z0-9]$/.test(String(valores.bucket))) return { ok: false, error: "bucket: minúsculas, números, punto y guion (3 a 63)" };
+  if (t.tipo === "twilio" && !/^AC[0-9a-fA-F]{32}$/.test(String(valores.account_sid))) return { ok: false, error: "account_sid: empieza por AC y tiene 34 caracteres" };
+  if (t.tipo === "telegram_bot" && !/^\d{5,15}:[A-Za-z0-9_-]{30,60}$/.test(String(valores.token))) return { ok: false, error: "token: el de @BotFather, con la forma 123456789:ABC…" };
+  if (t.tipo === "mongodb" && /^mongodb(\+srv)?:/i.test(String(valores.host))) return { ok: false, error: "host: el servidor o varios host:puerto separados por coma, no una URI mongodb:// (mongodb+srv no se admite)" };
   if (TIPOS_OAUTH.has(t.tipo)) {
     // Los tokens siguen mientras no cambie la aplicación ni los permisos; si cambian, hay que volver a conectar.
     const misma = ["client_id", "client_secret", "tenant", "scopes"].every((k) => JSON.stringify(anteriores[k]) === JSON.stringify(valores[k]));

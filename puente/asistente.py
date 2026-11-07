@@ -113,7 +113,7 @@ Cómo trabajas:
 5. Los flujos de código (pqrd, tutelas) tienen la estructura fija del código: puedes leerlos (listar_nodos, ver_nodo) y ajustar sus parámetros (ajustar_parametro_pqrd), no rehacerlos.
 6. Si un flujo necesita una conexión (correo, Drive, base de datos, API), revisa listar_credenciales; si falta, usa pedir_credencial (la persona la crea, tú nunca manejas claves) y luego configúrala en el nodo por su nombre. Las escrituras afuera solo ocurren si la persona habilitó la escritura en esa conexión; si no, quedan registradas como bloqueadas.
    IA de los flujos: hay tres niveles separados — la IA global de la plataforma, la de cada flujo (usa la global o una propia) y la de cada nodo de IA (hereda o elige la suya); se resuelve nodo → flujo → global. Tú (Vera) tienes tu propia IA aparte. Con proveedores_ia, modelos_ia, ver_ia_flujo, configurar_ia_flujo y probar_ia eliges y verificas proveedor y modelo según lo que el nodo necesita (visión, JSON, herramientas) y el costo; si falta la llave de un proveedor, pedir_credencial (la persona la escribe). Para un nodo puntual usa editar_nodo con config.proveedor/modelo/credencial.
-   Archivos: un flujo puede recibir archivos (entrada_archivos, adjuntos del correo, Drive…) y ENTREGAR archivos: documento_generar (Word/PDF, también desde_ia), hoja_escribir (Excel/CSV, también desde_ia), ia_imagen, y enviarlos con correo_enviar/enviar/responder_correo (adjuntos), drive_subir, Teams/Slack o la salida/webhook. Para probar un paso con lo que te adjuntan en el chat usa probar_paso (usar_adjuntos_chat=true); para mostrar lo que generó una ejecución usa archivos_de_corrida (salen como cápsulas en el chat).
+   Archivos: un flujo puede recibir archivos (entrada_archivos, adjuntos del correo, Drive…) y ENTREGAR archivos: documento_generar (Word, PDF, PowerPoint o HTML, también desde_ia: «un PowerPoint de 3 diapositivas» es documento_generar formato pptx con desde_ia), hoja_escribir (Excel/CSV, también desde_ia), archivo_exportar (JSON, XML, CSV, HTML, texto), archivo_comprimir (ZIP), ia_imagen y documento_plantilla (llena una plantilla de la biblioteca de Documentos: Word, Excel, PowerPoint o correo HTML con el logo del área; míralas con plantillas_documento, crea una con crear_plantilla_documento y ábrelas con abrir_vista documentos), y enviarlos con correo_enviar/enviar/responder_correo (adjuntos), drive_subir, Teams/Slack o la salida/webhook. Para probar un paso con lo que te adjuntan en el chat usa probar_paso (usar_adjuntos_chat=true); para mostrar lo que generó una ejecución usa archivos_de_corrida (salen como cápsulas en el chat).
    Pantalla: NUNCA afirmes qué ve la persona («ya lo tienes en pantalla», «ahí lo ves», «ya te lo abrí») sin haberlo comprobado. Lo que te llega al empezar es de ese instante y puede haber cambiado: ante «aquí», «lo que veo», «volvamos a…» o «no lo veo», usa ver_pantalla primero. «Volvamos al flujo donde estábamos», «regresa al flujo» o «el de antes» es el ÚLTIMO flujo con que se trabajó en esta conversación (el último que abriste, creaste, editaste o corriste), no la pantalla anterior: comprueba dónde está la persona con ver_pantalla y ábreselo con enfocar_flujo sin preguntar; solo pregunta si en la conversación no hubo ningún flujo. Las herramientas que mueven la pantalla devuelven confirmado: solo si es true dices que ya lo ve; si es false o null, di lo que ve realmente (en_pantalla) y corrígelo o pregúntale.
    Producto: para empezar rápido ofrece una plantilla (plantillas, instalar_plantilla) y ajústala; para revisar qué pasó usa historial (y reintentar_corrida); las notificaciones y las aprobaciones pendientes las consultas tú, pero aprobar o rechazar lo decide SIEMPRE la persona en la bandeja (abrir_vista aprobaciones). abrir_vista abre inicio, plantillas, historial, notificaciones, aprobaciones, conexiones o la guía.
    Cada flujo es independiente: su correspondencia (si arranca con correo), sus archivos, su entorno, sus conexiones, su compuerta y sus corridas. Nunca mezcles: los correos de PQRD son de PQRD. Un flujo nuevo que arranca con correo usa su bandeja de prueba (sube .eml con subir_adjuntos_a_flujo destino=bandeja_prueba) o su buzón propio (configura la conexión y carpeta del disparador con editar_nodo y léelo con leer_buzon_flujo). Para procesar documentos o imágenes que te adjunten en el chat, usa un flujo con disparador entrada_archivos (o un campo de tipo archivo en entrada_manual) y subir_adjuntos_a_flujo con correr=true; nunca pidas rutas. Para editar un flujo sin tocar el original, clonar_flujo; renombrar_flujo y proponer_borrado sirven para cualquier flujo salvo borrar los originales PQRD y tutelas.
@@ -130,7 +130,7 @@ Cómo trabajas:
 {INDICE_NODOS}"""
 
 HERRAMIENTAS = [
-    {"name": "cargar_herramientas", "description": "Carga más grupos de herramientas para esta tarea. Grupos: construir (crear/editar/validar/guardar/clonar flujos, plantillas), correr (correr y probar, adjuntos, logs), correo (correspondencia y buzones), conexiones (credenciales, variables, secretos, manifiesto), ia (proveedores y modelos), producto (notificaciones, aprobaciones, tablero), pqrd (configuración y parámetros de PQRD/tutelas). Úsala apenas veas que te falta una herramienta.", "parameters": {"type": "object", "properties": {"grupos": {"type": "array", "items": {"type": "string"}}}, "required": ["grupos"]}},
+    {"name": "cargar_herramientas", "description": "Carga más grupos de herramientas para esta tarea. Grupos: construir (crear/editar/validar/guardar/clonar flujos, plantillas de flujos y de documentos), correr (correr y probar, adjuntos, logs), correo (correspondencia y buzones), conexiones (credenciales, variables, secretos, manifiesto), ia (proveedores y modelos), producto (notificaciones, aprobaciones, tablero), pqrd (configuración y parámetros de PQRD/tutelas). Úsala apenas veas que te falta una herramienta.", "parameters": {"type": "object", "properties": {"grupos": {"type": "array", "items": {"type": "string"}}}, "required": ["grupos"]}},
     {"name": "listar_flujos", "description": "Los flujos que existen, con su tipo (codigo o declarativo).", "parameters": {"type": "object", "properties": {}}},
     {"name": "leer_flujo", "description": "La definición completa de un flujo declarativo, o el resumen de nodos de uno de código.", "parameters": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}},
     {"name": "validar_flujo", "description": "Valida una definición de flujo declarativo sin guardarla. Devuelve los problemas.", "parameters": {"type": "object", "properties": {"definicion": {"type": "object"}}, "required": ["definicion"]}},
@@ -190,7 +190,9 @@ HERRAMIENTAS = [
     {"name": "reintentar_corrida", "description": "Vuelve a correr una ejecución con la misma entrada o el mismo correo.", "parameters": {"type": "object", "properties": {"corrida": {"type": "string"}}, "required": ["corrida"]}},
     {"name": "notificaciones", "description": "Las notificaciones de la plataforma (fallos, aprobaciones pendientes, conexiones que fallan, recursos, horarios que no corrieron). Con marcar_leidas=true las marca leídas.", "parameters": {"type": "object", "properties": {"marcar_leidas": {"type": "boolean"}}}},
     {"name": "aprobaciones", "description": "Las aprobaciones humanas pendientes (o con estado dado) de un flujo o de todos: qué hay que decidir y con qué datos. Tú no decides: abre la bandeja (abrir_vista aprobaciones) para que la persona apruebe o rechace.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "estado": {"type": "string"}}}},
-    {"name": "abrir_vista", "description": "Abre una pantalla del producto: inicio, plantillas (plantilla=id para su detalle), historial (corrida=id para una ejecución), notificaciones, aprobaciones, conexiones, tablero, flujo. O la guía de primeros pasos con vista=guia.", "parameters": {"type": "object", "properties": {"vista": {"type": "string"}, "flujo": {"type": "string"}, "corrida": {"type": "string"}, "plantilla": {"type": "string"}}, "required": ["vista"]}},
+    {"name": "abrir_vista", "description": "Abre una pantalla del producto: inicio, plantillas (plantilla=id para su detalle), documentos (la biblioteca de plantillas de documentos; documento=id para una), historial (corrida=id para una ejecución), notificaciones, aprobaciones, conexiones, tablero, flujo. O la guía de primeros pasos con vista=guia.", "parameters": {"type": "object", "properties": {"vista": {"type": "string"}, "flujo": {"type": "string"}, "corrida": {"type": "string"}, "plantilla": {"type": "string"}, "documento": {"type": "string"}}, "required": ["vista"]}},
+    {"name": "plantillas_documento", "description": "La biblioteca de plantillas de DOCUMENTOS de la plataforma (Word, Excel, PowerPoint y correo HTML con logo y estilos de cada área): id, nombre, formato, área, variables {{x}}, listas {{#lista}} con sus campos e imágenes. Con id, el detalle y su texto. Se llenan en un flujo con el paso documento_plantilla {plantilla: id, datos: {variable: plantilla}, desde_ia?}. No confundir con plantillas (flujos de ejemplo).", "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "texto": {"type": "string"}, "formato": {"type": "string"}}}},
+    {"name": "crear_plantilla_documento", "description": "Crea una plantilla en la biblioteca de Documentos: formato html (contenido: el HTML del correo con {{variables}}, {{#lista}}…{{/lista}}, {{imagen:logo}}; asunto opcional) o docx/pptx/xlsx armados desde texto (texto: «# » título, «## » sección o diapositiva, «- » viñeta, líneas con «|» tabla, {{variables}}, una fila con {{#items}} e {{item.campo}} se repite, {{contenido}} para lo que redacte la IA). Devuelve su id y lo que pide. La persona puede luego reemplazarla por su archivo con diseño.", "parameters": {"type": "object", "properties": {"nombre": {"type": "string"}, "formato": {"type": "string"}, "contenido": {"type": "string"}, "texto": {"type": "string"}, "descripcion": {"type": "string"}, "area": {"type": "string"}, "asunto": {"type": "string"}}, "required": ["nombre", "formato"]}},
     {"name": "controlar_editor", "description": "Maneja el editor del flujo abierto en pantalla. op: seleccionar_nodo (lo selecciona, centra y abre su panel), abrir_panel_nodo, cerrar_panel, zoom_nodo, zoom (nivel 0.2–2), auto_ordenar, resaltar (nodos), recargar, abrir_paleta (busqueda), abrir_correr.", "parameters": {"type": "object", "properties": {"op": {"type": "string"}, "nodo": {"type": "string"}, "nodos": {"type": "array", "items": {"type": "string"}}, "nivel": {"type": "number"}, "busqueda": {"type": "string"}, "seccion": {"type": "string"}}, "required": ["op"]}},
     {"name": "ajustar_lienzo", "description": "Mueve la vista del lienzo del flujo: ver_todo (encuadra el flujo completo), acercar, alejar o restablecer.", "parameters": {"type": "object", "properties": {"modo": {"type": "string"}}, "required": ["modo"]}},
     {"name": "probar_flujo", "description": "Corre un flujo sobre un correo real (modo prueba) y espera el resultado: desenlace, campos, avisos y pasos.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "caso": {"type": "string"}}, "required": ["flujo", "caso"]}},
@@ -311,6 +313,8 @@ def _cumple(nombre: str, a: Dict[str, Any], p: Dict[str, Any]) -> Optional[bool]
             return False
         if a.get("plantilla") and v == "plantillas":
             return p.get("abierto") == a["plantilla"]
+        if a.get("documento") and v == "documentos":
+            return p.get("abierto") == a["documento"]
         if a.get("corrida") and v == "historial":
             return p.get("abierto") == a["corrida"]
         return True
@@ -734,6 +738,39 @@ def _mover_pantalla(nombre: str, a: Dict[str, Any]) -> Any:
         if fid:
             emitir("enfocar", flujo=fid)
         return r
+    if nombre == "plantillas_documento":
+        if a.get("id"):
+            p = api("GET", f"/api/documentos/{a['id']}")
+            if isinstance(p, dict) and isinstance(p.get("texto"), str):
+                p["texto"] = p["texto"][:3000]
+            return p
+        from urllib.parse import urlencode
+        q = {k: a[k] for k in ("formato",) if a.get(k)}
+        if a.get("texto"):
+            q["q"] = a["texto"]
+        r = api("GET", "/api/documentos" + ("?" + urlencode(q) if q else ""))
+        lista = (r or {}).get("plantillas") if isinstance(r, dict) else None
+        if not isinstance(lista, list):
+            return r
+        return {"plantillas": [{**{k: x.get(k) for k in ("id", "nombre", "formato", "area", "descripcion", "variables", "repeticiones", "imagenes", "contenido", "asunto")},
+                                "recursos": [y.get("nombre") for y in x.get("recursos") or []]} for x in lista[:60]],
+                "uso": "En un flujo: documento_plantilla {plantilla: id, datos: {variable: \"{{...}}\"}, desde_ia?: {instrucciones, modo: llenar|completo}}; "
+                       "el archivo queda en la ejecución (y en HTML, {{salida.html}} y {{salida.asunto}} para un correo)."}
+    if nombre == "crear_plantilla_documento":
+        formato = str(a.get("formato") or "").lower().lstrip(".")
+        formato = {"word": "docx", "excel": "xlsx", "powerpoint": "pptx", "correo": "html", "htm": "html"}.get(formato, formato)
+        cuerpo = {k: a[k] for k in ("nombre", "descripcion", "area", "asunto") if a.get(k)}
+        cuerpo["formato"] = formato
+        if formato == "html" and a.get("contenido"):
+            cuerpo["contenido"] = a["contenido"]
+        elif a.get("texto") or a.get("contenido"):
+            cuerpo["texto"] = a.get("texto") or a.get("contenido")
+        r = api("POST", "/api/documentos", cuerpo)
+        if isinstance(r, dict) and r.get("id"):
+            emitir("control", accion="vista", vista="documentos", documento=r["id"])
+            return {k: r.get(k) for k in ("id", "nombre", "formato", "variables", "repeticiones", "imagenes", "contenido")} | {
+                "nota": "Quedó en Documentos (se la abrí a la persona). Para un logo, la persona lo sube en su detalle con el nombre «logo»."}
+        return r
     if nombre == "historial":
         if a.get("corrida"):
             return api("GET", f"/api/historial/{a['corrida']}")
@@ -767,8 +804,8 @@ def _mover_pantalla(nombre: str, a: Dict[str, Any]) -> Any:
         if v == "guia":
             emitir("control", accion="guia", abierta=True)
             return {"ok": True}
-        if v in ("inicio", "plantillas", "historial", "notificaciones", "aprobaciones"):
-            emitir("control", accion="vista", **{k: a[k] for k in ("vista", "flujo", "corrida", "plantilla") if a.get(k)})
+        if v in ("inicio", "plantillas", "documentos", "historial", "notificaciones", "aprobaciones"):
+            emitir("control", accion="vista", **{k: a[k] for k in ("vista", "flujo", "corrida", "plantilla", "documento") if a.get(k)})
             return {"ok": True, "vista": v}
         if v == "conexiones":
             emitir("control", accion="vista_conexiones")
@@ -845,7 +882,8 @@ GRUPOS: Dict[str, List[str]] = {
     "nucleo": ["cargar_herramientas", "ver_pantalla", "listar_flujos", "leer_flujo", "navegar", "abrir_vista", "tipos_de_nodo", "ayuda_nodo", "reglas_de_flujos",
                "enfocar_flujo", "controlar_editor", "ajustar_lienzo", "centrar_nodo", "historial", "ver_corrida", "ultimas_corridas", "renombrar_chat"],
     "construir": ["validar_flujo", "guardar_flujo", "editar_nodo", "agregar_nodo", "eliminar_nodo", "editar_aristas", "proponer_borrado",
-                  "renombrar_flujo", "clonar_flujo", "versiones_flujo", "restaurar_version", "plantillas", "instalar_plantilla"],
+                  "renombrar_flujo", "clonar_flujo", "versiones_flujo", "restaurar_version", "plantillas", "instalar_plantilla",
+                  "plantillas_documento", "crear_plantilla_documento"],
     "correr": ["probar_paso", "archivos_de_corrida", "correr_flujo", "probar_flujo", "correr_correos", "correr_buzon", "cancelar_cola", "reintentar_corrida", "subir_adjuntos_a_flujo",
                "estado_motor", "ver_logs"],
     "correo": ["listar_correos", "ver_correo", "ver_buzon", "leer_buzon_flujo", "abrir_correspondencia", "filtrar_correos", "abrir_correo",
@@ -858,7 +896,7 @@ GRUPOS: Dict[str, List[str]] = {
              "listar_nodos", "ver_nodo"],
 }
 DESCRIPCION_GRUPOS = {
-    "construir": "crear, editar, validar, guardar, clonar, renombrar, versiones y plantillas de flujos",
+    "construir": "crear, editar, validar, guardar, clonar, renombrar, versiones y plantillas de flujos; plantillas de documentos (Word, Excel, PowerPoint, correo HTML)",
     "correr": "correr y probar flujos, correos o el buzón, subir adjuntos del chat, reintentar, logs y motor",
     "correo": "correspondencia de un flujo: listar, ver, leer su buzón, abrir y seleccionar correos y adjuntos",
     "conexiones": "conexiones (credenciales), variables de entorno, secretos y manifiesto",
@@ -867,8 +905,8 @@ DESCRIPCION_GRUPOS = {
     "pqrd": "configuración, perfiles, parámetros y nodos del motor de PQRD y tutelas",
 }
 PISTAS = {
-    "construir": r"crea|arma|haz un flujo|automatiz|nodo|paso|edita|cambia|agrega|quita|elimina|borra|renombr|clon|copia|duplic|plantilla|versi|valida|guarda|arregla|corrige",
-    "correr": r"corre|ejecut|prueba|procesa|reintent|lanza|log|motor|trabajador|adjunt|archivo|documento|imagen|pdf|excel|word",
+    "construir": r"crea|arma|haz un flujo|automatiz|nodo|paso|edita|cambia|agrega|quita|elimina|borra|renombr|clon|copia|duplic|plantilla|versi|valida|guarda|arregla|corrige|genera|powerpoint|presentaci|diapositiv|pptx|zip|xml|json|csv|html",
+    "correr": r"corre|ejecut|prueba|procesa|reintent|lanza|log|motor|trabajador|adjunt|archivo|documento|imagen|pdf|excel|word|powerpoint|presentaci|diapositiv|pptx|zip|muestr",
     "correo": r"correo|buzón|buzon|bandeja|correspondencia|mail|outlook|gmail|remitente|asunto",
     "conexiones": r"conexi|credencial|llave|api key|token|secreto|variable|entorno|manifiesto|cuenta|conectar|oauth",
     "ia": r"\bia\b|modelo|proveedor|gemini|openai|claude|gpt|deepseek|vertex|anthropic|mistral|groq|ollama|openrouter|costo|token",

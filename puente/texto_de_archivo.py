@@ -22,6 +22,12 @@ sys.path.insert(0, str(MOTOR))
 
 def texto(ruta: str, nombre: str) -> str:
     datos = Path(ruta).read_bytes()
+    n = nombre.lower()
+    if n.endswith((".pptx", ".zip")) and datos[:4] == b"PK\x03\x04":
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import salidas  # PowerPoint diapositiva por diapositiva y la lista de un ZIP (el motor no los lee)
+
+        return salidas.texto_pptx(datos) if n.endswith(".pptx") else "Archivos en el ZIP:\n" + salidas.texto_zip(datos)
     if nombre.lower().endswith((".txt", ".csv", ".json", ".md", ".xml", ".html", ".htm", ".log", ".yaml", ".yml", ".tsv")):
         for codificacion in ("utf-8", "latin-1"):
             try:

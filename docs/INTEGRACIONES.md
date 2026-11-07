@@ -33,8 +33,24 @@ Una persona habilita la **escritura** de esa conexión. Sin eso, todo lo que esc
 - Nunca se usa como cuenta, remitente, destinatario o invitado una dirección `@positiva.gov.co` ni los buzones protegidos.
 - SharePoint: bloqueados `positiva.sharepoint.com` y `positiva-my.sharepoint.com` (`puente/conectores/microsoft.py`, `SITIOS_VETADOS`). **Por confirmar con Jonathan** que ese es el nombre del tenant de Positiva; si es otro, agregarlo ahí.
 
+## Fase 2: páginas sin API, almacenamiento, datos y mensajería (probado SOLO con dobles locales)
+
+`puente/pruebas_externos.py` (21 pruebas): sitio web, feeds, S3, BigQuery, Firestore, Telegram, SendGrid, Mailgun y Twilio contra un servidor local; FTP contra un servidor FTP local; MongoDB, SQL Server y Oracle con controladores falsos. Ninguno se ha probado contra una cuenta real. Lo que hay que tener para probarlos de verdad:
+
+- **Páginas y RSS** (`web_leer`, `rss_leer`, `rss_nuevo`): nada; solo URLs públicas https. Respetan robots.txt y esperan ≥ 2 s entre pedidos al mismo sitio.
+- **FTP/FTPS**: servidor, usuario y clave (conexión «Servidor FTP / FTPS»). SFTP no existe (licencias de SSH).
+- **S3 / MinIO / GCS**: access key y secret key limitadas a un bucket; GCS con llave HMAC (Configuración › Interoperabilidad).
+- **MongoDB**: host:puerto de cada miembro (no mongodb+srv), usuario de solo lectura para consultas.
+- **SQL Server / Oracle**: servidor, base (o el nombre de servicio en Oracle) y usuario de solo lectura.
+- **BigQuery / Firestore**: cuenta de servicio con BigQuery Data Viewer + Job User (o Cloud Datastore User), o «Google (OAuth)» con los alcances `bigquery` / `datastore` agregados.
+- **Telegram**: token de @BotFather y el bot agregado al chat. **SendGrid**: API key con Mail Send y remitente verificado. **Mailgun**: API key, dominio y región. **Twilio**: Account SID, Auth Token y número remitente.
+
+Todo lo que escribe (subir, insertar, DML, guardar, enviar) queda retenido hasta que una persona habilite la escritura de la conexión.
+
 ## Limitaciones conocidas
 
 - Los disparadores (`gmail_nuevo`, `outlook_nuevo`, `calendar_evento_proximo`) revisan cada N minutos. Gmail push por Pub/Sub y las suscripciones de Graph no están hechos, porque exigen exponer la plataforma a internet.
 - `docs_crear_desde_plantilla` sin copia en Drive arma el PDF con el generador propio y no conserva todo el formato del Doc (en Word sí).
 - `teams_mensaje` solo funciona con `microsoft_oauth` (Graph no deja publicar en canales con permisos de aplicación).
+- `web_leer` no ejecuta JavaScript ni inicia sesión; la automatización de navegador está pendiente.
+- SFTP, WhatsApp Business, Dropbox y Box no están (ver `docs/PLAN.md`, 5d).

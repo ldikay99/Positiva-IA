@@ -24,7 +24,12 @@ export function Dialogo({ abierto, cerrar, titulo, sub, children, pie, ancho = 5
   useEffect(() => {
     if (!abierto) return;
     const previo = document.activeElement as HTMLElement | null;
-    const t = setTimeout(() => caja.current?.querySelector<HTMLElement>("[autofocus], input, textarea, button.primario, button")?.focus(), 40);
+    // El foco entra a la ventana (para Esc y Tab) sin caer en el botón de cerrar: si un campo ya lo tomó, se queda ahí.
+    const t = setTimeout(() => {
+      const c = caja.current;
+      if (!c || c.contains(document.activeElement)) return;
+      (c.querySelector<HTMLElement>("[autofocus]") ?? c).focus();
+    }, 40);
     const tecla = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         // con el visor de un archivo abierto, Esc cierra solo el visor
@@ -49,7 +54,7 @@ export function Dialogo({ abierto, cerrar, titulo, sub, children, pie, ancho = 5
     <AnimatePresence>
       {abierto && (
         <motion.div className="dlg-fondo" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onPointerDown={(e) => e.target === e.currentTarget && cerrar()}>
-          <motion.div ref={caja} className="dlg" role="dialog" aria-modal="true" aria-labelledby={id} style={{ ["--dlg-ancho" as string]: `${ancho}px` }} initial={{ opacity: 0, y: 18, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, transition: { duration: 0.12 } }} transition={{ type: "spring", stiffness: 420, damping: 36 }}>
+          <motion.div ref={caja} className="dlg" tabIndex={-1} role="dialog" aria-modal="true" aria-labelledby={id} style={{ ["--dlg-ancho" as string]: `${ancho}px` }} initial={{ opacity: 0, y: 18, scale: 0.98 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, transition: { duration: 0.12 } }} transition={{ type: "spring", stiffness: 420, damping: 36 }}>
             <header className="dlg-cabeza">
               <div className="crece">
                 <h2 id={id}>{titulo}</h2>

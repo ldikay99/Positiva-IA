@@ -1,7 +1,7 @@
 /**
  * Rutas: cada pantalla tiene su dirección y la URL siempre dice dónde está la persona.
  *
- *   /inicio  /tablero  /plantillas[/<plantilla>]  /notificaciones  /aprobaciones  /conexiones[/<conexión>|nueva]
+ *   /inicio  /tablero  /plantillas[/<plantilla>]  /documentos[/<plantilla de documento>]  /notificaciones  /aprobaciones  /conexiones[/<conexión>|nueva]
  *   /flujos/<flujo>                       el lienzo
  *   /flujos/<flujo>/nodo/<nodo>           el lienzo con un paso abierto en el inspector
  *   /flujos/<flujo>/correo/<caso>         el lienzo con un correo abierto
@@ -13,7 +13,7 @@
  */
 import { usar, type Vista } from "./estado.ts";
 
-const GLOBALES = new Set<Vista>(["inicio", "tablero", "plantillas", "notificaciones", "aprobaciones", "conexiones"]);
+const GLOBALES = new Set<Vista>(["inicio", "tablero", "plantillas", "documentos", "notificaciones", "aprobaciones", "conexiones"]);
 /** Nombre de cada vista del flujo en la URL (en el idioma de la pantalla). */
 const SLUG: Partial<Record<Vista, string>> = { historial: "historial", corridas: "ejecuciones", logs: "registro", proveedores: "sistemas", adjuntos: "adjuntos", herramientas: "herramientas", configuracion: "ajustes" };
 const VISTA_DE_SLUG: Record<string, Vista> = Object.fromEntries(Object.entries(SLUG).map(([v, slug]) => [slug, v as Vista]));
@@ -62,6 +62,12 @@ export function leerRuta(path: string): RutaLeida {
   }
   if (GLOBALES.has(p[0] as Vista)) return { vista: p[0] as Vista, sub: p[1] };
   return { vista: "inicio" };
+}
+
+/** Antes de cargar: si la URL pide una pantalla general (no de un flujo), se muestra ya, sin pasar por el inicio. */
+export function mostrarRutaInicial(): void {
+  const r = leerRuta(location.pathname);
+  if (!r.flujo && r.vista !== "inicio") usar.setState({ vista: r.vista, sub: r.sub ?? null });
 }
 
 let aplicando = false;

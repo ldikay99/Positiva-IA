@@ -43,7 +43,9 @@ export function rechazoLocal(f: File, tipos?: string[], maxMb = 25): string | nu
 /** El visor de un archivo del flujo, encima de todo: imagen, PDF o el texto que saca el motor. */
 export function VisorArchivo({ flujo, a, cerrar }: { flujo: string; a: ArchivoFlujo; cerrar: () => void }) {
   const url = `/api/flujos/${encodeURIComponent(flujo)}/archivos/${a.id}`;
-  const comoTexto = !a.tipo.startsWith("image/") && a.tipo !== "application/pdf";
+  // un HTML generado (un correo, un informe) se ve como página, aislado: sin scripts ni acceso a la plataforma
+  const html = a.tipo.startsWith("text/html") || /\.html?$/i.test(a.nombre);
+  const comoTexto = !a.tipo.startsWith("image/") && a.tipo !== "application/pdf" && !html;
   const [texto, setTexto] = useState<string | null>(null);
   useEffect(() => {
     if (!comoTexto) return;
@@ -66,6 +68,7 @@ export function VisorArchivo({ flujo, a, cerrar }: { flujo: string; a: ArchivoFl
         <div className="arch-visor-cuerpo">
           {a.tipo.startsWith("image/") && <img src={url} alt={a.nombre} />}
           {a.tipo === "application/pdf" && <iframe src={url} title={a.nombre} />}
+          {html && <iframe src={url} title={a.nombre} sandbox="" className="arch-html" />}
           {comoTexto && (texto === null ? <div className="arch-leyendo"><span className="girando" />Leyendo el archivo…</div> : <pre>{texto || "(el archivo no tiene texto)"}</pre>)}
         </div>
       </motion.div>

@@ -93,6 +93,7 @@ from conectores import tablas as c_tablas  # noqa: E402
 import proveedores as ia_proveedores  # noqa: E402  (la capa de proveedores de IA: Vertex, Gemini, OpenAI, Claude…)
 import nodos_producto as np_  # noqa: E402  (aprobación humana, documentos, datos personales, hojas, mensajería, IA, datos y control)
 import nodos_integraciones as ni_  # noqa: E402  (Google Workspace, Microsoft 365, OpenAPI y disparadores por evento)
+import nodos_salidas as ns_  # noqa: E402  (salidas a la medida: exportar a JSON/XML/CSV/HTML, ZIP y plantillas de documentos)
 import cache_conversion  # noqa: E402  (conversión, OCR y visión por huella del archivo)
 from conectores.base import (HOSTS_METADATOS, ErrorDeNegocio, ErrorTransitorio, destino_seguro, direccion_vetada,  # noqa: E402,F401
                              host_vetado, ip_bloqueada, ruta_estado, timeout_de)
@@ -129,7 +130,7 @@ TIPOS = DISPARADORES | CONECTORES | {
     "leer_adjuntos", "filtro", "condicion", "ia_clasificar", "ia_decidir", "ia_extraer", "extraer_regex", "validar", "transformar",
     "buscar_en_tabla", "bifurcar_por_valor", "ia_generar", "resumir", "ia_redactar", "notificar", "enviar", "http", "salida",
     "para_cada", "fin_ciclo", "paralelo", "unir", "esperar", "expresion", "json", "fecha", "llamar_flujo", "respuesta_webhook",
-    "tabla_guardar", "tabla_consultar", "archivo_leer", "archivo_guardar"} | np_.TIPOS | ni_.TIPOS
+    "tabla_guardar", "tabla_consultar", "archivo_leer", "archivo_guardar"} | np_.TIPOS | ni_.TIPOS | ns_.TIPOS
 TIPOS_IA = {"ia_clasificar", "ia_decidir", "ia_extraer", "ia_generar", "resumir", "ia_redactar"}
 # Los que hablan con algo de afuera y por eso aceptan reintentos.
 TIPOS_CON_REINTENTOS = TIPOS_IA | {"notificar", "enviar", "http", "llamar_flujo"} | CONECTORES | np_.CON_REINTENTOS | ni_.CON_REINTENTOS
@@ -142,8 +143,8 @@ TERMINALES = {"salida", "fin_ciclo"} | np_.TERMINALES
 CREDENCIALES_DE = {"correo_leer": ("imap", "microsoft_graph"), "correo_nuevo": ("imap", "microsoft_graph"), "entrada_correo": ("imap", "microsoft_graph"),
                    "correo_enviar": ("smtp", "microsoft_graph"), "drive_listar": ("google_servicio", "google_oauth"),
                    "drive_leer": ("google_servicio", "google_oauth"), "drive_subir": ("google_servicio", "google_oauth"),
-                   "hoja_leer": ("google_servicio", "google_oauth"), "sql_consulta": ("postgres", "mysql", "sqlite"),
-                   "sql_ejecutar": ("postgres", "mysql", "sqlite"), "http": ("http_bearer", "http_basico", "http_oauth2")}
+                   "hoja_leer": ("google_servicio", "google_oauth"), "sql_consulta": ("postgres", "mysql", "sqlite", "sqlserver", "oracle"),
+                   "sql_ejecutar": ("postgres", "mysql", "sqlite", "sqlserver", "oracle"), "http": ("http_bearer", "http_basico", "http_oauth2")}
 NOMBRE_CREDENCIAL = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,62}$")
 NOMBRE_ENTORNO = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 ID_FLUJO = re.compile(r"^[a-z][a-z0-9-]{1,40}$")
@@ -435,6 +436,8 @@ def _salidas_propias(t: Any, c: dict) -> Tuple[List[str], List[str]]:
         return np_.salidas(t, c)
     if t in ni_.TIPOS:
         return ni_.salidas(t, c)
+    if t in ns_.TIPOS:
+        return ns_.salidas(t, c)
     if t == "para_cada":
         return ["cada", "listo"], []
     if t == "paralelo":
@@ -551,6 +554,8 @@ def produce(n: dict) -> Set[str]:
         r = np_.produce(t, c, nid)
     elif t in ni_.TIPOS:
         r |= ni_.produce(t, c, nid)
+    elif t in ns_.TIPOS:
+        r |= ns_.produce(t, c, nid)
     return {x for x in r if isinstance(x, str)}
 
 
@@ -598,6 +603,8 @@ def referencias(n: dict) -> List[Tuple[str, Set[str]]]:
         return np_.referencias(t, c, _plantillas_en, _ref_de_fuente)
     if t in ni_.TIPOS:
         return ni_.referencias(t, c, _plantillas_en, _ref_de_fuente)
+    if t in ns_.TIPOS:
+        return ns_.referencias(t, c, _plantillas_en, _ref_de_fuente)
     if t == "transformar":
         locales: Set[str] = set()
         for o in _operaciones(c):
@@ -1377,6 +1384,8 @@ def _validar_config(n: dict) -> List[str]:
         _validar_http(c, q)
     elif t in ni_.TIPOS:
         ni_.validar(t, c, q)
+    elif t in ns_.TIPOS:
+        ns_.validar(t, c, q)
     elif t in NUEVOS:
         _validar_nuevos(t, c, q)
     elif t in np_.TIPOS:
@@ -1908,7 +1917,7 @@ def _sin_secretos(encabezados: Dict[str, str], credencial: str = "") -> Dict[str
 _paginas = threading.Lock()
 
 
-class Ejecucion(np_.NodosProducto, ni_.NodosIntegraciones):
+class Ejecucion(np_.NodosProducto, ni_.NodosIntegraciones, ns_.NodosSalidas):
     def __init__(self, defi: dict, caso: str, modelo: str, entrada: Any = None, credenciales: Optional[Dict[str, dict]] = None,
                  entorno: Optional[Dict[str, str]] = None, subflujos: Optional[Dict[str, dict]] = None,
                  pila: Optional[List[str]] = None, flujo: str = "", ia_global: Optional[dict] = None) -> None:
@@ -3178,7 +3187,7 @@ class Ejecucion(np_.NodosProducto, ni_.NodosIntegraciones):
         c = n.get("config") or {}
         cred = self.cred(c.get("credencial"), CREDENCIALES_DE["sql_ejecutar"])
         params = self._parametros_sql(c)
-        dialecto = "mysql" if cred["tipo"] == "mysql" else ("sqlite" if cred["tipo"] == "sqlite" else "postgres")
+        dialecto = cred["tipo"] if cred["tipo"] in ("mysql", "sqlite", "sqlserver", "oracle") else "postgres"
         sentencia, _ = c_sql.revisar(c.get("sentencia"), "escritura", dialecto, c.get("permitir_sin_where") is True)  # falla aunque no se escriba
         base = cred["valores"].get("ruta") or f"{cred['valores'].get('host', '')}/{cred['valores'].get('base', '')}"
         detalle = {"sentencia": sentencia[:2000], "parametros": params}
@@ -4319,6 +4328,7 @@ def _validar_cli(entrada: Any) -> List[str]:
 
 np_.enlazar(sys.modules[__name__])  # los nodos de producto usan este mismo módulo (y no una segunda copia)
 ni_.enlazar(sys.modules[__name__])  # y los de integración también
+ns_.enlazar(sys.modules[__name__])  # y los de salidas a la medida
 
 
 if __name__ == "__main__":

@@ -338,3 +338,6 @@
   .co-lista li { flex-wrap: wrap; }
   .co-botones .boton { flex: 1 1 auto; justify-content: center; }
 }
+
+/* La ventana recibe el foco al abrirse (para Esc y Tab) sin mostrar un borde. */
+.dlg:focus { outline: none; }

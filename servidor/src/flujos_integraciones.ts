@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CATEGORIA_EXTERNO, configExternos, describirExterno, DISPARADORES_EXTERNOS, ESCRITURA_EXTERNOS, LECTURA_EXTERNOS, NOMBRE_EXTERNO, TIPOS_EXTERNOS } from "./flujos_externos.ts";
 
 /**
  * La forma de la config de los nodos de integración (plan 5d): Google Workspace, Microsoft 365,
@@ -19,10 +20,12 @@ export const TIPOS_INTEGRACION = [
   "teams_mensaje", "excel_en_linea",
   // cualquier API con OpenAPI
   "api_operacion",
+  // fase 2 (flujos_externos.ts): páginas sin API, almacenamiento, datos y mensajería transaccional
+  ...TIPOS_EXTERNOS,
 ] as const;
 export type TipoIntegracion = (typeof TIPOS_INTEGRACION)[number];
 
-export const DISPARADORES_INTEGRACION = ["gmail_nuevo", "outlook_nuevo", "calendar_evento_proximo"] as const;
+export const DISPARADORES_INTEGRACION = ["gmail_nuevo", "outlook_nuevo", "calendar_evento_proximo", ...DISPARADORES_EXTERNOS] as const;
 export const DISPARADORES_DE_CORREO_INTEGRACION = ["gmail_nuevo", "outlook_nuevo"] as const;
 /** Todos los disparadores que arrancan con un correo (la corrida trae caso y tiene «Correspondencia»). Sin importar flujos.ts. */
 export const DISPARADORES_DE_CORREO_TODOS = new Set<string>(["entrada_correo", "correo_nuevo", ...DISPARADORES_DE_CORREO_INTEGRACION]);
@@ -30,9 +33,9 @@ export const DISPARADORES_DE_CORREO_TODOS = new Set<string>(["entrada_correo", "
 export const DISPARADORES_DE_SONDEO = new Set<string>(["correo_nuevo", ...DISPARADORES_INTEGRACION]);
 export const ESCRITURA_INTEGRACION = ["gmail_enviar", "gmail_responder", "gmail_etiquetar", "calendar_crear", "calendar_actualizar", "docs_crear_desde_plantilla",
   "outlook_enviar", "outlook_responder", "outlook_mover", "outlook_categorizar", "outlook_calendario_crear", "onedrive_subir",
-  "sharepoint_archivos", "sharepoint_lista", "teams_mensaje", "excel_en_linea", "api_operacion"];
+  "sharepoint_archivos", "sharepoint_lista", "teams_mensaje", "excel_en_linea", "api_operacion", ...ESCRITURA_EXTERNOS];
 export const LECTURA_INTEGRACION = ["gmail_buscar", "calendar_eventos", "calendar_disponibilidad", "forms_respuestas", "outlook_buscar", "outlook_calendario_eventos",
-  "onedrive_listar", "onedrive_leer"];
+  "onedrive_listar", "onedrive_leer", ...LECTURA_EXTERNOS];
 /** Hablan con un servicio de afuera: aceptan reintentos (los disparadores no). */
 export const CON_REINTENTOS_INTEGRACION = [...ESCRITURA_INTEGRACION, ...LECTURA_INTEGRACION];
 
@@ -45,10 +48,14 @@ export const NOMBRE_INTEGRACION: Record<TipoIntegracion, string> = {
   outlook_categorizar: "Outlook · categorías", outlook_calendario_eventos: "Outlook · eventos", outlook_calendario_crear: "Outlook · crear evento",
   onedrive_listar: "OneDrive · listar", onedrive_leer: "OneDrive · leer", onedrive_subir: "OneDrive · subir", sharepoint_archivos: "SharePoint · archivos",
   sharepoint_lista: "SharePoint · lista", teams_mensaje: "Teams · mensaje (Graph)", excel_en_linea: "Excel en línea", api_operacion: "API · operación (OpenAPI)",
+  ...NOMBRE_EXTERNO,
 };
 
-export const CATEGORIA_INTEGRACION: Record<TipoIntegracion, string> = Object.fromEntries(TIPOS_INTEGRACION.map((t) => [t,
-  (DISPARADORES_INTEGRACION as readonly string[]).includes(t) ? "entrada" : t === "docs_crear_desde_plantilla" ? "documentos" : t === "teams_mensaje" || t === "api_operacion" ? "integracion" : "conector"])) as Record<TipoIntegracion, string>;
+export const CATEGORIA_INTEGRACION: Record<TipoIntegracion, string> = {
+  ...Object.fromEntries(TIPOS_INTEGRACION.map((t) => [t,
+    (DISPARADORES_INTEGRACION as readonly string[]).includes(t) ? "entrada" : t === "docs_crear_desde_plantilla" ? "documentos" : t === "teams_mensaje" || t === "api_operacion" ? "integracion" : "conector"])),
+  ...CATEGORIA_EXTERNO,
+} as Record<TipoIntegracion, string>;
 
 /** Lo que flujos.ts le presta a este módulo. */
 export interface Piezas {
@@ -174,6 +181,7 @@ export function configIntegraciones(p: Piezas): Record<TipoIntegracion, z.ZodTyp
     api_operacion: conf({ ...comun, operacion: textoReq("operacion (operationId o «GET /ruta»)"), parametros: mapaPlantillas("parametros").optional(),
       cuerpo: z.union([z.string(), z.record(z.string(), z.unknown()), z.array(z.unknown())], { error: "cuerpo: un objeto JSON con plantillas o un texto" }).optional(),
       paginacion: paginacion.optional(), mapeo: mapeo.optional() }),
+    ...configExternos(p),
   };
 }
 
@@ -205,6 +213,7 @@ export function extensionHttp(p: Pick<Piezas, "entre" | "opcional" | "archivosRe
 /** Una línea que dice qué hace cada nodo de integración (para el lienzo). */
 export function describirIntegracion(tipo: string, c: Record<string, unknown>, add: (d: string) => void): boolean {
   if (!(TIPOS_INTEGRACION as readonly string[]).includes(tipo)) return false;
+  if (describirExterno(tipo, c, add)) return true;
   const cred = `con la conexión «${String(c.credencial ?? "—")}»`;
   const t = tipo as TipoIntegracion;
   switch (t) {

@@ -16,6 +16,7 @@ import * as descargas from "./descargas.ts";
 import { programacionDe, estado as estadoDelProgramador, enlace as programadorEnlace } from "./programador.ts";
 import type { Corrida } from "./motor.ts";
 import * as integ from "./flujos_integraciones.ts";
+import * as salidasMedida from "./flujos_salidas.ts";
 
 /**
  * Los flujos de la plataforma.
@@ -51,6 +52,8 @@ export const TIPOS_DE_NODO = [
   "responder_correo", "ia_imagen",
   // integraciones (flujos_integraciones.ts): Google Workspace, Microsoft 365, OpenAPI y disparadores por evento
   ...integ.TIPOS_INTEGRACION,
+  // salidas a la medida (flujos_salidas.ts): exportar a JSON/XML/CSV/HTML, ZIP y plantillas de Documentos
+  ...salidasMedida.TIPOS_SALIDAS,
 ] as const;
 export type TipoDeNodo = (typeof TIPOS_DE_NODO)[number];
 export const DISPARADORES = new Set<string>(["entrada_correo", "entrada_manual", "programado", "webhook", "correo_nuevo", "entrada_archivos", ...integ.DISPARADORES_INTEGRACION]);
@@ -520,8 +523,8 @@ export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
     }
   }),
   documento_generar: conf({
-    formato: z.enum(["pdf", "docx"], { error: "formato: pdf o docx" }), plantilla: z.string().optional(),
-    plantilla_archivo: z.string().regex(ID_ARCHIVO, "plantilla_archivo: el id de un .docx subido al flujo").optional(), nombre: z.string().optional(), titulo: z.string().optional(),
+    formato: z.enum(["pdf", "docx", "pptx", "html"], { error: "formato: pdf, docx, pptx o html" }), plantilla: z.string().optional(),
+    plantilla_archivo: z.string().regex(ID_ARCHIVO, "plantilla_archivo: el id de un .docx o .pptx subido al flujo").optional(), nombre: z.string().optional(), titulo: z.string().optional(),
     desde_ia: desdeIa.optional(),
   }).refine((c) => Number(Boolean(c.plantilla?.trim())) + Number(Boolean(c.plantilla_archivo)) + Number(c.desde_ia !== undefined) === 1,
     { message: "documento_generar necesita plantilla, plantilla_archivo o desde_ia (una de las tres)", path: ["plantilla"] }),
@@ -681,6 +684,8 @@ export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
   }),
   // ---------------------------------------------- integraciones (flujos_integraciones.ts)
   ...integ.configIntegraciones({ conf, credencialRef, archivosRef, textoReq, entre, opcional, mapaPlantillas, timeoutS, RUTA, variable, filtroCorreo }),
+  // ---------------------------------------------- salidas a la medida (flujos_salidas.ts)
+  ...salidasMedida.configSalidas({ conf, archivosRef, mapaPlantillas, desdeIa }),
 };
 
 const nodo = z.object({
@@ -1296,6 +1301,7 @@ export async function manifiesto(id: string): Promise<Record<string, unknown> | 
       ...(disp && integ.DISPARADORES_INTEGRACION.includes(disp.tipo as (typeof integ.DISPARADORES_INTEGRACION)[number]) ? { [disp.tipo]: {
         credencial: cd.credencial, cada_minutos: cd.cada_minutos ?? 5, activo: cd.activo === true, solo_lectura: true, sin_repetir: true,
         ...(disp.tipo === "outlook_nuevo" ? { carpeta: cd.carpeta ?? "inbox" } : disp.tipo === "gmail_nuevo" ? { etiqueta: cd.etiqueta ?? "INBOX", consulta: cd.consulta ?? "" }
+          : disp.tipo === "rss_nuevo" ? { url: cd.url, cada_minutos: cd.cada_minutos ?? 30, robots_txt: "respetado" }
           : { calendario: cd.calendario ?? "primary", minutos_antes: cd.minutos_antes ?? 15 }) } } : {}),
       ...(disp?.tipo === "correo_nuevo" ? { correo_nuevo: { credencial: cd.credencial, carpeta: cd.carpeta ?? "INBOX", cada_minutos: cd.cada_minutos ?? 5, activo: cd.activo === true, solo_lectura: true } } : {}),
       ...(disp?.tipo === "entrada_manual" ? { campos: cd.campos ?? [] } : {}),
@@ -1340,6 +1346,7 @@ const CATEGORIA: Record<TipoDeNodo, string> = {
   reintentar_mas_tarde: "logica", limite_tasa: "logica", ventana_horario: "logica", detener_con_alerta: "salida",
   responder_correo: "conector", ia_imagen: "ia",
   ...integ.CATEGORIA_INTEGRACION,
+  ...salidasMedida.CATEGORIA_SALIDAS,
 };
 const NOMBRE_TIPO: Record<TipoDeNodo, string> = {
   entrada_correo: "Entrada de correo", leer_adjuntos: "Leer adjuntos", filtro: "Filtro", condicion: "Condición",
@@ -1362,6 +1369,7 @@ const NOMBRE_TIPO: Record<TipoDeNodo, string> = {
   ventana_horario: "Ventana de horario", detener_con_alerta: "Detener con alerta",
   responder_correo: "Responder correo", ia_imagen: "IA · generar imagen",
   ...integ.NOMBRE_INTEGRACION,
+  ...salidasMedida.NOMBRE_SALIDAS,
 };
 
 const valorDe = (x: unknown, clave = "valor") => (typeof x === "object" && x ? String((x as Record<string, unknown>)[clave] ?? "") : String(x));
@@ -1560,7 +1568,7 @@ function describirConfig(n: Definicion["nodos"][number], aristas: Definicion["ar
       if (c.plantilla_respuesta) add(`Respuesta: ${corto(c.plantilla_respuesta, 300)}`);
       break;
     default:
-      integ.describirIntegracion(n.tipo, c, add);  // Google, Microsoft 365, OpenAPI y disparadores por evento
+      if (!salidasMedida.describirSalidas(n.tipo, c, add)) integ.describirIntegracion(n.tipo, c, add);  // salidas a la medida; Google, Microsoft 365, OpenAPI y disparadores por evento
   }
   if (c.salida && !["ia_clasificar", "ia_decidir", "ia_extraer", "extraer_regex", "transformar", "buscar_en_tabla", "ia_generar", "resumir", "ia_redactar", "http", "salida"].includes(n.tipo)) add(`Deja su resultado en «${String(c.salida)}»`);
   // Lo común a todo nodo: reintentos, qué hace si falla y si está apagado.

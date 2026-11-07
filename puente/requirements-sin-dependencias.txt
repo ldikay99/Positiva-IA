@@ -1,0 +1,3 @@
+# Se instalan con `pip install --no-deps` (ver Dockerfile y requirements.txt).
+# MongoDB (Apache-2.0); sin dnspython (ISC), que solo pide mongodb+srv://.
+pymongo==4.10.1

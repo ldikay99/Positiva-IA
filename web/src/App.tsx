@@ -1,4 +1,4 @@
-import { iniciarRutas } from "./rutas.ts";
+import { iniciarRutas, mostrarRutaInicial } from "./rutas.ts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
@@ -20,6 +20,7 @@ import { DialogoNuevoFlujo } from "./componentes/Dialogos.tsx";
 import { VistaInicio } from "./componentes/Inicio.tsx";
 import { VistaHistorial } from "./componentes/Historial.tsx";
 import { VistaPlantillas } from "./componentes/Plantillas.tsx";
+import { VistaDocumentos } from "./componentes/Documentos.tsx";
 import { Campana, VistaNotificaciones } from "./componentes/Notificaciones.tsx";
 import { VistaAprobaciones } from "./componentes/Aprobaciones.tsx";
 import { PanelGuia } from "./componentes/Guia.tsx";
@@ -44,6 +45,7 @@ const NAVEGACION: { id: Vista; nombre: string; corto?: string; icono: NombreIcon
   { id: "historial", nombre: "Historial", icono: "historial", pista: "Cada ejecución del flujo: qué entró, qué hizo y cómo terminó", grupo: "trabajo" },
   { id: "aprobaciones", nombre: "Aprobaciones", corto: "Aprobar", icono: "persona", pista: "Casos en pausa que esperan que una persona decida", grupo: "trabajo" },
   { id: "plantillas", nombre: "Plantillas", icono: "plantilla", pista: "Flujos de ejemplo listos para usar", grupo: "construir" },
+  { id: "documentos", nombre: "Documentos", icono: "documento", pista: "Plantillas de Word, Excel, PowerPoint y correo con el logo y los estilos de cada área", grupo: "construir" },
   { id: "conexiones", nombre: "Conexiones", icono: "llave", pista: "Cuentas y llaves con que los pasos hablan con otros sistemas", grupo: "construir" },
   { id: "tablero", nombre: "Tablero", icono: "corridas", pista: "Las cifras de cada flujo: resultados, tiempos y recursos", grupo: "supervisar" },
   { id: "logs", nombre: "Registro", icono: "logs", pista: "Todo lo que hace el motor, en vivo (logs)", grupo: "supervisar" },
@@ -54,10 +56,10 @@ const NAVEGACION: { id: Vista; nombre: string; corto?: string; icono: NombreIcon
 ];
 
 /** Las vistas de toda la plataforma (no de un flujo): la barra muestra su título, no el selector de flujo. */
-const TITULOS: Partial<Record<Vista, string>> = { inicio: "Inicio", tablero: "Tus flujos", plantillas: "Plantillas", notificaciones: "Notificaciones", aprobaciones: "Aprobaciones" };
+const TITULOS: Partial<Record<Vista, string>> = { inicio: "Inicio", tablero: "Tus flujos", plantillas: "Plantillas", documentos: "Documentos", notificaciones: "Notificaciones", aprobaciones: "Aprobaciones" };
 /** Qué sección del riel se marca en cada vista (el resumen de corridas es parte del historial). */
 const SECCION_DE: Partial<Record<Vista, Vista>> = { corridas: "historial" };
-const VISTAS_DE_CONTROL = new Set<Vista>(["inicio", "plantillas", "historial", "notificaciones", "aprobaciones", "tablero", "flujo", "conexiones", "adjuntos", "logs", "herramientas", "proveedores", "configuracion", "corridas"]);
+const VISTAS_DE_CONTROL = new Set<Vista>(["inicio", "plantillas", "documentos", "historial", "notificaciones", "aprobaciones", "tablero", "flujo", "conexiones", "adjuntos", "logs", "herramientas", "proveedores", "configuracion", "corridas"]);
 
 /** «Ayuda»: abre la guía de primeros pasos; mientras no esté completa muestra el avance. */
 function BotonAyuda() {
@@ -532,7 +534,10 @@ export default function App() {
   const [bandeja, setBandeja] = useState(() => window.innerWidth >= 1100 && leerLocal("positiva-ia:bandeja-visible", true));
 
   useEffect(() => {
-    cargar().then(() => iniciarRutas()).catch((e: Error) => avisar(`No se pudo cargar: ${e.message}`, "error"));
+    // Las pantallas generales se muestran de inmediato; las de un flujo esperan a que carguen los flujos.
+    // Aunque la carga falle, la URL se sigue respetando.
+    mostrarRutaInicial();
+    cargar().catch((e: Error) => avisar(`No se pudo cargar: ${e.message}`, "error")).finally(() => void iniciarRutas());
     conectar();
   }, [cargar, conectar, avisar]);
 
@@ -558,8 +563,8 @@ export default function App() {
         else if (x.flujo && x.flujo !== s.flujo && s.flujos.some((f) => f.id === x.flujo)) void s.cambiarFlujo(x.flujo).then(() => irA(x.vista));
         else irA(x.vista);
         // Lo que se abre dentro de la vista (una plantilla, una conexión) también va en la URL.
-        const dentro = (d as { plantilla?: unknown; conexion?: unknown }).plantilla ?? (d as { conexion?: unknown }).conexion;
-        if (typeof dentro === "string" && dentro && (x.vista === "plantillas" || x.vista === "conexiones")) s.fijarSub(dentro);
+        const dentro = (d as { plantilla?: unknown; conexion?: unknown }).plantilla ?? (d as { conexion?: unknown }).conexion ?? (d as { documento?: unknown }).documento;
+        if (typeof dentro === "string" && dentro && (x.vista === "plantillas" || x.vista === "conexiones" || x.vista === "documentos")) s.fijarSub(dentro);
       } else if (d?.accion === "guia") {
         const abierta = (d as { abierta?: unknown }).abierta !== false;
         if (abierta && usar.getState().vista === "inicio" && !usarGuia.getState().cerrada) document.querySelector<HTMLElement>(".in-guia")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
@@ -599,6 +604,7 @@ export default function App() {
               {vista === "flujo" && <EspacioFlujo ancho={ancho} bandejaVisible={bandeja} cerrarBandeja={() => setBandeja(false)} />}
               {vista === "historial" && <VistaHistorial />}
               {vista === "plantillas" && <VistaPlantillas />}
+              {vista === "documentos" && <VistaDocumentos />}
               {vista === "notificaciones" && <VistaNotificaciones />}
               {vista === "aprobaciones" && <VistaAprobaciones />}
               {vista === "adjuntos" && <VistaAdjuntos />}

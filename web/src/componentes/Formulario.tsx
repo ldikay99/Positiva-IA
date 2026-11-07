@@ -7,6 +7,7 @@ import { Selector } from "./Selector.tsx";
 import { EditorJson, Interruptor } from "./Editores.tsx";
 import { FormularioCredencial } from "./Conexiones.tsx";
 import { CampoArchivoFlujo } from "./Archivos.tsx";
+import { CampoPlantillaDocumento } from "./Documentos.tsx";
 
 /**
  * Un formulario que se arma solo a partir del esquema de configuración de un
@@ -565,6 +566,8 @@ export function Campo({ clave, esquema, valor, alCambiar, ctx, ruta, obligatorio
     switch (esquema.format) {
       case "archivo-flujo":
         return envolver(<CampoArchivoFlujo valor={texto} alCambiar={(t) => alCambiar(t || undefined)} />, true);
+      case "plantilla-documento":
+        return envolver(<CampoPlantillaDocumento valor={texto} alCambiar={(t) => alCambiar(t || undefined)} />, true);
       case "plantilla":
         return envolver(<CampoPlantilla id={id} valor={texto} variables={ctx.variables} largo={esquema["x-largo"] === true || texto.length > 70 || /cuerpo|mensaje|plantilla|instrucciones/.test(clave)} placeholder={esquema.default !== undefined ? String(esquema.default) : "Texto con {{variables}}"} alCambiar={poner} />, true);
       case "texto-largo":

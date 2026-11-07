@@ -29,7 +29,7 @@ VERSION = 8
 
 DESENLACES = ["radicar", "manual", "reenviar", "descartar", "responder", "duplicado"]
 DISPARADORES = ["entrada_correo", "entrada_manual", "programado", "webhook", "correo_nuevo", "entrada_archivos", "gmail_nuevo", "outlook_nuevo",
-                "calendar_evento_proximo"]
+                "calendar_evento_proximo", "rss_nuevo"]
 # Lo que acepta entrada_archivos por defecto (video y audio nunca).
 TIPOS_PERMITIDOS = ["jpg", "jpeg", "png", "webp", "tif", "tiff", "bmp", "gif", "heic", "pdf", "doc", "docx", "xls", "xlsx", "csv",
                     "ppt", "pptx", "txt", "md", "json", "xml", "html", "eml", "msg", "zip", "rtf", "odt", "ods"]
@@ -37,7 +37,11 @@ TIPOS_CREDENCIAL_IA = ["ia_gemini", "ia_openai", "ia_azure_openai", "ia_anthropi
                        "ia_ollama", "ia_compatible", "ia_cohere", "ia_personalizado"]
 TIPOS_CREDENCIAL = ["imap", "smtp", "microsoft_graph", "google_servicio", "google_oauth", "microsoft_oauth", "api_openapi", "http_oauth2",
                     "postgres", "mysql", "sqlite", "http_bearer", "http_basico",
-                    "webhook_teams", "webhook_slack", "webhook_saliente", *TIPOS_CREDENCIAL_IA]
+                    "webhook_teams", "webhook_slack", "webhook_saliente",
+                    # fase 2 (especificacion_externos.py): almacenamiento, datos y mensajería transaccional
+                    "sqlserver", "oracle", "mongodb", "ftp", "s3", "telegram_bot", "sendgrid", "mailgun", "twilio", *TIPOS_CREDENCIAL_IA]
+# Las bases SQL de sql_consulta y sql_ejecutar.
+TIPOS_SQL = ["postgres", "mysql", "sqlite", "sqlserver", "oracle"]
 # Los proveedores de IA (los registra puente/proveedores/; una prueba compara las listas).
 PROVEEDORES_IA = ["vertex", "gemini", "openai", "azure_openai", "deepseek", "mistral", "groq", "openrouter", "ollama", "openai_compatible",
                   "anthropic", "cohere", "personalizado"]
@@ -752,9 +756,9 @@ TIPOS: Dict[str, Dict[str, Any]] = {
     },
     "sql_consulta": {
         "nombre": "SQL · consultar", "categoria": "conector",
-        "descripcion": "Corre UNA consulta SELECT/WITH en PostgreSQL, MySQL o SQLite (en transacción de solo lectura) y deja las filas. Los valores van como "
-                       "parámetros :nombre, nunca pegados en el texto.",
-        "config": conf({"credencial": credencial(["postgres", "mysql", "sqlite"]), "consulta": largo("SELECT … WHERE documento = :documento"),
+        "descripcion": "Corre UNA consulta SELECT/WITH en PostgreSQL, MySQL, SQLite, SQL Server u Oracle (en transacción de solo lectura, o que se deshace "
+                       "siempre en SQL Server) y deja las filas. Los valores van como parámetros :nombre, nunca pegados en el texto.",
+        "config": conf({"credencial": credencial(TIPOS_SQL), "consulta": largo("SELECT … WHERE documento = :documento"),
                         "parametros": mapa(plantilla(), "{nombre: plantilla} para cada :nombre"), "max_filas": MAX_FILAS, "timeout_s": TIMEOUT,
                         "salida": SALIDA()}, ["credencial", "consulta"]),
         "salidas": ["ok", "vacio"], "produce": "salida (lista de filas)", "x-credencial": True,
@@ -766,7 +770,7 @@ TIPOS: Dict[str, Dict[str, Any]] = {
         "nombre": "SQL · ejecutar", "categoria": "conector",
         "descripcion": "Corre UNA sentencia INSERT/UPDATE/DELETE (UPDATE y DELETE con WHERE). ESCRIBE AFUERA: solo se aplica si una persona habilitó la escritura "
                        "de la credencial; si no, queda como escritura bloqueada.",
-        "config": conf({"credencial": credencial(["postgres", "mysql", "sqlite"]), "sentencia": largo("UPDATE casos SET estado = :estado WHERE id = :id"),
+        "config": conf({"credencial": credencial(TIPOS_SQL), "sentencia": largo("UPDATE casos SET estado = :estado WHERE id = :id"),
                         "parametros": mapa(plantilla(), "{nombre: plantilla}"), "permitir_sin_where": booleano("UPDATE/DELETE sin WHERE (toda la tabla)", False),
                         "reintentos": _REINTENTOS, "timeout_s": TIMEOUT, "salida": SALIDA()}, ["credencial", "sentencia"]),
         "salidas": ["ok"], "produce": "salida {afectadas, filas, bloqueado}", "x-credencial": True,
@@ -887,13 +891,15 @@ TIPOS: Dict[str, Dict[str, Any]] = {
     # -------------------------------------------------------------- documentos
     "documento_generar": {
         "nombre": "Generar documento", "categoria": "documentos",
-        "descripcion": "Genera un PDF o un Word desde una plantilla con {{variables}}: un texto (con «# » títulos, «- » viñetas y líneas con «|» como tablas), "
-                       "un .docx subido al flujo con {{variables}} en su texto, o desde_ia: la IA redacta el documento con tus instrucciones (título, secciones "
-                       "con párrafos, viñetas y tablas) y se arma en PDF o Word. Queda como archivo del flujo y resultado de la ejecución, y deja su ficha "
-                       "{id, nombre, tipo, tamano} para adjuntarlo después ({{salida}} o {{salida.id}}).",
-        "config": conf({"formato": opcion(["pdf", "docx"], "pdf o docx (Word)"),
+        "descripcion": "Genera un PDF, un Word, un PowerPoint o un HTML desde una plantilla con {{variables}}: un texto (con «# » títulos, «- » viñetas y "
+                       "líneas con «|» como tablas; en PowerPoint cada «# » o «## » es una diapositiva), un .docx o .pptx subido al flujo con {{variables}} "
+                       "en su texto, o desde_ia: la IA redacta el documento con tus instrucciones (título, secciones con párrafos, viñetas y tablas; en "
+                       "PowerPoint, diapositivas con puntos, tablas y notas) y se arma en el formato pedido. Queda como archivo del flujo y resultado de la "
+                       "ejecución, y deja su ficha {id, nombre, tipo, tamano} para adjuntarlo después ({{salida}} o {{salida.id}}). Para las plantillas "
+                       "de la biblioteca de Documentos (con logo y estilos de cada área) usa documento_plantilla.",
+        "config": conf({"formato": opcion(["pdf", "docx", "pptx", "html"], "pdf, docx (Word), pptx (PowerPoint) o html"),
                         "plantilla": plantilla("el texto del documento con {{variables}}", largo=True),
-                        "plantilla_archivo": texto("o un .docx subido al flujo con {{variables}} en su texto", None, "Plantilla Word", "archivo-flujo"),
+                        "plantilla_archivo": texto("o un .docx (o .pptx con formato pptx) subido al flujo con {{variables}} en su texto", None, "Plantilla Word o PowerPoint", "archivo-flujo"),
                         "desde_ia": DESDE_IA,
                         "nombre": plantilla("nombre del archivo (sin extensión), p. ej. «certificado-{{entrada.documento}}»"),
                         "titulo": plantilla("título del documento (metadatos)"), "salida": SALIDA()}, ["formato"]),
@@ -1538,12 +1544,15 @@ AYUDA: Dict[str, Dict[str, Any]] = {
                      "No va dentro de un para_cada ni de un flujo llamado. Vera puede listar las pendientes, pero solo una persona decide en la plataforma."],
     },
     "documento_generar": {
-        "ejemplos": [{"formato": "docx", "nombre": "respuesta-{{radicado}}", "plantilla": "# Respuesta a su solicitud\n\n{{respuesta}}\n\n| Campo | Valor |\n| Radicado | {{radicado}} |"},
-                     {"formato": "docx", "nombre": "respuesta-{{datos.radicado}}", "salida": "documento", "desde_ia": {
+        "ejemplos": [{"formato": "docx", "nombre": "respuesta-{{datos.radicado}}", "salida": "documento", "desde_ia": {
                          "instrucciones": "Redacta la respuesta formal a la solicitud: saludo, resumen de lo pedido, la decisión y los próximos pasos. "
-                                          "Incluye una tabla con los datos del caso.", "entradas": ["correo", "datos"]}}],
-        "consejos": ["En la plantilla de texto: «# » título, «## » subtítulo, «- » viñeta, líneas con «|» tabla y una línea en blanco separa párrafos; "
-                     "con plantilla_archivo (un .docx del flujo) se llena cada párrafo que tenga {{…}}.",
+                                          "Incluye una tabla con los datos del caso.", "entradas": ["correo", "datos"]}},
+                     {"formato": "pptx", "nombre": "presentacion-{{tema}}", "salida": "presentacion", "desde_ia": {
+                         "instrucciones": "Arma una presentación de 3 diapositivas sobre {{tema}}: contexto, cifras clave (con una tabla) y próximos pasos, "
+                                          "con notas para quien presenta."}}],
+        "consejos": ["En la plantilla de texto: «# » título, «## » subtítulo (en PowerPoint, una diapositiva), «- » viñeta, líneas con «|» tabla y una "
+                     "línea en blanco separa párrafos; con plantilla_archivo (un .docx o .pptx del flujo) se llena cada párrafo que tenga {{…}}. "
+                     "PowerPoint sale en 16:9, con portada y notas del orador; HTML, como página con estilo.",
                      "Con desde_ia la IA redacta el documento (título, secciones, párrafos, viñetas y tablas) y no inventa datos: dale entradas con lo que sabe.",
                      "El archivo queda en el flujo y como resultado de la ejecución: adjúntalo con «{{salida}}» (correo, respuesta, Drive, Teams) o pásalo a pdf_unir."],
     },
@@ -1710,6 +1719,10 @@ import especificacion_integraciones as _integ  # noqa: E402
 TIPOS.update(_integ.tipos(sys.modules[__name__]))
 ESCRITURA |= _integ.ESCRITURA
 CON_REINTENTOS |= _integ.CON_REINTENTOS
+# Salidas a la medida (exportar a JSON/XML/CSV/HTML, ZIP y plantillas de la biblioteca de Documentos): especificacion_salidas.py.
+import especificacion_salidas as _salidas  # noqa: E402
+
+TIPOS.update(_salidas.tipos(sys.modules[__name__]))
 
 for _t, _a in AYUDA.items():
     TIPOS[_t]["ejemplos"] = _a["ejemplos"]
@@ -1802,15 +1815,21 @@ REGLAS = """Un flujo declarativo es {id, nombre, descripcion, ia, nodos: [{id, t
   No va dentro de para_cada, de ramas ni de flujos llamados. Vera puede listar las aprobaciones, nunca decidirlas.
 - Corridas que vuelven: reintentar_mas_tarde, limite_tasa (al_exceder aplazar) y ventana_horario (fuera aplazar) terminan la corrida como «aplazada» y la
   vuelven a correr desde el principio a la hora que toca, con la misma entrada; {{aplazamiento.intento}} dice en qué intento va (0 la primera vez).
-- Archivos del flujo: documento_generar, pdf_unir, pdf_dividir, documento_convertir, hoja_escribir e ia_imagen dejan fichas {id, nombre, tipo, tamano}; los nodos que
+- Archivos del flujo: documento_generar, documento_plantilla, pdf_unir, pdf_dividir, documento_convertir, hoja_escribir, archivo_exportar, archivo_comprimir e
+  ia_imagen dejan fichas {id, nombre, tipo, tamano}; los nodos que
   leen documentos reciben ids («a-…»), plantillas como «{{carta.id}}», una variable con fichas o «adjuntos» (los del correo).
 - Archivos que salen: todo archivo que genera una ejecución queda como su resultado (descargable en el historial y la ejecución, en el chat y, con
   respuesta_webhook archivos, en la respuesta del webhook). Para mandarlos: correo_enviar y enviar (adjuntos), responder_correo (responde en el MISMO hilo
   al correo que arrancó la ejecución, con adjuntos), drive_subir (archivo), mensaje_teams y mensaje_slack (archivos como enlaces de descarga firmados que
   vencen), webhook_saliente (archivos en base64, multipart o enlace) y salida (archivos que entrega). Una lista de archivos admite «{{documento}}»,
   «{{pdf.id}}», «{{imagenes}}», «{{archivos}}» (los subidos), «{{adjuntos}}» (los del correo), ids «a-…» y filtros {de, nombre, tipo}; hasta 10 y 20 MB.
-- La IA genera archivos: documento_generar con desde_ia {instrucciones, entradas} (Word o PDF con títulos, párrafos, viñetas y tablas), hoja_escribir con
-  desde_ia (Excel con pestañas, columnas y filas, o CSV) e ia_imagen (PNG; Vertex gemini-2.5-flash-image por defecto).
+- La IA genera archivos: documento_generar con desde_ia {instrucciones, entradas} (Word, PDF, PowerPoint o HTML con títulos, párrafos, viñetas,
+  tablas y, en PowerPoint, diapositivas con notas), hoja_escribir con desde_ia (Excel con pestañas, columnas y filas, o CSV) e ia_imagen (PNG; Vertex
+  gemini-2.5-flash-image por defecto).
+- Salidas a la medida: archivo_exportar (JSON, XML, CSV, HTML, texto o markdown desde una variable o un texto), archivo_comprimir (ZIP de archivos de la
+  ejecución) y documento_plantilla: llena una plantilla de la biblioteca de Documentos (Word, Excel, PowerPoint o correo HTML, con logo y estilos) con
+  {{variables}}, filas o párrafos con {{#lista}}…{{item.campo}}, {{imagen:logo}} y {{contenido}}; con desde_ia la IA escribe lo que falta (modo llenar)
+  o el documento completo con el diseño de la plantilla (modo completo). Las plantillas se ven y suben en Documentos (/documentos).
 - Probar un paso: en el editor (o con POST /api/flujos/<id>/probar-paso) se corre SOLO un paso, o el flujo hasta ese paso, con un archivo, un correo
   de su correspondencia, un archivo del flujo o los datos de una ejecución anterior; nunca escribe (todo queda retenido) ni llama a otros flujos, y lo
   que produce se puede fijar como datos de prueba para los pasos siguientes.

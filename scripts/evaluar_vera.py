@@ -91,6 +91,12 @@ def correr(flujo, entrada):
     return None
 
 
+def tiene_archivo(c, extension):
+    """Si la ejecución entregó un archivo con esa extensión (el PDF puede ir en los datos o como archivo de la ejecución)."""
+    r = api("GET", f"/api/corridas/{(c or {}).get('id')}/archivos") if (c or {}).get("id") else {}
+    return any(str(x.get("nombre", "")).lower().endswith(extension) for x in (r or {}).get("archivos") or [])
+
+
 def texto_de(c):
     return json.dumps((c or {}).get("resultado") or {}, ensure_ascii=False).lower()
 
@@ -132,7 +138,7 @@ CASOS = [
     {"nombre": "anonimizar y generar PDF", "flujo": "ev-anonimo",
      "pedido": "Crea 'ev-anonimo', manual, que reciba un campo 'texto', anonimice los datos personales (cédulas, nombres, teléfonos y correos) y genere un PDF con el texto ya anonimizado; la salida trae el texto anonimizado y el PDF. Pruébalo con: 'Juan Pérez, C.C. 1.023.456.789, cel 3105551234, juan@correo.com, pide su certificado.'",
      "entrada": {"texto": "Juan Pérez, C.C. 1.023.456.789, cel 3105551234, juan@correo.com, pide su certificado."},
-     "espera": lambda c: (lambda sal: "1023456789" not in sal.replace(".", "") and "3105551234" not in sal and "juan@correo.com" not in sal and "pdf" in sal)(json.dumps(((c or {}).get("resultado") or {}).get("solicitud") or {}, ensure_ascii=False).lower())},
+     "espera": lambda c: (lambda sal: "1023456789" not in sal.replace(".", "") and "3105551234" not in sal and "juan@correo.com" not in sal and ("pdf" in sal or tiene_archivo(c, ".pdf")))(json.dumps(((c or {}).get("resultado") or {}).get("solicitud") or {}, ensure_ascii=False).lower())},
     {"nombre": "aprobación humana", "flujo": "ev-aprobar",
      "pedido": "Crea 'ev-aprobar', manual, que reciba 'monto' (número) y 'concepto'; si el monto es mayor a 1.000.000 pide aprobación humana antes de terminar en radicar; si es menor, radica directo. Guárdalo y valídalo, no lo corras.",
      "entrada": None, "espera": None,
@@ -141,6 +147,15 @@ CASOS = [
      "pedido": "Crea un flujo 'ev-informe' manual que reciba 'tema' y con IA genere un informe corto en Word (título, dos secciones y una tabla) y lo entregue en la salida. Córrelo con el tema «beneficios de la radicación automática» y muéstrame el archivo aquí en el chat.",
      "espera_eventos": lambda evs: any(e.get("tipo") == "archivos" and any(str(x.get("nombre", "")).lower().endswith((".docx", ".doc")) for x in e.get("archivos") or []) for e in evs),
      "limpiar": lambda: api("DELETE", "/api/flujos/ev-informe")},
+    {"nombre": "PowerPoint generado", "flujo": None,
+     "pedido": "Crea un flujo 'ev-presentacion' manual que reciba 'tema' y con IA genere un PowerPoint de 3 diapositivas sobre ese tema y lo entregue en la salida. Córrelo con el tema «resultados del trimestre» y muéstramelo aquí en el chat.",
+     "espera_eventos": lambda evs: any(e.get("tipo") == "archivos" and any(str(x.get("nombre", "")).lower().endswith(".pptx") for x in e.get("archivos") or []) for e in evs),
+     "limpiar": lambda: api("DELETE", "/api/flujos/ev-presentacion")},
+    {"nombre": "plantilla de correo HTML", "flujo": None,
+     "pedido": "Crea en Documentos una plantilla de correo HTML llamada 'EV bienvenida' que salude a {{nombre}} y muestre su {{radicado}}, y dime qué variables pide.",
+     "espera_eventos": lambda evs: any(e.get("tipo") == "resultado_herramienta" and e.get("nombre") == "crear_plantilla_documento" and "radicado" in (e.get("resultado") or "") for e in evs),
+     "limpiar": lambda: [api("DELETE", f"/api/documentos/{p['id']}", h={"X-Confirmado-Por-Persona": "si"})
+                         for p in (api("GET", "/api/documentos") or {}).get("plantillas", []) if "ev bienvenida" in (p.get("nombre") or "").lower()]},
     {"nombre": "Gmail responde con Word", "flujo": "ev-gmail",
      "pedido": "Crea el flujo 'ev-gmail': cada correo nuevo de Gmail con «cotización» en el asunto, con IA redacta una respuesta, la genera como Word y responde en el mismo hilo con el Word adjunto. Usa la conexión 'gmail_ventas'. Guárdalo y valídalo, no lo corras.",
      "entrada": None, "espera": None,
@@ -149,6 +164,13 @@ CASOS = [
      "pedido": "Arma el flujo 'ev-facturas': cuando llegue a Outlook un correo con una factura en PDF, extrae NIT, valor y fecha; anéxalos a la tabla 'Facturas' del Excel en línea 'facturas.xlsx'; si el valor pasa de 5.000.000 pide aprobación humana antes de seguir; al final responde al proveedor en el mismo hilo confirmando el recibido. Usa la conexión 'm365'. Guárdalo y valídalo, no lo corras.",
      "entrada": None, "espera": None,
      "verificar_def": lambda d: {"outlook_nuevo", "aprobacion_humana", "outlook_responder", "excel_en_linea"} <= {n["tipo"] for n in d["nodos"]}},
+    {"nombre": "RSS: resumir lo nuevo", "flujo": "ev-rss",
+     "pedido": "Crea el flujo 'ev-rss' que revise cada hora el feed https://www.ejemplo.com/feed.xml y, por cada noticia nueva (sin repetir), lea la página "
+               "de la noticia, me haga un resumen de tres líneas y me lo mande por Telegram con la conexión 'bot_avisos'. Guárdalo y valídalo, no lo corras ni lo enciendas.",
+     "entrada": None, "espera": None,
+     "verificar_def": lambda d: (lambda tipos, disp: {"rss_nuevo", "telegram_mensaje"} <= tipos and bool(tipos & {"resumir", "ia_generar", "ia_redactar"})
+                                 and "web_leer" in tipos and disp.get("url") == "https://www.ejemplo.com/feed.xml" and disp.get("activo") is not True)(
+         {n["tipo"] for n in d["nodos"]}, next((n.get("config") or {} for n in d["nodos"] if n["tipo"] == "rss_nuevo"), {}))},
     {"nombre": "volver al flujo", "flujo": None,
      "previo": [("Ábreme el flujo de tutelas.", {"vista": "inicio", "flujo": "tutelas", "nombreFlujo": "Tutelas"})],
      "pantalla": {"vista": "inicio", "flujo": "tutelas", "nombreFlujo": "Tutelas"},

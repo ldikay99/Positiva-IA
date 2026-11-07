@@ -532,8 +532,11 @@ def tipos(h: Any) -> Dict[str, Dict[str, Any]]:
                          "Para POST, PUT, PATCH o DELETE una persona tiene que habilitar la escritura de la conexión."],
         },
     }
+    T.update(_ext.tipos(h))  # fase 2: páginas sin API, almacenamiento, datos y mensajería transaccional
     return T
 
+
+import especificacion_externos as _ext  # noqa: E402
 
 # Los tipos de cada familia (para el motor y las pruebas).
 DISPARADORES = {"gmail_nuevo", "outlook_nuevo", "calendar_evento_proximo"}
@@ -543,6 +546,9 @@ ESCRITURA = {"gmail_enviar", "gmail_responder", "gmail_etiquetar", "calendar_cre
              "sharepoint_archivos", "sharepoint_lista", "teams_mensaje", "excel_en_linea", "api_operacion"}
 LECTURA = {"gmail_buscar", "calendar_eventos", "calendar_disponibilidad", "forms_respuestas", "outlook_buscar", "outlook_calendario_eventos",
            "onedrive_listar", "onedrive_leer"}
+DISPARADORES |= _ext.DISPARADORES
+ESCRITURA |= _ext.ESCRITURA
+LECTURA |= _ext.LECTURA
 TIPOS = DISPARADORES | ESCRITURA | LECTURA
 # Hablan con un servicio de afuera: aceptan reintentos ante fallos pasajeros (los disparadores no).
 CON_REINTENTOS = ESCRITURA | LECTURA
@@ -556,4 +562,5 @@ CREDENCIALES_DE = {
     **{t: tuple(MICROSOFT) for t in ("outlook_nuevo", "outlook_buscar", "outlook_enviar", "outlook_responder", "outlook_mover", "outlook_categorizar",
                                        "outlook_calendario_eventos", "outlook_calendario_crear", "onedrive_listar", "onedrive_leer", "onedrive_subir",
                                        "sharepoint_archivos", "sharepoint_lista", "excel_en_linea")},
+    **_ext.CREDENCIALES_DE,
 }

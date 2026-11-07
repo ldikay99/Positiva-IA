@@ -1,6 +1,8 @@
 """
 Consultas a bases de datos: PostgreSQL (pg8000, BSD), MySQL/MariaDB (PyMySQL,
-MIT) y SQLite (biblioteca estándar, solo archivos del espacio de archivos).
+MIT), SQLite (biblioteca estándar, solo archivos del espacio de archivos),
+SQL Server (python-tds, MIT) y Oracle (python-oracledb en modo «thin»,
+Apache-2.0; sin el cliente de Oracle).
 
 Límites:
 - una sola sentencia (nunca «;» en medio) y sin comentarios (se quitan antes
@@ -43,6 +45,13 @@ PROHIBIDAS_SIEMPRE = {
 # En lectura también los pares «replace into» y «comment on» (replace() y una columna «comment» sí valen).
 PROHIBIDAS_LECTURA = PROHIBIDAS_SIEMPRE | DML | {"into", "set", "replace_into", "comment_on", "do"}
 PROHIBIDAS_ESCRITURA = PROHIBIDAS_SIEMPRE | {"merge", "upsert", "do"}
+# Lo propio de cada motor que ejecuta código, lee archivos o sale a la red (palabras sueltas y prefijos).
+PROHIBIDAS_DIALECTO = {
+    "sqlserver": ({"openrowset", "opendatasource", "openquery", "openxml", "waitfor", "dbcc", "reconfigure", "bulk", "use", "go",
+                   "backup", "restore", "deny", "external"}, ("sp_", "xp_")),
+    "oracle": ({"httpuritype", "dburitype", "xdburitype", "java", "declare", "procedure", "function", "trigger", "audit", "noaudit",
+                "flashback", "purge"}, ("dbms_", "utl_")),
+}
 
 
 def _limpiar(sql: str, dialecto: str) -> Tuple[str, str, List[str]]:
@@ -65,6 +74,14 @@ def _limpiar(sql: str, dialecto: str) -> Tuple[str, str, List[str]]:
             i = j + 2
             salida.append(" ")
             esqueleto.append(" ")
+            continue
+        if c == "[" and dialecto == "sqlserver":  # [nombre con espacios] de SQL Server: un identificador, no palabras
+            j = sql.find("]", i + 1)
+            if j < 0:
+                raise ErrorDeNegocio("la consulta tiene un [ sin cerrar")
+            salida.append(sql[i:j + 1])
+            esqueleto.append('""')
+            i = j + 1
             continue
         if c in ("'", '"', "`") or (c == "$" and dialecto == "postgres" and re.match(r"\$[A-Za-z_]*\$", sql[i:])):
             if c == "$":
@@ -123,6 +140,11 @@ def revisar(sql: Any, modo: str, dialecto: str = "postgres", permitir_sin_where:
     if not palabras:
         raise ErrorDeNegocio("la consulta está vacía")
     pares = {f"{a}_{b}" for a, b in zip(palabras, palabras[1:])}
+    if dialecto in PROHIBIDAS_DIALECTO:
+        sueltas, prefijos = PROHIBIDAS_DIALECTO[dialecto]
+        malas = sorted({p for p in palabras if p in sueltas or p.startswith(prefijos)})
+        if malas:
+            raise ErrorDeNegocio(f"la consulta no admite {', '.join(m.upper() for m in malas)} (ejecuta código, lee archivos o sale a la red)")
     if modo == "lectura":
         if palabras[0] not in INICIO_LECTURA:
             raise ErrorDeNegocio(f"sql_consulta solo acepta SELECT, WITH o VALUES (empieza por {palabras[0].upper()}); para escribir usa sql_ejecutar")
@@ -142,16 +164,21 @@ def revisar(sql: Any, modo: str, dialecto: str = "postgres", permitir_sin_where:
     return limpio, list(dict.fromkeys(params))
 
 
-def _a_pymysql(sql: str, params: List[str]) -> str:
-    """:nombre → %(nombre)s, y todo «%» literal → «%%» (PyMySQL formatea el texto completo)."""
-    limpio, _, _ = _limpiar(sql, "mysql")
+def _a_pymysql(sql: str, params: List[str], dialecto: str = "mysql") -> str:
+    """:nombre → %(nombre)s, y todo «%» literal → «%%» (PyMySQL y python-tds formatean el texto completo)."""
+    limpio, _, _ = _limpiar(sql, dialecto)
     r, i, n = [], 0, len(limpio)
     while i < n:
         c = limpio[i]
+        if c == "[" and dialecto == "sqlserver":
+            j = limpio.find("]", i + 1)
+            r.append(limpio[i:j + 1].replace("%", "%%"))
+            i = j + 1
+            continue
         if c in ("'", '"', "`"):
             j = i + 1
             while j < n:
-                if limpio[j] == "\\" and c != "`":
+                if limpio[j] == "\\" and c != "`" and dialecto == "mysql":
                     j += 2
                     continue
                 if limpio[j] == c:
@@ -289,6 +316,95 @@ def _mysql(valores: dict, sql: str, params: Dict[str, Any], modo: str, max_filas
     return _resultado(columnas, filas, max_filas, afectadas)
 
 
+def _conectar_sqlserver_real(**kw: Any) -> Any:
+    import pytds
+    return pytds.connect(**kw)
+
+
+def _conectar_oracle_real(**kw: Any) -> Any:
+    import oracledb  # modo thin: sin el cliente de Oracle
+    return oracledb.connect(**kw)
+
+
+# Las pruebas los cambian por dobles (no hay un SQL Server ni un Oracle de verdad para probar).
+conectar_sqlserver = _conectar_sqlserver_real
+conectar_oracle = _conectar_oracle_real
+CA_SISTEMA = "/etc/ssl/certs/ca-certificates.crt"
+
+
+def _sqlserver(valores: dict, sql: str, params: Dict[str, Any], modo: str, max_filas: int, timeout_s: float) -> dict:
+    host, puerto = str(valores.get("host") or ""), int(valores.get("puerto") or 1433)
+    ip = destino_seguro(host, puerto, red_privada=True)
+    cifrado = _verdad(valores.get("cifrado", True))
+    kw: Dict[str, Any] = {"server": host if cifrado else ip, "port": puerto, "database": str(valores.get("base") or "") or None,
+                          "user": str(valores.get("usuario") or ""), "password": str(valores.get("clave") or ""),
+                          "login_timeout": max(1, int(timeout_s)), "timeout": max(1, int(timeout_s)), "autocommit": False,
+                          "appname": "positiva-ia-flujos"}
+    if cifrado:
+        kw.update(cafile=CA_SISTEMA, validate_host=True)
+    try:
+        con = conectar_sqlserver(**kw)
+    except ImportError as e:
+        raise ErrorDeNegocio("el cifrado de SQL Server necesita pyOpenSSL en la imagen; o pon cifrado: false si el servidor no lo exige") from e
+    except Exception as e:
+        raise _error_conexion("SQL Server", e)
+    try:
+        cur = con.cursor()
+        cur.execute(f"SET LOCK_TIMEOUT {int(timeout_s * 1000)}")
+        if modo == "lectura":
+            cur.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+        try:
+            if params:
+                cur.execute(_a_pymysql(sql, list(params), "sqlserver"), params)
+            else:
+                cur.execute(sql)
+        except Exception as e:
+            raise _error_sql("SQL Server", e)
+        columnas = [d[0] for d in cur.description or []]
+        filas = cur.fetchmany(max_filas + 1) if columnas else []
+        afectadas = cur.rowcount if modo != "lectura" else None
+        con.rollback() if modo == "lectura" else con.commit()  # la lectura nunca deja nada: se deshace siempre
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+    return _resultado(columnas, filas, max_filas, afectadas)
+
+
+def _oracle(valores: dict, sql: str, params: Dict[str, Any], modo: str, max_filas: int, timeout_s: float) -> dict:
+    host, puerto = str(valores.get("host") or ""), int(valores.get("puerto") or 1521)
+    ip = destino_seguro(host, puerto, red_privada=True)
+    tls = _verdad(valores.get("tls"))
+    kw: Dict[str, Any] = {"user": str(valores.get("usuario") or ""), "password": str(valores.get("clave") or ""),
+                          "host": host if tls else ip, "port": puerto, "service_name": str(valores.get("servicio") or "") or None,
+                          "protocol": "tcps" if tls else "tcp", "tcp_connect_timeout": float(timeout_s)}
+    try:
+        con = conectar_oracle(**kw)
+    except Exception as e:
+        raise _error_conexion("Oracle", e)
+    try:
+        con.call_timeout = int(timeout_s * 1000)
+        cur = con.cursor()
+        if modo == "lectura":
+            cur.execute("SET TRANSACTION READ ONLY")
+        texto = f"SELECT * FROM (\n{sql}\n) FETCH FIRST {max_filas + 1} ROWS ONLY" if modo == "lectura" else sql
+        try:
+            cur.execute(texto, params or {})
+        except Exception as e:
+            raise _error_sql("Oracle", e)
+        columnas = [d[0] for d in cur.description or []]
+        filas = cur.fetchmany(max_filas + 1) if columnas else []
+        afectadas = cur.rowcount if modo != "lectura" else None
+        con.rollback() if modo == "lectura" else con.commit()
+    finally:
+        try:
+            con.close()
+        except Exception:
+            pass
+    return _resultado(columnas, filas, max_filas, afectadas)
+
+
 def _verdad(x: Any) -> bool:
     return x is True or str(x).strip().lower() in ("true", "si", "sí", "1", "requerido", "require")
 
@@ -321,7 +437,7 @@ def _resultado(columnas: List[str], filas: List[Any], max_filas: int, afectadas:
     return r
 
 
-MOTORES = {"sqlite": _sqlite, "postgres": _postgres, "mysql": _mysql}
+MOTORES = {"sqlite": _sqlite, "postgres": _postgres, "mysql": _mysql, "sqlserver": _sqlserver, "oracle": _oracle}
 
 
 def ejecutar(tipo: str, valores: dict, sql: str, params: Dict[str, Any], modo: str, max_filas: int, timeout_s: float,
@@ -329,7 +445,7 @@ def ejecutar(tipo: str, valores: dict, sql: str, params: Dict[str, Any], modo: s
     """Revisa y corre una sentencia. modo: «lectura» (sql_consulta) o «escritura» (sql_ejecutar)."""
     if tipo not in MOTORES:
         raise ErrorDeNegocio(f"tipo de base desconocido «{tipo}» (válidos: {', '.join(MOTORES)})")
-    dialecto = "mysql" if tipo == "mysql" else ("sqlite" if tipo == "sqlite" else "postgres")
+    dialecto = tipo if tipo in ("mysql", "sqlite", "sqlserver", "oracle") else "postgres"
     limpio, usados = revisar(sql, modo, dialecto, permitir_sin_where)
     faltan = [p for p in usados if p not in params]
     if faltan:

@@ -319,11 +319,11 @@ export async function sondear(deps: Dependencias, flujo: string, origen = "corre
       p.stdin.end(JSON.stringify(orden));
     });
     if (!r.ok) {
-      deps.aviso(`${origen}: no se pudo revisar ${origen === "calendar_evento_proximo" ? "el calendario" : "el buzón"}`, { flujo, error: r.error });
+      deps.aviso(`${origen}: no se pudo revisar ${origen === "calendar_evento_proximo" ? "el calendario" : origen === "rss_nuevo" ? "el feed" : "el buzón"}`, { flujo, error: r.error });
       return { casos: [], error: r.error };
     }
     for (const x of r.casos ?? []) {
-      // un correo (gmail_nuevo, outlook_nuevo, correo_nuevo) llega como caso; un evento del calendario, como entrada
+      // un correo (gmail_nuevo, outlook_nuevo, correo_nuevo) llega como caso; un evento del calendario o un elemento de un feed (rss_nuevo), como entrada
       if (x.caso) deps.disparar(flujo, origen, { caso: x.caso, entrada: { id: x.id, asunto: x.asunto ?? "", ...(x.entrada && typeof x.entrada === "object" ? x.entrada as object : {}) } });
       else if (x.entrada !== undefined) deps.disparar(flujo, origen, { entrada: x.entrada });
     }
