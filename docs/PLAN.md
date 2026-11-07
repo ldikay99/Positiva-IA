@@ -281,6 +281,39 @@ Que en un flujo entren documentos o imágenes por donde vengan (arrastrados, por
 ### Vera en paridad con la pantalla
 - [ ] Todo lo nuevo se puede hacer también con Vera (plantillas, aprobaciones, historial, notificaciones, nodos nuevos) y la evaluación de Vera crece con casos de esto.
 
+## 5d. Integraciones y salidas a la medida (pedido 2026-11-07)
+
+Jonathan: «un programa que te permite crear flujos y automatizaciones que no pueda generar salidas personalizadas no sirve tanto». Si les gusta, van a querer integrarlo con lo que usan y probar de todo: Gmail, Calendar, Outlook o cualquier otra página. Hay que tener el soporte y que Vera lo maneje todo sin saturarse.
+
+### Base común para conectar cualquier servicio
+- [ ] Conexiones con OAuth 2.0 (pantalla de consentimiento, renovación del token, revocar), además de llaves y usuario/clave; cada conexión con alcance global o por flujo, permiso de escritura que da una persona, y prueba de conexión.
+- [ ] Conector genérico por OpenAPI/Swagger: importar la especificación de cualquier API y obtener sus operaciones como pasos configurables (con sus parámetros y su autenticación), sin escribir código.
+- [ ] Conector HTTP avanzado: paginación, OAuth, reintentos, mapeo de la respuesta, carga y descarga de archivos.
+- [ ] Páginas sin API: lectura de páginas web y RSS (solo lectura, respetando robots y límites) y, si hace falta, automatización de navegador en entorno aislado con aprobación.
+- [ ] Disparadores por evento (webhooks entrantes de cada servicio, sondeo con marcas para no repetir) además de los programados.
+
+### Servicios (por fases)
+- [ ] Fase 1, Google Workspace: Gmail (leer, buscar, enviar, responder con adjuntos, etiquetas), Calendar (eventos, disponibilidad, invitaciones), Drive (ya hay), Sheets (ya hay), Docs (crear desde plantilla), Forms (respuestas).
+- [ ] Fase 1, Microsoft 365: Outlook (leer ya hay; enviar, responder, mover, categorías), Calendario, OneDrive y SharePoint (archivos y listas), Teams (canales y chats, ya hay webhooks), Excel en línea.
+- [ ] Fase 2, mensajería: WhatsApp Business, Telegram, SMS (Twilio u otro), correo transaccional (SendGrid o Mailgun).
+- [ ] Fase 2, almacenamiento: SFTP/FTP, Google Cloud Storage, S3, Dropbox, Box.
+- [ ] Fase 2, datos: BigQuery, SQL Server, Oracle, MongoDB, Firestore (además de Postgres, MySQL y SQLite que ya hay).
+- [ ] Fase 3, trabajo y clientes: Jira, Trello, Asana, Notion, HubSpot, Salesforce, Zoho, firma electrónica (DocuSign u otra).
+- [ ] Cada servicio: sus pasos con ficha completa (ayuda, ejemplos, consejos), validación en paridad, escrituras retenidas sin permiso, pruebas con dobles y una prueba real cuando haya cuenta de prueba.
+
+### Salidas a la medida
+- [ ] Formatos de salida: Word, PDF, Excel, PowerPoint, CSV, JSON, XML, HTML, imágenes y ZIP.
+- [ ] Biblioteca de plantillas de documentos (Word, Excel, PowerPoint, correo HTML) con variables, logos y estilos de cada área, reutilizables entre flujos.
+- [ ] La IA llena plantillas o arma el documento completo (Word, Excel, PowerPoint, imagen) según instrucciones.
+- [ ] Entregar la salida donde se necesite: responder o enviar correo con adjuntos, subir a Drive/OneDrive/SharePoint, publicar en Teams/Slack/WhatsApp, devolver por webhook, dejar para descargar.
+
+### Vera a la altura, sin saturarse
+- [ ] Herramientas por grupos que se cargan según la tarea (flujos, nodos, conexiones, archivos, producto, IA…), para no mandarle al modelo cientos de herramientas en cada mensaje.
+- [ ] Documentación de nodos y conectores consultada bajo demanda (ficha por ficha) en vez de toda en el prompt; el prompt base corto.
+- [ ] Planificar antes de construir automatizaciones grandes (plan en pasos, confirmar lo esencial, construir, probar, reportar), con un proceso aparte para lo largo.
+- [ ] Presupuesto de contexto y resumen automático de conversaciones largas sin perder lo importante.
+- [ ] La evaluación de Vera crece con cada conector y salida (pedidos realistas medidos por resultado), con tiempos y costos; no baja de 90 % de logrados.
+
 ## 6. Paso a producción (cuando aprueben)
 
 - [x] Documento de despliegue (`docs/PRODUCCION.md`): principios, entorno y secretos de PQRD y tutelas con sus nombres reales, conexiones, cómo jala la información cada flujo, qué escribe y los pasos para salir a producción.
