@@ -16,18 +16,71 @@ import { Chat } from "./componentes/Chat.tsx";
 import { VistaConexiones } from "./componentes/Conexiones.tsx";
 import { PanelEntorno, type EstadoCompuerta, type SeccionEntorno } from "./componentes/Entorno.tsx";
 import { DialogoNuevoFlujo } from "./componentes/Dialogos.tsx";
+import { VistaInicio } from "./componentes/Inicio.tsx";
+import { VistaHistorial } from "./componentes/Historial.tsx";
+import { VistaPlantillas } from "./componentes/Plantillas.tsx";
+import { Campana, VistaNotificaciones } from "./componentes/Notificaciones.tsx";
+import { VistaAprobaciones } from "./componentes/Aprobaciones.tsx";
+import { PanelGuia } from "./componentes/Guia.tsx";
+import { PASOS_GUIA, usarGuia } from "./guia.ts";
 
-const NAVEGACION: { id: Vista; nombre: string; icono: NombreIcono; pista: string; principal: boolean }[] = [
-  { id: "tablero", nombre: "Tablero", icono: "corridas", pista: "Todos los flujos y cómo les va", principal: true },
-  { id: "flujo", nombre: "Flujo", icono: "flujo", pista: "Elegir correos, correrlos y ver cada etapa", principal: true },
-  { id: "corridas", nombre: "Corridas", icono: "historial", pista: "Resultados de cada correo corrido", principal: true },
-  { id: "adjuntos", nombre: "Adjuntos", icono: "documento", pista: "Cada adjunto hoja por hoja", principal: true },
-  { id: "logs", nombre: "Logs", icono: "logs", pista: "Todo lo que hace el motor, en vivo", principal: false },
-  { id: "herramientas", nombre: "Herramientas", icono: "herramientas", pista: "Con qué busca datos la IA", principal: false },
-  { id: "conexiones", nombre: "Conexiones", icono: "llave", pista: "Credenciales con que los nodos hablan con otros sistemas", principal: false },
-  { id: "proveedores", nombre: "Sistemas", icono: "proveedores", pista: "Sistemas que consulta el flujo", principal: false },
-  { id: "configuracion", nombre: "Ajustes", icono: "ajustes", pista: "Modelo de IA, capacidad y reglas", principal: false },
+/**
+ * Las secciones, por grupo. «trabajo» es lo de todos los días (y la barra de abajo
+ * del celular); «construir» y «supervisar» van debajo, separados; «otras» son
+ * vistas técnicas de uso raro y viven en «Más»; «Ajustes» queda fijo abajo.
+ */
+type GrupoNav = "trabajo" | "construir" | "supervisar" | "otras" | "pie";
+const GRUPOS: { id: GrupoNav; nombre: string }[] = [
+  { id: "trabajo", nombre: "Trabajo" },
+  { id: "construir", nombre: "Construir" },
+  { id: "supervisar", nombre: "Supervisar" },
+  { id: "otras", nombre: "Otras vistas" },
+  { id: "pie", nombre: "Configuración" },
 ];
+const NAVEGACION: { id: Vista; nombre: string; corto?: string; icono: NombreIcono; pista: string; grupo: GrupoNav }[] = [
+  { id: "inicio", nombre: "Inicio", icono: "inicio", pista: "Qué es la plataforma, tus flujos y lo que pasó hoy", grupo: "trabajo" },
+  { id: "flujo", nombre: "Flujo", icono: "flujo", pista: "El flujo abierto: sus pasos, correrlo y verlo trabajar", grupo: "trabajo" },
+  { id: "historial", nombre: "Historial", icono: "historial", pista: "Cada ejecución del flujo: qué entró, qué hizo y cómo terminó", grupo: "trabajo" },
+  { id: "aprobaciones", nombre: "Aprobaciones", corto: "Aprobar", icono: "persona", pista: "Casos en pausa que esperan que una persona decida", grupo: "trabajo" },
+  { id: "plantillas", nombre: "Plantillas", icono: "plantilla", pista: "Flujos de ejemplo listos para usar", grupo: "construir" },
+  { id: "conexiones", nombre: "Conexiones", icono: "llave", pista: "Cuentas y llaves con que los pasos hablan con otros sistemas", grupo: "construir" },
+  { id: "tablero", nombre: "Tablero", icono: "corridas", pista: "Las cifras de cada flujo: resultados, tiempos y recursos", grupo: "supervisar" },
+  { id: "logs", nombre: "Registro", icono: "logs", pista: "Todo lo que hace el motor, en vivo (logs)", grupo: "supervisar" },
+  { id: "proveedores", nombre: "Sistemas", icono: "proveedores", pista: "Sistemas que consulta el flujo", grupo: "supervisar" },
+  { id: "adjuntos", nombre: "Adjuntos", icono: "documento", pista: "Cada documento de un correo, hoja por hoja", grupo: "otras" },
+  { id: "herramientas", nombre: "Herramientas", icono: "herramientas", pista: "Con qué busca datos la IA", grupo: "otras" },
+  { id: "configuracion", nombre: "Ajustes", icono: "ajustes", pista: "Modelo de IA, capacidad y reglas", grupo: "pie" },
+];
+
+/** Las vistas de toda la plataforma (no de un flujo): la barra muestra su título, no el selector de flujo. */
+const TITULOS: Partial<Record<Vista, string>> = { inicio: "Inicio", tablero: "Tus flujos", plantillas: "Plantillas", notificaciones: "Notificaciones", aprobaciones: "Aprobaciones" };
+/** Qué sección del riel se marca en cada vista (el resumen de corridas es parte del historial). */
+const SECCION_DE: Partial<Record<Vista, Vista>> = { corridas: "historial" };
+const VISTAS_DE_CONTROL = new Set<Vista>(["inicio", "plantillas", "historial", "notificaciones", "aprobaciones", "tablero", "flujo", "conexiones", "adjuntos", "logs", "herramientas", "proveedores", "configuracion", "corridas"]);
+
+/** «Ayuda»: abre la guía de primeros pasos; mientras no esté completa muestra el avance. */
+function BotonAyuda() {
+  const hechos = usarGuia((s) => s.hechos.length);
+  const abierta = usarGuia((s) => s.abierta);
+  const abrir = usarGuia((s) => s.abrir);
+  const vista = usar((s) => s.vista);
+  const completa = hechos >= PASOS_GUIA.length;
+  const alternar = () => {
+    // En el inicio la guía vive en su tarjeta: se trae a la vista (o reaparece si estaba cerrada).
+    if (vista === "inicio" && !usarGuia.getState().cerrada) {
+      document.querySelector<HTMLElement>(".in-guia")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      document.querySelector<HTMLElement>(".in-guia .gu-paso")?.focus({ preventScroll: true });
+      return;
+    }
+    abrir(!abierta);
+  };
+  return (
+    <button className={`boton-mini grande gu-ayuda ${abierta ? "activo" : ""} ${completa ? "" : "con-avance"}`} aria-pressed={abierta} aria-label={completa ? "Ayuda: primeros pasos y palabras de la plataforma" : `Primeros pasos: ${hechos} de ${PASOS_GUIA.length}`} title={completa ? "Ayuda" : `Primeros pasos: ${hechos} de ${PASOS_GUIA.length}`} onClick={alternar}>
+      <Icono n="ayuda" tam={18} />
+      {!completa && <span className="gu-ayuda-avance" aria-hidden>{hechos}/{PASOS_GUIA.length}</span>}
+    </button>
+  );
+}
 
 /** «gemini-3.1-flash-lite» se lee «Gemini 3.1 Flash Lite». */
 function nombreModelo(m: string | undefined): string {
@@ -155,6 +208,7 @@ function BarraSuperior({ alternarBandeja, bandejaVisible, abrirEntorno, nuevoFlu
   const ajustes = Object.keys(configuracion?.parametros ?? {}).length + Object.keys(configuracion?.entorno ?? {}).length;
   const reglas = configuracion?.reglas.filter((r) => r.activa).length ?? 0;
   const enCola = motor?.enCola.length ?? 0;
+  const titulo = TITULOS[vista];
   return (
     <header className="barra">
       {vista === "flujo" && (
@@ -162,8 +216,8 @@ function BarraSuperior({ alternarBandeja, bandejaVisible, abrirEntorno, nuevoFlu
           <Icono n="lado" tam={17} />
         </button>
       )}
-      {vista === "tablero" ? (
-        <h1 className="barra-titulo">Tus flujos</h1>
+      {titulo ? (
+        <h1 className="barra-titulo">{titulo}</h1>
       ) : (
       <button
         className="selector-flujo"
@@ -179,7 +233,8 @@ function BarraSuperior({ alternarBandeja, bandejaVisible, abrirEntorno, nuevoFlu
               ...flujos.map((f) => ({ etiqueta: f.nombre, icono: (f.tipo === "codigo" ? "terminal" : "flujo") as NombreIcono, marcado: f.id === flujo, pista: f.tipo === "codigo" ? "Motor de producción" : `Creado aquí, versión ${f.version ?? 1}`, alHacer: () => void cambiarFlujo(f.id) })),
               { separador: true },
               { etiqueta: "Nuevo flujo", icono: "mas", alHacer: nuevoFlujo },
-              { etiqueta: "Crear un flujo con IA", icono: "chispa", alHacer: () => pedirAlAsistente("Quiero crear un flujo nuevo. Pregúntame lo necesario y ármalo.") },
+              { etiqueta: "Desde una plantilla", icono: "plantilla", alHacer: () => irA("plantillas") },
+              { etiqueta: "Crear un flujo con Vera", icono: "chispa", alHacer: () => pedirAlAsistente("Quiero crear un flujo nuevo. Pregúntame lo necesario y ármalo.") },
             ],
           });
         }}
@@ -210,15 +265,17 @@ function BarraSuperior({ alternarBandeja, bandejaVisible, abrirEntorno, nuevoFlu
         ) : (
           <span className="pastilla verde" title={`Corre hasta ${listos} correos a la vez`}><span className="punto" />Listo para correr</span>
         )}
-        {enCola > 0 && <span className="pastilla azul" title="Correos que esperan turno">{enCola} en espera</span>}
-        {flujoActual?.tipo === "codigo" ? (
+        {enCola > 0 && <span className="pastilla azul" title="Ejecuciones que esperan turno">{enCola} en espera</span>}
+        {!titulo && (flujoActual?.tipo === "codigo" ? (
           <PastillaCompuerta flujo={flujo} abrir={() => abrirEntorno("ejecucion")} />
         ) : (
-          <span className="pastilla solo-ancho" title="Nada se escribe en SGDEA ni en el buzón real: lo que se radicaría o movería queda registrado aquí, sin enviarse"><Icono n="candado" tam={11} />Solo lectura</span>
-        )}
-        <button className="pastilla boton-pastilla solo-ancho" onClick={() => irA("configuracion")} title="Modelo de IA en uso. Cámbialo en Ajustes"><Icono n="chispa" tam={12} />{nombreModelo(configuracion?.ia.modelo)}</button>
-        {ajustes + reglas > 0 && <button className="pastilla ambar boton-pastilla solo-ancho" onClick={() => irA("configuracion")} title="Cambios propios sobre el código de producción. Revísalos en Ajustes">{ajustes + reglas} cambio{ajustes + reglas === 1 ? "" : "s"} propio{ajustes + reglas === 1 ? "" : "s"}</button>}
+          <span className="pastilla solo-ancho" title="Nada se escribe en sistemas reales: lo que se enviaría, radicaría o movería queda registrado aquí, sin enviarse"><Icono n="candado" tam={11} />Simulación</span>
+        ))}
+        {!titulo && <button className="pastilla boton-pastilla solo-ancho" onClick={() => irA("configuracion")} title="Modelo de IA en uso. Cámbialo en Ajustes"><Icono n="chispa" tam={12} />{nombreModelo(configuracion?.ia.modelo)}</button>}
+        {!titulo && ajustes + reglas > 0 && <button className="pastilla ambar boton-pastilla solo-ancho" onClick={() => irA("configuracion")} title="Cambios propios sobre el código de producción. Revísalos en Ajustes">{ajustes + reglas} cambio{ajustes + reglas === 1 ? "" : "s"} propio{ajustes + reglas === 1 ? "" : "s"}</button>}
       </div>
+      <BotonAyuda />
+      <Campana />
       {menu && <MenuContextual x={menu.x} y={menu.y} opciones={menu.opciones} cerrar={() => setMenu(null)} />}
     </header>
   );
@@ -231,68 +288,133 @@ function Riel({ movil }: { movil: boolean }) {
   const conectado = usar((s) => s.conectado);
   const ocupados = motor?.trabajadores.filter((t) => t.corrida).length ?? 0;
   const [mas, setMas] = useState(false);
-  const secundarias = NAVEGACION.filter((n) => !n.principal);
-  const enSecundaria = secundarias.some((n) => n.id === vista);
-  const visibles = movil ? NAVEGACION.filter((n) => n.principal) : NAVEGACION;
+  const botonMas = useRef<HTMLButtonElement>(null);
+  const hojaMas = useRef<HTMLDivElement>(null);
+  const [posMas, setPosMas] = useState<{ left: number; bottom: number } | null>(null);
+  const pendientesAprobar = usar((s) => s.notificaciones.filter((n) => n.tipo === "aprobacion" && !n.leida).length);
+  const seccion = SECCION_DE[vista] ?? vista;
+  // En el celular la barra de abajo lleva «trabajo»; lo demás va a la hoja «Más». En pantalla grande, solo «otras».
+  const enMas = NAVEGACION.filter((n) => (movil ? n.grupo !== "trabajo" : n.grupo === "otras"));
+  const enSecundaria = enMas.some((n) => n.id === seccion);
 
   useEffect(() => {
     if (!mas) return;
-    const tecla = (e: KeyboardEvent) => e.key === "Escape" && setMas(false);
+    const tecla = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setMas(false);
+      botonMas.current?.focus();
+    };
+    const fuera = (e: PointerEvent) => {
+      const t = e.target as Node;
+      if (!hojaMas.current?.contains(t) && !botonMas.current?.contains(t)) setMas(false);
+    };
     window.addEventListener("keydown", tecla);
-    return () => window.removeEventListener("keydown", tecla);
-  }, [mas]);
+    if (!movil) window.addEventListener("pointerdown", fuera);
+    return () => {
+      window.removeEventListener("keydown", tecla);
+      window.removeEventListener("pointerdown", fuera);
+    };
+  }, [mas, movil]);
+  useEffect(() => setMas(false), [movil, vista]);
   useEffect(() => {
-    if (!movil) setMas(false);
-  }, [movil]);
+    if (!mas || movil) return;
+    const r = botonMas.current?.getBoundingClientRect();
+    if (r) setPosMas({ left: r.right + 10, bottom: Math.max(8, window.innerHeight - r.bottom) });
+    hojaMas.current?.querySelector<HTMLElement>("button")?.focus();
+  }, [mas, movil]);
+
+  const ir = (id: Vista) => {
+    irA(id);
+    setMas(false);
+  };
+  const fondo = <motion.span layoutId="riel-activo" className="riel-fondo" transition={{ type: "spring", stiffness: 500, damping: 38 }} />;
 
   const boton = (n: (typeof NAVEGACION)[number]) => (
-    <button key={n.id} className={vista === n.id ? "activo" : ""} onClick={() => { irA(n.id); setMas(false); }} title={n.pista} aria-current={vista === n.id ? "page" : undefined}>
-      {vista === n.id && <motion.span layoutId="riel-activo" className="riel-fondo" transition={{ type: "spring", stiffness: 500, damping: 38 }} />}
+    <button key={n.id} className={`riel-item ${seccion === n.id ? "activo" : ""}`} onClick={() => ir(n.id)} title={n.pista} aria-label={n.nombre} aria-current={seccion === n.id ? "page" : undefined}>
+      {seccion === n.id && fondo}
       <Icono n={n.icono} tam={19} />
-      <span>{n.nombre}</span>
-      {n.id === "corridas" && ocupados > 0 && <i className="indicador" />}
+      <span className="riel-etq" data-corto={n.corto ?? n.nombre}><span>{n.nombre}</span></span>
+      {n.id === "historial" && ocupados > 0 && <i className="indicador" aria-label={`${ocupados} corriendo`} />}
+      {n.id === "aprobaciones" && pendientesAprobar > 0 && <i className="indicador" aria-label={`${pendientesAprobar} por decidir`} />}
     </button>
   );
+
+  const opcionMas = (n: (typeof NAVEGACION)[number]) => (
+    <button key={n.id} className={`mas-opcion ${seccion === n.id ? "activa" : ""}`} onClick={() => ir(n.id)} aria-current={seccion === n.id ? "page" : undefined}>
+      <span className="mas-icono"><Icono n={n.icono} tam={18} /></span>
+      <span className="crece"><b>{n.nombre}</b><small>{n.pista}</small></span>
+      <Icono n="derecha" tam={14} />
+    </button>
+  );
+
+  const etiquetaMas = movil && enSecundaria && !mas ? NAVEGACION.find((n) => n.id === seccion)?.nombre ?? "Más" : "Más";
+  const botonDeMas = (
+    <button ref={botonMas} className={`riel-item riel-mas ${enSecundaria || mas ? "activo" : ""}`} onClick={() => setMas(!mas)} aria-expanded={mas} aria-haspopup="dialog" aria-label="Más secciones" title={movil ? undefined : "Más vistas: adjuntos y herramientas"}>
+      {(enSecundaria || mas) && fondo}
+      <Icono n="menu" tam={19} />
+      <span className="riel-etq" data-corto={etiquetaMas}><span>{etiquetaMas}</span></span>
+    </button>
+  );
+
+  if (movil) {
+    return (
+      <nav className="riel" aria-label="Secciones">
+        <div className="riel-secciones">
+          {NAVEGACION.filter((n) => n.grupo === "trabajo").map(boton)}
+          {botonDeMas}
+        </div>
+        <AnimatePresence>
+          {mas && (
+            <>
+              <motion.button key="fondo" className="mas-fondo" aria-label="Cerrar" onClick={() => setMas(false)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} />
+              <motion.div key="hoja" ref={hojaMas} className="mas-hoja" role="dialog" aria-label="Más secciones" initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={{ type: "spring", stiffness: 460, damping: 40 }}>
+                <span className="mas-asa" aria-hidden />
+                {GRUPOS.filter((g) => g.id !== "trabajo").map((g) => (
+                  <div key={g.id} className="mas-grupo" role="group" aria-label={g.nombre}>
+                    <span className="mas-grupo-nombre">{g.nombre}</span>
+                    {enMas.filter((n) => n.grupo === g.id).map(opcionMas)}
+                  </div>
+                ))}
+              </motion.div>
+            </>
+          )}
+        </AnimatePresence>
+      </nav>
+    );
+  }
 
   return (
     <nav className="riel" aria-label="Secciones">
       <div className="riel-marca" title="Positiva IA">
         <span className="riel-logo" aria-hidden>
-          <svg viewBox="0 0 32 32" width="22" height="22"><path d="M5 9.5 16 17l11-7.5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /><rect x="4" y="7" width="24" height="18" rx="3.5" fill="none" stroke="currentColor" strokeWidth="2.2" /><circle cx="24.5" cy="22.5" r="5" fill="var(--lacre)" stroke="var(--tinta)" strokeWidth="2" /></svg>
+          <svg viewBox="0 0 32 32" width="20" height="20"><path d="M5 9.5 16 17l11-7.5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /><rect x="4" y="7" width="24" height="18" rx="3.5" fill="none" stroke="currentColor" strokeWidth="2.2" /><circle cx="24.5" cy="22.5" r="5" fill="var(--cian)" stroke="var(--azul)" strokeWidth="2" /></svg>
         </span>
         <b>Positiva IA</b>
       </div>
       <div className="riel-secciones">
-        {visibles.map(boton)}
-        {movil && (
-          <button className={enSecundaria || mas ? "activo" : ""} onClick={() => setMas(!mas)} aria-expanded={mas} aria-haspopup="dialog" title="Más secciones">
-            {(enSecundaria || mas) && <motion.span layoutId="riel-activo" className="riel-fondo" transition={{ type: "spring", stiffness: 500, damping: 38 }} />}
-            <Icono n="menu" tam={19} />
-            <span>{enSecundaria && !mas ? NAVEGACION.find((n) => n.id === vista)?.nombre : "Más"}</span>
-          </button>
-        )}
+        {GRUPOS.filter((g) => g.id === "trabajo" || g.id === "construir" || g.id === "supervisar").map((g) => (
+          <div key={g.id} className="riel-grupo" role="group" aria-label={g.nombre}>
+            <span className="riel-grupo-nombre" aria-hidden>{g.nombre}</span>
+            {NAVEGACION.filter((n) => n.grupo === g.id).map(boton)}
+          </div>
+        ))}
+      </div>
+      <div className="riel-pie">
+        {botonDeMas}
+        {NAVEGACION.filter((n) => n.grupo === "pie").map(boton)}
+        <div className={`riel-estado ${conectado ? "vivo" : "caido"}`} title={conectado ? "Recibiendo los eventos del motor en vivo" : "Reconectando con el motor"}>
+          <span className="riel-pulso" />
+          <span>{conectado ? (ocupados ? `${ocupados} corriendo` : "En vivo") : "Sin conexión"}</span>
+        </div>
       </div>
       <AnimatePresence>
-        {movil && mas && (
-          <>
-            <motion.button key="fondo" className="mas-fondo" aria-label="Cerrar" onClick={() => setMas(false)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} />
-            <motion.div key="hoja" className="mas-hoja" role="dialog" aria-label="Más secciones" initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={{ type: "spring", stiffness: 460, damping: 40 }}>
-              <span className="mas-asa" aria-hidden />
-              {secundarias.map((n) => (
-                <button key={n.id} className={`mas-opcion ${vista === n.id ? "activa" : ""}`} onClick={() => { irA(n.id); setMas(false); }} aria-current={vista === n.id ? "page" : undefined}>
-                  <span className="mas-icono"><Icono n={n.icono} tam={18} /></span>
-                  <span className="crece"><b>{n.nombre}</b><small>{n.pista}</small></span>
-                  <Icono n="derecha" tam={14} />
-                </button>
-              ))}
-            </motion.div>
-          </>
+        {mas && posMas && (
+          <motion.div key="pop" ref={hojaMas} className="mas-pop" role="dialog" aria-label="Más vistas" style={{ left: posMas.left, bottom: posMas.bottom }} initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -6, transition: { duration: 0.12 } }} transition={{ duration: 0.16 }}>
+            <span className="mas-grupo-nombre">Otras vistas</span>
+            {enMas.map(opcionMas)}
+          </motion.div>
         )}
       </AnimatePresence>
-      <div className={`riel-estado ${conectado ? "vivo" : "caido"}`} title={conectado ? "Recibiendo los eventos del motor en vivo" : "Reconectando con el motor"}>
-        <span className="riel-pulso" />
-        <span>{conectado ? (ocupados ? `${ocupados} corriendo` : "En vivo") : "Sin conexión"}</span>
-      </div>
     </nav>
   );
 }
@@ -427,6 +549,18 @@ export default function App() {
     const oir = (e: Event) => {
       const d = (e as CustomEvent<{ accion?: string; panel?: string; abierto?: boolean; flujo?: string }>).detail;
       if (d?.accion === "vista_conexiones") irA("conexiones");
+      // Vera abre cualquier pantalla: {accion:"vista", vista, flujo?, corrida?} y la guía: {accion:"guia", abierta}.
+      else if (d?.accion === "vista" && typeof (d as { vista?: unknown }).vista === "string" && VISTAS_DE_CONTROL.has((d as { vista: Vista }).vista)) {
+        const x = d as { vista: Vista; flujo?: string; corrida?: string };
+        const s = usar.getState();
+        if (x.vista === "historial" && typeof x.corrida === "string" && x.corrida) void s.abrirEnHistorial(x.corrida, x.flujo);
+        else if (x.flujo && x.flujo !== s.flujo && s.flujos.some((f) => f.id === x.flujo)) void s.cambiarFlujo(x.flujo).then(() => irA(x.vista));
+        else irA(x.vista);
+      } else if (d?.accion === "guia") {
+        const abierta = (d as { abierta?: unknown }).abierta !== false;
+        if (abierta && usar.getState().vista === "inicio" && !usarGuia.getState().cerrada) document.querySelector<HTMLElement>(".in-guia")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        else usarGuia.getState().abrir(abierta);
+      }
       else if (d?.accion === "entorno" || d?.accion === "manifiesto") {
         const abrir = () => setEntorno({ abierto: true, seccion: d.accion === "manifiesto" ? "manifiesto" : "variables" });
         const s = usar.getState();
@@ -456,8 +590,13 @@ export default function App() {
         <main className="contenido">
           <AnimatePresence mode="wait" initial={false}>
             <motion.div key={vista} className="contenido-vista" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.16, ease: "easeOut" }}>
+              {vista === "inicio" && <VistaInicio />}
               {vista === "tablero" && <VistaTablero />}
               {vista === "flujo" && <EspacioFlujo ancho={ancho} bandejaVisible={bandeja} cerrarBandeja={() => setBandeja(false)} />}
+              {vista === "historial" && <VistaHistorial />}
+              {vista === "plantillas" && <VistaPlantillas />}
+              {vista === "notificaciones" && <VistaNotificaciones />}
+              {vista === "aprobaciones" && <VistaAprobaciones />}
               {vista === "adjuntos" && <VistaAdjuntos />}
               {vista === "corridas" && <VistaCorridas />}
               {vista === "logs" && <VistaLogs />}
@@ -472,6 +611,7 @@ export default function App() {
       <Avisos />
       <PanelEntorno abierto={entorno.abierto} seccion={entorno.seccion} cambiarSeccion={(seccion) => setEntorno({ abierto: true, seccion })} cerrar={() => setEntorno((x) => ({ ...x, abierto: false }))} />
       <DialogoNuevoFlujo abierto={nuevo} cerrar={() => setNuevo(false)} />
+      <PanelGuia />
       <Chat />
     </div>
     </MotionConfig>

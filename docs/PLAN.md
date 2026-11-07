@@ -248,7 +248,7 @@ Que alguien que llega por primera vez entienda qué es, qué puede hacer y cómo
 - [x] Bandeja de aprobaciones (`web/src/componentes/Aprobaciones.tsx`): cada caso en pausa con sus datos, aprobar o rechazar con comentario y cambios en los campos editables (rechazo con confirmación en línea), contra `GET /api/aprobaciones` y `POST /api/aprobaciones/:id`; el historial une la ejecución que se pausó con la que siguió después de decidir. Probada con el paso `aprobacion_humana` en escritorio y celular.
 - [ ] `hoja_leer` con `origen: adjunto` no encuentra los archivos subidos con `entrada_archivos` (busca en `adj/` y no usa su `_ruta`, `puente/flujo_declarativo.py` ~l. 3006): por eso «Revisar una tabla» toma la hoja de un correo. Cuando se arregle, puede volver a arrancar con archivos.
 
-- [ ] Paleta en azules monocromáticos de Linktic (#0094FF, #015B9D, #01D9FF, #0E1C56; claros #DEF0FF, #E8F1F9, #F0F2F5): superficies blancas o azul claro, sin superficies oscuras (barra lateral, cabecera del chat, barra de llamada, globos, botones, menús, editor), marino solo para títulos y texto, colores de estado solo para estados.
+- [x] Paleta en azules monocromáticos de Linktic: superficies blancas o azul claro, sin superficies oscuras; el riel lateral agrupado (Trabajo, Construir, Supervisar, «Más») cabe sin barra de desplazamiento en 1280×720 a 1920×1080, tableta y celular (revisado con capturas).
 
 ### Nodos y herramientas que un usuario necesita
 Motor en `puente/nodos_producto.py` (+ `documentos.py`, `anonimizar.py`, `festivos.py`, `conectores/sheets.py`, `conectores/mensajeria.py`); fichas en `puente/nodos_declarativos.py` (VERSION 7, 72 tipos en `GET /api/nodos/tipos`); zod en `servidor/src/flujos.ts`.
@@ -308,11 +308,12 @@ Jonathan: «un programa que te permite crear flujos y automatizaciones que no pu
 - [ ] Entregar la salida donde se necesite: responder o enviar correo con adjuntos, subir a Drive/OneDrive/SharePoint, publicar en Teams/Slack/WhatsApp, devolver por webhook, dejar para descargar.
 
 ### Vera a la altura, sin saturarse
-- [ ] Herramientas por grupos que se cargan según la tarea (flujos, nodos, conexiones, archivos, producto, IA…), para no mandarle al modelo cientos de herramientas en cada mensaje.
-- [ ] Documentación de nodos y conectores consultada bajo demanda (ficha por ficha) en vez de toda en el prompt; el prompt base corto.
+- [x] Herramientas por grupos (núcleo + construir, correr, correo, conexiones, ia, producto, pqrd) elegidos por el pedido y la pantalla; Vera carga más con cargar_herramientas; en la voz un conjunto fijo y lo demás se delega al proceso escrito.
+- [x] Documentación de nodos bajo demanda: el prompt lleva un índice de una línea por tipo y la ficha se pide con ayuda_nodo. Prompt de 94 mil a 17 mil caracteres; herramientas por mensaje de 23 mil a 8–16 mil.
 - [ ] Planificar antes de construir automatizaciones grandes (plan en pasos, confirmar lo esencial, construir, probar, reportar), con un proceso aparte para lo largo.
 - [ ] Presupuesto de contexto y resumen automático de conversaciones largas sin perder lo importante.
-- [ ] La evaluación de Vera crece con cada conector y salida (pedidos realistas medidos por resultado), con tiempos y costos; no baja de 90 % de logrados.
+- [~] La evaluación de Vera crece con cada conector y salida: hoy 11 casos (flujos, nodos nuevos, plantillas, historial, aprobaciones), 11 de 11 con las herramientas por grupos; sigue creciendo con cada conector.
+- [x] Las herramientas aceptan «flujo» o «id» indistintamente y avisan qué argumento falta (era la causa de un fallo de la evaluación).
 
 ## 6. Paso a producción (cuando aprueben)
 

@@ -63,6 +63,7 @@ import copy
 import csv
 import datetime
 import hashlib
+import hmac
 import http.client
 import io
 import json
@@ -214,12 +215,34 @@ REINTENTO_ESPERA_MS, REINTENTO_FACTOR, REINTENTO_MAXIMO_MS = 500, 2.0, 10000
 _dormir = time.sleep  # las pruebas lo cambian para no esperar
 
 
+def _generar_imagen(proveedor: str, modelo: str, prompt: str, cantidad: int, aspecto: str, credencial: Optional[dict], flujo: str) -> dict:
+    """Las imágenes de ia_imagen (las pruebas lo cambian por uno falso): {imagenes: [png], proveedor, modelo, ms}."""
+    return ia_proveedores.generar_imagen(proveedor, modelo, prompt, cantidad, aspecto, credencial, flujo)
+
+
+
 class _Terminar(BaseException):  # BaseException: ningún «except Exception» de un nodo la atrapa
     """Un cuerpo de bucle o una rama llegó a una salida: termina todo el flujo con ese resultado."""
 
     def __init__(self, resultado: dict) -> None:
         super().__init__("salida")
         self.resultado = resultado
+
+
+class _Parada(BaseException):
+    """«Probar hasta este paso»: el recorrido llegó al paso pedido y se detiene ahí (con su salida)."""
+
+    def __init__(self, nodo: str, salida: Any, resultado: Optional[dict]) -> None:
+        super().__init__("parada")
+        self.nodo, self.salida, self.resultado = nodo, salida, resultado
+
+
+# Lo que en «Probar este paso» no se corre de verdad porque escribiría en el estado de la plataforma o tocaría otro flujo:
+# se arma, se anota como escritura retenida y sigue por su salida normal.
+SIMULADOS_EN_PRUEBA = {"tabla_guardar", "archivo_guardar", "aprobacion_humana", "reintentar_mas_tarde", "limite_tasa", "ventana_horario",
+                       "llamar_flujo", "subflujo"}
+# La estructura de bucles y ramas no se salta con datos fijados.
+ESTRUCTURA = {"para_cada", "paralelo", "unir", "fin_ciclo"}
 
 
 class RespuestaTransitoria(ErrorTransitorio):
@@ -608,6 +631,9 @@ def referencias(n: dict) -> List[Tuple[str, Set[str]]]:
         refs += [(r, set()) for r in _ref_de_fuente(c.get("lista"))]
     elif t in ("json", "archivo_guardar", "drive_subir", "tabla_guardar"):
         refs += [(r, set()) for r in _ref_de_fuente(c.get("de"))]
+    if t in ("correo_enviar", "enviar", "notificar", "drive_subir", "salida", "respuesta_webhook"):
+        for clave in ("adjuntos", "archivos", "archivo") if t != "drive_subir" else ("archivo",):
+            refs += [(r, set()) for r in np_.refs_archivos(c.get(clave), _ref_de_fuente)]
     elif t == "expresion" and isinstance(c.get("expresion"), str):
         try:
             refs += [(x, set()) for x in sorted(c_expresion.nombres(c["expresion"]) - {"entorno"})]
@@ -898,6 +924,7 @@ def _validar_nuevos(t: str, c: dict, q) -> None:
     elif t == "correo_enviar":
         for k in ("para", "asunto", "cuerpo"):
             texto_req(k, "admite plantillas")
+        np_.problemas_archivos(c, "adjuntos", q)
     elif t == "drive_listar":
         entero_en("max", 1, 200)
     elif t == "drive_leer":
@@ -905,10 +932,15 @@ def _validar_nuevos(t: str, c: dict, q) -> None:
         bools("ocr")
         entero_en("max_caracteres", 1, 500000)
     elif t == "drive_subir":
-        texto_req("nombre", "nombre del archivo")
         opcion("formato", c_archivos.FORMATOS_GUARDAR)
-        if not (c.get("contenido") or c.get("de")):
-            q("drive_subir necesita contenido (plantilla) o de (variable)")
+        if c.get("archivo") not in (None, ""):
+            np_.problemas_archivos(c, "archivo", q)
+            if c.get("contenido") or c.get("de"):
+                q("drive_subir: usa archivo (un archivo tal cual) o contenido/de (un texto), no los dos")
+        else:
+            texto_req("nombre", "nombre del archivo")
+            if not (c.get("contenido") or c.get("de")):
+                q("drive_subir necesita archivo (p. ej. «{{documento}}»), contenido (plantilla) o de (variable)")
     elif t == "hoja_leer":
         opcion("origen", ["adjunto", "drive", "archivo", "url", "sheets"], True)
         o = c.get("origen")
@@ -999,6 +1031,8 @@ def _validar_nuevos(t: str, c: dict, q) -> None:
     elif t == "respuesta_webhook":
         entero_en("estado", 100, 599)
         opcion("tipo_contenido", ["application/json", "text/plain"])
+        np_.problemas_archivos(c, "archivos", q)
+        opcion("archivos_como", ["enlaces", "base64"])
     elif t == "tabla_guardar":
         try:
             c_tablas.revisar_tabla(c.get("tabla"))
@@ -1325,6 +1359,7 @@ def _validar_config(n: dict) -> List[str]:
             q("notificar necesita para (destino, admite plantillas)")
         if not (isinstance(c.get("cuerpo"), str) and c["cuerpo"].strip()):
             q(f"{t} necesita cuerpo (admite plantillas, p. ej. «{{{{respuesta}}}}»)")
+        np_.problemas_archivos(c, "adjuntos", q)
     elif t == "http":
         _validar_http(c, q)
     elif t in NUEVOS:
@@ -1340,6 +1375,7 @@ def _validar_config(n: dict) -> List[str]:
             q("campos tiene que ser una lista de variables o un objeto {nombre: plantilla}")
         if "plantilla_respuesta" in c and not isinstance(c["plantilla_respuesta"], str):
             q("plantilla_respuesta tiene que ser texto")
+        np_.problemas_archivos(c, "archivos", q)
     return p
 
 
@@ -1893,6 +1929,27 @@ class Ejecucion(np_.NodosProducto):
         self.max_segundos: float = MAX_SEGUNDOS
         self._siguiente_forzado: Optional[str] = None
         self._union: Dict[str, Any] = {}
+        # los archivos que genera la corrida (documentos, hojas, imágenes…): {id, nombre, tipo, tamano, nodo}
+        self.generados: List[dict] = []
+        self._nodo_actual = ""
+        # «Probar este paso»: nada escribe (ni afuera ni en el estado del flujo), se puede parar en un nodo y saltar los que tienen datos fijados
+        self.prueba = False
+        self._parar_en: Optional[str] = None
+        self._fijados: Dict[str, dict] = {}
+        # enlaces de descarga firmados y con vencimiento: {base, clave, vence_s} (los pone el servidor)
+        self.enlaces: Dict[str, Any] = {}
+
+    def enlace_descarga(self, ficha: dict) -> dict:
+        """{url, vence} de un archivo del flujo: /api/descargas/<flujo>/<id>?vence=…&firma=… (HMAC del servidor, vence en horas)."""
+        clave = str((self.enlaces or {}).get("clave") or "")
+        if not clave or not ID_FLUJO.match(self.flujo or ""):
+            raise ErrorDeNegocio("esta plataforma no tiene enlaces de descarga configurados: manda los archivos como adjuntos o en base64")
+        vence = int(time.time()) + int((self.enlaces or {}).get("vence_s") or 72 * 3600)
+        aid = str(ficha.get("id") or "")
+        firma = hmac.new(clave.encode(), f"{self.flujo}/{aid}/{vence}".encode(), hashlib.sha256).hexdigest()[:40]
+        base = str((self.enlaces or {}).get("base") or "").rstrip("/")
+        return {"url": f"{base}/api/descargas/{self.flujo}/{aid}?vence={vence}&firma={firma}",
+                "vence": datetime.datetime.fromtimestamp(vence, datetime.timezone.utc).isoformat(timespec="seconds")}
 
     # ------------------------------------------------------ datos y plantillas
     def _vista_correo(self) -> dict:
@@ -2545,12 +2602,16 @@ class Ejecucion(np_.NodosProducto):
         m = {"canal": c.get("canal") or "correo", "para": self.render(c.get("para") or para_defecto).strip(),
              "cc": self.render(c.get("cc") or "").strip(), "asunto": self.render(c.get("asunto") or asunto_defecto).strip(),
              "cuerpo": self.render(c.get("cuerpo") or ""), "nodo": n["id"], "operacion": operacion, "enviado": False, "bloqueado": True}
+        if c.get("adjuntos") not in (None, "", []):
+            # se arma con sus adjuntos (nombre, tipo y tamaño) aunque nunca salga
+            _, m["adjuntos"] = self._para_envio(c["adjuntos"], "la respuesta")
         self.vars[c.get("salida") or n["id"]] = m
         self.mensajes.append(m)
         evento("escritura", sistema=m["canal"], operacion=operacion, destino=m["para"], bloqueada=True, simulada=True,
-               detalle={k: m[k] for k in ("para", "cc", "asunto", "cuerpo")}, nodo=n["id"])
+               detalle={k: m[k] for k in ("para", "cc", "asunto", "cuerpo", "adjuntos") if k in m}, nodo=n["id"])
         _paso(n["id"], f"{'Aviso' if operacion == 'notificar' else 'Respuesta'} a {m['para'] or '(sin destino)'} · bloqueado, no se envía",
-              "aviso", f"Asunto: {m['asunto']}\n\n{m['cuerpo'][:1200]}", bloqueado=True, destino=m["para"])
+              "aviso", f"Asunto: {m['asunto']}\n\n{m['cuerpo'][:1200]}" + (f"\n\nAdjuntos: {', '.join(a['nombre'] for a in m['adjuntos'])}" if m.get("adjuntos") else ""),
+              bloqueado=True, destino=m["para"])
         if not m["para"]:
             self.avisos.append(f"{n['id']}: el mensaje quedó sin destino")
         return "ok"
@@ -2758,10 +2819,19 @@ class Ejecucion(np_.NodosProducto):
             solicitud = {k: self.resolver(k) for k in (campos or list(self.vars)) if not k.startswith("_")}
         respuesta = self.render(c["plantilla_respuesta"]) if c.get("plantilla_respuesta") else ""
         evento("etapa_inicio", etapa=n["id"])
+        # los archivos que entrega el flujo (además de todos los que generó, que quedan en «archivos» del resultado)
+        entregados = []
+        for f in self._archivos_ref(c["archivos"]) if c.get("archivos") not in (None, "", []) else []:
+            if not ID_ARCHIVO.fullmatch(str(f.get("id") or "")):
+                # un adjunto del correo se copia al espacio del flujo: así se descarga desde el historial y el webhook
+                f = {**self._guardar_archivo(f["nombre"], self._bytes(f), f.get("tipo") or "application/octet-stream", "copia"), "ruta": f["ruta"]}
+            entregados.append({k: f.get(k) for k in ("id", "nombre", "tipo")} | {"tamano": Path(f["ruta"]).stat().st_size})
         _paso(n["id"], n.get("nombre") or accion, "ok" if accion in ("radicado", "respondido") else "aviso",
-              (motivo or "") + (f"\n\n{respuesta[:1200]}" if respuesta else ""), desenlace=accion)
+              (motivo or "") + (f"\n\n{respuesta[:1200]}" if respuesta else "")
+              + (f"\n\nEntrega: {', '.join(x['nombre'] for x in entregados)}" if entregados else ""), desenlace=accion)
         evento("etapa_fin", etapa=n["id"], ms=0, fallo="", muestra=muestra(solicitud))
-        return {"accion": accion, "motivo": motivo, "destino": self.render(c.get("destino") or ""), "solicitud": solicitud, "respuesta": respuesta}
+        return {"accion": accion, "motivo": motivo, "destino": self.render(c.get("destino") or ""), "solicitud": solicitud, "respuesta": respuesta,
+                **({"archivos": entregados} if entregados else {})}
 
     # ------------------------------------------------- credenciales y escrituras
     def cred(self, nombre: Any, tipos: Iterable[str]) -> dict:
@@ -2938,13 +3008,17 @@ class Ejecucion(np_.NodosProducto):
         m["cuerpo"] = self.render(c.get("cuerpo") or "")
         if c.get("html"):
             m["html"] = self.render(c["html"])
+        m["adjuntos"], resumen = self._para_envio(c.get("adjuntos"), "el correo")
         try:
             c_correo.revisar_destinatarios(m)
+            c_correo.revisar_adjuntos(m["adjuntos"], cred["tipo"])
         except ErrorDeNegocio as e:
             evento("escritura", sistema=cred["tipo"], operacion="enviar correo", destino=m["para"], bloqueada=True, simulada=True,
-                   detalle={k: m.get(k) for k in ("para", "cc", "asunto")}, nodo=n["id"], credencial=cred["nombre"], motivo=str(e), vetado=True)
+                   detalle={**{k: m.get(k) for k in ("para", "cc", "asunto")}, "adjuntos": resumen}, nodo=n["id"], credencial=cred["nombre"],
+                   motivo=str(e), vetado=True)
             raise
-        detalle = {k: m.get(k, "") for k in ("para", "cc", "cco", "asunto", "cuerpo")}
+        detalle = {**{k: m.get(k, "") for k in ("para", "cc", "cco", "asunto", "cuerpo")},
+                   **({"adjuntos": resumen, "adjuntos_bytes": sum(a["tamano"] for a in resumen)} if resumen else {})}
         r = self._escribir(n, cred["tipo"], "enviar correo", m["para"], detalle, cred,
                            lambda: c_correo.enviar(cred["tipo"], cred["valores"], m, timeout_de(c)))
         self.mensajes.append({**detalle, "nodo": n["id"], "operacion": "correo_enviar", "enviado": not r["bloqueado"], "bloqueado": r["bloqueado"]})
@@ -2989,17 +3063,27 @@ class Ejecucion(np_.NodosProducto):
     def drive_subir(self, n: dict) -> str:
         c = n.get("config") or {}
         cred = self.cred(c.get("credencial"), ("google_servicio",))
-        valor, formato = self._contenido_a_guardar(c)
-        if formato == "json":
-            datos, tipo = json.dumps(valor, ensure_ascii=False, indent=2, default=str).encode(), "application/json"
-        elif formato == "csv":
-            datos, tipo = c_archivos._csv(valor).encode(), "text/csv"
+        archivo = None
+        if c.get("archivo") not in (None, ""):
+            # un archivo de la corrida (generado, subido o adjunto del correo) o del flujo, tal cual
+            archivos, _ = self._para_envio(c["archivo"], "drive_subir", max_archivos=1, max_mb=30)
+            if not archivos:
+                raise ErrorDeNegocio("drive_subir: el archivo no está (revisa la referencia, p. ej. «{{documento}}»)")
+            archivo = archivos[0]
+            datos, tipo = archivo["datos"], archivo["tipo"]
         else:
-            datos, tipo = (valor if isinstance(valor, str) else _a_texto(valor)).encode(), "text/plain"
-        nombre, carpeta = self.render(c.get("nombre") or "").strip(), self.render(c.get("carpeta") or "").strip()
+            valor, formato = self._contenido_a_guardar(c)
+            if formato == "json":
+                datos, tipo = json.dumps(valor, ensure_ascii=False, indent=2, default=str).encode(), "application/json"
+            elif formato == "csv":
+                datos, tipo = c_archivos._csv(valor).encode(), "text/csv"
+            else:
+                datos, tipo = (valor if isinstance(valor, str) else _a_texto(valor)).encode(), "text/plain"
+        nombre, carpeta = self.render(c.get("nombre") or "").strip() or (archivo or {}).get("nombre", ""), self.render(c.get("carpeta") or "").strip()
         if carpeta:
             c_drive.revisar_id(carpeta, "carpeta")
-        detalle = {"nombre": nombre, "carpeta": carpeta, "tipo": tipo, "bytes": len(datos), "vista": datos[:600].decode("utf-8", "replace")}
+        detalle = {"nombre": nombre, "carpeta": carpeta, "tipo": tipo, "bytes": len(datos),
+                   **({"archivo": {k: archivo[k] for k in ("id", "nombre", "tipo", "tamano")}} if archivo else {"vista": datos[:600].decode("utf-8", "replace")})}
         r = self._escribir(n, "google_drive", "subir archivo", f"drive:{carpeta or 'raíz'}/{nombre}", detalle, cred,
                            lambda: c_drive.fabrica(cred["valores"], timeout_de(c)).subir(nombre, carpeta, datos, tipo))
         self.vars[c.get("salida") or n["id"]] = {k: r.get(k) for k in ("id", "nombre", "bloqueado", "motivo", "webViewLink") if k in r}
@@ -3219,6 +3303,11 @@ class Ejecucion(np_.NodosProducto):
         c = n.get("config") or {}
         cuerpo = self.render_profundo(c.get("cuerpo")) if c.get("cuerpo") is not None else None
         self.respuesta_gancho = {"estado": int(c.get("estado") or 200), "cuerpo": cuerpo, "tipo_contenido": c.get("tipo_contenido") or "application/json"}
+        if c.get("archivos") not in (None, "", []):
+            # el servidor los entrega como enlaces de descarga con vencimiento (o en base64, con archivos_como)
+            self.respuesta_gancho["archivos"] = [{"id": f["id"], "nombre": f["nombre"], "tipo": f.get("tipo") or "", "tamano": Path(f["ruta"]).stat().st_size}
+                                                 for f in self._archivos_ref(c["archivos"]) if ID_ARCHIVO.fullmatch(str(f.get("id") or ""))]
+            self.respuesta_gancho["archivos_como"] = c.get("archivos_como") or "enlaces"
         evento("respuesta_webhook", **self.respuesta_gancho)
         _paso(n["id"], f"Respuesta del webhook: {self.respuesta_gancho['estado']}", "ok", _a_texto(cuerpo)[:600])
         return "ok"
@@ -3608,6 +3697,81 @@ class Ejecucion(np_.NodosProducto):
                rama_error=como == "error", continua=como == "continuar", siguiente=elegida["hacia"], muestra=self._muestra_de(n, antes))
         return elegida["hacia"]
 
+    # ------------------------------------------------- «Probar este paso»
+    def restaurar(self, variables: Dict[str, Any]) -> None:
+        """Pone datos de prueba (fijados o de una ejecución anterior): las variables y, si vienen, el correo y el texto de sus adjuntos."""
+        for k, x in (variables or {}).items():
+            if not isinstance(k, str) or k.startswith("_"):
+                continue
+            if k == "correo" and isinstance(x, dict):
+                self.correo.update({f: x[f] for f in INTEGRADAS["correo"] if f in x})
+            elif k == "adjuntos" and isinstance(x, dict):
+                self.correo["adjuntos_texto"] = str(x.get("texto") or "")
+                nombres = x.get("nombres")
+                if isinstance(nombres, str) and nombres:
+                    self.correo["adjuntos_nombres"] = [y.strip() for y in nombres.split(",") if y.strip()]
+                leidos = x.get("leidos")
+                if isinstance(leidos, str) and leidos:
+                    self.correo["adjuntos_leidos"] = [y.strip() for y in leidos.split(",") if y.strip()]
+            elif k == "archivos" and isinstance(x, dict) and "lista" in x:
+                continue  # la vista de los archivos subidos: los archivos de verdad llegan con la prueba
+            else:
+                self.vars[k] = x
+
+    def _simular_en_prueba(self, n: dict) -> str:
+        """En una prueba, lo que escribiría en la plataforma o tocaría otro flujo se arma y se retiene; sigue por su salida normal."""
+        t, c = n["tipo"], n.get("config") or {}
+        que = {"tabla_guardar": f"guardaría una fila en la tabla «{c.get('tabla')}»", "archivo_guardar": f"guardaría «{self.render(c.get('ruta') or '')}»",
+               "aprobacion_humana": "pediría una aprobación a una persona (en la prueba sigue por «aprobado»)",
+               "reintentar_mas_tarde": "dejaría la ejecución para más tarde", "limite_tasa": "contaría un paso en el límite de tasa (en la prueba no cuenta)",
+               "ventana_horario": "revisaría el horario (en la prueba sigue por «dentro»)",
+               "llamar_flujo": f"llamaría al flujo «{c.get('flujo')}»", "subflujo": f"llamaría al flujo «{c.get('flujo')}»"}[t]
+        motivo = f"«Probar este paso» no escribe ni toca otros flujos: {que}"
+        datos = {k: self.render_profundo(c[k]) for k in ("datos", "entrada", "clave", "titulo") if k in c}
+        registro = {"nodo": n["id"], "sistema": "plataforma", "operacion": t, "destino": str(c.get("tabla") or c.get("flujo") or c.get("ruta") or ""),
+                    "bloqueado": True, "simulado": True, "motivo": motivo, **({"detalle": muestra(datos)} if datos else {})}
+        self.escrituras.append(registro)
+        evento("escritura", sistema="plataforma", operacion=t, destino=registro["destino"], bloqueada=True, simulada=True, detalle=muestra(datos),
+               nodo=n["id"], motivo=motivo, prueba=True)
+        _paso(n["id"], f"{n.get('nombre') or n['id']}: simulado en la prueba", "aviso", motivo, bloqueado=True)
+        variable = np_.salida_de(t, c, n["id"]) if t in np_.TIPOS else (c.get("salida") or n["id"])
+        if t == "aprobacion_humana":
+            d = self.render_profundo(c["datos"]) if isinstance(c.get("datos"), dict) else {}
+            self.vars[variable] = {"id": "prueba", "estado": "aprobado", "decision": "aprobar", "aprobado": True, "comentario": "(prueba: no se pidió)",
+                                   "cambios": {}, "datos": d, "titulo": self.render(c.get("titulo") or ""), "por": "prueba"}
+            return "aprobado"
+        if t == "reintentar_mas_tarde":
+            raise _Terminar({"accion": "aplazado", "motivo": "(prueba) la ejecución se aplazaría", "destino": "", "respuesta": "",
+                             "solicitud": {k: v for k, v in self.vars.items() if not k.startswith("_")}})
+        if t in ("limite_tasa", "ventana_horario"):
+            if c.get("salida"):
+                self.vars[c["salida"]] = {"simulado": True}
+            return "ok" if t == "limite_tasa" else "dentro"
+        self.vars[variable] = {"simulado": True, "motivo": motivo}
+        return "ok"
+
+    def correr_un_paso(self, n: dict) -> Tuple[str, Optional[dict]]:
+        """Corre SOLO este paso con lo que ya tiene la ejecución (contexto y datos de prueba). (salida, resultado si termina)."""
+        self._nodo_actual = n["id"]
+        if n["tipo"] == "salida":
+            r = self.salida(n)
+            return "fin", r
+        if n["tipo"] == "fin_ciclo":
+            return "fin_ciclo", None
+        evento("etapa_inicio", etapa=n["id"])
+        t = time.time()
+        antes = dict(self.vars)
+        try:
+            salida = self._simular_en_prueba(n) if n["tipo"] in SIMULADOS_EN_PRUEBA else getattr(self, n["tipo"])(n)
+        except _Terminar as fin:
+            evento("etapa_fin", etapa=n["id"], ms=int((time.time() - t) * 1000), fallo="", salida="fin", muestra=self._muestra_de(n, antes))
+            return "fin", fin.resultado
+        except Exception as e:
+            evento("etapa_fin", etapa=n["id"], ms=int((time.time() - t) * 1000), fallo=describir_fallo(n, e)[:400], error=f"{type(e).__name__}: {e}"[:400])
+            raise
+        evento("etapa_fin", etapa=n["id"], ms=int((time.time() - t) * 1000), fallo="", salida=salida, muestra=self._muestra_de(n, antes))
+        return str(salida), None
+
     def correr(self, desde: Optional[str] = None) -> dict:
         """Corre desde el disparador (o desde `desde`, al seguir una corrida que esperó una aprobación)."""
         self._nodos = {n["id"]: n for n in self.defi["nodos"]}
@@ -3633,8 +3797,11 @@ class Ejecucion(np_.NodosProducto):
                 raise ErrorDeNegocio(f"la corrida pasó su tiempo máximo ({self.max_segundos:g} s, en Entorno › Ejecución)")
             n = self._nodos[actual]
             tipo = n["tipo"]
+            self._nodo_actual = n["id"]
             if tipo == "salida":
                 r = self.salida(n)
+                if self._parar_en == n["id"]:
+                    raise _Parada(n["id"], "fin", r)
                 if profundidad:
                     raise _Terminar(r)
                 return "salida", r
@@ -3647,30 +3814,47 @@ class Ejecucion(np_.NodosProducto):
             candidatas = [a for a in aristas if a.get("desde") == actual]
             evento("etapa_inicio", etapa=n["id"])
             if (n.get("config") or {}).get("deshabilitado") is True:
+                if self._parar_en == n["id"]:
+                    raise _Parada(n["id"], "omitido", None)
                 actual = self._omitir(n, candidatas)
                 continue
             t = time.time()
             antes = dict(self.vars)
             self._prof = profundidad
+            fijado = self._fijados.get(n["id"]) if self.prueba and n["id"] != self._parar_en and tipo not in ESTRUCTURA else None
             try:
-                salida = getattr(self, tipo)(n)
+                if fijado is not None:
+                    # «Probar este paso»: este paso tiene datos fijados, no se corre (sus variables y su salida son las fijadas)
+                    self.restaurar(fijado.get("variables") or {})
+                    salida = str(fijado.get("salida") or (salidas_posibles(n)[0] or ["ok"])[0])
+                    _paso(n["id"], f"{n.get('nombre') or n['id']}: datos fijados, no se corre", "info", f"sale por «{salida}»", fijado=True)
+                elif self.prueba and tipo in SIMULADOS_EN_PRUEBA:
+                    salida = self._simular_en_prueba(n)
+                else:
+                    salida = getattr(self, tipo)(n)
             except Exception as e:
                 ms = int((time.time() - t) * 1000)
                 siguiente = self._tras_fallo(n, e, candidatas, ms, antes)
                 if siguiente is None:
                     evento("etapa_fin", etapa=n["id"], ms=ms, fallo=describir_fallo(n, e)[:400], error=f"{type(e).__name__}: {e}"[:400])
                     raise
+                if self._parar_en == n["id"]:
+                    raise _Parada(n["id"], RAMA_ERROR, None) from e
                 actual = siguiente
                 continue
             if self._siguiente_forzado:  # un paralelo cuyas ramas llegaron a un unir: se sigue desde ese unir
                 actual, self._siguiente_forzado = self._siguiente_forzado, None
                 evento("etapa_fin", etapa=n["id"], ms=int((time.time() - t) * 1000), fallo="", salida=salida, siguiente=actual,
                        muestra=self._muestra_de(n, antes))
+                if self._parar_en == n["id"]:
+                    raise _Parada(n["id"], salida, None)
                 continue
             # la rama de error solo se toma si el nodo falla
             elegida = self._arista([a for a in candidatas if _norm(_cuando(a)) != RAMA_ERROR or _norm(salida) == RAMA_ERROR], salida)
             evento("etapa_fin", etapa=n["id"], ms=int((time.time() - t) * 1000), fallo="", salida=salida,
-                   siguiente=elegida["hacia"] if elegida else "", muestra=self._muestra_de(n, antes))
+                   siguiente=elegida["hacia"] if elegida else "", muestra=self._muestra_de(n, antes), **({"fijado": True} if fijado is not None else {}))
+            if self._parar_en == n["id"]:
+                raise _Parada(n["id"], salida, None)
             if not elegida:
                 if profundidad:
                     return "fin", None  # dentro de un cuerpo o una rama: sin arista, termina la vuelta
@@ -3762,6 +3946,7 @@ def preparar_secretos(orden: dict) -> None:
         registrar_secretos([(entorno or {}).get(k) for k in secretos_entorno or []])
 
     de_paquete(orden.get("credenciales") or {}, orden.get("entorno") or {}, orden.get("entorno_secretos") or [])
+    registrar_secretos([(orden.get("enlaces") or {}).get("clave")] if isinstance(orden.get("enlaces"), dict) else [])  # la clave que firma los enlaces
     for sub in (orden.get("subflujos") or {}).values():
         if isinstance(sub, dict):
             de_paquete(sub.get("credenciales") or {}, sub.get("entorno") or {}, sub.get("entorno_secretos") or [])
@@ -3783,6 +3968,7 @@ async def procesar(orden: dict) -> None:
     _vueltas.clear()
     e = Ejecucion(defi, caso, modelo, entrada=orden.get("entrada"), credenciales=orden.get("credenciales") or {}, entorno=entorno,
                   subflujos=orden.get("subflujos") or {}, flujo=str(orden.get("flujo") or defi.get("id") or ""), ia_global=orden.get("ia_global"))
+    e.enlaces = orden.get("enlaces") if isinstance(orden.get("enlaces"), dict) else {}
     e.cargar_archivos(orden.get("archivos") or [])
     if isinstance(orden.get("aplazamiento"), dict):  # la corrida vuelve tras reintentar_mas_tarde: {{aplazamiento.intento}}
         e.aplazamiento = orden["aplazamiento"]
@@ -3807,13 +3993,144 @@ async def procesar(orden: dict) -> None:
                variables={k: _corto(v) for k, v in e.vars.items() if not k.startswith("_")},
                avisos=e.avisos, tokens_entrada=e.tokens["entrada"], tokens_salida=e.tokens["salida"], consumo=e.consumo,
                ia={k: v for k, v in e.ia.items() if k in ("proveedor", "modelo", "origen")},
+               # los archivos que generó la corrida (resultados descargables) y los que entrega su salida
+               archivos=e.generados[:200], archivos_salida=r.get("archivos") or [],
                vueltas=sum(_vueltas.values()), segundos=round(time.time() - t, 1), radicado="SIMULADO" if r["accion"] == "radicado" else "")
     except Exception as ex:
         evento("resultado", caso=caso, accion="error", motivo=f"{type(ex).__name__}: {ex}"[:500], escrituras=[_corto(x) for x in e.escrituras],
-               consumo=e.consumo, tokens_entrada=e.tokens["entrada"], tokens_salida=e.tokens["salida"],
+               consumo=e.consumo, tokens_entrada=e.tokens["entrada"], tokens_salida=e.tokens["salida"], archivos=e.generados[:200],
                respuesta_webhook=e.respuesta_gancho, traza=traceback.format_exc()[-2500:], segundos=round(time.time() - t, 1))
     finally:
         _secretos_activos.clear()
+
+
+# ------------------------------------------------- «Probar este paso»
+
+class _Captura(io.TextIOBase):
+    """Recoge los eventos de una prueba en vez de mandarlos al servidor."""
+
+    def __init__(self) -> None:
+        self.lineas: List[str] = []
+
+    def write(self, s: str) -> int:
+        self.lineas.append(s)
+        return len(s)
+
+    def flush(self) -> None:
+        return None
+
+    def eventos(self) -> List[dict]:
+        r = []
+        for linea in "".join(self.lineas).split("\n"):
+            if linea.startswith(MARCA):
+                try:
+                    r.append(json.loads(linea[len(MARCA):]))
+                except ValueError:
+                    pass
+        return r
+
+
+def _corto_prueba(v: Any) -> Any:
+    """Las variables de una prueba, más largas que en el resultado (se pueden fijar para los pasos siguientes)."""
+    t = json.dumps(v, ensure_ascii=False, default=str)
+    if len(t) <= 60000:
+        return v
+    return v[:60000] if isinstance(v, str) else t[:60000]
+
+
+def probar(orden: dict) -> dict:
+    """«Probar este paso»: corre SOLO un paso (o el flujo hasta ese paso) en simulación, sin escribir nada.
+
+    orden: {definicion, flujo, nodo, hasta?, entrada?, archivos?, caso?, variables? (de una ejecución anterior), fijados? {nodo: {variables, salida}},
+            credenciales, entorno, entorno_secretos, ia_global, enlaces}.
+    Ninguna credencial escribe (permitir_escritura apagado aquí también, aunque el servidor ya lo apagó), lo que escribiría en la plataforma
+    (tablas, archivos guardados, aprobaciones, aplazadas) se retiene, otros flujos no se llaman y los archivos solo son los de ESTE flujo.
+    Devuelve {ok, nodo, salida, variables, todas, muestra, archivos, escrituras, mensajes, avisos, eventos, ms, resultado?, error?}."""
+    global _salida
+    preparar_secretos(orden)
+    captura = _Captura()
+    previo = _salida
+    _salida = captura
+    t0 = time.time()
+    e: Optional[Ejecucion] = None
+    n: Optional[dict] = None
+    try:
+        defi = orden.get("definicion") or {}
+        nid = str(orden.get("nodo") or "")
+        entorno = {str(k): ("" if v is None else str(v)) for k, v in (orden.get("entorno") or {}).items()}
+        creds = {k: {**(v or {}), "permitir_escritura": False} for k, v in (orden.get("credenciales") or {}).items()}
+        creds_ia = {k: {"tipo": (v or {}).get("tipo")} for k, v in creds.items()} if "credenciales" in orden else None
+        problemas = validar(defi, al_ejecutar=True, entorno=entorno.keys() if "entorno" in orden else None, credenciales=creds_ia,
+                            ia_global=orden.get("ia_global"))
+        if problemas:
+            return {"ok": False, "error": "el flujo no es válido", "problemas": problemas, "ms": int((time.time() - t0) * 1000)}
+        n = next((x for x in defi.get("nodos") or [] if x.get("id") == nid), None)
+        if not n:
+            return {"ok": False, "error": f"el flujo no tiene el paso «{nid}»", "ms": 0}
+        e = Ejecucion(defi, str(orden.get("caso") or "prueba"), (orden.get("ia") or {}).get("modelo") or defi.get("modelo") or "gemini-2.5-flash",
+                      entrada=orden.get("entrada"), credenciales=creds, entorno=entorno, subflujos={}, flujo=str(orden.get("flujo") or defi.get("id") or ""),
+                      ia_global=orden.get("ia_global"))
+        e.prueba = True
+        e.enlaces = orden.get("enlaces") if isinstance(orden.get("enlaces"), dict) else {}
+        e.cargar_archivos(orden.get("archivos") or [])
+        e._nodos = {x["id"]: x for x in defi["nodos"]}
+        e._prof = 0
+        e._fijados = {k: v for k, v in (orden.get("fijados") or {}).items() if isinstance(v, dict)}
+        disp = next((x for x in defi["nodos"] if x["tipo"] in DISPARADORES), None)
+        if disp and disp["tipo"] in ("entrada_correo", "correo_nuevo") and not orden.get("caso"):
+            # sin correo elegido: el disparador de correo no tiene qué leer; con datos de prueba (variables o fijados) igual se puede probar
+            e.correo = {"asunto": "", "cuerpo": "", "remitente": "", "remitente_correo": "", "remitente_nombre": "", "recibido": "",
+                        "adjuntos_nombres": [], "adjuntos_texto": "", "adjuntos_leidos": []}
+        salida: Any = None
+        resultado: Optional[dict] = None
+        alcanzado = True
+        antes: Dict[str, Any] = {}
+        if orden.get("hasta"):
+            e.restaurar(orden.get("variables") or {})
+            e._parar_en = nid
+            antes = {}
+            try:
+                if disp and disp["tipo"] in ("entrada_correo", "correo_nuevo") and not orden.get("caso") and disp["id"] not in e._fijados:
+                    raise ErrorDeNegocio("este flujo arranca con un correo: elige uno de su correspondencia (o fija los datos del disparador)")
+                resultado = e.correr()
+                alcanzado = False  # terminó sin pasar por el paso (otra rama)
+            except _Parada as p:
+                salida, resultado = p.salida, p.resultado
+        else:
+            # el contexto del disparador (el correo elegido o la entrada), luego los datos de prueba, y SOLO el paso
+            if disp and disp["id"] != nid and disp["id"] not in e._fijados and not (disp["tipo"] in ("entrada_correo", "correo_nuevo") and not orden.get("caso")):
+                e._nodo_actual = disp["id"]
+                getattr(e, disp["tipo"])(disp)
+            e.restaurar(orden.get("variables") or {})
+            for f in e._fijados.values():
+                e.restaurar(f.get("variables") or {})
+            antes = dict(e.vars)
+            salida, resultado = e.correr_un_paso(n)
+        propias = produce(n)
+        nuevas = {k: v for k, v in e.vars.items() if not k.startswith("_") and (k in propias or k not in antes or antes[k] is not v)}
+        if n["tipo"] in ("entrada_correo", "correo_nuevo", "leer_adjuntos"):
+            nuevas = {"correo": e._vista_correo(), "adjuntos": e._vista_adjuntos(), **nuevas}
+        r = {"ok": True, "nodo": nid, "hasta": bool(orden.get("hasta")), "alcanzado": alcanzado, "salida": salida,
+             "variables": {k: _corto_prueba(v) for k, v in nuevas.items()},
+             "todas": {k: _corto(v) for k, v in e.vars.items() if not k.startswith("_")},
+             "muestra": e._muestra_de(n, antes) if alcanzado else {}, **({"resultado": json.loads(json.dumps(resultado, default=str))} if resultado else {})}
+    except _Terminar as fin:
+        r = {"ok": True, "nodo": n["id"] if n else "", "salida": "fin", "resultado": json.loads(json.dumps(fin.resultado, default=str)), "variables": {},
+             "todas": {k: _corto(v) for k, v in (e.vars if e else {}).items() if not k.startswith("_")}}
+    except Exception as ex:
+        r = {"ok": False, "nodo": n["id"] if n else "", "error": describir_fallo(n or {"tipo": "", "id": ""}, ex)[:600],
+             "detalle_error": f"{type(ex).__name__}: {ex}"[:600],
+             "todas": {k: _corto(v) for k, v in (e.vars if e else {}).items() if not k.startswith("_")}}
+    finally:
+        _salida = previo
+    eventos = captura.eventos()
+    r.update({"archivos": (e.generados if e else [])[:100], "escrituras": [_corto(x) for x in (e.escrituras if e else [])],
+              "mensajes": [_corto(x) for x in (e.mensajes if e else [])], "avisos": (e.avisos if e else [])[:50],
+              "eventos": [x for x in eventos if x.get("tipo") not in ("modelo_inicio",)][-400:], "ms": int((time.time() - t0) * 1000),
+              "consumo": e.consumo if e else {}})
+    limpio = json.loads(enmascarar(json.dumps(r, ensure_ascii=False, default=str)))
+    _secretos_activos.clear()
+    return limpio
 
 
 # ------------------------------------------------------- correo_nuevo: sondeo
@@ -3870,7 +4187,8 @@ def sondear(orden: dict) -> dict:
                 "id": mid, "subject": m.get("asunto") or "", "receivedDateTime": m.get("fecha") or "",
                 "from": {"emailAddress": {"name": m.get("remitente_nombre") or "", "address": m.get("remitente_correo") or ""}},
                 "toRecipients": [{"emailAddress": {"address": x.strip()}} for x in (m.get("para") or "").split(",") if x.strip()],
-                "body": {"contentType": "text", "content": m.get("cuerpo") or ""}, "_adjuntos": adjuntos, "_origen": f"correo_nuevo:{flujo}"},
+                "body": {"contentType": "text", "content": m.get("cuerpo") or ""}, "_adjuntos": adjuntos, "_origen": f"correo_nuevo:{flujo}",
+                **_hilo_de(m)},
                 ensure_ascii=False), encoding="utf-8")
             casos.append({"caso": caso, "id": mid, "asunto": m.get("asunto") or ""})
         estado = {"vistos": vistos[-2000:], "ultimo": time.time(), "carpeta": carpeta}
@@ -3880,6 +4198,12 @@ def sondear(orden: dict) -> dict:
         return {"ok": False, "error": enmascarar(f"{describir_fallo({'tipo': 'correo_nuevo', 'id': 'correo_nuevo'}, ex)}"[:400]), "casos": []}
     finally:
         _secretos_activos.clear()
+
+
+def _hilo_de(m: dict) -> dict:
+    """Lo que hace falta para responder en el mismo hilo: el id de Graph, References y Reply-To del correo."""
+    return {k: v for k, v in (("_graph_id", str(m.get("graph_id") or "")), ("_referencias", str(m.get("referencias") or "")),
+                              ("_responder_a", str(m.get("responder_a") or ""))) if v}
 
 
 def guardar_correo(dest: Path, m: dict, origen: str) -> List[dict]:
@@ -3899,7 +4223,7 @@ def guardar_correo(dest: Path, m: dict, origen: str) -> List[dict]:
         "id": str(m.get("id") or ""), "subject": m.get("asunto") or "", "receivedDateTime": m.get("fecha") or "",
         "from": {"emailAddress": {"name": m.get("remitente_nombre") or "", "address": m.get("remitente_correo") or ""}},
         "toRecipients": [{"emailAddress": {"address": x.strip()}} for x in (m.get("para") or "").split(",") if x.strip()],
-        "body": {"contentType": "text", "content": m.get("cuerpo") or ""}, "_adjuntos": adjuntos, "_origen": origen},
+        "body": {"contentType": "text", "content": m.get("cuerpo") or ""}, "_adjuntos": adjuntos, "_origen": origen, **_hilo_de(m)},
         ensure_ascii=False), encoding="utf-8")
     return adjuntos
 
@@ -3978,5 +4302,8 @@ if __name__ == "__main__":
         _real.write(json.dumps(sondear(json.loads(sys.stdin.read())), ensure_ascii=False) + "\n")
     elif sys.argv[1:2] == ["buzon"]:
         _real.write(json.dumps(buzon_del_flujo(json.loads(sys.stdin.read())), ensure_ascii=False) + "\n")
+    elif sys.argv[1:2] == ["probar"]:
+        # «Probar este paso»: una orden por stdin, el resultado en una línea (los eventos van dentro, no por la marca)
+        _real.write(json.dumps(probar(json.loads(sys.stdin.read())), ensure_ascii=False) + "\n")
     else:
         asyncio.run(principal())

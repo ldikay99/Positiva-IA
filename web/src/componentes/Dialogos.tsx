@@ -11,6 +11,7 @@ import { Selector } from "./Selector.tsx";
 import { ZonaArchivos } from "./Archivos.tsx";
 import { pedir } from "../estado.ts";
 import type { ArchivoFlujo } from "../tipos.ts";
+import { marcarPaso } from "../guia.ts";
 
 type ReglasArchivos = { tipos_permitidos: string[]; max_mb: number; max_archivos: number };
 /** Lo que va a la entrada: los archivos de un campo como sus ids (uno solo en «archivo»). */
@@ -271,7 +272,7 @@ export function DialogoCorrer({ abierto, cerrar }: { abierto: boolean; cerrar: (
         await correr({ entrada });
       }
       window.dispatchEvent(new CustomEvent("positiva:control", { detail: { accion: "proceso" } }));
-      avisar("Corriendo: síguelo en el lienzo y en el panel de abajo", "info");
+      avisar("Corriendo: síguelo en el lienzo; el resultado queda en el Historial", "info");
       cerrar();
     } catch (e) {
       const m = (e as Error).message;
@@ -425,10 +426,11 @@ export function DialogoNuevoFlujo({ abierto, cerrar }: { abierto: boolean; cerra
         return;
       }
       try { localStorage.setItem(`positiva-ia:disenio:${id}:${cuerpo.flujo?.version ?? 1}`, JSON.stringify(def.disenio)); } catch { /* sin almacenamiento */ }
+      marcarPaso("crear");
       await cargarFlujos();
       await cambiarFlujo(id);
       irA("flujo");
-      avisar(`Flujo «${n}» creado: agrega nodos desde la paleta`);
+      avisar(`Flujo «${n}» creado: agrega pasos con «Agregar»`);
       setNombre("");
       setDescripcion("");
       cerrar();
@@ -444,7 +446,7 @@ export function DialogoNuevoFlujo({ abierto, cerrar }: { abierto: boolean; cerra
       abierto={abierto}
       cerrar={cerrar}
       titulo="Nuevo flujo"
-      sub="Elige con qué arranca. Después lo armas nodo a nodo en el lienzo."
+      sub="Elige cómo arranca. Después le agregas pasos en el lienzo, uno a uno."
       pie={
         <>
           <span className="espacio" />

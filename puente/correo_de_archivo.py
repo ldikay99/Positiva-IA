@@ -61,7 +61,8 @@ def de_eml(datos: bytes) -> Dict[str, Any]:
             html = parte.get_content()
     return {"id": str(m.get("Message-ID") or ""), "asunto": str(m.get("Subject") or ""), "remitente_nombre": nombre,
             "remitente_correo": direccion, "para": str(m.get("To") or ""), "fecha": fecha,
-            "cuerpo": html or texto, "html": bool(html), "adjuntos": adjuntos}
+            "cuerpo": html or texto, "html": bool(html), "adjuntos": adjuntos,
+            "referencias": " ".join(str(m.get("References") or "").split()), "responder_a": str(m.get("Reply-To") or "")}
 
 
 # ------------------------------------------------------------------- .msg
@@ -158,7 +159,8 @@ def a_caso(datos: bytes, nombre: str, carpeta: Path) -> Dict[str, Any]:
         "from": {"emailAddress": {"name": m["remitente_nombre"], "address": m["remitente_correo"]}},
         "toRecipients": [{"emailAddress": {"address": x.strip()}} for x in re.split(r"[;,]", m["para"] or "") if x.strip()],
         "body": {"contentType": "html" if m["html"] else "text", "content": m["cuerpo"] or ""},
-        "_adjuntos": adjuntos, "_origen": "bandeja_de_prueba", "_archivo": nombre[:200]}, ensure_ascii=False), encoding="utf-8")
+        "_adjuntos": adjuntos, "_origen": "bandeja_de_prueba", "_archivo": nombre[:200],
+        "_referencias": m.get("referencias") or "", "_responder_a": m.get("responder_a") or ""}, ensure_ascii=False), encoding="utf-8")
     return {"caso": caso, "asunto": m["asunto"], "adjuntos": len(adjuntos)}
 
 

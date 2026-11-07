@@ -251,3 +251,72 @@ export interface EstadoMotor {
 }
 
 export type EstadoNodo = "inactivo" | "activo" | "hecho" | "fallo" | "desenlace";
+
+/** Una notificación del centro (GET /api/notificaciones). */
+export interface Notificacion {
+  id: string;
+  tipo: "fallo" | "aprobacion" | "conexion" | "recursos" | "programacion" | "alerta";
+  titulo: string;
+  texto: string;
+  t: number;
+  leida: boolean;
+  flujo?: string;
+  corrida?: string;
+  aprobacion?: string;
+  accion?: { vista: "historial" | "aprobaciones" | "conexiones" | "flujo" | "tablero"; flujo?: string; corrida?: string; etiqueta: string };
+}
+
+/** Una plantilla de la galería (GET /api/plantillas). */
+export interface Plantilla {
+  id: string;
+  nombre: string;
+  resumen: string;
+  descripcion: string;
+  categoria: string;
+  necesita: { tipo: "nada" | "correos" | "archivos" | "datos" | "conexion" | "entorno"; texto: string }[];
+  como_probar: string;
+  disparador: string | null;
+  usa_ia: boolean;
+  nodos: { id: string; tipo: string; nombre: string }[];
+  aristas: { desde: string; hacia: string; cuando?: string }[];
+  disponible: boolean;
+  motivo?: string;
+}
+
+/** Una fila del historial (GET /api/historial). */
+export interface FilaHistorial {
+  id: string;
+  flujo: string;
+  caso: string;
+  titulo: string;
+  estado: "en_curso" | "bien" | "revisar" | "fallo";
+  desenlace: string | null;
+  motivo: string;
+  origen: string;
+  creada: number;
+  segundos: number | null;
+  reintento_de: string | null;
+  /** Aprobación humana: la ejecución que se pausó (en la que siguió) y la que siguió después de decidir. */
+  viene_de?: string | null;
+  continuada_en?: string | null;
+}
+
+export interface RespuestaHistorial {
+  total: number;
+  corridas: FilaHistorial[];
+  facetas: { estados: Record<string, number>; desenlaces: Record<string, number> };
+  en_memoria: number;
+}
+
+/** El detalle legible de una ejecución (GET /api/historial/:id). */
+export interface DetalleEjecucion {
+  corrida: FilaHistorial;
+  flujo: { id: string; nombre: string; tipo: "codigo" | "declarativo" };
+  aprobacion: { titulo: string; viene_de: string | null; continuada_en: string | null } | null;
+  entrada: { tipo: "correo" | "datos"; resumen: string; campos: { nombre: string; valor: string }[] };
+  pasos: { id: string; nombre: string; tipo: string | null; estado: "hecho" | "fallo" | "en_curso"; salida: string; ms: number; veces: number; notas: string[]; datos: { nombre: string; valor: string }[]; fallo: string }[];
+  salida: { datos: { nombre: string; valor: string }[]; respuesta: string; escrituras: { que: string; destino: string; retenida: boolean }[]; avisos: string[] };
+  porque: { desenlace: string | null; estado: FilaHistorial["estado"]; motivo: string; explicacion: string; paso_final: string | null; fallo: string };
+  consumo: { tokens: number; consultas_ia: number } | null;
+  se_puede_reintentar: boolean;
+}

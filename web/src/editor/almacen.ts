@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { guardarLocal, leerLocal, pedir, usar } from "../estado.ts";
 import type { Corrida } from "../tipos.ts";
+import { marcarPaso } from "../guia.ts";
 import { autoOrdenar, normalizarTipos, slugFlujo, type Definicion, type Posicion, type TipoNodo } from "./modelo.ts";
 
 /**
@@ -432,6 +433,7 @@ export const usarEditor = create<EstadoEditor>((set, get) => ({
     const f = get().flujo;
     if (!f) return;
     const r = await pedir<{ id: string; caso: string } | { id: string; caso: string }[]>(`/api/flujos/${encodeURIComponent(f)}/correr`, { method: "POST", body: JSON.stringify(cuerpo) });
+    marcarPaso("correr");
     const creadas = Array.isArray(r) ? r : [r];
     usar.setState((s) => {
       const corridas: Record<string, Corrida> = { ...s.corridas };

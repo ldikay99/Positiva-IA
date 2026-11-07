@@ -12,7 +12,7 @@ const tema = EditorView.theme({
   ".cm-content": { fontFamily: "var(--mono)", padding: "8px 0" },
   ".cm-gutters": { backgroundColor: "transparent", border: "none", color: "var(--texto-3)" },
   "&.cm-focused": { outline: "2px solid var(--azul-borde)" },
-  ".cm-activeLine": { backgroundColor: "rgba(47,111,214,0.05)" },
+  ".cm-activeLine": { backgroundColor: "rgba(0,148,255,0.06)" },
   ".cm-activeLineGutter": { backgroundColor: "transparent" },
 });
 

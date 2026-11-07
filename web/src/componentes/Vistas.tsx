@@ -88,7 +88,9 @@ export function VistaCorridas() {
   };
   return (
     <div className="vista">
-      <Cabecera titulo="Corridas" sub={conProduccion ? "Cómo terminó cada correo corrido aquí, al lado de lo que hizo producción con el mismo correo. Abre una fila para verla en el flujo." : "Cómo terminó cada correo corrido en este flujo. Abre una fila para verla en el flujo."} />
+      <Cabecera titulo="Resumen de ejecuciones" sub={conProduccion ? "Cómo terminó cada correo corrido aquí, al lado de lo que hizo producción con el mismo correo. Abre una fila para verla en el flujo." : "Cómo terminó cada correo corrido en este flujo. Abre una fila para verla en el flujo."}>
+        <button className="boton" onClick={() => irA("historial")}><Icono n="atras" tam={14} />Volver al historial</button>
+      </Cabecera>
       {!lista.length ? (
         <div className="estado-vacio">
           <span className="estado-vacio-icono"><Icono n="historial" tam={22} /></span>

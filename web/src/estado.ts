@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { reglaNueva } from "./flujo.ts";
-import type { Buzon, Catalogo, Configuracion, Corrida, Correo, EstadoMotor, Evento, FlujoResumen, Regla, TableroFlujo } from "./tipos.ts";
+import type { Buzon, Catalogo, Configuracion, Corrida, Correo, EstadoMotor, Evento, FlujoResumen, Notificacion, Regla, TableroFlujo } from "./tipos.ts";
+import { marcarPaso } from "./guia.ts";
 
 /** La ruta de un correo de la correspondencia de un flujo (solo de ESE flujo). */
 export const urlCorreo = (flujo: string, caso: string, adjunto?: string) =>
@@ -43,7 +44,7 @@ export async function pedir<T>(ruta: string, init?: RequestInit): Promise<T> {
   return cuerpo;
 }
 
-export type Vista = "tablero" | "flujo" | "conexiones" | "adjuntos" | "corridas" | "logs" | "herramientas" | "proveedores" | "configuracion";
+export type Vista = "inicio" | "tablero" | "flujo" | "historial" | "plantillas" | "notificaciones" | "aprobaciones" | "conexiones" | "adjuntos" | "corridas" | "logs" | "herramientas" | "proveedores" | "configuracion";
 export type Foco = { tipo: "nodo"; id: string } | { tipo: "regla"; id: string } | { tipo: "correo"; caso: string } | { tipo: "corrida"; id: string } | null;
 
 export interface Aviso {
@@ -140,6 +141,17 @@ interface Estado {
   borrarNota: (id: string) => void;
   centrar: (id: string) => void;
   abrirParametro: (nodo: string, clave: string) => void;
+  /** El centro de notificaciones (GET /api/notificaciones, empujadas por el canal de eventos). */
+  notificaciones: Notificacion[];
+  sinLeer: number;
+  /** Si el servidor ya tiene el paso de aprobación humana (null: todavía no se sabe). */
+  aprobacionesDisponibles: boolean | null;
+  cargarNotificaciones: () => Promise<void>;
+  marcarLeida: (id: string) => Promise<void>;
+  marcarTodasLeidas: () => Promise<void>;
+  /** La ejecución que el historial debe abrir al llegar (desde una notificación, el inicio o Vera). */
+  historialFoco: { corrida: string; n: number } | null;
+  abrirEnHistorial: (corrida: string, flujo?: string) => Promise<void>;
 }
 
 let siguienteAviso = 1;
@@ -207,7 +219,7 @@ export const usar = create<Estado>((set, get) => ({
   recientes: [],
   motor: null,
   conectado: false,
-  vista: "tablero",
+  vista: "inicio",
   foco: null,
   corridaVisible: null,
   seguirEnVivo: true,
@@ -260,6 +272,7 @@ export const usar = create<Estado>((set, get) => ({
 
   verCorrida: async (id) => {
     set({ corridaVisible: id });
+    if (id) marcarPaso("revisar");
     const c = id ? get().corridas[id] : null;
     if (id && c && c.eventos.length === 0 && c.estado !== "en_cola") {
       try {
@@ -292,6 +305,7 @@ export const usar = create<Estado>((set, get) => ({
   },
 
   correrComoElJob: async (n, ids) => {
+    marcarPaso("correr");
     const r = await pedir<{ lote: string | null; corridas: { id: string; caso: string }[] }>(q("/api/buzon/correr", get().flujo), { method: "POST", body: JSON.stringify(ids?.length ? { ids } : { n }) });
     const bandeja = await pedir<Correo[]>(q("/api/bandeja", get().flujo));
     set((s) => {
@@ -304,6 +318,7 @@ export const usar = create<Estado>((set, get) => ({
   },
 
   procesar: async (casos, comoElJob = false) => {
+    marcarPaso("correr");
     const creadas = await pedir<{ id: string; caso: string; lote?: string }[]>("/api/corridas", { method: "POST", body: JSON.stringify({ casos, comoElJob, flujo: get().flujo }) });
     set((s) => {
       const corridas = { ...s.corridas };
@@ -396,6 +411,28 @@ export const usar = create<Estado>((set, get) => ({
     }),
   centrar: (id) => set((s) => ({ objetivo: { id, n: (s.objetivo?.n ?? 0) + 1 }, vista: "flujo" })),
   abrirParametro: (nodo, clave) => set({ foco: { tipo: "nodo", id: nodo }, parametroAbierto: clave, vista: "flujo" }),
+
+  notificaciones: [],
+  sinLeer: 0,
+  aprobacionesDisponibles: null,
+  cargarNotificaciones: async () => {
+    const r = await pedir<{ notificaciones: Notificacion[]; sin_leer: number; aprobaciones_disponibles?: boolean }>("/api/notificaciones");
+    set({ notificaciones: r.notificaciones, sinLeer: r.sin_leer, aprobacionesDisponibles: r.aprobaciones_disponibles === true });
+  },
+  marcarLeida: async (id) => {
+    set((s) => ({ notificaciones: s.notificaciones.map((n) => (n.id === id ? { ...n, leida: true } : n)), sinLeer: Math.max(0, s.sinLeer - (s.notificaciones.some((n) => n.id === id && !n.leida) ? 1 : 0)) }));
+    const r = await pedir<{ sin_leer: number }>(`/api/notificaciones/${encodeURIComponent(id)}/leida`, { method: "POST" }).catch(() => null);
+    if (r) set({ sinLeer: r.sin_leer });
+  },
+  marcarTodasLeidas: async () => {
+    set((s) => ({ notificaciones: s.notificaciones.map((n) => ({ ...n, leida: true })), sinLeer: 0 }));
+    await pedir("/api/notificaciones/leidas", { method: "POST" }).catch(() => undefined);
+  },
+  historialFoco: null,
+  abrirEnHistorial: async (corrida, flujo) => {
+    if (flujo && flujo !== get().flujo) await get().cambiarFlujo(flujo);
+    set((s) => ({ historialFoco: { corrida, n: (s.historialFoco?.n ?? 0) + 1 }, vista: "historial" }));
+  },
 }));
 
 let conexiones = 0;
@@ -454,6 +491,18 @@ async function resincronizar(): Promise<void> {
 
 function recibir(e: Evento): void {
   const s0 = usar.getState();
+  // Las notificaciones son de toda la plataforma, no del flujo abierto.
+  if (e.tipo === "notificacion" || e.tipo === "notificaciones") {
+    const n = e.notificacion as Notificacion | undefined;
+    usar.setState((s) => ({
+      notificaciones: n ? [n, ...s.notificaciones.filter((x) => x.id !== n.id)].slice(0, 100) : s.notificaciones,
+      sinLeer: typeof e.sin_leer === "number" ? e.sin_leer : s.sinLeer,
+    }));
+    if (e.tipo === "notificaciones") void s0.cargarNotificaciones().catch(() => undefined);
+    return;
+  }
+  // Un flujo que no estaba (creado a mano, desde una plantilla o por Vera): un paso de la guía.
+  if (e.tipo === "flujo_guardado" && typeof e.flujo === "string" && s0.flujos.length && !s0.flujos.some((f) => f.id === e.flujo)) marcarPaso("crear");
   if (e.tipo === "flujo_guardado" || e.tipo === "flujo_borrado") {
     void s0.cargarFlujos();
     // El editor abierto se recarga solo (o avisa si hay cambios sin guardar).

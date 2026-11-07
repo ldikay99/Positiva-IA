@@ -164,7 +164,9 @@ async def principal() -> None:
     PANTALLA_INICIAL.update(inicio.get("pantalla") or {})
     sistema = (asistente.SISTEMA + NOTA_VOZ + "\n\n" + asistente.describir_pantalla(inicio.get("pantalla") or {}, flujo)
                + contexto_previo(conv))
-    declaraciones = [types.FunctionDeclaration(**h) for h in asistente.HERRAMIENTAS if h["name"] not in SOLO_POR_ESCRITO]
+    # En la llamada no se cargan grupos a mitad de la sesión: va lo rápido; construir y configurar se delega al proceso escrito.
+    de_voz = asistente.herramientas_de(["nucleo", "correr", "correo", "producto"]) + [h for h in asistente.HERRAMIENTAS if h["name"] in ("clonar_flujo", "renombrar_flujo", "instalar_plantilla", "plantillas", "pedir_credencial", "abrir_entorno")]
+    declaraciones = [types.FunctionDeclaration(**h) for h in {h["name"]: h for h in de_voz}.values() if h["name"] not in SOLO_POR_ESCRITO and h["name"] != "cargar_herramientas"]
     declaraciones += [types.FunctionDeclaration(**h) for h in HERRAMIENTAS_VOZ]
     cred, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
 

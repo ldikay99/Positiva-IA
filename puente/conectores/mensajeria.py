@@ -18,7 +18,8 @@ import socket
 import ssl
 import time
 import urllib.parse
-from typing import Any, Dict, Optional
+import uuid
+from typing import Any, Dict, List, Optional, Tuple
 
 from .base import IPS_PERMITIDAS_PRUEBAS, ErrorDeNegocio, ErrorTransitorio, destino_seguro, host_vetado
 
@@ -70,14 +71,33 @@ def solo_host(url: str) -> str:
     return (urllib.parse.urlsplit(str(url or "")).hostname or "").lower()
 
 
-def publicar(url: str, tipo: str, cuerpo: Any, encabezados: Optional[Dict[str, str]] = None, timeout: float = 15.0) -> Dict[str, Any]:
-    """POST JSON a la URL (ya permitido por quien llama). {status, ms, respuesta}."""
+def multipart(cuerpo: Any, archivos: List[Dict[str, Any]]) -> Tuple[bytes, str]:
+    """Un cuerpo multipart/form-data: el JSON en el campo «datos» y cada archivo en «archivo» ({nombre, tipo, datos})."""
+    frontera = f"----positiva-ia-{uuid.uuid4().hex}"
+    partes: List[bytes] = [
+        f"--{frontera}\r\nContent-Disposition: form-data; name=\"datos\"\r\nContent-Type: application/json; charset=utf-8\r\n\r\n".encode()
+        + json.dumps(cuerpo, ensure_ascii=False).encode("utf-8") + b"\r\n"]
+    for a in archivos:
+        nombre = str(a.get("nombre") or "archivo").replace('"', "").replace("\r", "").replace("\n", "")
+        partes.append(f"--{frontera}\r\nContent-Disposition: form-data; name=\"archivo\"; filename=\"{nombre}\"; "
+                      f"filename*=UTF-8''{urllib.parse.quote(nombre)}\r\nContent-Type: {a.get('tipo') or 'application/octet-stream'}\r\n\r\n".encode("utf-8")
+                      + (a.get("datos") or b"") + b"\r\n")
+    partes.append(f"--{frontera}--\r\n".encode())
+    return b"".join(partes), f"multipart/form-data; boundary={frontera}"
+
+
+def publicar(url: str, tipo: str, cuerpo: Any, encabezados: Optional[Dict[str, str]] = None, timeout: float = 15.0,
+             archivos: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """POST JSON a la URL (ya permitido por quien llama). Con archivos va como multipart/form-data. {status, ms, respuesta}."""
     u = revisar_url(url, tipo)
     host = (u.hostname or "").lower()
     puerto = u.port or (443 if u.scheme == "https" else 80)
     ip = destino_seguro(host, puerto)
-    datos = json.dumps(cuerpo, ensure_ascii=False).encode("utf-8")
-    cab = {"Content-Type": "application/json; charset=utf-8", "User-Agent": "Positiva-IA/flujos", **(encabezados or {})}
+    if archivos:
+        datos, tipo_contenido = multipart(cuerpo, archivos)
+    else:
+        datos, tipo_contenido = json.dumps(cuerpo, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8"
+    cab = {"Content-Type": tipo_contenido, "User-Agent": "Positiva-IA/flujos", **(encabezados or {})}
     for k, v in cab.items():
         if "\r" in str(v) or "\n" in str(v) or "\r" in k or "\n" in k:
             raise ErrorDeNegocio(f"el encabezado {k} tiene saltos de línea")
@@ -110,8 +130,10 @@ def publicar(url: str, tipo: str, cuerpo: Any, encabezados: Optional[Dict[str, s
     return {"status": status, "ms": int((time.time() - t) * 1000), "respuesta": respuesta}
 
 
-def cuerpo_teams(titulo: str, texto: str, hechos: Optional[Dict[str, Any]] = None, enlace: str = "") -> Dict[str, Any]:
-    """Un mensaje con tarjeta adaptable (lo que aceptan los flujos de trabajo de Teams y los webhooks entrantes)."""
+def cuerpo_teams(titulo: str, texto: str, hechos: Optional[Dict[str, Any]] = None, enlace: str = "",
+                 archivos: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    """Un mensaje con tarjeta adaptable (lo que aceptan los flujos de trabajo de Teams y los webhooks entrantes).
+    archivos: [{nombre, url}] — un botón «Descargar» por archivo (enlace de descarga con vencimiento)."""
     cuerpo: list = []
     if titulo:
         cuerpo.append({"type": "TextBlock", "text": titulo, "weight": "Bolder", "size": "Medium", "wrap": True})
@@ -119,15 +141,21 @@ def cuerpo_teams(titulo: str, texto: str, hechos: Optional[Dict[str, Any]] = Non
         cuerpo.append({"type": "TextBlock", "text": texto, "wrap": True})
     if hechos:
         cuerpo.append({"type": "FactSet", "facts": [{"title": str(k), "value": str(v)} for k, v in hechos.items()]})
+    if archivos:
+        cuerpo.append({"type": "TextBlock", "text": "Archivos: " + ", ".join(str(a.get("nombre") or "") for a in archivos), "wrap": True, "isSubtle": True})
     tarjeta: Dict[str, Any] = {"$schema": "http://adaptivecards.io/schemas/adaptive-card.json", "type": "AdaptiveCard", "version": "1.4", "body": cuerpo}
-    if enlace:
-        tarjeta["actions"] = [{"type": "Action.OpenUrl", "title": "Abrir", "url": enlace}]
+    acciones = ([{"type": "Action.OpenUrl", "title": "Abrir", "url": enlace}] if enlace else []) + [
+        {"type": "Action.OpenUrl", "title": f"Descargar {str(a.get('nombre') or '')[:40]}", "url": str(a.get("url") or "")} for a in (archivos or []) if a.get("url")]
+    if acciones:
+        tarjeta["actions"] = acciones[:6]
     return {"type": "message", "text": titulo or texto[:200],
             "attachments": [{"contentType": "application/vnd.microsoft.card.adaptive", "content": tarjeta}]}
 
 
-def cuerpo_slack(titulo: str, texto: str, hechos: Optional[Dict[str, Any]] = None, enlace: str = "") -> Dict[str, Any]:
+def cuerpo_slack(titulo: str, texto: str, hechos: Optional[Dict[str, Any]] = None, enlace: str = "",
+                 archivos: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     lineas = ([f"*{titulo}*"] if titulo else []) + ([texto] if texto else []) + [f"• *{k}:* {v}" for k, v in (hechos or {}).items()]
     if enlace:
         lineas.append(f"<{enlace}|Abrir>")
+    lineas += [f"• Archivo: <{a['url']}|{a.get('nombre') or 'archivo'}>" for a in archivos or [] if a.get("url")]
     return {"text": "\n".join(lineas)}

@@ -312,7 +312,7 @@ function porPasillo(sx: number, sy: number, sp: Position, tx: number, ty: number
   return [redondeada(pts, 14), (desde + hasta) / 2, carril];
 }
 
-const COLOR_FLECHA = { inactivo: "#c2c8d2", recorrido: "#2f9e6e", activo: "#2f6fd6", resaltado: "#7ea3e0", regla: "#d27aa6" };
+const COLOR_FLECHA = { inactivo: "#bcc8da", recorrido: "#4aa83f", activo: "#0094ff", resaltado: "#5cb8ff", regla: "#5a7fbf" };
 
 /** Cable con flecha; mientras la corriente pasa, unas chispas recorren el trazo. */
 const Cable = memo(function Cable({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, markerEnd }: EdgeProps<Edge<DatosCable>>) {
@@ -1215,9 +1215,9 @@ function LienzoDeCodigo() {
             nodeColor={(n) => {
               if (n.type === "fase") return "rgba(0,0,0,0)";
               const e = (n.data as DatosEtapa).estado;
-              return ({ activo: "#8fb5f0", hecho: "#9fd8bd", fallo: "#f0b2ac" } as Record<string, string>)[e as string] ?? (n.type === "regla" ? "#efc3d8" : "#d9dde4");
+              return ({ activo: "#5cb8ff", hecho: "#a9dfa2", fallo: "#f4b4ab" } as Record<string, string>)[e as string] ?? (n.type === "regla" ? "#b7cbe8" : "#cfe3f7");
             }}
-            maskColor="rgba(243,244,246,0.72)"
+            maskColor="rgba(232,241,249,0.72)"
           />
         )}
       </ReactFlow>

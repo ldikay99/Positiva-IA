@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 /**
@@ -39,6 +39,8 @@ export function Tooltips() {
       }, inmediato ? 0 : 450);
     };
     const sobre = (e: PointerEvent) => {
+      // Con el dedo no hay «encima»: un globo que queda pegado tras tocar solo estorba.
+      if (e.pointerType === "touch") return;
       const el = (e.target as Element | null)?.closest?.("[title]") as HTMLElement | null;
       if (el && !(el instanceof SVGElement)) tomar(el, false);
       else if (actual.current && !actual.current.contains(e.target as Node)) soltar();
@@ -66,10 +68,24 @@ export function Tooltips() {
   }, []);
 
   if (!globo) return null;
-  return createPortal(
-    <div role="tooltip" className={`globo ${globo.arriba ? "arriba" : "abajo"}`} style={{ left: globo.x, top: globo.y }}>
-      {globo.texto}
-    </div>,
-    document.body,
+  return createPortal(<Globo {...globo} />, document.body);
+}
+
+/** El globo se mide al dibujarse y se corre para que nunca quede fuera de la ventana. */
+function Globo({ texto, x, y, arriba }: { texto: string; x: number; y: number; arriba: boolean }) {
+  const caja = useRef<HTMLDivElement>(null);
+  const [corrimiento, setCorrimiento] = useState(0);
+  useLayoutEffect(() => {
+    const r = caja.current?.getBoundingClientRect();
+    if (!r) return;
+    const margen = 8;
+    if (r.left < margen) setCorrimiento(margen - r.left);
+    else if (r.right > window.innerWidth - margen) setCorrimiento(window.innerWidth - margen - r.right);
+    else setCorrimiento(0);
+  }, [texto, x, y]);
+  return (
+    <div ref={caja} role="tooltip" className={`globo ${arriba ? "arriba" : "abajo"}`} style={{ left: x + corrimiento, top: y, ["--flecha" as string]: `${-corrimiento}px` }}>
+      {texto}
+    </div>
   );
 }

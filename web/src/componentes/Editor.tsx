@@ -682,7 +682,7 @@ export function EditorFlujo() {
         const estado: DatosCable["estado"] = recorrido ? (rd?.estado === "activo" ? "activo" : "recorrido") : "inactivo";
         const id = `${a.desde}|${i}|${a.hacia}`;
         const sel = aristaSel === id;
-        const color = estado !== "inactivo" ? (estado === "activo" ? "#3047d1" : "#127a55") : sel ? "#18203a" : error ? "#c0392e" : "#9aa3b8";
+        const color = estado !== "inactivo" ? (estado === "activo" ? "#0094ff" : "#137a02") : sel ? "#015b9d" : error ? "#c73d2b" : "#a9b7cc";
         return {
           id,
           source: a.desde,
@@ -1125,7 +1125,7 @@ export function EditorFlujo() {
             snapGrid={[8, 8]}
             proOptions={{ hideAttribution: true }}
             className={lejos ? "lejos" : ""}
-            connectionLineStyle={{ stroke: "#3047d1", strokeWidth: 2 }}
+            connectionLineStyle={{ stroke: "#0094ff", strokeWidth: 2 }}
           >
             {!def.nodos.some((n) => mapa.get(n.tipo)?.disparador || n.tipo.startsWith("entrada")) && def.nodos.length > 0 && tiposCargados && (
               <Panel position="top-center" className="en-pista"><Icono n="info" tam={13} />Este flujo no tiene disparador: agrega uno desde la paleta para que pueda correr.</Panel>
@@ -1137,7 +1137,7 @@ export function EditorFlujo() {
               <button onClick={encuadrar} title="Encuadrar todo (F)" aria-label="Encuadrar todo"><Icono n="encuadrar" tam={15} /></button>
               <button onClick={ordenar} title="Ordenar automáticamente" aria-label="Ordenar automáticamente"><Icono n="reordenar" tam={15} /></button>
             </Panel>
-            <MiniMap pannable zoomable position="bottom-right" style={{ width: 160, height: 100 }} nodeBorderRadius={8} nodeColor={(n) => ((n.data as DatosNodo).problemas ? "#f5cfca" : (n.data as DatosNodo).resultado?.estado === "hecho" ? "#c2e5d2" : "#dfe6e0")} maskColor="rgba(238,242,238,0.7)" />
+            <MiniMap pannable zoomable position="bottom-right" style={{ width: 160, height: 100 }} nodeBorderRadius={8} nodeColor={(n) => ((n.data as DatosNodo).problemas ? "#f8d2cc" : (n.data as DatosNodo).resultado?.estado === "hecho" ? "#c8ecc1" : "#cfe3f7")} maskColor="rgba(232,241,249,0.72)" />
           </ReactFlow>
           {def.nodos.length === 0 && (
             <div className="en-vacio">

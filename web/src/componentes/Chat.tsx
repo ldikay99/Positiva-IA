@@ -117,7 +117,7 @@ function Visor({ chat, a, cerrar }: { chat: string; a: Adjunto; cerrar: () => vo
 
 /**
  * El indicador de la llamada: cinco barras redondeadas que se mueven con la voz.
- * Azules cuando hablas tú, color lacre cuando habla Vera, quietas en silencio.
+ * Azul claro cuando hablas tú, azul hondo cuando habla Vera, quietas en silencio.
  */
 function Indicador({ analizadores }: { analizadores: () => { vera?: AnalyserNode; mic?: AnalyserNode; micMudo: boolean } }) {
   const caja = useRef<HTMLSpanElement>(null);

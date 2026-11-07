@@ -28,8 +28,10 @@ from proveedores import personalizado  # noqa: E402,F401
 from proveedores import catalogo  # noqa: E402,F401
 from proveedores.base import ErrorDeProveedor, Parte, enmascarar  # noqa: E402,F401
 from proveedores.nucleo import conversar_con_herramientas, generar, probar  # noqa: E402,F401
+from proveedores import imagenes  # noqa: E402,F401  (imágenes generadas: vertex, gemini y openai)
+from proveedores.imagenes import generar_imagen  # noqa: E402,F401
 from proveedores.registro import PROVEEDORES, Adaptador, obtener, registrar  # noqa: E402,F401
 from proveedores.resolver import GLOBAL_DEFECTO, ia_del_flujo, ia_del_nodo, ia_global, problemas_ia  # noqa: E402,F401
 
-__all__ = ["generar", "probar", "conversar_con_herramientas", "PROVEEDORES", "Adaptador", "registrar", "obtener", "catalogo",
+__all__ = ["generar", "generar_imagen", "imagenes", "probar", "conversar_con_herramientas", "PROVEEDORES", "Adaptador", "registrar", "obtener", "catalogo",
            "problemas_ia", "ia_del_flujo", "ia_del_nodo", "ia_global", "GLOBAL_DEFECTO", "ErrorDeProveedor", "Parte", "enmascarar"]

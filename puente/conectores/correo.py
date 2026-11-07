@@ -18,6 +18,7 @@ import email.utils
 import http.client
 import imaplib
 import json
+import mimetypes
 import re
 import smtplib
 import socket
@@ -31,6 +32,10 @@ from .base import ErrorDeNegocio, ErrorTransitorio, destino_seguro, direccion_ve
 
 MAX_CORREOS = 100
 MAX_ADJUNTO = 15_000_000
+# Lo que lleva un correo que sale: cuántos adjuntos, cuánto en total y, por Graph (un solo pedido), cada uno.
+MAX_ADJUNTOS_ENVIO = 10
+MAX_BYTES_ENVIO = 20_000_000
+MAX_BYTES_GRAPH = 3_000_000
 MESES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
 
@@ -123,7 +128,9 @@ def _de_mime(crudo: bytes, uid: str, incluir_adjuntos: bool) -> dict:
     return {"id": str(m.get("Message-ID") or f"uid-{uid}").strip(), "uid": uid, "asunto": str(m.get("Subject") or ""),
             "remitente": f"{nombre} <{direccion}>" if nombre else direccion, "remitente_correo": direccion,
             "remitente_nombre": nombre, "para": str(m.get("To") or ""), "cc": str(m.get("Cc") or ""), "fecha": fecha,
-            "cuerpo": (cuerpo or "")[:60000], "adjuntos": adjuntos}
+            "cuerpo": (cuerpo or "")[:60000], "adjuntos": adjuntos,
+            # para responder en el mismo hilo (In-Reply-To y References)
+            "referencias": " ".join(str(m.get("References") or "").split())[:4000], "responder_a": str(m.get("Reply-To") or "")}
 
 
 def leer_imap(valores: dict, carpeta: str, filtro: Dict[str, Any], desde: str, maximo: int, incluir_adjuntos: bool,
@@ -321,38 +328,80 @@ def revisar_destinatarios(mensaje: dict) -> List[str]:
     return todos
 
 
-def enviar(tipo: str, valores: dict, mensaje: dict, timeout: float) -> dict:
-    """Envía de verdad (quien llama ya revisó permitir_escritura). Devuelve {enviado, id}."""
-    todos = revisar_destinatarios(mensaje)
-    if tipo == "smtp":
-        host, puerto = str(valores.get("host") or ""), int(valores.get("puerto") or 587)
-        remitente = str(valores.get("remitente") or valores.get("usuario") or "")
-        revisar_buzon(remitente)
-        m = EmailMessage()
-        m["From"], m["To"], m["Subject"] = remitente, ", ".join(direcciones(mensaje.get("para"))), mensaje.get("asunto") or ""
-        if mensaje.get("cc"):
-            m["Cc"] = ", ".join(direcciones(mensaje.get("cc")))
-        m["Message-ID"] = email.utils.make_msgid(domain=(remitente.rsplit("@", 1)[-1] or "positiva-ia.local"))
-        m.set_content(mensaje.get("cuerpo") or "")
-        if mensaje.get("html"):
-            m.add_alternative(mensaje["html"], subtype="html")
-        try:
-            s = fabrica_smtp(host, puerto, _modo_tls(valores.get("tls"), "starttls"), timeout)
-        except (socket.timeout, TimeoutError) as e:
-            raise TimeoutError(f"el servidor SMTP {host} no respondió a tiempo") from e
-        try:
-            if valores.get("usuario"):
-                try:
-                    s.login(str(valores["usuario"]), str(valores.get("clave") or ""))
-                except smtplib.SMTPAuthenticationError as e:
-                    raise ErrorDeNegocio("SMTP rechazó el usuario o la clave") from e
-            s.send_message(m, from_addr=remitente, to_addrs=todos)
-        finally:
+def revisar_adjuntos(adjuntos: List[dict], tipo: str = "") -> None:
+    """Los límites de los adjuntos de un correo: cuántos, cuánto pesan en total y, por Graph, cada uno (un solo pedido)."""
+    if len(adjuntos) > MAX_ADJUNTOS_ENVIO:
+        raise ErrorDeNegocio(f"son {len(adjuntos)} adjuntos y un correo lleva hasta {MAX_ADJUNTOS_ENVIO}")
+    total = sum(len(a.get("datos") or b"") for a in adjuntos)
+    if total > MAX_BYTES_ENVIO:
+        raise ErrorDeNegocio(f"los adjuntos suman {total / 1_000_000:.1f} MB y un correo lleva hasta {MAX_BYTES_ENVIO // 1_000_000} MB en total")
+    if tipo == "microsoft_graph":
+        grandes = [a.get("nombre") for a in adjuntos if len(a.get("datos") or b"") > MAX_BYTES_GRAPH]
+        if grandes:
+            raise ErrorDeNegocio(f"por Microsoft Graph cada adjunto va hasta {MAX_BYTES_GRAPH // 1_000_000} MB: «{', '.join(map(str, grandes))[:200]}» pasa "
+                                 "(usa una credencial smtp o un enlace de descarga)")
+
+
+def _armar_mime(remitente: str, mensaje: dict) -> EmailMessage:
+    """El correo tal como sale por SMTP: texto (y HTML), adjuntos y, si responde, In-Reply-To y References."""
+    m = EmailMessage()
+    m["From"], m["To"], m["Subject"] = remitente, ", ".join(direcciones(mensaje.get("para"))), mensaje.get("asunto") or ""
+    if mensaje.get("cc"):
+        m["Cc"] = ", ".join(direcciones(mensaje.get("cc")))
+    m["Message-ID"] = email.utils.make_msgid(domain=(remitente.rsplit("@", 1)[-1] or "positiva-ia.local"))
+    original = str(mensaje.get("en_respuesta_a") or "").strip()
+    if original:
+        if "\r" in original or "\n" in original:
+            raise ErrorDeNegocio("el Message-ID del correo original no es válido")
+        m["In-Reply-To"] = original
+        refs = " ".join(x for x in str(mensaje.get("referencias") or "").split() if x != original)
+        m["References"] = f"{refs} {original}".strip()[-4000:]
+    m.set_content(mensaje.get("cuerpo") or "")
+    if mensaje.get("html"):
+        m.add_alternative(mensaje["html"], subtype="html")
+    for a in mensaje.get("adjuntos") or []:
+        tipo = str(a.get("tipo") or "") or (mimetypes.guess_type(str(a.get("nombre") or ""))[0] or "application/octet-stream")
+        principal, _, sub = tipo.partition("/")
+        m.add_attachment(a.get("datos") or b"", maintype=principal or "application", subtype=sub or "octet-stream", filename=str(a.get("nombre") or "adjunto"))
+    return m
+
+
+def _enviar_smtp(valores: dict, mensaje: dict, todos: List[str], timeout: float) -> dict:
+    host, puerto = str(valores.get("host") or ""), int(valores.get("puerto") or 587)
+    remitente = str(valores.get("remitente") or valores.get("usuario") or "")
+    revisar_buzon(remitente)
+    m = _armar_mime(remitente, mensaje)
+    try:
+        s = fabrica_smtp(host, puerto, _modo_tls(valores.get("tls"), "starttls"), timeout)
+    except (socket.timeout, TimeoutError) as e:
+        raise TimeoutError(f"el servidor SMTP {host} no respondió a tiempo") from e
+    try:
+        if valores.get("usuario"):
             try:
-                s.quit()
-            except Exception:
-                pass
-        return {"enviado": True, "id": m["Message-ID"]}
+                s.login(str(valores["usuario"]), str(valores.get("clave") or ""))
+            except smtplib.SMTPAuthenticationError as e:
+                raise ErrorDeNegocio("SMTP rechazó el usuario o la clave") from e
+        s.send_message(m, from_addr=remitente, to_addrs=todos)
+    finally:
+        try:
+            s.quit()
+        except Exception:
+            pass
+    return {"enviado": True, "id": m["Message-ID"], **({"en_respuesta_a": m["In-Reply-To"]} if m["In-Reply-To"] else {})}
+
+
+def _adjuntos_graph(adjuntos: List[dict]) -> List[dict]:
+    return [{"@odata.type": "#microsoft.graph.fileAttachment", "name": str(a.get("nombre") or "adjunto"),
+             "contentType": str(a.get("tipo") or "application/octet-stream"), "contentBytes": base64.b64encode(a.get("datos") or b"").decode()}
+            for a in adjuntos]
+
+
+def enviar(tipo: str, valores: dict, mensaje: dict, timeout: float) -> dict:
+    """Envía de verdad (quien llama ya revisó permitir_escritura). Devuelve {enviado, id}. mensaje.adjuntos: [{nombre, tipo, datos}]."""
+    todos = revisar_destinatarios(mensaje)
+    revisar_adjuntos(mensaje.get("adjuntos") or [], tipo)
+    if tipo == "smtp":
+        return _enviar_smtp(valores, mensaje, todos, timeout)
     if tipo == "microsoft_graph":
         buzon = _buzon_graph(valores)
         token = _token_graph(valores, timeout)
@@ -360,7 +409,69 @@ def enviar(tipo: str, valores: dict, mensaje: dict, timeout: float) -> dict:
         _json_https("POST", f"https://graph.microsoft.com/v1.0/users/{urllib.parse.quote(buzon)}/sendMail", timeout, token, datos={
             "message": {"subject": mensaje.get("asunto") or "",
                         "body": {"contentType": "HTML" if mensaje.get("html") else "Text", "content": mensaje.get("html") or mensaje.get("cuerpo") or ""},
-                        "toRecipients": dest(mensaje.get("para")), "ccRecipients": dest(mensaje.get("cc")), "bccRecipients": dest(mensaje.get("cco"))},
+                        "toRecipients": dest(mensaje.get("para")), "ccRecipients": dest(mensaje.get("cc")), "bccRecipients": dest(mensaje.get("cco")),
+                        **({"attachments": _adjuntos_graph(mensaje["adjuntos"])} if mensaje.get("adjuntos") else {})},
             "saveToSentItems": True})
         return {"enviado": True, "id": ""}
     raise ErrorDeNegocio(f"para enviar correo la credencial tiene que ser smtp o microsoft_graph (es {tipo})")
+
+
+def _id_graph(base: str, original: dict, timeout: float, token: str) -> str:
+    """El id de Graph del correo original: el guardado al traerlo o, si no, se busca por su Message-ID (solo lectura)."""
+    gid = str(original.get("graph_id") or "").strip()
+    if gid:
+        if not re.fullmatch(r"[A-Za-z0-9=_+/-]{10,400}", gid):
+            raise ErrorDeNegocio("el id de Graph del correo original no es válido")
+        return gid
+    mid = str(original.get("message_id") or "").strip()
+    if not mid or "'" in mid:
+        raise ErrorDeNegocio("el correo original no tiene un Message-ID para encontrarlo en el buzón")
+    q = urllib.parse.urlencode({"$filter": f"internetMessageId eq '{mid}'", "$select": "id", "$top": "1"})
+    r = _json_https("GET", f"{base}/messages?{q}", timeout, token)
+    v = r.get("value") or []
+    if not v or not v[0].get("id"):
+        raise ErrorDeNegocio("el correo original ya no está en el buzón del flujo: no se puede responder en su hilo")
+    return str(v[0]["id"])
+
+
+def responder(tipo: str, valores: dict, original: dict, mensaje: dict, timeout: float) -> dict:
+    """Responde en el MISMO hilo (quien llama ya revisó permitir_escritura).
+
+    - microsoft_graph: createReply sobre el correo original (con el texto citado si incluir_original), ajusta para, cc y cuerpo,
+      sube los adjuntos al borrador y lo envía (send).
+    - smtp: un correo con In-Reply-To y References del original (los clientes de correo lo muestran en el mismo hilo).
+    original: {message_id, referencias, graph_id?}; mensaje: {para, cc, asunto, cuerpo, html?, adjuntos, incluir_original, cita}."""
+    todos = revisar_destinatarios(mensaje)
+    revisar_adjuntos(mensaje.get("adjuntos") or [], tipo)
+    if tipo == "smtp":
+        cuerpo = mensaje.get("cuerpo") or ""
+        if mensaje.get("incluir_original") and mensaje.get("cita"):
+            cuerpo = f"{cuerpo}\n\n{mensaje['cita']}"
+        return _enviar_smtp(valores, {**mensaje, "cuerpo": cuerpo, "en_respuesta_a": original.get("message_id") or "",
+                                      "referencias": original.get("referencias") or ""}, todos, timeout)
+    if tipo == "microsoft_graph":
+        buzon = _buzon_graph(valores)
+        token = _token_graph(valores, timeout)
+        base = f"https://graph.microsoft.com/v1.0/users/{urllib.parse.quote(buzon)}"
+        gid = _id_graph(base, original, timeout, token)
+        contenido = mensaje.get("html") or mensaje.get("cuerpo") or ""
+        incluir = bool(mensaje.get("incluir_original"))
+        # con el original: el texto va como comentario encima de la cita que arma Outlook; sin él, el cuerpo se reemplaza
+        borrador = _json_https("POST", f"{base}/messages/{urllib.parse.quote(gid, safe='')}/createReply", timeout, token,
+                               datos={"comment": contenido} if incluir else {})
+        did = str(borrador.get("id") or "")
+        if not did:
+            raise ErrorDeNegocio("Microsoft no devolvió el borrador de la respuesta")
+        dest = lambda xs: [{"emailAddress": {"address": d}} for d in direcciones(xs)]  # noqa: E731
+        cambios: Dict[str, Any] = {"toRecipients": dest(mensaje.get("para")), "ccRecipients": dest(mensaje.get("cc"))}
+        if mensaje.get("asunto"):
+            cambios["subject"] = mensaje["asunto"]
+        if not incluir:
+            cambios["body"] = {"contentType": "HTML" if mensaje.get("html") else "Text", "content": contenido}
+        url_borrador = f"{base}/messages/{urllib.parse.quote(did, safe='')}"
+        _json_https("PATCH", url_borrador, timeout, token, datos=cambios)
+        for a in _adjuntos_graph(mensaje.get("adjuntos") or []):
+            _json_https("POST", f"{url_borrador}/attachments", timeout, token, datos=a)
+        _json_https("POST", f"{url_borrador}/send", timeout, token, datos={})
+        return {"enviado": True, "id": did, "en_respuesta_a": gid}
+    raise ErrorDeNegocio(f"para responder un correo la credencial tiene que ser smtp o microsoft_graph (es {tipo})")

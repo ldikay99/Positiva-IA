@@ -4,6 +4,7 @@ import { pedir, usar } from "../estado.ts";
 import { Icono } from "../iconos.tsx";
 import { ZonaArchivos } from "./Archivos.tsx";
 import { NOMBRES_CORTOS_DESENLACE, NOMBRES_DESENLACE, TONO_DESENLACE, motivoLegible } from "../progreso.ts";
+import { nombreResultado } from "../lenguaje.ts";
 import { Selector } from "./Selector.tsx";
 import type { Correo, CorreoDelBuzon, Corrida } from "../tipos.ts";
 
@@ -42,7 +43,7 @@ function iniciales(nombre: string): string {
 }
 
 /** Cada remitente con su propio tono, siempre el mismo: se reconoce a quien escribe varias veces. */
-const TONOS = ["azul", "verde", "violeta", "turquesa", "ambar", "rosa"] as const;
+const TONOS = ["azul", "violeta", "turquesa", "rosa"] as const;
 function tonoDe(texto: string): string {
   let h = 0;
   for (const c of texto.toLowerCase()) h = (h * 31 + c.charCodeAt(0)) >>> 0;
@@ -667,9 +668,9 @@ export function PanelSinCorreo() {
     return s < 60 ? "ahora" : s < 3600 ? `${Math.round(s / 60)} min` : s < 86400 ? `${Math.round(s / 3600)} h` : new Date(t).toLocaleDateString("es-CO", { day: "numeric", month: "short" });
   };
   return (
-    <section className="panel-corridas" aria-label="Corridas del flujo">
+    <section className="panel-corridas" aria-label="Ejecuciones del flujo">
       <header>
-        <h2>Corridas</h2>
+        <h2>Ejecuciones</h2>
         <p>{QUE[f?.disparador ?? ""] ?? "Corre este flujo y revisa aquí cada resultado."}</p>
         <button className="boton primario chico" onClick={abrirCorrer}><Icono n="play" tam={13} />Correr</button>
       </header>
@@ -677,12 +678,13 @@ export function PanelSinCorreo() {
         <ul className="pc-lista">
           {lista.map((c) => {
             const accion = String(c.resultado?.accion ?? (c.estado === "en_cola" ? "en cola" : c.estado === "procesando" ? "corriendo" : c.estado));
+            const nombre = c.resultado ? nombreResultado(accion, false) : accion === "en cola" ? "En espera" : accion === "corriendo" ? "Corriendo" : accion;
             return (
               <li key={c.id}>
                 <button className={visible === c.id ? "activa" : ""} onClick={() => void verCorrida(c.id)}>
                   <span className={`punto tono-${c.resultado ? TONO_DESENLACE[accion] ?? "gris" : "azul"}`} />
                   <span className="pc-texto">
-                    <b>{NOMBRES_CORTOS_DESENLACE[accion] ?? accion}</b>
+                    <b>{nombre}</b>
                     <small>{c.resultado?.motivo ? motivoLegible(String(c.resultado.motivo)) : c.caso}</small>
                   </span>
                   <span className="pc-cuando">{hace(c.creada)}</span>
@@ -692,7 +694,7 @@ export function PanelSinCorreo() {
           })}
         </ul>
       ) : (
-        <p className="pc-vacio">Todavía no tiene corridas. Pulsa «Correr» para la primera: verás cada paso en el lienzo y en el panel de abajo.</p>
+        <p className="pc-vacio">Todavía no ha corrido. Pulsa «Correr» para la primera vez: verás cada paso en el lienzo y en el panel de abajo; el resultado queda en el Historial.</p>
       )}
     </section>
   );

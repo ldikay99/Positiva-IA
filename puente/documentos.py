@@ -221,6 +221,136 @@ def bloques_de_texto(texto: str) -> List[Tuple[str, Any]]:
     return r
 
 
+# --------------------------------------------- documento estructurado (IA)
+# Lo que devuelve la IA cuando redacta un documento: un título y secciones con párrafos, viñetas y una tabla.
+
+ESQUEMA_DOCUMENTO: Dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "titulo": {"type": "string"},
+        "secciones": {"type": "array", "items": {"type": "object", "properties": {
+            "titulo": {"type": "string"},
+            "parrafos": {"type": "array", "items": {"type": "string"}},
+            "lista": {"type": "array", "items": {"type": "string"}},
+            "tabla": {"type": "object", "properties": {
+                "columnas": {"type": "array", "items": {"type": "string"}},
+                "filas": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}}}},
+        }}},
+    },
+    "required": ["titulo", "secciones"],
+}
+
+# Lo que devuelve la IA cuando arma una hoja de cálculo: hojas con columnas y filas.
+ESQUEMA_HOJAS: Dict[str, Any] = {
+    "type": "object",
+    "properties": {"hojas": {"type": "array", "items": {"type": "object", "properties": {
+        "nombre": {"type": "string"},
+        "columnas": {"type": "array", "items": {"type": "string"}},
+        "filas": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}}}, "required": ["columnas", "filas"]}}},
+    "required": ["hojas"],
+}
+
+
+def bloques_de_estructura(doc: Any, max_secciones: int = 60) -> List[Tuple[str, Any]]:
+    """Un documento {titulo, secciones[{titulo, parrafos[], lista[], tabla{columnas, filas}}]} como bloques para PDF y Word."""
+    r: List[Tuple[str, Any]] = []
+    if not isinstance(doc, dict):
+        return [("parrafo", str(doc or ""))] if doc else []
+    if str(doc.get("titulo") or "").strip():
+        r.append(("titulo", str(doc["titulo"]).strip()))
+    for s in (doc.get("secciones") or [])[:max_secciones]:
+        if not isinstance(s, dict):
+            if str(s or "").strip():
+                r.append(("parrafo", str(s).strip()))
+            continue
+        if str(s.get("titulo") or "").strip():
+            r.append(("subtitulo", str(s["titulo"]).strip()))
+        for p in s.get("parrafos") or []:
+            if str(p or "").strip():
+                r.append(("parrafo", str(p).strip()))
+        for v in s.get("lista") or []:
+            if str(v or "").strip():
+                r.append(("vineta", str(v).strip()))
+        t = s.get("tabla")
+        if isinstance(t, dict) and (t.get("columnas") or t.get("filas")):
+            filas = [[str(x if x is not None else "") for x in (f if isinstance(f, list) else [f])] for f in (t.get("filas") or [])[:500]]
+            cab = [str(x) for x in t.get("columnas") or []]
+            r.append(("tabla", ([cab] if cab else []) + filas))
+    return r
+
+
+def hojas_limpias(datos: Any, max_hojas: int = 20, max_filas: int = 5000) -> List[Dict[str, Any]]:
+    """Las hojas {nombre, columnas, filas} que devolvió la IA, revisadas: nombres válidos para Excel y filas del ancho de las columnas."""
+    hojas = datos.get("hojas") if isinstance(datos, dict) else datos
+    r: List[Dict[str, Any]] = []
+    usados: set = set()
+    for i, h in enumerate((hojas if isinstance(hojas, list) else [])[:max_hojas], 1):
+        if not isinstance(h, dict):
+            continue
+        nombre = re.sub(r"[\[\]:*?/\\]", " ", str(h.get("nombre") or f"Hoja {i}")).strip()[:31] or f"Hoja {i}"
+        base, k = nombre, 2
+        while nombre.lower() in usados:
+            nombre = f"{base[:28]} {k}"
+            k += 1
+        usados.add(nombre.lower())
+        columnas = [str(c) for c in h.get("columnas") or []]
+        filas = []
+        for f in (h.get("filas") or [])[:max_filas]:
+            f = f if isinstance(f, list) else ([f.get(c) for c in columnas] if isinstance(f, dict) else [f])
+            filas.append([("" if x is None else x) for x in f])
+        ancho = max([len(columnas)] + [len(f) for f in filas] or [0])
+        columnas += [f"columna_{j}" for j in range(len(columnas) + 1, ancho + 1)]
+        r.append({"nombre": nombre, "columnas": columnas, "filas": [f + [""] * (ancho - len(f)) for f in filas]})
+    return r
+
+
+def _valor_celda(x: Any) -> Any:
+    """Un número que llegó como texto se guarda como número (para sumar en Excel); lo demás, tal cual."""
+    if isinstance(x, (int, float)) and not isinstance(x, bool):
+        return x
+    t = str(x if x is not None else "")
+    if re.fullmatch(r"-?\d{1,15}([.,]\d+)?", t.strip()) and not re.fullmatch(r"0\d+", t.strip()):
+        try:
+            return float(t.strip().replace(",", ".")) if re.search(r"[.,]", t) else int(t.strip())
+        except ValueError:
+            return t
+    return t
+
+
+def xlsx_de_hojas(hojas: List[Dict[str, Any]]) -> bytes:
+    """Un .xlsx con una pestaña por hoja (encabezado en negrita y fijo)."""
+    import openpyxl  # MIT
+    from openpyxl.styles import Font
+
+    libro = openpyxl.Workbook()
+    libro.remove(libro.active)
+    for h in hojas or [{"nombre": "Hoja 1", "columnas": [], "filas": []}]:
+        ws = libro.create_sheet(h["nombre"])
+        if h["columnas"]:
+            ws.append(h["columnas"])
+            for celda in ws[1]:
+                celda.font = Font(bold=True)
+            ws.freeze_panes = "A2"
+        for f in h["filas"]:
+            ws.append([_valor_celda(x) for x in f])
+        for k, col in enumerate(h["columnas"], 1):
+            ancho = max([len(str(col))] + [len(str(f[k - 1])) for f in h["filas"][:200] if k - 1 < len(f)])
+            ws.column_dimensions[openpyxl.utils.get_column_letter(k)].width = min(60, max(8, ancho + 2))
+    s = io.BytesIO()
+    libro.save(s)
+    return s.getvalue()
+
+
+def csv_de_hoja(h: Dict[str, Any]) -> bytes:
+    s = io.StringIO()
+    w = csv.writer(s)
+    if h.get("columnas"):
+        w.writerow(h["columnas"])
+    for f in h.get("filas") or []:
+        w.writerow(["" if x is None else x for x in f])
+    return ("﻿" + s.getvalue()).encode("utf-8")  # con BOM: Excel lo abre con tildes
+
+
 def pdf_de_bloques(bloques: List[Tuple[str, Any]], titulo: str = "") -> bytes:
     p = _PDF(titulo)
     for tipo, v in bloques:

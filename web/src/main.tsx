@@ -6,6 +6,7 @@ import { Tooltips } from "./componentes/Tooltips.tsx";
 import "./diseno.css";
 import "./plataforma.css";
 import "./editor.css";
+import "./producto.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

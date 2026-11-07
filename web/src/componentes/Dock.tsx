@@ -5,9 +5,10 @@ import { NOMBRE_FUENTE, describir, narrar, solicitud, type EstadoCampo, type Pas
 import { CATEGORIAS } from "../flujo.ts";
 import { Icono } from "../iconos.tsx";
 import { Selector, type OpcionSelector } from "./Selector.tsx";
-import { NOMBRES_DESENLACE, TONO_DESENLACE, motivoLegible, segundos } from "../progreso.ts";
+import { TONO_DESENLACE, motivoLegible, segundos } from "../progreso.ts";
 import type { Evento } from "../tipos.ts";
 import { PastillaConsumo, consumoDe, textoConsumo } from "./IA.tsx";
+import { nombreResultado } from "../lenguaje.ts";
 
 // ------------------------------------------------------------ piezas comunes
 
@@ -115,6 +116,8 @@ export function Dock({ plegado, alternar }: { plegado: boolean; alternar: () => 
   const verCorrida = usar((s) => s.verCorrida);
   const enfocar = usar((s) => s.enfocar);
   const irA = usar((s) => s.irA);
+  // PQRD y tutelas hablan de SGDEA; los flujos creados aquí, de completar.
+  const deCodigo = usar((s) => s.flujos.find((f) => f.id === s.flujo)?.tipo === "codigo");
   const [vista, setVista] = useState<"vivo" | "logs" | "consola">("vivo");
   const [seguir, setSeguir] = useState(true);
   const [filtro, setFiltro] = useState("");
@@ -157,7 +160,7 @@ export function Dock({ plegado, alternar }: { plegado: boolean; alternar: () => 
   const opcionesCorrida: OpcionSelector[] = orden.slice(0, 120).flatMap((id) => {
     const c = corridas[id];
     if (!c) return [];
-    const estado = c.resultado ? (NOMBRES_DESENLACE[String(c.resultado.accion)] ?? String(c.resultado.accion)) : c.estado === "en_cola" ? "En espera" : "Corriendo";
+    const estado = c.resultado ? nombreResultado(String(c.resultado.accion), deCodigo) : c.estado === "en_cola" ? "En espera" : "Corriendo";
     const gasto = textoConsumo(consumoDe(c.resultado));
     return [{ valor: id, etiqueta: c.caso, texto: c.caso, detalle: gasto ? `${estado} · ${gasto}` : estado }];
   });
@@ -173,7 +176,7 @@ export function Dock({ plegado, alternar }: { plegado: boolean; alternar: () => 
           <span>{conCorreo ? "Elige correos en la correspondencia y pulsa «Correr»: aquí verás cada paso del motor y cómo queda la solicitud." : "Pulsa «Correr»: aquí verás cada paso del flujo y lo que deja."}</span>
         </p>
         {orden.length > 0 && (
-          <Selector valor={null} opciones={opcionesCorrida} alCambiar={(v) => verCorrida(v)} etiqueta="Ver una corrida anterior" placeholder="Ver una corrida anterior…" tamano="chico" ancho={260} />
+          <Selector valor={null} opciones={opcionesCorrida} alCambiar={(v) => verCorrida(v)} etiqueta="Ver una ejecución anterior" placeholder="Ver una ejecución anterior…" tamano="chico" ancho={260} />
         )}
       </section>
     );
@@ -194,11 +197,11 @@ export function Dock({ plegado, alternar }: { plegado: boolean; alternar: () => 
         {corrida && (
           <span className={`pastilla ${r ? (TONO_DESENLACE[accion] ?? "") : "azul"}`}>
             {!r && <span className="girando" />}
-            {r ? (NOMBRES_DESENLACE[accion] ?? accion) : corrida.estado === "en_cola" ? "En espera" : "Corriendo"}
+            {r ? nombreResultado(accion, deCodigo) : corrida.estado === "en_cola" ? "En espera" : "Corriendo"}
           </span>
         )}
         {r && <PastillaConsumo r={r} />}
-        <Selector valor={corrida.id} opciones={opcionesCorrida} alCambiar={(v) => verCorrida(v)} etiqueta="Corrida a la vista" tamano="chico" ancho={260} />
+        <Selector valor={corrida.id} opciones={opcionesCorrida} alCambiar={(v) => verCorrida(v)} etiqueta="Ejecución a la vista" tamano="chico" ancho={260} />
         <button className="boton chico" onClick={() => irA("adjuntos")} title="Cada adjunto hoja por hoja: imagen, texto, búsquedas y origen de cada dato"><Icono n="documento" tam={13} />Ver hojas</button>
         <button className="boton chico" onClick={() => enfocar({ tipo: "corrida", id: corrida.id })}>Ver resultado</button>
         {vista !== "vivo" && !plegado && <div className="campo-icono filtro-dock"><Icono n="buscar" tam={13} /><input className="campo chico-campo" placeholder="Filtrar" aria-label="Filtrar líneas" value={filtro} onChange={(e) => setFiltro(e.target.value)} /></div>}
@@ -215,8 +218,8 @@ export function Dock({ plegado, alternar }: { plegado: boolean; alternar: () => 
                   <div className={`desenlace tono-${TONO_DESENLACE[accion] ?? "gris"}`}>
                     <Icono n={accion === "radicado" ? "ok" : "bandera"} tam={16} />
                     <div className="crece">
-                      <b>{NOMBRES_DESENLACE[accion] ?? accion}</b>
-                      <span>{accion === "radicado" ? `Radicado ${String(r.radicado ?? "")} · no se envió a SGDEA` : motivoLegible(String(r.motivo ?? ""))}</span>
+                      <b>{nombreResultado(accion, deCodigo)}</b>
+                      <span>{accion === "radicado" && deCodigo ? `Radicado ${String(r.radicado ?? "")}: no se envió a SGDEA (simulación)` : motivoLegible(String(r.motivo ?? ""))}</span>
                     </div>
                     <span className="mono">{String(r.segundos ?? "")} s</span>
                   </div>
