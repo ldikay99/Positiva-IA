@@ -137,5 +137,6 @@ cat = {"nodos": nodos, "aristas": aristas, "fases": [{"id": a, "nombre": b, "nod
                              {"nombre": "TUTELAS-MICROSOFT-CLIENT-SECRET", "uso": "Secreto de la aplicación de Graph (Secret Manager).", "secreto": True},
                              {"nombre": "TUTELAS-SGDEA-CLIENT-SECRET", "uso": "Cliente de SGDEA (Secret Manager). El visor no lo usa.", "secreto": True},
                              {"nombre": "TUTELAS-REDIS-PASSWORD", "uso": "Redis de deduplicación (Secret Manager). El visor no lo usa.", "secreto": True}]}
-json.dump(cat, open(sys.argv[1], "w", encoding="utf-8"), ensure_ascii=False, indent=1)
+from tildes import corregir  # noqa: E402
+json.dump(corregir(cat), open(sys.argv[1], "w", encoding="utf-8"), ensure_ascii=False, indent=1)
 print("nodos", len(nodos), "aristas", len(aristas))

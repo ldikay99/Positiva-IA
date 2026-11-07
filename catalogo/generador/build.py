@@ -1180,7 +1180,8 @@ def main():
         for s in n["siguientes"]:
             assert s in ids, (n["id"], s)
     with open(SALIDA, "w", encoding="utf-8") as f:
-        json.dump(out, f, ensure_ascii=False, indent=1)
+        from tildes import corregir
+        json.dump(corregir(out), f, ensure_ascii=False, indent=1)
     print("nodos", len(nodos), "params", total_params, "sobrescribibles", sob,
           "herramientas", len(HERRAMIENTAS), "proveedores", len(PROVEEDORES))
 

@@ -308,7 +308,7 @@
    "reglas": [
     {
      "id": "juzgado_0",
-     "descripcion": "buscar_por_codigo: regexp_replace(codigo, '[^0-9]', '', 'g') = código. En el visor, sobre juzgados_actualizada.csv.",
+     "descripcion": "buscar_por_codigo: regexp_replace(código, '[^0-9]', '', 'g') = código. En el visor, sobre juzgados_actualizada.csv.",
      "modulo": "Tutelas/services/juzgados_service.py",
      "funcion": "buscar_por_codigo"
     },
@@ -446,7 +446,7 @@
     },
     {
      "id": "radicar_1",
-     "descripcion": "Reintenta solo 401, 429, 503 y errores de conexión (3, 9, 27 s). 408/409/500/502/504/522 o timeout de lectura: resultado incierto, no se reintenta ni se libera el reclamo → RADICACION-POR-CONFIRMAR.",
+     "descripcion": "Reintenta solo 401, 429, 503 y errores de conexión (3, 9, 27 s). 408/409/500/502/504/522 o timeout de lectura: resultado incierto, no se reintenta ni se libera el reclamo → RADICACIÓN-POR-CONFIRMAR.",
      "modulo": "Tutelas/services/sgdea_service.py",
      "funcion": "radicar_tutela"
     },
@@ -600,7 +600,7 @@
    "reglas": [
     {
      "id": "nr_0",
-     "descripcion": "responder_no_radicado(principal, op.motivo(etiqueta), radicado si ya se identificó, accion=op.accion(etiqueta)); RADICACION-POR-CONFIRMAR pide verificar antes de radicar.",
+     "descripcion": "responder_no_radicado(principal, op.motivo(etiqueta), radicado si ya se identificó, accion=op.accion(etiqueta)); RADICACIÓN-POR-CONFIRMAR pide verificar antes de radicar.",
      "modulo": "Tutelas/main.py",
      "funcion": "_mover_hilo_fallido"
     },
@@ -612,7 +612,7 @@
     },
     {
      "id": "nr_2",
-     "descripcion": "Etiquetas (operaciones.MOTIVOS): DOMINIO-DE-CORREO-INVALIDO, NO-ES-TUTELA, CORREO-CON-ENLACE, SIN-RADICADO-ENCONTRADO, SIN-DOCUMENTACION-ADJUNTA, JUZGADO-NO-ENCONTRADO, RADICADO-DUPLICADO, RADICACION-POR-CONFIRMAR, ERROR-RADICAR, ERROR-INESPERADO.",
+     "descripcion": "Etiquetas (operaciones.MOTIVOS): DOMINIO-DE-CORREO-INVÁLIDO, NO-ES-TUTELA, CORREO-CON-ENLACE, SIN-RADICADO-ENCONTRADO, SIN-DOCUMENTACION-ADJUNTA, JUZGADO-NO-ENCONTRADO, RADICADO-DUPLICADO, RADICACIÓN-POR-CONFIRMAR, ERROR-RADICAR, ERROR-INESPERADO.",
      "modulo": "Tutelas/operaciones.py",
      "funcion": "motivo"
     }
