@@ -74,6 +74,14 @@ Al buscar, el nodo encuentra lo que se busca sin importar mayúsculas, tildes, e
   - [ ] de números y fechas: mayor, menor, entre, antes de, después de.
 - [ ] Opciones por condición: distinguir mayúsculas y tildes solo si se pide (por defecto se ignoran).
 - [ ] Mismos operadores y normalización en `tabla_consultar`.
+- [ ] Modo de comparación por condición: flexible (ignora mayúsculas, tildes y espacios), exacta (todo cuenta, incluidos espacios) o parecida (similitud con umbral); ajustes finos para distinguir mayúsculas, tildes o espacios.
+- [ ] Longitud como criterio en todo lo que compara o extrae:
+  - [ ] operadores `longitud_igual`, `longitud_mayor`, `longitud_menor` y `longitud_entre`, contando caracteres, dígitos, letras o palabras;
+  - [ ] `extraer_regex` con longitud mínima, máxima o exacta y solo dígitos (elige el candidato que cumple, por ejemplo el radicado de 23 dígitos y no un número más corto);
+  - [ ] `ia_extraer` con longitud por campo, revisada después de la respuesta del modelo;
+  - [ ] `validar` con longitud consistente;
+  - [ ] `transformar` con recortar y rellenar.
+- [ ] Opciones iguales en todos los nodos que comparan o extraen, para construir cualquier automatización con IA o sin ella.
 - [ ] Panel del nodo: «Agregar condición» y «Agregar campo» salen del esquema; ayuda y ejemplos de cada operador; Vera los conoce por la ficha del nodo.
 - [ ] Pruebas con textos mixtos («PETICIÓN», «peticion», «Petición  urgente», «peticiòn»).
 
