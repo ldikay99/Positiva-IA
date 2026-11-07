@@ -85,6 +85,35 @@ Al buscar, el nodo encuentra lo que se busca sin importar mayúsculas, tildes, e
 - [ ] Panel del nodo: «Agregar condición» y «Agregar campo» salen del esquema; ayuda y ejemplos de cada operador; Vera los conoce por la ficha del nodo.
 - [ ] Pruebas con textos mixtos («PETICIÓN», «peticion», «Petición  urgente», «peticiòn»).
 
+### 2c. Proveedores y modelos de IA por flujo (pedido 2026-11-07)
+
+Cada flujo, y cada nodo de IA, elige su proveedor y su modelo. Hoy todo usa Vertex, y Vertex queda por defecto en los flujos actuales. Otros flujos pueden usar Gemini directo, OpenAI, Claude, DeepSeek, OpenRouter o cualquier servicio compatible con OpenAI. Cada flujo es independiente aunque corran al mismo tiempo.
+
+- [ ] Capa de proveedores en el motor (`puente/proveedores/`), con una sola interfaz: texto, JSON con esquema, imágenes y PDF cuando el modelo los acepte, tokens y costo.
+  - [ ] Vertex (Gemini con la identidad del servicio, como hoy).
+  - [ ] Gemini directo (API key).
+  - [ ] OpenAI.
+  - [ ] Anthropic (Claude).
+  - [ ] DeepSeek.
+  - [ ] OpenRouter.
+  - [ ] «Compatible con OpenAI» genérico (URL base y llave), que sirve para servicios propios o locales.
+- [ ] Llaves de cada proveedor como conexiones cifradas (tipos de credencial nuevos), globales o propias de un flujo.
+- [ ] Catálogo de modelos por proveedor, leído de su API cuando la tenga y guardado en caché, con lo que cada modelo acepta (imágenes, PDF, JSON, herramientas) y su precio por millón de tokens para estimar costos.
+- [ ] Proveedor y modelo por defecto en cada flujo (`definicion.ia`) y por nodo (`config.proveedor`, `config.modelo`); validación de que la conexión exista y el modelo acepte lo que el nodo le pide (por ejemplo, visión).
+- [ ] PQRD y tutelas fijos en Vertex (lo que usan hoy), mostrados en su manifiesto.
+- [ ] Reintentos, límite de tasa y concurrencia por proveedor y por flujo; un flujo no frena a otro.
+- [ ] Consumo por flujo y por corrida: tokens, costo estimado, tiempo; visible en Corridas, en el tablero y en el manifiesto.
+- [ ] Editor: selector de proveedor y modelo en el flujo y en cada nodo de IA (con lo que acepta cada modelo); «Probar conexión».
+- [ ] Vera: herramientas para listar proveedores y modelos, configurar el proveedor o el modelo de un flujo o un nodo, probar una conexión y explicar costos. Pide la llave a la persona, nunca la recibe.
+
+### 2d. Recursos y rendimiento (pedido 2026-11-07)
+
+- [ ] Límites por flujo: trabajadores, corridas simultáneas, cola y tiempo máximo por corrida; que varios flujos a la vez no se ahoguen entre sí.
+- [ ] Llamadas a proveedores asíncronas, con conexiones reutilizadas y sin bloquear al trabajador.
+- [ ] Caché de conversión y OCR por huella del archivo, para no repetir el trabajo pesado.
+- [ ] Medición de CPU y memoria por trabajador y alertas en el tablero.
+- [ ] Revisar qué conviene en cada lenguaje: Node para el servidor y los eventos, Python para el motor y la IA, y lo que haga falta en código nativo solo si una medición lo justifica.
+
 ## 3. Editor visual e interfaz
 
 - [x] Selectores y controles propios en toda la plataforma (nada con estilo del navegador).
