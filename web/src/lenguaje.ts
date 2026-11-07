@@ -20,6 +20,7 @@ export const ESTADOS: Record<EstadoLegible, { nombre: string; plural: string; to
 const RESULTADOS_DECLARATIVOS: Record<string, string> = {
   radicado: "Completado",
   radicar: "Completado",
+  completar: "Completado",
   manual: "Para revisión de una persona",
   reenviado: "Para otra área",
   reenviar: "Para otra área",

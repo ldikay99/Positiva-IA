@@ -198,6 +198,14 @@ CASOS = [
                                  and any(n["tipo"] == "jira_issues" and (n.get("config") or {}).get("operacion") == "crear" for n in nodos)
                                  and any(n["tipo"] == "telegram_mensaje" for n in nodos)
                                  and not any((n.get("config") or {}).get("activo") is True for n in nodos))(d["nodos"])},
+    {"nombre": "documento se sube, no se pide ruta", "flujo": "ev-extraer-doc",
+     "pedido": "Crea el flujo 'ev-extraer-doc' que se corra a mano con un documento y saque nombre, cédula, celular y ciudad. Guárdalo y valídalo, no lo corras.",
+     "entrada": None, "espera": None,
+     "verificar_def": lambda d: (lambda nodos: (any(n["tipo"] == "entrada_archivos" for n in nodos)
+                                                or any(n["tipo"] == "entrada_manual" and any(f.get("tipo") in ("archivo", "archivos") for f in (n.get("config") or {}).get("campos") or []) for n in nodos))
+                                 and not re.search(r"ruta|path|/datos", json.dumps([n for n in nodos if n["tipo"] in ("entrada_manual", "archivo_leer")], ensure_ascii=False), re.I)
+                                 and any(n["tipo"] == "salida" and (n.get("config") or {}).get("desenlace") == "completar" for n in nodos))(d["nodos"]),
+     "limpiar": lambda: api("DELETE", "/api/flujos/ev-extraer-doc")},
 ]
 
 

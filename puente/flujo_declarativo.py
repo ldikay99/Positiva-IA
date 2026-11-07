@@ -161,7 +161,8 @@ ZONA = "America/Bogota"
 MASCARA = "••••"
 RAMA_ERROR = "error"
 FALLO_CAMPOS = {"nodo", "nombre", "tipo", "motivo", "error"}
-DESENLACES = {"radicar": "radicado", "manual": "manual", "reenviar": "reenviado", "descartar": "descartado",
+# «completar» es el fin normal de un flujo que hizo su trabajo: el mismo resultado que «radicar» (en los flujos creados aquí se ve como «Completado»).
+DESENLACES = {"completar": "radicado", "radicar": "radicado", "manual": "manual", "reenviar": "reenviado", "descartar": "descartado",
               "responder": "respondido", "duplicado": "duplicado"}
 MAX_PASOS = 60
 OPERADORES = set(c_busqueda.OPERADORES)  # texto, números, fechas y longitud (ver conectores/busqueda.py)
@@ -189,6 +190,9 @@ EXT_VIDEO_AUDIO = {"mp4", "m4v", "mov", "avi", "mkv", "webm", "wmv", "flv", "mpg
 TIPOS_PERMITIDOS_DEFECTO = ["jpg", "jpeg", "png", "webp", "tif", "tiff", "bmp", "gif", "heic", "pdf", "doc", "docx", "xls", "xlsx", "csv",
                             "ppt", "pptx", "txt", "md", "json", "xml", "html", "eml", "msg", "zip", "rtf", "odt", "ods"]
 TIPOS_CAMPO_ENTRADA = ("texto", "numero", "booleano", "fecha", "lista", "objeto", "archivo", "archivos")
+# Quien corre un flujo nunca conoce rutas del servidor: un campo de texto que pide una ruta (o carpeta) es un error de diseño;
+# el archivo se pide con un campo «archivo» (se sube al correr) y se lee con archivo: «{{entrada.<campo>}}».
+RUTA_A_MANO = re.compile(r"(^|[^a-z])(ruta|rutas|path|carpeta|directorio|filepath|file_path)([^a-z]|$)|/datos", re.I)
 # Los nombres cortos de antes, que siguen valiendo en filtro y condición.
 LEGADO = {"asunto": "correo.asunto", "cuerpo": "correo.cuerpo", "remitente": "correo.remitente",
           "adjuntos": "adjuntos.nombres", "texto": "texto"}
@@ -895,6 +899,9 @@ def _validar_nuevos(t: str, c: dict, q) -> None:
                     q(f"campo {f.get('nombre')}: tipo «{f.get('tipo')}» (válidos: {', '.join(TIPOS_CAMPO_ENTRADA)})")
                 if "obligatorio" in f and not isinstance(f["obligatorio"], bool):
                     q(f"campo {f.get('nombre')}: obligatorio tiene que ser true o false")
+                if f.get("tipo", "texto") == "texto" and RUTA_A_MANO.search(f"{f.get('nombre') or ''} {f.get('descripcion') or ''}"):
+                    q(f"el campo «{f.get('nombre')}» pide una ruta escrita a mano y quien corre el flujo no conoce rutas del servidor: "
+                      "hazlo de tipo «archivo» (o «archivos») para que se suba al correr, y léelo con archivo_leer archivo: «{{entrada.<campo>}}»")
             if len(set(map(str, nombres))) != len(nombres):
                 q("hay campos con el mismo nombre")
     elif t == "entrada_archivos":
@@ -1097,6 +1104,9 @@ def _validar_nuevos(t: str, c: dict, q) -> None:
         else:
             texto_req("ruta", "ruta relativa dentro del espacio de archivos" if t == "archivo_guardar" else "un archivo subido al flujo (archivo) o una ruta relativa")
         r = c.get("ruta")
+        if t == "archivo_leer" and isinstance(r, str) and re.fullmatch(r"\{\{\s*entrada\.[^}]+\}\}", r.strip()):
+            q("la ruta sale de lo que escribe quien corre el flujo, y nadie conoce rutas del servidor: pide el archivo con un campo «archivo» "
+              "en la entrada y léelo con archivo: «{{entrada.<campo>}}» (o archivo: «{{entrada.archivos.0.id}}» con entrada_archivos)")
         if isinstance(r, str) and "{{" not in r:
             try:
                 from conectores.base import ruta_segura

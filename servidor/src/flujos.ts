@@ -198,7 +198,7 @@ const operacion = z.looseObject({
   if (o.op === "recortar" && o.contar && !["caracteres", "palabras"].includes(o.contar)) ctx.addIssue({ code: "custom", path: ["contar"], message: "recortar: contar es caracteres o palabras" });
   if (!minMaxOk(o)) ctx.addIssue({ code: "custom", path: ["longitud_min"], message: "longitud_min es mayor que longitud_max" });
 });
-const DESENLACES_DECL = ["radicar", "manual", "reenviar", "descartar", "responder", "duplicado"] as const;
+const DESENLACES_DECL = ["completar", "radicar", "manual", "reenviar", "descartar", "responder", "duplicado"] as const;
 
 // ---------------------------------------------- piezas de los tipos nuevos
 

@@ -1546,6 +1546,15 @@ class Archivos(Plataforma):
         self.assertEqual(r["variables"]["json_leido"]["datos"], filas)
         self.assertTrue((self.archivos / "reportes" / "hoy.csv").exists())
 
+    def test_nunca_se_pide_una_ruta_a_quien_corre(self):
+        """Quien corre un flujo no conoce rutas del servidor: el documento se pide con un campo archivo, nunca con un texto «ruta»."""
+        for campo in ({"nombre": "ruta_archivo", "tipo": "texto"}, {"nombre": "doc", "descripcion": "Ruta del archivo en /datos/archivos"}, {"nombre": "carpeta"}):
+            with self.subTest(campo=campo):
+                self.assertTrue(fd._validar_config(nodo("inicio", "entrada_manual", campos=[campo])))
+        self.assertEqual(fd._validar_config(nodo("inicio", "entrada_manual", campos=[{"nombre": "documento", "tipo": "archivo", "descripcion": "ruta no importa: se sube"}])), [])
+        self.assertTrue(fd._validar_config(nodo("l", "archivo_leer", ruta="{{entrada.ruta_archivo}}")))
+        self.assertEqual(fd._validar_config(nodo("l", "archivo_leer", archivo="{{entrada.documento}}")), [])
+
     def test_rutas_que_salen_se_rechazan(self):
         for ruta in ["../fuera.txt", "/etc/passwd", "a/../../fuera.txt", "C:/Windows/win.ini", "~/x", "reportes/../../x"]:
             with self.subTest(ruta=ruta):
@@ -1555,8 +1564,8 @@ class Archivos(Plataforma):
                     fd.c_archivos.leer(ruta)
                 self.assertTrue(fd._validar_config(nodo("g", "archivo_guardar", ruta=ruta, contenido="x")))
         # con plantilla, en la corrida
-        d = manual(nodo("g", "archivo_guardar", ruta="{{entrada.ruta}}", contenido="x"), campos=[{"nombre": "ruta"}])
-        r, _ = self.correr_orden(d, exigir_ok=False, entrada={"ruta": "../../escape.txt"})
+        d = manual(nodo("g", "archivo_guardar", ruta="{{entrada.destino}}", contenido="x"), campos=[{"nombre": "destino"}])
+        r, _ = self.correr_orden(d, exigir_ok=False, entrada={"destino": "../../escape.txt"})
         self.assertEqual(r["accion"], "error")
         self.assertIn("espacio de archivos", r["motivo"])
         self.assertFalse((Path(self.tmp.name) / "escape.txt").exists())
@@ -3560,6 +3569,18 @@ class Hojas(Producto):
         d = self.con(nodo("c", "hoja_escribir", archivo=cid, fila={"a": "2", "b": "ñ"}, salida="c"))
         r, _ = self.correr_orden(d, entrada={})
         self.assertEqual(self.ruta_de(r["variables"]["c"]).read_text(encoding="utf-8").splitlines(), ["a,b", "1,x", "2,ñ"])
+
+    def test_campo_archivo_de_entrada_manual_se_lee(self):
+        """El documento pedido con un campo archivo llega como la ficha del archivo subido y archivo_leer lo lee."""
+        aid = self.archivo("datos.txt", "Nombre: Ana Pérez".encode())
+        d = flujo([nodo("inicio", "entrada_manual", campos=[{"nombre": "documento", "tipo": "archivo", "obligatorio": True}]),
+                   nodo("l", "archivo_leer", archivo="{{entrada.documento}}", salida="leido"), nodo("fin", "salida", desenlace="manual", motivo="{{leido.texto}}"),
+                   nodo("no", "salida", desenlace="descartar")],
+                  [{"desde": "inicio", "hacia": "l"}, {"desde": "l", "hacia": "fin", "cuando": "ok"}, {"desde": "l", "hacia": "no", "cuando": "no_existe"}])
+        self.assertEqual(fd.validar(d), [])
+        subido = [{"id": aid, "nombre": "datos.txt", "tipo": "text/plain", "tamano": 17, "ruta": str(self.archivos / "prueba" / "entradas" / aid / "datos.txt")}]
+        r, _ = self.correr_orden(d, entrada={"documento": aid}, archivos=subido)
+        self.assertIn("Ana Pérez", r["motivo"])
 
     def test_archivos_subidos_se_leen_como_adjuntos(self):
         """Lo subido a la corrida (entrada_archivos, campos archivo, webhook) se lee igual que un adjunto de correo en todos los nodos."""

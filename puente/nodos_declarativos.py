@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 VERSION = 8
 
-DESENLACES = ["radicar", "manual", "reenviar", "descartar", "responder", "duplicado"]
+DESENLACES = ["completar", "radicar", "manual", "reenviar", "descartar", "responder", "duplicado"]
 DISPARADORES = ["entrada_correo", "entrada_manual", "programado", "webhook", "correo_nuevo", "entrada_archivos", "gmail_nuevo", "outlook_nuevo",
                 "calendar_evento_proximo", "rss_nuevo"]
 # Lo que acepta entrada_archivos por defecto (video y audio nunca).
@@ -356,7 +356,9 @@ TIPOS: Dict[str, Dict[str, Any]] = {
     },
     "entrada_manual": {
         "nombre": "Entrada manual", "categoria": "entrada",
-        "descripcion": "Se corre a mano (o la llama otro flujo) con un JSON de entrada. Los campos declarados se revisan y quedan en {{entrada.<campo>}}.",
+        "descripcion": "Se corre a mano (o la llama otro flujo) con un formulario. Los campos declarados se revisan y quedan en {{entrada.<campo>}}. "
+                       "Un documento o archivo se pide con un campo de tipo «archivo» (o «archivos»): quien corre lo sube en «Correr» y se lee con "
+                       "archivo_leer archivo: «{{entrada.<campo>}}». Nunca un campo de texto con una ruta: nadie conoce las rutas del servidor.",
         "config": conf({"campos": lista(_CAMPO_ENTRADA, "los datos que recibe")}),
         "salidas": ["ok"], "produce": "entrada",
         "ejemplo": {"id": "inicio", "tipo": "entrada_manual", "nombre": "Datos de entrada", "config": {
@@ -1257,7 +1259,8 @@ TIPOS: Dict[str, Dict[str, Any]] = {
         "descripcion": "Termina el flujo con un desenlace. Entrega la solicitud con los campos indicados, si se da, la respuesta armada con la plantilla y, "
                        "con archivos, los archivos que entrega (descargables en el historial, en el chat de Vera y en la respuesta del webhook). Todos los "
                        "archivos que la ejecución generó quedan además como sus resultados.",
-        "config": conf({"desenlace": opcion(DESENLACES, "cómo termina"), "motivo": plantilla(), "destino": plantilla(),
+        "config": conf({"desenlace": opcion(DESENLACES, "cómo termina: completar = hizo su trabajo (se ve «Completado»); manual = SOLO si una persona tiene que "
+                                                       "revisarlo; descartar = no aplica; responder = entrega una respuesta; radicar = radicó (PQRD y tutelas)"), "motivo": plantilla(), "destino": plantilla(),
                         "campos": libre("lista de variables o {nombre: plantilla} (por defecto todas las variables)"),
                         "plantilla_respuesta": plantilla("el texto final que entrega el flujo", largo=True),
                         "archivos": ARCHIVOS("los archivos que entrega el flujo: «{{documento}}», «{{imagenes}}», «{{adjuntos}}»…")}, ["desenlace"]),
@@ -1299,7 +1302,8 @@ AYUDA: Dict[str, Dict[str, Any]] = {
                      "Video y audio se rechazan siempre, por extensión y por su contenido."],
     },
     "entrada_manual": {
-        "ejemplos": [{"campos": [{"nombre": "documento", "tipo": "texto", "obligatorio": True}]}, {"campos": []}],
+        "ejemplos": [{"campos": [{"nombre": "documento", "tipo": "texto", "obligatorio": True}]},
+                     {"campos": [{"nombre": "soporte", "tipo": "archivo", "obligatorio": True, "descripcion": "el PDF o Word que se va a leer"}]}],
         "consejos": ["Se corre con POST /api/flujos/<id>/correr {entrada: {...}}; los campos quedan en {{entrada.<campo>}}.",
                      "Es el disparador que necesita un flujo para que otro lo llame con llamar_flujo."],
     },
@@ -1691,7 +1695,7 @@ AYUDA: Dict[str, Dict[str, Any]] = {
                      "Es un final: no tiene aristas que salgan."],
     },
     "salida": {
-        "ejemplos": [{"desenlace": "radicar", "campos": ["nombre", "documento"]},
+        "ejemplos": [{"desenlace": "completar", "campos": ["nombre", "documento"]},
                      {"desenlace": "responder", "plantilla_respuesta": "{{respuesta}}", "archivos": ["{{documento}}", "{{imagenes}}"]}],
         "consejos": ["campos como objeto {nombre: plantilla} arma la solicitud con otros nombres.", "No se puede deshabilitar ni tiene aristas que salgan.",
                      "archivos dice qué entrega el flujo; todo lo que la ejecución generó igual queda en sus resultados (historial, Vera, webhook)."],
