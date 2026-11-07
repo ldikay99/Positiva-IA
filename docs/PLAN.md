@@ -232,6 +232,34 @@ Pedido de Jonathan (2026-11-07): que desde aquí se puedan hacer TODOS los flujo
 - [ ] Cloudflare frente a SGDEA rechaza a algunos correos puntuales (`CLOUDFLARE_CHALLENGE`, desde el 5 nov 15:02): 8 correos en ~33 h; cada uno se reintenta 3 veces por ejecución y termina aplazado o en manual. Revisar con quien administra SGDEA y Cloudflare (regla del WAF que dispara con esos correos) y en el código cómo se aplazan (no reintentar cada 30 min sin fin).
 - [ ] Las 3 ejecuciones de PQRD del 25 jun quedaron sin arrancar por un secreto destruido (`PQRD_SGDEA_CLIENT_SECRET` v5); ya no afecta, pero ensucian la lista: se pueden borrar.
 
+## 5c. Que se entienda como producto (pedido 2026-11-07)
+
+Que alguien que llega por primera vez entienda qué es, qué puede hacer y cómo hacerlo, a mano o con Vera.
+
+### Experiencia en pantalla
+- [ ] Inicio que explica el producto en una mirada: qué es, los flujos con su estado, lo que pasó hoy y qué hacer después (crear, correr, revisar).
+- [ ] Primeros pasos guiados para quien entra la primera vez: crear su primer flujo (a mano, desde plantilla o con Vera), correrlo y ver el resultado.
+- [ ] Galería de plantillas de flujos listas para usar (extraer datos de documentos, clasificar correos, responder con IA, revisar tablas, informe programado, webhook a base de datos…), que se instalan como flujo propio y se ajustan.
+- [ ] Lenguaje de producto en toda la interfaz: nada de jerga interna (corrida, nodo, desenlace) sin explicación; ayudas contextuales donde haga falta.
+- [ ] Historial de ejecuciones por flujo con filtros (estado, fecha, desenlace), búsqueda, detalle legible y reintentar.
+- [ ] Notificaciones dentro de la plataforma: corridas que fallan, aprobaciones pendientes, conexiones vencidas, avisos de recursos.
+- [ ] Vista de cada corrida legible para quien no es técnico: qué entró, qué hizo cada paso, qué salió, por qué terminó así.
+- [ ] Coherencia visual y de interacción en todas las vistas (mismos patrones de tarjetas, listas, botones, estados vacíos, cargando y error), responsiva.
+
+### Nodos y herramientas que un usuario necesita
+- [ ] Aprobación humana: el flujo se detiene, alguien aprueba o rechaza (con comentario y cambios) desde la plataforma, y sigue por la rama que toca; con tiempo límite.
+- [ ] Documentos: generar PDF o Word desde plantilla, unir o dividir PDF, convertir formatos, clasificar el tipo de documento con IA, comparar dos documentos.
+- [ ] Datos personales: anonimizar o enmascarar (cédulas, nombres, teléfonos, correos) antes de enviar a una IA externa o a un informe.
+- [ ] Hojas de cálculo: escribir y actualizar Excel/CSV y Google Sheets (lectura ya existe).
+- [ ] Mensajería: Teams, Slack y webhooks salientes (escritura habilitada por una persona).
+- [ ] IA: traducir, resumir largo por partes, responder preguntas sobre documentos (con citas), extraer tablas.
+- [ ] Datos: deduplicar por huella, agrupar y sumar, ordenar y filtrar listas, mapear campos de un formato a otro, validar contra listas o tablas.
+- [ ] Control: subflujos con salida, reintentar más tarde, límite de tasa, ventana de horario (solo días hábiles), detenerse con alerta.
+- [ ] Cada nodo nuevo con ficha completa (ayuda, ejemplos, consejos), validación Python y zod en paridad, y pruebas.
+
+### Vera en paridad con la pantalla
+- [ ] Todo lo nuevo se puede hacer también con Vera (plantillas, aprobaciones, historial, notificaciones, nodos nuevos) y la evaluación de Vera crece con casos de esto.
+
 ## 6. Paso a producción (cuando aprueben)
 
 - [x] Documento de despliegue (`docs/PRODUCCION.md`): principios, entorno y secretos de PQRD y tutelas con sus nombres reales, conexiones, cómo jala la información cada flujo, qué escribe y los pasos para salir a producción.
