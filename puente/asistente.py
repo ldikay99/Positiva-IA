@@ -92,6 +92,7 @@ Cómo trabajas:
    Para cambios puntuales usa editar_nodo, agregar_nodo, eliminar_nodo y editar_aristas: cada una valida y guarda una versión nueva.
 5. Los flujos de código (pqrd, tutelas) tienen la estructura fija del código: puedes leerlos (listar_nodos, ver_nodo) y ajustar sus parámetros (ajustar_parametro_pqrd), no rehacerlos.
 6. Si un flujo necesita una conexión (correo, Drive, base de datos, API), revisa listar_credenciales; si falta, usa pedir_credencial (la persona la crea, tú nunca manejas claves) y luego configúrala en el nodo por su nombre. Las escrituras afuera solo ocurren si la persona habilitó la escritura en esa conexión; si no, quedan registradas como bloqueadas.
+   Cada flujo tiene su propio entorno (variables y secretos, no globales): en los nodos se usan como {{entorno.NOMBRE}}. Revisa con ver_entorno; define o quita las que NO son secretas con definir_variable / quitar_variable; los secretos los escribe la persona (pedir_secreto). Para la revisión antes de producción, ver_manifiesto.
    En el editor del flujo abierto usa controlar_editor (seleccionar o centrar un nodo, abrir su panel, zoom, ordenar, resaltar, abrir la paleta o el diálogo de correr). Renombra, duplica, versiona y corre flujos con renombrar_flujo, duplicar_flujo, versiones_flujo, restaurar_version y correr_flujo.
    Moverte por la plataforma: navegar (vistas), abrir_correspondencia, filtrar_correos, abrir_correo, seleccionar_correos, abrir_corrida, abrir_adjuntos, abrir_proceso, ajustar_lienzo (ver todo, acercar, alejar), centrar_nodo, enfocar_flujo. Si piden «muéstrame», «ábreme», «llévame», «aléjalo», hazlo con estas.
 7. Consultar: resumen_tablero, listar_flujos, leer_flujo, listar_correos, ver_correo, ver_buzon, ultimas_corridas, ver_corrida, ver_logs, estado_motor, listar_nodos, ver_nodo, ver_configuracion, historial_configuracion, listar_perfiles, listar_chats.
@@ -141,6 +142,12 @@ HERRAMIENTAS = [
     {"name": "listar_credenciales", "description": "Las conexiones (credenciales) guardadas: nombre, tipo, campos y si pueden escribir. Nunca muestra valores.", "parameters": {"type": "object", "properties": {}}},
     {"name": "tipos_de_credencial", "description": "Los tipos de conexión que se pueden crear (correo IMAP/SMTP, Microsoft Graph, Google, Postgres, MySQL, SQLite, HTTP…) y qué campos piden.", "parameters": {"type": "object", "properties": {}}},
     {"name": "pedir_credencial", "description": "Abre a la persona la pantalla de Conexiones para que ELLA cree una credencial (tú nunca recibes ni escribes contraseñas). Indica el tipo y para qué.", "parameters": {"type": "object", "properties": {"tipo": {"type": "string"}, "nombre_sugerido": {"type": "string"}, "para_que": {"type": "string"}}, "required": ["tipo"]}},
+    {"name": "ver_entorno", "description": "Las variables de entorno de un flujo: nombre, valor (solo si no es secreto), si es secreto y si está definido. Los secretos nunca se ven.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}}, "required": ["flujo"]}},
+    {"name": "definir_variable", "description": "Crea o cambia una variable de entorno NO secreta de un flujo (nombre en MAYÚSCULAS_CON_GUION_BAJO). Para secretos usa pedir_secreto.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "nombre": {"type": "string"}, "valor": {"type": "string"}, "descripcion": {"type": "string"}}, "required": ["flujo", "nombre", "valor"]}},
+    {"name": "quitar_variable", "description": "Quita una variable de entorno NO secreta de un flujo.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "nombre": {"type": "string"}}, "required": ["flujo", "nombre"]}},
+    {"name": "pedir_secreto", "description": "Abre a la persona la sección Entorno del flujo para que ELLA escriba un secreto (clave, token). Tú nunca lo recibes.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "nombre": {"type": "string"}, "para_que": {"type": "string"}}, "required": ["flujo", "nombre"]}},
+    {"name": "ver_manifiesto", "description": "El manifiesto de un flujo para revisarlo antes de producción: disparador, nodos, conexiones externas, variables (sin valores), escrituras y si están habilitadas, programación y webhook.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}}, "required": ["flujo"]}},
+    {"name": "abrir_entorno", "description": "Abre en pantalla la sección Entorno de un flujo (o su manifiesto con manifiesto=true).", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "manifiesto": {"type": "boolean"}}, "required": ["flujo"]}},
     {"name": "controlar_editor", "description": "Maneja el editor del flujo abierto en pantalla. op: seleccionar_nodo (lo selecciona, centra y abre su panel), abrir_panel_nodo, cerrar_panel, zoom_nodo, zoom (nivel 0.2–2), auto_ordenar, resaltar (nodos), recargar, abrir_paleta (busqueda), abrir_correr.", "parameters": {"type": "object", "properties": {"op": {"type": "string"}, "nodo": {"type": "string"}, "nodos": {"type": "array", "items": {"type": "string"}}, "nivel": {"type": "number"}, "busqueda": {"type": "string"}, "seccion": {"type": "string"}}, "required": ["op"]}},
     {"name": "ajustar_lienzo", "description": "Mueve la vista del lienzo del flujo: ver_todo (encuadra el flujo completo), acercar, alejar o restablecer.", "parameters": {"type": "object", "properties": {"modo": {"type": "string"}}, "required": ["modo"]}},
     {"name": "probar_flujo", "description": "Corre un flujo sobre un correo real (modo prueba) y espera el resultado: desenlace, campos, avisos y pasos.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "caso": {"type": "string"}}, "required": ["flujo", "caso"]}},
@@ -432,6 +439,36 @@ def ejecutar(nombre: str, a: Dict[str, Any]) -> Any:
     if nombre == "pedir_credencial":
         emitir("control", accion="vista_conexiones", tipo=a.get("tipo"), nombre=a.get("nombre_sugerido"), para_que=a.get("para_que"))
         return {"ok": True, "nota": "La persona ve la pantalla de Conexiones para crearla. Pídele que te avise cuando la guarde; tú no recibes la clave."}
+    if nombre == "ver_entorno":
+        r = api("GET", f"/api/flujos/{a['flujo']}/entorno")
+        if isinstance(r, list):
+            return [{k: v for k, v in x.items() if not (x.get("secreto") and k == "valor")} for x in r]
+        return r
+    if nombre == "definir_variable":
+        import re as _re
+        if not _re.fullmatch(r"[A-Z][A-Z0-9_]{1,62}", a.get("nombre") or ""):
+            return {"error": "el nombre va en MAYÚSCULAS_CON_GUION_BAJO (ej. CARPETA_DESTINO)"}
+        actual = api("GET", f"/api/flujos/{a['flujo']}/entorno")
+        if isinstance(actual, list) and any(x.get("nombre") == a["nombre"] and x.get("secreto") for x in actual):
+            return {"error": "esa variable es secreta: solo la persona la cambia (usa pedir_secreto)"}
+        r = api("PUT", f"/api/flujos/{a['flujo']}/entorno/{a['nombre']}", {"valor": str(a["valor"]), "secreto": False, "descripcion": a.get("descripcion") or ""})
+        emitir("control", accion="entorno", flujo=a["flujo"], refrescar=True)
+        return r
+    if nombre == "quitar_variable":
+        actual = api("GET", f"/api/flujos/{a['flujo']}/entorno")
+        if isinstance(actual, list) and any(x.get("nombre") == a["nombre"] and x.get("secreto") for x in actual):
+            return {"error": "esa variable es secreta: solo la persona la quita"}
+        r = api("DELETE", f"/api/flujos/{a['flujo']}/entorno/{a['nombre']}")
+        emitir("control", accion="entorno", flujo=a["flujo"], refrescar=True)
+        return r
+    if nombre == "pedir_secreto":
+        emitir("control", accion="entorno", flujo=a["flujo"], pedir=a["nombre"], para_que=a.get("para_que"))
+        return {"ok": True, "nota": "La persona ve la sección Entorno para escribir el secreto. Pídele que te avise cuando lo guarde; tú no lo recibes."}
+    if nombre == "ver_manifiesto":
+        return api("GET", f"/api/flujos/{a['flujo']}/manifiesto")
+    if nombre == "abrir_entorno":
+        emitir("control", accion="manifiesto" if a.get("manifiesto") else "entorno", flujo=a["flujo"])
+        return {"ok": True}
     if nombre == "controlar_editor":
         ops = ("seleccionar_nodo", "abrir_panel_nodo", "cerrar_panel", "zoom_nodo", "zoom", "auto_ordenar", "resaltar", "recargar", "abrir_paleta", "abrir_correr")
         if a.get("op") not in ops:
