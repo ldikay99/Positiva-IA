@@ -4,7 +4,8 @@ import { usar } from "../estado.ts";
 import { NOMBRE_FUENTE, describir, narrar, solicitud, type EstadoCampo, type Paso, type Tramo } from "../eventos.ts";
 import { CATEGORIAS } from "../flujo.ts";
 import { Icono } from "../iconos.tsx";
-import { NOMBRES_DESENLACE, TONO_DESENLACE, segundos } from "../progreso.ts";
+import { Selector, type OpcionSelector } from "./Selector.tsx";
+import { NOMBRES_DESENLACE, TONO_DESENLACE, motivoLegible, segundos } from "../progreso.ts";
 import type { Evento } from "../tipos.ts";
 
 // ------------------------------------------------------------ piezas comunes
@@ -117,6 +118,17 @@ export function Dock({ plegado, alternar }: { plegado: boolean; alternar: () => 
   const [seguir, setSeguir] = useState(true);
   const [filtro, setFiltro] = useState("");
   const caja = useRef<HTMLDivElement>(null);
+  // El asistente puede abrir el panel en una pestaña: {accion:"proceso", pestana}.
+  // Abrir el panel lo hace EspacioFlujo con el mismo evento.
+  useEffect(() => {
+    const oir = (e: Event) => {
+      const d = (e as CustomEvent<{ accion?: string; pestana?: string }>).detail;
+      if (d?.accion !== "proceso" || !["vivo", "logs", "consola"].includes(String(d.pestana))) return;
+      setVista(d.pestana as "vivo" | "logs" | "consola");
+    };
+    window.addEventListener("positiva:control", oir);
+    return () => window.removeEventListener("positiva:control", oir);
+  }, []);
 
   const tramos = useMemo(() => narrar(catalogo, corrida), [catalogo, corrida]);
   const campos = useMemo(() => solicitud(corrida), [corrida]);
@@ -141,6 +153,29 @@ export function Dock({ plegado, alternar }: { plegado: boolean; alternar: () => 
     { id: "logs" as const, nombre: "Logs", icono: "logs" as const, n: corrida ? corrida.eventos.filter((e) => e.tipo !== "consola").length : 0 },
     { id: "consola" as const, nombre: "Consola", icono: "terminal" as const, n: corrida ? corrida.eventos.filter((e) => e.tipo === "consola").length : 0 },
   ];
+  const opcionesCorrida: OpcionSelector[] = orden.slice(0, 120).flatMap((id) => {
+    const c = corridas[id];
+    if (!c) return [];
+    const estado = c.resultado ? (NOMBRES_DESENLACE[String(c.resultado.accion)] ?? String(c.resultado.accion)) : c.estado === "en_cola" ? "En espera" : "Corriendo";
+    return [{ valor: id, etiqueta: c.caso, texto: c.caso, detalle: estado }];
+  });
+
+  // Sin corrida a la vista: una barra delgada que dice qué hacer.
+  if (!corrida) {
+    return (
+      <section className="dock dock-reposo" aria-label="Proceso en vivo">
+        <span className="dock-reposo-icono"><Icono n="rayo" tam={14} /></span>
+        <p className="dock-reposo-texto">
+          <b>Proceso en vivo</b>
+          <span>Elige correos en la correspondencia y pulsa «Correr»: aquí verás cada paso del motor y cómo queda la solicitud.</span>
+        </p>
+        {orden.length > 0 && (
+          <Selector valor={null} opciones={opcionesCorrida} alCambiar={(v) => verCorrida(v)} etiqueta="Ver una corrida anterior" placeholder="Ver una corrida anterior…" tamano="chico" ancho={260} />
+        )}
+      </section>
+    );
+  }
+
   return (
     <section className="dock">
       <header className="dock-cabeza">
@@ -156,31 +191,19 @@ export function Dock({ plegado, alternar }: { plegado: boolean; alternar: () => 
         {corrida && (
           <span className={`pastilla ${r ? (TONO_DESENLACE[accion] ?? "") : "azul"}`}>
             {!r && <span className="girando" />}
-            {r ? (NOMBRES_DESENLACE[accion] ?? accion) : corrida.estado === "en_cola" ? "En cola" : "Procesando"}
+            {r ? (NOMBRES_DESENLACE[accion] ?? accion) : corrida.estado === "en_cola" ? "En espera" : "Corriendo"}
           </span>
         )}
-        <select className="campo chico-campo" value={corrida?.id ?? ""} onChange={(e) => verCorrida(e.target.value || null)} aria-label="Corrida">
-          <option value="">Elegir corrida…</option>
-          {orden.slice(0, 120).map((id) => {
-            const c = corridas[id];
-            if (!c) return null;
-            return <option key={id} value={id}>{c.caso} · {c.resultado ? (NOMBRES_DESENLACE[String(c.resultado.accion)] ?? String(c.resultado.accion)) : c.estado === "en_cola" ? "en cola" : "procesando"}</option>;
-          })}
-        </select>
-        {corrida && <button className="boton chico" onClick={() => irA("adjuntos")} title="Cada adjunto hoja por hoja: imagen, texto, búsquedas y origen de cada dato"><Icono n="documento" tam={13} />Ver hojas</button>}
-        {corrida && <button className="boton chico" onClick={() => enfocar({ tipo: "corrida", id: corrida.id })}>Resultado</button>}
-        {vista !== "vivo" && <div className="campo-icono filtro-dock"><Icono n="buscar" tam={13} /><input className="campo chico-campo" placeholder="Filtrar" value={filtro} onChange={(e) => setFiltro(e.target.value)} /></div>}
-        <button className={`boton-mini ${seguir ? "activo" : ""}`} title="Seguir al final" onClick={() => setSeguir(!seguir)}><Icono n="abajo" tam={14} /></button>
-        <button className="boton-mini" title={plegado ? "Desplegar panel" : "Plegar panel"} onClick={alternar}><Icono n={plegado ? "expandir" : "menos"} tam={14} /></button>
+        <Selector valor={corrida.id} opciones={opcionesCorrida} alCambiar={(v) => verCorrida(v)} etiqueta="Corrida a la vista" tamano="chico" ancho={260} />
+        <button className="boton chico" onClick={() => irA("adjuntos")} title="Cada adjunto hoja por hoja: imagen, texto, búsquedas y origen de cada dato"><Icono n="documento" tam={13} />Ver hojas</button>
+        <button className="boton chico" onClick={() => enfocar({ tipo: "corrida", id: corrida.id })}>Ver resultado</button>
+        {vista !== "vivo" && !plegado && <div className="campo-icono filtro-dock"><Icono n="buscar" tam={13} /><input className="campo chico-campo" placeholder="Filtrar" aria-label="Filtrar líneas" value={filtro} onChange={(e) => setFiltro(e.target.value)} /></div>}
+        {!plegado && <button className={`boton-mini ${seguir ? "activo" : ""}`} title={seguir ? "Siguiendo lo último: clic para dejar de seguir" : "Seguir lo último"} aria-label="Seguir lo último" aria-pressed={seguir} onClick={() => setSeguir(!seguir)}><Icono n="abajo" tam={14} /></button>}
+        <button className="boton-mini" title={plegado ? "Abrir el panel" : "Plegar el panel"} aria-label={plegado ? "Abrir el panel" : "Plegar el panel"} aria-expanded={!plegado} onClick={alternar}><Icono n={plegado ? "expandir" : "menos"} tam={14} /></button>
       </header>
       {!plegado && (
         <div className="dock-cuerpo">
-          {!corrida ? (
-            <div className="vacio grande">
-              <Icono n="rayo" tam={26} />
-              <p>Elige casos en la correspondencia y córrelos. Aquí verás, etapa por etapa, qué busca el motor, qué encuentra, qué decide la IA y cómo queda la solicitud.</p>
-            </div>
-          ) : vista === "vivo" ? (
+          {vista === "vivo" ? (
             <div className="vivo">
               <div className="vivo-tramos" ref={caja} onWheel={() => setSeguir(false)}>
                 {tramos.map((tr, i) => <BloqueTramo key={tr.id} tr={tr} t0={t0} plegado={tramos.length > 6 && i < tramos.length - 4 && tr.pasos.length > 6} />)}
@@ -189,7 +212,7 @@ export function Dock({ plegado, alternar }: { plegado: boolean; alternar: () => 
                     <Icono n={accion === "radicado" ? "ok" : "bandera"} tam={16} />
                     <div className="crece">
                       <b>{NOMBRES_DESENLACE[accion] ?? accion}</b>
-                      <span>{accion === "radicado" ? `Radicado ${String(r.radicado ?? "")} (simulado)` : String(r.motivo ?? "")}</span>
+                      <span>{accion === "radicado" ? `Radicado ${String(r.radicado ?? "")} · no se envió a SGDEA` : motivoLegible(String(r.motivo ?? ""))}</span>
                     </div>
                     <span className="mono">{String(r.segundos ?? "")} s</span>
                   </div>

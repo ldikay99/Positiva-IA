@@ -5,8 +5,9 @@ import { narrar, solicitud } from "../eventos.ts";
 import { ACCIONES, ANCLA_DEL_PUNTO, CAMPOS, CAMPOS_DE_ENTRADA, CATEGORIAS, OPERADORES, PUNTOS, alternativas, categoria, fraseDeRegla, nombreCampo, type Categoria } from "../flujo.ts";
 import { Icono, type NombreIcono } from "../iconos.tsx";
 import { ETIQUETA_CLASE, ORDEN_CLASE, ajustado, clase, conValor, esRegex, resumen, vigente, type Clase } from "../parametros.ts";
-import { NOMBRES_DESENLACE, TONO_DESENLACE, progreso, segundos } from "../progreso.ts";
+import { NOMBRES_DESENLACE, TONO_DESENLACE, motivoLegible, progreso, segundos } from "../progreso.ts";
 import type { Configuracion, Correo, Nodo, Parametro, Regla } from "../tipos.ts";
+import { Selector } from "./Selector.tsx";
 import { BloqueTramo, TablaSolicitud } from "./Dock.tsx";
 import { Codigo, Deslizador, EditorJson, EditorLista, EditorMapa, EditorRegex, Interruptor } from "./Editores.tsx";
 
@@ -567,8 +568,8 @@ function InspectorRegla({ id }: { id: string }) {
         <section className="seccion">
           <h3>Condición</h3>
           <div className="rejilla-form">
-            <label className="etiqueta">Si<select className="campo" value={r.campo} onChange={(e) => cambiar({ campo: e.target.value })}>{Object.entries(campos).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label>
-            <label className="etiqueta">…<select className="campo" value={r.operador} onChange={(e) => cambiar({ operador: e.target.value as Regla["operador"] })}>{Object.entries(OPERADORES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</select></label>
+            <div className="etiqueta">Si el campo<Selector valor={r.campo} opciones={Object.entries(campos).map(([k, v]) => ({ valor: k, etiqueta: v, texto: v }))} alCambiar={(v) => cambiar({ campo: v })} etiqueta="Campo de la condición" /></div>
+            <div className="etiqueta">cumple que<Selector valor={r.operador} opciones={Object.entries(OPERADORES).map(([k, v]) => ({ valor: k as Regla["operador"], etiqueta: v, texto: v }))} alCambiar={(v) => cambiar({ operador: v })} etiqueta="Operador de la condición" /></div>
           </div>
           {conPatron && (
             <>
@@ -627,7 +628,7 @@ function InspectorCorreo({ caso }: { caso: string }) {
     <div className="inspector">
       <Cabeza icono="correo" tono="pizarra" etiqueta={`Correo ${c.caso}`} titulo={c.asunto || "(sin asunto)"} subtitulo={`${c.remitente} · ${c.remitenteCorreo}`}>
         <div className="fila envuelve">
-          {c.desenlaceProduccion && <span className={`pastilla ${TONO_DESENLACE[c.desenlaceProduccion] ?? ""}`}>Producción: {NOMBRES_DESENLACE[c.desenlaceProduccion] ?? c.desenlaceProduccion}{c.motivoProduccion ? ` · ${c.motivoProduccion}` : ""}</span>}
+          {c.desenlaceProduccion && <span className={`pastilla ${TONO_DESENLACE[c.desenlaceProduccion] ?? ""}`}>Producción: {NOMBRES_DESENLACE[c.desenlaceProduccion] ?? c.desenlaceProduccion}{c.motivoProduccion ? ` · ${motivoLegible(c.motivoProduccion)}` : ""}</span>}
         </div>
         <div className="fila">
           <button className="boton primario" onClick={() => void procesar([c.caso]).then(() => avisar("El caso está corriendo")).catch((e: Error) => avisar(e.message, "error"))}><Icono n="play" tam={14} />Correr este caso</button>
@@ -670,8 +671,8 @@ function InspectorCorrida({ id }: { id: string }) {
     <div className="inspector">
       <Cabeza icono="corridas" tono={r ? (accion === "radicado" ? "verde" : "ambar") : "azul"} etiqueta="Resultado de la corrida" titulo={`${corrida.caso} · ${r ? (NOMBRES_DESENLACE[accion] ?? accion) : corrida.estado === "en_cola" ? "En cola" : "Procesando"}`} subtitulo={corrida.id}>
         <div className="kpis">
-          <div className={TONO_DESENLACE[accion] ?? ""}><b>{r ? (accion === "radicado" ? String(r.radicado ?? "Radicado") : NOMBRES_DESENLACE[accion] ?? accion) : "…"}</b><span>{r?.motivo ? String(r.motivo) : "desenlace"}</span></div>
-          <div><b>{p.vueltas}</b><span>vueltas de la IA</span></div>
+          <div className={TONO_DESENLACE[accion] ?? ""}><b>{r ? (accion === "radicado" ? String(r.radicado ?? "Radicado") : NOMBRES_DESENLACE[accion] ?? accion) : "…"}</b><span title={r?.motivo ? String(r.motivo) : undefined}>{r?.motivo ? motivoLegible(String(r.motivo)) : "desenlace"}</span></div>
+          <div><b>{p.vueltas}</b><span>consultas a la IA</span></div>
           <div><b>{(p.tokensEntrada + p.tokensSalida).toLocaleString("es-CO")}</b><span>tokens</span></div>
           <div><b>{r?.segundos !== undefined ? `${String(r.segundos).replace(".", ",")} s` : "—"}</b><span>tiempo</span></div>
         </div>

@@ -32,6 +32,10 @@ export interface MensajeChat {
   pasos?: PasoChat[];
   cambiados?: string[];
   error?: boolean;
+  /** Dicho en una llamada de voz. */
+  voz?: boolean;
+  /** Acciones que la IA propuso y la persona confirma con un botón. */
+  propuestas?: { accion: string; id: string; estado?: "hecha" | "descartada" }[];
 }
 
 export interface Conversacion {

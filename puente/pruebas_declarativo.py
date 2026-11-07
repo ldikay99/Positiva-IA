@@ -11,12 +11,15 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import http.server
 import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -43,9 +46,12 @@ class ModeloFalso:
                   "campos": {"nombre": "Ana María Pérez", "documento": "1023456789"}, "json": {"saludo": "hola", "prioridad": "alta"},
                   **respuestas}
         self.llamadas = []
+        self.fallos = []  # excepciones que lanzan las próximas llamadas, en orden
 
     def __call__(self, modelo, sistema, tarea, esquema, temperatura, json_libre=False):
         self.llamadas.append({"modelo": modelo, "sistema": sistema, "tarea": tarea, "esquema": esquema, "temperatura": temperatura, "json": json_libre})
+        if self.fallos:
+            raise self.fallos.pop(0)
         tok = {"entrada": 10, "salida": 5}
         props = (esquema or {}).get("properties") or {}
         if "categoria" in props:
@@ -128,17 +134,33 @@ class Base(unittest.TestCase):
         fd._llamar_modelo = self.modelo
         self.salida = io.StringIO()
         fd._salida = self.salida
+        # sin esperas de verdad: se anota cuánto se habría dormido
+        self.esperas = []
+        self._orig_red = (fd._dormir, set(fd._IPS_PERMITIDAS_PRUEBAS), os.environ.get("HTTP_HOSTS_PERMITIDOS"))
+        fd._dormir = self.esperas.append
+        os.environ.pop("HTTP_HOSTS_PERMITIDOS", None)
 
     def tearDown(self):
         fd.BANDEJA, fd.VIVO, fd._llamar_modelo, fd._transcriptor, fd._salida, fd.RAIZ = self._orig
+        fd._dormir, ips, hosts = self._orig_red
+        fd._IPS_PERMITIDAS_PRUEBAS.clear()
+        fd._IPS_PERMITIDAS_PRUEBAS.update(ips)
+        if hosts is None:
+            os.environ.pop("HTTP_HOSTS_PERMITIDOS", None)
+        else:
+            os.environ["HTTP_HOSTS_PERMITIDOS"] = hosts
         self.tmp.cleanup()
 
-    def correr(self, defi):
+    def correr_crudo(self, defi):
+        """Corre sin exigir que salga bien: (resultado, eventos)."""
         self.salida.seek(0)
         self.salida.truncate()
         asyncio.run(fd.procesar({"cmd": "procesar", "corrida": "x", "caso": CASO, "definicion": defi}))
         eventos = [json.loads(linea[len(fd.MARCA):]) for linea in self.salida.getvalue().split(SALTO) if linea.startswith(fd.MARCA)]
-        resultado = next(e for e in eventos if e["tipo"] == "resultado")
+        return next(e for e in eventos if e["tipo"] == "resultado"), eventos
+
+    def correr(self, defi):
+        resultado, eventos = self.correr_crudo(defi)
         self.assertNotEqual(resultado["accion"], "error", resultado.get("motivo", "") + "\n" + str(resultado.get("avisos")) + str(resultado.get("traza", "")))
         return resultado, eventos
 
@@ -546,6 +568,402 @@ class Ejecucion(Base):
         self.assertTrue(any("instrucciones" in a for a in r["avisos"]))
 
 
+# ------------------------------------------------------------- fallos
+
+class Error429(Exception):
+    """Como los errores de la API: trae su código HTTP."""
+
+    def __init__(self, code=429):
+        super().__init__(f"{code} RESOURCE_EXHAUSTED")
+        self.code = code
+
+
+def con_rama_de_error(n, **fin_error):
+    """correo → n → ok; n --error--> avisar → manual."""
+    return flujo([nodo("correo", "entrada_correo", leer_adjuntos=False), n,
+                  nodo("avisar", "notificar", para="soporte@x", asunto="Falló {{fallo.nodo}}", cuerpo="{{fallo.motivo}} ({{fallo.tipo}})"),
+                  nodo("ok", "salida", desenlace="radicar"), nodo("mal", "salida", desenlace="manual", motivo="{{fallo.motivo}}", **fin_error)],
+                 [{"desde": "correo", "hacia": n["id"]}, {"desde": n["id"], "hacia": "ok"}, {"desde": n["id"], "hacia": "avisar", "cuando": "error"},
+                  {"desde": "avisar", "hacia": "mal"}])
+
+
+class Fallos(Base):
+    def test_rama_de_error(self):
+        d = con_rama_de_error(nodo("g", "ia_generar", instrucciones="x", salida="r"))
+        self.assertEqual(self.problemas(d), [])
+        self.modelo.fallos = [ValueError("respuesta imposible")]
+        r, ev = self.correr(d)
+        self.assertEqual(r["accion"], "manual")
+        self.assertIn("respuesta imposible", r["motivo"])
+        self.assertEqual(r["variables"]["fallo"]["nodo"], "g")
+        self.assertEqual(r["variables"]["fallo"]["tipo"], "ia_generar")
+        self.assertEqual(r["mensajes"][0]["asunto"], "Falló g")
+        self.assertIn("(ia_generar)", r["mensajes"][0]["cuerpo"])
+        fin = next(e for e in ev if e["tipo"] == "etapa_fin" and e["etapa"] == "g")
+        self.assertTrue(fin["rama_error"] and fin["fallo"])
+        self.assertEqual((fin["salida"], fin["siguiente"]), ("error", "avisar"))
+        self.assertTrue(any(e["tipo"] == "paso" and e["nodo"] == "g" and e["tono"] == "error" and e.get("rama") == "error" for e in ev))
+        self.assertTrue(any("rama de error" in a for a in r["avisos"]))
+        # sin fallo, la rama de error no se toma aunque la arista por defecto exista
+        r, _ = self.correr(d)
+        self.assertEqual(r["accion"], "radicado")
+        self.assertNotIn("fallo", r["variables"])
+
+    def test_continuar_si_falla(self):
+        d = cadena(nodo("g", "ia_generar", instrucciones="x", salida="r", continuar_si_falla=True),
+                   fin=nodo("fin", "salida", desenlace="manual", motivo="{{fallo.motivo}}"))
+        self.assertEqual(self.problemas(d), [])
+        self.modelo.fallos = [Error429(503)]
+        r, ev = self.correr(d)
+        self.assertEqual(r["accion"], "manual")
+        self.assertIn("503", r["motivo"])
+        self.assertTrue(any("continuó" in a for a in r["avisos"]))
+        fin = next(e for e in ev if e["tipo"] == "etapa_fin" and e["etapa"] == "g")
+        self.assertTrue(fin["continua"])
+        self.assertEqual(fin["siguiente"], "fin")
+
+    def test_sin_rama_ni_continuar_aborta_como_antes(self):
+        self.modelo.fallos = [ValueError("roto")]
+        r, ev = self.correr_crudo(cadena(nodo("g", "ia_generar", instrucciones="x")))
+        self.assertEqual(r["accion"], "error")
+        self.assertIn("roto", r["motivo"])
+        fin = next(e for e in ev if e["tipo"] == "etapa_fin" and e["etapa"] == "g")
+        self.assertIn("roto", fin["fallo"])
+
+    def test_validacion_de_la_rama_de_error(self):
+        for t in fd.TIPOS - {"salida"}:
+            self.assertIn("error", fd.salidas_posibles({"tipo": t, "config": {}})[1], t)
+        self.assertNotIn("error", fd.salidas_posibles({"tipo": "salida", "config": {}})[1])
+        # {{fallo.*}} solo existe tras la rama de error
+        self.assertProblema(cadena(nodo("g", "ia_generar", instrucciones="{{fallo.motivo}}")), "«fallo» solo existe")
+        d = con_rama_de_error(nodo("g", "ia_generar", instrucciones="x"))
+        d["nodos"][2]["config"]["cuerpo"] = "{{fallo.telefono}}"
+        self.assertProblema(d, "«fallo.telefono» no existe")
+        # lo que el nodo iba a producir no llega por la rama de error
+        d = con_rama_de_error(nodo("g", "ia_generar", instrucciones="x", salida="r"))
+        d["nodos"][2]["config"]["cuerpo"] = "{{r}}"
+        self.assertProblema(d, "«r»")
+        # «fallo» es reservada y «error» no puede ser categoría
+        self.assertProblema(cadena(nodo("g", "ia_generar", instrucciones="x", salida="fallo")), "no es un nombre de variable válido")
+        d = cadena(nodo("c", "ia_clasificar", categorias=["error", "otro"], variable="tema"))
+        self.assertProblema(d, "rama de fallo")
+        self.assertEqual(fd.validar(d, al_ejecutar=True), [])
+        self.assertProblema(cadena(fin=nodo("fin", "salida", desenlace="manual", continuar_si_falla=True)), "no puede continuar")
+        self.assertProblema(cadena(nodo("g", "ia_generar", instrucciones="x", continuar_si_falla="sí")), "continuar_si_falla tiene que ser")
+
+    def test_describir_fallo(self):
+        n = {"id": "g", "tipo": "ia_generar"}
+        self.assertIn("429", fd.describir_fallo(n, Error429()))
+        self.assertIn("a tiempo", fd.describir_fallo(n, TimeoutError()))
+        self.assertIn("conectarse", fd.describir_fallo({"id": "h", "tipo": "http"}, ConnectionRefusedError()))
+        self.assertEqual(fd.describir_fallo(n, fd.ErrorDeNegocio("falta el documento")), "falta el documento")
+
+
+class Reintentos(Base):
+    def test_reintenta_lo_pasajero(self):
+        d = cadena(nodo("g", "ia_generar", instrucciones="x", salida="r", reintentos={"intentos": 3, "espera_ms": 100, "backoff": 2, "maximo_ms": 150}))
+        self.assertEqual(self.problemas(d), [])
+        self.modelo.fallos = [Error429(), TimeoutError("lento")]
+        r, ev = self.correr(d)
+        self.assertTrue(r["variables"]["r"].startswith("TEXTO GENERADO"))
+        self.assertEqual(len(self.modelo.llamadas), 3)
+        pasos = [e for e in ev if e["tipo"] == "paso" and e.get("reintento")]
+        self.assertEqual([p["reintento"] for p in pasos], [1, 2])
+        self.assertEqual(pasos[0]["titulo"], "Reintento 1 de 2")
+        self.assertEqual(len(self.esperas), 2)
+        self.assertTrue(0 <= self.esperas[0] <= 0.1 and 0 <= self.esperas[1] <= 0.15, self.esperas)  # full jitter con tope
+
+    def test_no_reintenta_errores_de_negocio_y_se_agota(self):
+        d = cadena(nodo("g", "ia_generar", instrucciones="x", reintentos={"intentos": 5}))
+        self.modelo.fallos = [ValueError("dato malo")]
+        r, _ = self.correr_crudo(d)
+        self.assertEqual((r["accion"], len(self.modelo.llamadas)), ("error", 1))
+        self.modelo.llamadas.clear()
+        self.modelo.fallos = [Error429(500)] * 2
+        d["nodos"][1]["config"]["reintentos"] = {"intentos": 2, "espera_ms": 0}
+        r, _ = self.correr_crudo(d)
+        self.assertEqual((r["accion"], len(self.modelo.llamadas)), ("error", 2))
+
+    def test_clasificacion_y_espera(self):
+        self.assertTrue(fd.es_transitorio(Error429()))
+        self.assertTrue(fd.es_transitorio(Error429(502)))
+        self.assertTrue(fd.es_transitorio(ConnectionResetError()))
+        self.assertTrue(fd.es_transitorio(TimeoutError()))
+        self.assertFalse(fd.es_transitorio(Error429(400)))
+        self.assertFalse(fd.es_transitorio(ValueError("x")))
+        self.assertFalse(fd.es_transitorio(fd.ErrorDeNegocio("x")))
+        for k in range(1, 6):
+            self.assertTrue(0 <= fd.espera_con_jitter(k, 500, 2, 3000) <= min(3000, 500 * 2 ** (k - 1)))
+
+    def test_validacion(self):
+        self.assertProblema(cadena(nodo("g", "ia_generar", instrucciones="x", reintentos={"intentos": 9})), "entre 1 y 5")
+        self.assertProblema(cadena(nodo("g", "ia_generar", instrucciones="x", reintentos={"intentos": 2, "backoff": 0})), "backoff")
+        self.assertProblema(cadena(nodo("g", "ia_generar", instrucciones="x", reintentos=3)), "tiene que ser un objeto")
+        self.assertProblema(cadena(nodo("f", "filtro", campo="asunto", valor="x", reintentos={"intentos": 2})), "solo aplica")
+        self.assertEqual(fd._validar_config(nodo("e", "enviar", cuerpo="x", reintentos={"intentos": 2})), [])
+
+
+class Deshabilitado(Base):
+    def test_se_omite_y_sigue(self):
+        d = cadena(nodo("g", "ia_generar", instrucciones="x", salida="r", deshabilitado=True),
+                   nodo("t", "transformar", op="plantilla", plantilla="[{{r}}]", salida="t"))
+        self.assertEqual(self.problemas(d), [])
+        r, ev = self.correr(d)
+        self.assertEqual(self.modelo.llamadas, [])
+        self.assertEqual(r["variables"]["t"], "[]")
+        fin = next(e for e in ev if e["tipo"] == "etapa_fin" and e["etapa"] == "g")
+        self.assertTrue(fin["omitido"])
+        self.assertEqual(fin["siguiente"], "t")
+        self.assertTrue(any(e["tipo"] == "paso" and e.get("omitido") and "se omite" in e["titulo"] for e in ev))
+
+    def test_sin_arista_por_defecto_toma_la_primera(self):
+        d = flujo([nodo("correo", "entrada_correo", leer_adjuntos=False), nodo("c", "ia_clasificar", categorias=["a", "b"], variable="v", deshabilitado=True),
+                   nodo("sa", "salida", desenlace="radicar"), nodo("sb", "salida", desenlace="manual"), nodo("se", "salida", desenlace="descartar")],
+                  [{"desde": "correo", "hacia": "c"}, {"desde": "c", "hacia": "se", "cuando": "error"}, {"desde": "c", "hacia": "sa", "cuando": "a"},
+                   {"desde": "c", "hacia": "sb", "cuando": "b"}])
+        self.assertEqual(self.problemas(d), [])
+        self.assertEqual(self.correr(d)[0]["accion"], "radicado")  # la primera que no es de error
+
+    def test_validacion(self):
+        d = cadena()
+        d["nodos"][0]["config"]["deshabilitado"] = True
+        self.assertProblema(d, "no se puede deshabilitar")
+        self.assertProblema(cadena(nodo("g", "ia_generar", instrucciones="x", deshabilitado="no")), "deshabilitado tiene que ser")
+
+
+# ------------------------------------------------------------- plantillas nuevas
+
+class PlantillasAvanzadas(Base):
+    def test_selectores_indices_y_claves_con_punto(self):
+        e = fd.Ejecucion(cadena(), CASO, "m")
+        e.entrada_correo(nodo("correo", "entrada_correo", leer_adjuntos=False))
+        e.vars.update({"polizas": [{"id": "P1", "estado": "vencida"}, {"id": "P2", "estado": "Activa", "plan": {"nombre": "Oro"}}],
+                       "datos": {"a.b": "punto", "con espacio": "sí", "0": "cero"}, "nums": [10, 20]})
+        self.assertEqual(e.render("{{polizas[estado=activa].id}}"), "P2")
+        self.assertEqual(e.render("{{polizas[estado=\"vencida\"].id}}|{{polizas[estado='activa'].plan.nombre}}"), "P1|Oro")
+        self.assertEqual(e.render("{{polizas.0.id}}{{polizas[1].id}}{{nums.1}}"), "P1P220")
+        self.assertEqual(e.render("{{datos[\"a.b\"]}}/{{datos['con espacio']}}/{{datos.0}}"), "punto/sí/cero")
+        self.assertEqual(e.render("[{{polizas[estado=nada].id}}][{{polizas.9.id}}][{{nums.x}}]"), "[][][]")
+        self.assertEqual(e.render("{{correo.asunto}}"), "Solicitud pago incapacidad")
+
+    def test_segmentos(self):
+        self.assertEqual(fd.segmentos('a.b[0][c="x y"]["k.l"].2'),
+                         [("clave", "a"), ("clave", "b"), ("indice", 0), ("filtro", "c", "x y"), ("clave", "k.l"), ("clave", "2")])
+        for malo in ("", "a..b", "a[", "a[b=c", "a.b]", "a b"):
+            self.assertIsNone(fd.segmentos(malo), malo)
+
+    def test_validacion_entiende_las_rutas(self):
+        base = nodo("x", "ia_extraer", salida="datos", campos=[{"nombre": "lista"}])
+        d = cadena(base, nodo("g", "ia_generar", instrucciones="{{lista[estado=activa].id}} {{datos[\"a.b\"]}} {{lista.0.id}} {{correo.asunto}}"))
+        self.assertEqual(self.problemas(d), [])
+        self.assertProblema(cadena(base, nodo("g", "ia_generar", instrucciones="{{lista[estado=}}")), "no es válida")
+        self.assertProblema(cadena(base, nodo("g", "ia_generar", instrucciones="{{nada[0].id}}")), "«nada»")
+        self.assertProblema(cadena(nodo("g", "ia_generar", instrucciones="{{correo[0]}}")), "no existe")
+
+
+# ------------------------------------------------------------- http
+
+SECRETO = "tok-SECRETO-123"
+
+
+class _Servidor(http.server.BaseHTTPRequestHandler):
+    vistas = []
+    contador = {}
+
+    def log_message(self, *a):
+        pass
+
+    def _responder(self, status, cuerpo=None, **cabeceras):
+        datos = json.dumps(cuerpo).encode() if cuerpo is not None else b""
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(datos)))
+        for k, v in cabeceras.items():
+            self.send_header(k, v)
+        self.end_headers()
+        self.wfile.write(datos)
+
+    def do_GET(self):
+        ruta = self.path.split("?")[0]
+        _Servidor.vistas.append({"ruta": self.path, "auth": self.headers.get("Authorization")})
+        _Servidor.contador[ruta] = _Servidor.contador.get(ruta, 0) + 1
+        if ruta == "/afiliados":
+            self._responder(200, {"estado": "activo", "empresa": {"nombre": "ACME"},
+                                  "polizas": [{"id": "P1", "estado": "vencida"}, {"id": "P2", "estado": "activa"}]})
+        elif ruta == "/falla-una":
+            self._responder(500, {"x": 1}) if _Servidor.contador[ruta] == 1 else self._responder(200, {"estado": "repuesto"})
+        elif ruta == "/siempre-503":
+            self._responder(503, {"x": 1})
+        elif ruta == "/lento":
+            time.sleep(1.0)
+            self._responder(200, {})
+        elif ruta == "/redirige":
+            self._responder(302, None, Location="http://169.254.169.254/latest/meta-data/")
+        else:
+            self._responder(404, {"error": "no existe"})
+
+    do_POST = do_GET
+
+
+class Http(Base):
+    @classmethod
+    def setUpClass(cls):
+        cls.srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), _Servidor)
+        cls.srv.handle_error = lambda *a: None  # el cliente que cortó por tiempo deja un «broken pipe» sin importancia
+        cls.url = f"http://127.0.0.1:{cls.srv.server_address[1]}"
+        threading.Thread(target=cls.srv.serve_forever, daemon=True).start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.srv.shutdown()
+        cls.srv.server_close()
+
+    def setUp(self):
+        super().setUp()
+        _Servidor.vistas.clear()
+        _Servidor.contador.clear()
+        os.environ["HTTP_TOKEN_PRUEBA"] = SECRETO
+
+    def tearDown(self):
+        os.environ.pop("HTTP_TOKEN_PRUEBA", None)
+        super().tearDown()
+
+    def permitir_local(self):
+        """Solo en estas pruebas: el host local permitido y su loopback fuera del bloqueo SSRF."""
+        os.environ["HTTP_HOSTS_PERMITIDOS"] = "127.0.0.1"
+        fd._IPS_PERMITIDAS_PRUEBAS.add("127.0.0.1")
+
+    def flujo_http(self, ruta="/afiliados", **conf):
+        conf = {"url": self.url + ruta, "timeout_ms": 3000, "salida": "resp", **conf}
+        return flujo([nodo("correo", "entrada_correo", leer_adjuntos=False), nodo("h", "http", **conf),
+                      nodo("ok", "salida", desenlace="radicar"), nodo("err_http", "salida", desenlace="manual", motivo="HTTP {{resp.status}}"),
+                      nodo("err", "salida", desenlace="descartar", motivo="{{fallo.motivo}}")],
+                     [{"desde": "correo", "hacia": "h"}, {"desde": "h", "hacia": "ok", "cuando": "ok"},
+                      {"desde": "h", "hacia": "err_http", "cuando": "error_http"}, {"desde": "h", "hacia": "err", "cuando": "error"}])
+
+    def test_get_permitido_con_mapeo_credencial_y_query(self):
+        self.permitir_local()
+        d = self.flujo_http(query={"doc": "{{correo.remitente_correo}}"}, credencial="HTTP_TOKEN_PRUEBA", mapeo=[
+            {"variable": "estado", "ruta": "estado"}, {"variable": "poliza", "ruta": "polizas[estado=activa].id", "obligatorio": True},
+            {"variable": "empresa", "ruta": "empresa.nombre"}, {"variable": "plan", "ruta": "plan.nombre", "defecto": "sin plan"}])
+        self.assertEqual(self.problemas(d), [])
+        r, ev = self.correr(d)
+        self.assertEqual(r["accion"], "radicado")
+        v = r["variables"]
+        self.assertEqual((v["estado"], v["poliza"], v["empresa"], v["plan"]), ("activo", "P2", "ACME", "sin plan"))
+        self.assertEqual(v["resp"]["status"], 200)
+        self.assertEqual(_Servidor.vistas[0]["auth"], f"Bearer {SECRETO}")
+        self.assertIn("doc=rrhh%40empresa.example", _Servidor.vistas[0]["ruta"])
+        self.assertNotIn(SECRETO, self.salida.getvalue())  # el secreto nunca sale en los eventos
+        self.assertTrue(any(e["tipo"] == "busqueda" and e["metodo"] == "http" and e["campo"] == "poliza" for e in ev))
+        fin = next(e for e in ev if e["tipo"] == "etapa_fin" and e["etapa"] == "h")
+        self.assertEqual(fin["muestra"]["poliza"], "P2")
+
+    def test_escrituras_y_hosts_no_permitidos_se_simulan(self):
+        self.permitir_local()
+        r, ev = self.correr(self.flujo_http(metodo="POST", cuerpo={"doc": "{{correo.remitente_correo}}"}, credencial="HTTP_TOKEN_PRUEBA"))
+        self.assertEqual(r["accion"], "radicado")
+        self.assertEqual(_Servidor.vistas, [])  # no salió nada
+        self.assertTrue(r["variables"]["resp"]["simulado"])
+        self.assertEqual(r["variables"]["resp"]["cuerpo"], {"doc": "rrhh@empresa.example"})
+        esc = next(e for e in ev if e["tipo"] == "escritura")
+        self.assertTrue(esc["bloqueada"] and esc["simulada"])
+        self.assertEqual((esc["sistema"], esc["operacion"]), ("http", "POST"))
+        self.assertEqual(esc["detalle"]["encabezados"]["Authorization"], "Bearer ‹HTTP_TOKEN_PRUEBA›")
+        self.assertEqual(r["peticiones"][0]["metodo"], "POST")
+        self.assertNotIn(SECRETO, self.salida.getvalue())
+        # GET sin lista de hosts (o con otro host): simulado también
+        os.environ["HTTP_HOSTS_PERMITIDOS"] = ""
+        r, _ = self.correr(self.flujo_http())
+        self.assertIn("vacío", r["variables"]["resp"]["motivo"])
+        os.environ["HTTP_HOSTS_PERMITIDOS"] = "api.ejemplo.gov.co"
+        r, _ = self.correr(self.flujo_http())
+        self.assertIn("no está en HTTP_HOSTS_PERMITIDOS", r["variables"]["resp"]["motivo"])
+        self.assertEqual(_Servidor.vistas, [])
+
+    def test_bloqueo_ssrf(self):
+        os.environ["HTTP_HOSTS_PERMITIDOS"] = "127.0.0.1,localhost,metadata.google.internal"  # aunque estén permitidos
+        r, _ = self.correr(self.flujo_http())
+        self.assertEqual(r["accion"], "descartado")
+        self.assertIn("bloqueado por seguridad", r["motivo"])
+        self.assertEqual(_Servidor.vistas, [])
+        for ip in ("127.0.0.1", "10.1.2.3", "192.168.0.10", "172.16.5.4", "169.254.169.254", "::1", "fe80::1", "::ffff:10.0.0.1", "0.0.0.0", "100.64.0.1"):
+            self.assertIsNotNone(fd.ip_bloqueada(ip), ip)
+        self.assertIsNone(fd.ip_bloqueada("8.8.8.8"))
+        for host in ("metadata.google.internal", "localhost", "algo.internal"):
+            with self.assertRaises(fd.ErrorDeNegocio):
+                fd.destino_seguro(host, 80)
+
+    def test_redireccion_no_se_sigue(self):
+        self.permitir_local()
+        r, _ = self.correr(self.flujo_http("/redirige"))
+        self.assertEqual(r["variables"]["resp"]["status"], 302)
+        self.assertEqual(_Servidor.contador, {"/redirige": 1})
+        self.assertIn("169.254.169.254", r["variables"]["resp"]["redireccion"])
+
+    def test_error_http_reintentos_y_tiempo(self):
+        self.permitir_local()
+        r, _ = self.correr(self.flujo_http("/no-existe"))
+        self.assertEqual((r["accion"], r["motivo"]), ("manual", "HTTP 404"))
+        # un 500 pasajero se reintenta
+        r, ev = self.correr(self.flujo_http("/falla-una", reintentos={"intentos": 3, "espera_ms": 0}))
+        self.assertEqual(r["accion"], "radicado")
+        self.assertEqual(_Servidor.contador["/falla-una"], 2)
+        self.assertEqual(len([e for e in ev if e["tipo"] == "paso" and e.get("reintento")]), 1)
+        # un 503 que no cede: se agotan los intentos y sale por error_http
+        r, _ = self.correr(self.flujo_http("/siempre-503", reintentos={"intentos": 2, "espera_ms": 0}))
+        self.assertEqual((r["accion"], r["motivo"], _Servidor.contador["/siempre-503"]), ("manual", "HTTP 503", 2))
+        # sin reintentos, un 404 no se repite
+        self.assertEqual(_Servidor.contador["/no-existe"], 1)
+        # tiempo agotado → rama de error
+        r, _ = self.correr(self.flujo_http("/lento", timeout_ms=200))
+        self.assertEqual(r["accion"], "descartado")
+        self.assertIn("a tiempo", r["motivo"])
+        # obligatorio que no viene → rama de error
+        r, _ = self.correr(self.flujo_http(mapeo=[{"variable": "x", "ruta": "no.esta", "obligatorio": True}]))
+        self.assertEqual(r["accion"], "descartado")
+        self.assertIn("no trae x", r["motivo"])
+
+    def test_validacion(self):
+        def p(**conf):
+            return fd._validar_config(nodo("h", "http", **conf))
+        self.assertEqual(p(**nd.TIPOS["http"]["ejemplo"]["config"]), [])
+        casos = [({}, "necesita url"), ({"url": "ftp://x"}, "http:// o https://"), ({"url": "https://x", "metodo": "TRACE"}, "metodo"),
+                 ({"url": "https://x", "encabezados": {"Authorization": "Bearer abc"}}, "usa credencial"),
+                 ({"url": "https://x", "credencial": "Bearer abc123"}, "NOMBRE de una variable"),
+                 ({"url": "https://x", "timeout_ms": 120000}, "timeout_ms"), ({"url": "https://x", "cuerpo": 5}, "cuerpo"),
+                 ({"url": "https://x", "mapeo": [{"variable": "a", "ruta": "x["}]}, "ruta"),
+                 ({"url": "https://x", "mapeo": [{"variable": "correo", "ruta": "x"}]}, "variable «correo»"),
+                 ({"url": "https://x", "query": {"a": 1}}, "query")]
+        for conf, texto in casos:
+            with self.subTest(conf=conf):
+                self.assertTrue(any(texto in x for x in p(**conf)), p(**conf))
+        d = cadena(nodo("h", "http", url="https://api.x/{{nada}}", mapeo=[{"variable": "a", "ruta": "a"}]),
+                   nodo("g", "ia_generar", instrucciones="{{a}} {{h.status}}"))
+        self.assertProblema(d, "«nada»")
+        self.assertEqual(fd.salidas_posibles(d["nodos"][1]), (["ok", "error_http"], ["error"]))
+
+
+# ------------------------------------------------------------- muestra
+
+class Muestra(Base):
+    def test_muestra_acotada_por_nodo(self):
+        d = cadena(nodo("t", "transformar", operaciones=[
+            {"op": "asignar", "valor": "x" * 1000, "salida": "largo"},
+            {"op": "asignar", "valor": list(range(50)), "salida": "lista"},
+            {"op": "asignar", "valor": {"a": {"b": {"c": {"d": {"e": "hondo"}}}}}, "salida": "hondo"}]))
+        r, ev = self.correr(d)
+        fin = next(e for e in ev if e["tipo"] == "etapa_fin" and e["etapa"] == "t")
+        m = fin["muestra"]
+        self.assertEqual(set(m), {"largo", "lista", "hondo"})
+        self.assertEqual(len(m["largo"]), 301)
+        self.assertEqual(len(m["lista"]), 21)
+        self.assertEqual(m["hondo"]["a"]["b"]["c"], {"d": "…"})  # cuatro niveles y se corta
+        correo = next(e for e in ev if e["tipo"] == "etapa_fin" and e["etapa"] == "correo")
+        self.assertEqual(correo["muestra"]["correo"]["asunto"], "Solicitud pago incapacidad")
+        self.assertIn("muestra", next(e for e in ev if e["tipo"] == "etapa_fin" and e["etapa"] == "fin"))
+
+
 # ------------------------------------------------------------- documentación
 
 class Documentacion(unittest.TestCase):
@@ -563,6 +981,22 @@ class Documentacion(unittest.TestCase):
         for t in fd.TIPOS - {"salida"}:  # lo que la doc dice que sale coincide con el motor
             oblig, _ = fd.salidas_posibles(nd.TIPOS[t]["ejemplo"])
             self.assertTrue(oblig, t)
+        self.assertEqual(e["version"], nd.VERSION)
+        for clave in ("deshabilitado", "continuar_si_falla", "reintentos"):
+            self.assertIn(clave, e["comunes"])
+            self.assertIn(clave, nd.DOCUMENTACION)
+        for texto in ("- http:", "HTTP_HOSTS_PERMITIDOS", "\"error\"", "{{fallo.motivo}}", "[campo=valor]"):
+            self.assertIn(texto, nd.DOCUMENTACION)
+
+    def test_ayuda_por_tipo(self):
+        e = nd.esquema()
+        for t, spec in e["tipos"].items():
+            with self.subTest(tipo=t):
+                self.assertTrue(1 <= len(spec["ejemplos"]) <= 2, t)
+                self.assertTrue(1 <= len(spec["consejos"]) <= 3, t)
+                self.assertTrue(all(isinstance(x, str) and x.strip() for x in spec["consejos"]))
+                for conf in spec["ejemplos"]:  # cada ejemplo se puede copiar tal cual
+                    self.assertEqual(fd._validar_config({"id": "n", "tipo": t, "config": conf}), [], conf)
 
 
 if __name__ == "__main__":

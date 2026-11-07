@@ -21,17 +21,23 @@ import { catalogo as catalogoDePqrd, type Catalogo } from "./catalogo.ts";
 /** Los tipos de nodo; su documentación está en `puente/nodos_declarativos.py`. */
 export const TIPOS_DE_NODO = [
   "entrada_correo", "leer_adjuntos", "filtro", "condicion", "ia_clasificar", "ia_decidir", "ia_extraer", "extraer_regex", "validar",
-  "transformar", "buscar_en_tabla", "bifurcar_por_valor", "ia_generar", "resumir", "ia_redactar", "notificar", "enviar", "salida",
+  "transformar", "buscar_en_tabla", "bifurcar_por_valor", "ia_generar", "resumir", "ia_redactar", "notificar", "enviar", "http", "salida",
 ] as const;
 export type TipoDeNodo = (typeof TIPOS_DE_NODO)[number];
 const TIPOS_IA = new Set<string>(["ia_clasificar", "ia_decidir", "ia_extraer", "ia_generar", "resumir", "ia_redactar"]);
+/** Los que hablan con algo de afuera y por eso aceptan reintentos. */
+const TIPOS_CON_REINTENTOS = new Set<string>([...TIPOS_IA, "notificar", "enviar", "http"]);
+/** Ni la entrada ni las salidas se pueden saltar. */
+const NO_DESHABILITABLES = new Set<string>(["entrada_correo", "salida"]);
+/** La rama que toma cualquier nodo cuando falla. */
+const RAMA_ERROR = "error";
 
 // ------------------------------------------------- config de cada tipo
 //
 // La forma de la config. Lo semántico (variables que existan antes, aristas por
 // cada salida, ciclos) lo valida el motor en Python, que es quien ejecuta.
 
-const RESERVADAS = ["correo", "adjuntos", "asunto", "cuerpo", "remitente", "texto"];
+const RESERVADAS = ["correo", "adjuntos", "asunto", "cuerpo", "remitente", "texto", "fallo"];
 const variable = z.string({ error: "tiene que ser un nombre de variable" })
   .regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "nombre de variable: letras, números y guion bajo, sin espacios")
   .refine((x) => !RESERVADAS.includes(x), `nombre reservado (${RESERVADAS.join(", ")})`);
@@ -40,14 +46,34 @@ const booleano = z.boolean({ error: "tiene que ser true o false" });
 const regex = (que: string) => z.string({ error: `falta ${que}` }).min(1, `falta ${que}`).refine((p) => {
   try { new RegExp(p.replace(/\(\?P</g, "(?<")); return true; } catch { return false; }
 }, `${que}: expresión regular inválida`);
+// Reintentos ante fallos pasajeros: intentos cuenta el primero (1 = sin reintentos).
+const reintentos = z.looseObject({
+  intentos: z.number({ error: "reintentos.intentos: entero entre 1 y 5" }).int("reintentos.intentos: entero entre 1 y 5").min(1, "reintentos.intentos: entero entre 1 y 5").max(5, "reintentos.intentos: entero entre 1 y 5"),
+  espera_ms: z.number().int().min(0, "reintentos.espera_ms entre 0 y 60000").max(60000, "reintentos.espera_ms entre 0 y 60000").optional(),
+  backoff: z.number().min(1, "reintentos.backoff entre 1 y 10").max(10, "reintentos.backoff entre 1 y 10").optional(),
+  maximo_ms: z.number().int().min(0, "reintentos.maximo_ms entre 0 y 120000").max(120000, "reintentos.maximo_ms entre 0 y 120000").optional(),
+}, { error: "reintentos tiene que ser un objeto {intentos, espera_ms, backoff, maximo_ms}" });
 const comunes = {
   entradas: z.array(z.string().min(1), { error: "entradas tiene que ser una lista de nombres" }).optional(),
   salida: variable.optional(),
   modelo: z.string().min(1).optional(),
   temperatura: z.number({ error: "temperatura tiene que ser un número" }).min(0, "temperatura entre 0 y 2").max(2, "temperatura entre 0 y 2").optional(),
+  deshabilitado: z.boolean({ error: "deshabilitado tiene que ser true o false" }).optional(),
+  continuar_si_falla: z.boolean({ error: "continuar_si_falla tiene que ser true o false" }).optional(),
+  reintentos: reintentos.optional(),
 };
 const conf = <T extends z.ZodRawShape>(forma: T) => z.looseObject({ ...comunes, ...forma });
-const valorOObjeto = (clave: string) => z.union([z.string().min(1), z.looseObject({ [clave]: z.string({ error: `cada elemento necesita ${clave}` }).min(1) })]);
+// En la salida, «salida» no es una variable (el motor tampoco la revisa ahí).
+const { salida: _salidaVariable, ...comunesDeSalida } = comunes;
+const noEsError = (x: unknown) => (typeof x === "object" && x ? String((x as Record<string, unknown>).valor ?? "") : String(x)).trim().toLowerCase() !== RAMA_ERROR;
+const valorOObjeto = (clave: string) => z.union([z.string().min(1), z.looseObject({ [clave]: z.string({ error: `cada elemento necesita ${clave}` }).min(1) })])
+  .refine(noEsError, `«${RAMA_ERROR}» es la rama de fallo de todo nodo: usa otro valor`);
+
+// Rutas dentro de una variable o de una respuesta: a.b, lista.0, lista[0], lista[campo=valor], datos["a.b"] (igual que en Python).
+const CORCHETES = String.raw`\[\s*(?:"[^"]*"|'[^']*'|\d+|[A-Za-z_][A-Za-z0-9_]*\s*=\s*(?:"[^"]*"|'[^']*'|[^\]"']*?))\s*\]`;
+const RUTA = new RegExp(String.raw`^\s*(?:[A-Za-z0-9_]+|${CORCHETES})(?:\.[A-Za-z0-9_]+|${CORCHETES})*\s*$`);
+const ENCABEZADOS_SECRETOS = ["authorization", "proxy-authorization", "cookie", "x-api-key", "api-key", "apikey", "x-auth-token"];
+const METODOS_HTTP = ["GET", "POST", "PUT", "PATCH", "DELETE"] as const;
 const OPERADOR = z.enum(["contiene", "coincide", "no_coincide", "igual", "vacio", "no_vacio"], { error: "operador: contiene, coincide, no_coincide, igual, vacio o no_vacio" });
 const filtroConf = conf({ campo: textoReq("campo"), operador: OPERADOR.optional(), valor: z.unknown().optional() });
 const OPS = ["plantilla", "asignar", "mayusculas", "minusculas", "titulo", "limpiar", "solo_digitos", "regex_extraer", "regex_reemplazar", "concatenar", "defecto"] as const;
@@ -80,7 +106,7 @@ export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
   }).refine((c) => c.variable || c.salida, { message: "falta variable (o salida) donde dejar la categoría", path: ["variable"] }),
   ia_decidir: conf({
     pregunta: z.string().optional(), instrucciones: z.string().optional(),
-    opciones: z.array(z.looseObject({ valor: textoReq("valor"), criterio: z.string().optional(), descripcion: z.string().optional() }), { error: "faltan opciones: [{valor, criterio}]" }).min(2, "al menos dos opciones"),
+    opciones: z.array(z.looseObject({ valor: textoReq("valor").refine(noEsError, `«${RAMA_ERROR}» es la rama de fallo de todo nodo: usa otro valor`), criterio: z.string().optional(), descripcion: z.string().optional() }), { error: "faltan opciones: [{valor, criterio}]" }).min(2, "al menos dos opciones"),
   }).refine((c) => c.pregunta || c.instrucciones, { message: "falta pregunta (o instrucciones)", path: ["pregunta"] }),
   ia_extraer: conf({
     instrucciones: z.string().optional(),
@@ -101,7 +127,7 @@ export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
     }), { error: "faltan reglas: [{campo, regla}]" }).min(1, "faltan reglas"),
   }),
   // Una lista de operaciones o, en corto, una sola operación en la propia config.
-  transformar: z.looseObject({ operaciones: z.array(operacion, { error: "operaciones tiene que ser una lista [{op, salida, ...}]" }).min(1, "faltan operaciones").optional() })
+  transformar: z.looseObject({ ...comunes, operaciones: z.array(operacion, { error: "operaciones tiene que ser una lista [{op, salida, ...}]" }).min(1, "faltan operaciones").optional() })
     .superRefine((c, ctx) => {
       if (c.operaciones) return;
       if (!("op" in c)) return void ctx.addIssue({ code: "custom", path: ["operaciones"], message: "transformar necesita operaciones: [{op, salida, ...}]" });
@@ -129,7 +155,25 @@ export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
   ia_redactar: conf({ instrucciones: z.string().optional(), variable: variable.optional() }),
   notificar: conf({ para: textoReq("para"), cuerpo: textoReq("cuerpo"), asunto: z.string().optional(), cc: z.string().optional(), canal: z.string().optional() }),
   enviar: conf({ cuerpo: textoReq("cuerpo"), para: z.string().optional(), asunto: z.string().optional(), cc: z.string().optional() }),
+  // Solo los GET a hosts de HTTP_HOSTS_PERMITIDOS salen de verdad; lo demás se arma y queda como escritura bloqueada.
+  http: conf({
+    metodo: z.enum(METODOS_HTTP, { error: `metodo: ${METODOS_HTTP.join(", ")}` }).optional(),
+    url: textoReq("url").refine((u) => u.trim().startsWith("{{") || /^https?:\/\/[^\s/]/i.test(u.trim()), "url tiene que empezar por http:// o https://"),
+    query: z.record(z.string(), z.string(), { error: "query tiene que ser un objeto {nombre: plantilla}" }).optional(),
+    encabezados: z.record(z.string(), z.string(), { error: "encabezados tiene que ser un objeto {nombre: plantilla}" })
+      .refine((e) => !Object.keys(e).some((k) => ENCABEZADOS_SECRETOS.includes(k.trim().toLowerCase())), "encabezados: Authorization y las claves no van en el flujo; usa credencial con el nombre de la variable de entorno")
+      .optional(),
+    cuerpo: z.union([z.string(), z.record(z.string(), z.unknown()), z.array(z.unknown())], { error: "cuerpo tiene que ser texto (plantilla) o un objeto JSON con plantillas" }).optional(),
+    credencial: z.string().regex(/^[A-Z][A-Z0-9_]{2,63}$/, "credencial es el NOMBRE de una variable de entorno (p. ej. HTTP_TOKEN_X), nunca el valor").optional(),
+    timeout_ms: z.number({ error: "timeout_ms tiene que ser un entero entre 100 y 60000" }).int().min(100, "timeout_ms entre 100 y 60000").max(60000, "timeout_ms entre 100 y 60000").optional(),
+    mapeo: z.array(z.looseObject({
+      variable, ruta: z.string({ error: "falta ruta" }).regex(RUTA, "ruta inválida (p. ej. «items.0.id», «items[estado=activo].id», «[\"a.b\"]»)"),
+      defecto: z.unknown().optional(), obligatorio: booleano.optional(),
+    }), { error: "mapeo tiene que ser una lista [{variable, ruta, defecto, obligatorio}]" })
+      .refine((m) => new Set(m.map((x) => x.variable)).size === m.length, "mapeo: hay variables repetidas").optional(),
+  }),
   salida: z.looseObject({
+    ...comunesDeSalida,
     desenlace: z.enum(DESENLACES_DECL, { error: `desenlace: ${DESENLACES_DECL.join(", ")}` }),
     motivo: z.string().optional(), destino: z.string().optional(), plantilla_respuesta: z.string().optional(),
     campos: z.union([z.array(z.string().min(1)), z.record(z.string(), z.string())], { error: "campos: lista de variables o {nombre: plantilla}" }).optional(),
@@ -146,6 +190,12 @@ const nodo = z.object({
 }).superRefine((n, ctx) => {
   const r = CONFIG_DE[n.tipo].safeParse(n.config);
   if (!r.success) for (const i of r.error.issues) ctx.addIssue({ code: "custom", path: ["config", ...i.path.map((p) => (typeof p === "symbol" ? String(p) : p))], message: `${n.id} (${n.tipo}): ${i.message}` });
+  // Lo común que depende del tipo (igual que en el motor).
+  const c = n.config as Record<string, unknown>;
+  const problema = (clave: string, m: string) => ctx.addIssue({ code: "custom", path: ["config", clave], message: `${n.id} (${n.tipo}): ${m}` });
+  if (c.deshabilitado === true && NO_DESHABILITABLES.has(n.tipo)) problema("deshabilitado", `un nodo ${n.tipo} no se puede deshabilitar`);
+  if (c.continuar_si_falla === true && n.tipo === "salida") problema("continuar_si_falla", "una salida no puede continuar si falla: no tiene por dónde seguir");
+  if (c.reintentos !== undefined && !TIPOS_CON_REINTENTOS.has(n.tipo)) problema("reintentos", "reintentos solo aplica a los nodos de IA, enviar, notificar y http");
 });
 
 export const definicion = z.object({
@@ -268,21 +318,22 @@ export async function borrar(id: string): Promise<boolean> {
 const CATEGORIA: Record<TipoDeNodo, string> = {
   entrada_correo: "entrada", leer_adjuntos: "ocr", filtro: "filtro", condicion: "ruta", ia_clasificar: "ia", ia_decidir: "ia",
   ia_extraer: "ia", extraer_regex: "busqueda", validar: "validacion", transformar: "datos", buscar_en_tabla: "datos",
-  bifurcar_por_valor: "ruta", ia_generar: "ia", resumir: "ia", ia_redactar: "ia", notificar: "integracion", enviar: "integracion", salida: "salida",
+  bifurcar_por_valor: "ruta", ia_generar: "ia", resumir: "ia", ia_redactar: "ia", notificar: "integracion", enviar: "integracion",
+  http: "integracion", salida: "salida",
 };
 const NOMBRE_TIPO: Record<TipoDeNodo, string> = {
   entrada_correo: "Entrada de correo", leer_adjuntos: "Leer adjuntos", filtro: "Filtro", condicion: "Condición",
   ia_clasificar: "IA · clasificar", ia_decidir: "IA · decidir", ia_extraer: "IA · extraer datos", extraer_regex: "Extraer con regex",
   validar: "Validación", transformar: "Transformar", buscar_en_tabla: "Buscar en tabla", bifurcar_por_valor: "Bifurcar por valor",
   ia_generar: "IA · generar", resumir: "IA · resumir", ia_redactar: "IA · redactar", notificar: "Notificar (simulado)",
-  enviar: "Enviar respuesta (simulado)", salida: "Salida",
+  enviar: "Enviar respuesta (simulado)", http: "Petición HTTP", salida: "Salida",
 };
 
 const valorDe = (x: unknown, clave = "valor") => (typeof x === "object" && x ? String((x as Record<string, unknown>)[clave] ?? "") : String(x));
 const lista = (x: unknown) => (Array.isArray(x) ? (x as unknown[]) : []);
 const corto = (x: unknown, n = 160) => { const t = typeof x === "string" ? x : JSON.stringify(x ?? ""); return t.length > n ? `${t.slice(0, n)}…` : t; };
 
-function describirConfig(n: Definicion["nodos"][number]): { id: string; descripcion: string }[] {
+function describirConfig(n: Definicion["nodos"][number], aristas: Definicion["aristas"] = []): { id: string; descripcion: string }[] {
   const c = n.config as Record<string, unknown>;
   const r: { id: string; descripcion: string }[] = [];
   const add = (d: string) => r.push({ id: `${n.id}_${r.length + 1}`, descripcion: d });
@@ -350,13 +401,36 @@ function describirConfig(n: Definicion["nodos"][number]): { id: string; descripc
       add(`Cuerpo: ${corto(c.cuerpo, 300)}`);
       add("Simulado: se arma el mensaje y queda como escritura bloqueada, nunca se envía");
       break;
+    case "http": {
+      const metodo = String(c.metodo ?? "GET");
+      const query = c.query && typeof c.query === "object" ? Object.keys(c.query as object) : [];
+      add(`${metodo} ${String(c.url)}${query.length ? ` · query ${query.join(", ")}` : ""} · espera hasta ${String(c.timeout_ms ?? 15000)} ms`);
+      if (c.credencial) add(`Credencial: Bearer desde la variable de entorno ${String(c.credencial)} (el valor nunca queda en el flujo)`);
+      if (c.cuerpo !== undefined) add(`Cuerpo: ${corto(c.cuerpo, 300)}${metodo === "GET" ? " (no se envía en GET)" : ""}`);
+      add(metodo === "GET"
+        ? "Sale de verdad solo si el host está en HTTP_HOSTS_PERMITIDOS (nunca a IP privadas ni de metadatos, sin seguir redirecciones); si no, se simula"
+        : "Simulado: la petición se arma y queda como escritura bloqueada, nunca se envía");
+      for (const m of lista(c.mapeo) as { variable: string; ruta: string; defecto?: unknown; obligatorio?: boolean }[])
+        add(`«${m.variable}» ← ${m.ruta}${m.obligatorio ? " (obligatorio)" : ""}${m.defecto !== undefined ? ` · si no está: ${corto(m.defecto, 60)}` : ""}`);
+      add(`Deja la respuesta en «${String(c.salida ?? n.id)}» · sale por «ok» o «error_http» (status ≥ 400)`);
+      break;
+    }
     case "salida":
       add(`Desenlace: ${String(c.desenlace)}${c.motivo ? ` · motivo ${String(c.motivo)}` : ""}${c.destino ? ` · destino ${String(c.destino)}` : ""}`);
       if (c.campos) add(`Entrega: ${Array.isArray(c.campos) ? (c.campos as string[]).join(", ") : Object.keys(c.campos as object).join(", ")}`);
       if (c.plantilla_respuesta) add(`Respuesta: ${corto(c.plantilla_respuesta, 300)}`);
       break;
   }
-  if (c.salida && !["ia_clasificar", "ia_decidir", "ia_extraer", "extraer_regex", "transformar", "buscar_en_tabla", "ia_generar", "resumir", "ia_redactar", "salida"].includes(n.tipo)) add(`Deja su resultado en «${String(c.salida)}»`);
+  if (c.salida && !["ia_clasificar", "ia_decidir", "ia_extraer", "extraer_regex", "transformar", "buscar_en_tabla", "ia_generar", "resumir", "ia_redactar", "http", "salida"].includes(n.tipo)) add(`Deja su resultado en «${String(c.salida)}»`);
+  // Lo común a todo nodo: reintentos, qué hace si falla y si está apagado.
+  const rt = c.reintentos as { intentos?: number; espera_ms?: number; backoff?: number; maximo_ms?: number } | undefined;
+  if (rt && typeof rt === "object" && (rt.intentos ?? 1) > 1)
+    add(`Reintenta hasta ${String(rt.intentos)} veces en total ante fallos pasajeros (429, 5xx, tiempo, conexión) · espera ${String(rt.espera_ms ?? 500)} ms × ${String(rt.backoff ?? 2)}, tope ${String(rt.maximo_ms ?? 10000)} ms, al azar`);
+  if (n.tipo !== "salida") {
+    if (aristas.some((a) => a.desde === n.id && (a.cuando ?? "").trim().toLowerCase() === RAMA_ERROR)) add("Si falla, sigue por la rama «error» con {{fallo.motivo}}");
+    else if (c.continuar_si_falla === true) add("Si falla, continúa por su arista normal y lo anota como aviso");
+  }
+  if (c.deshabilitado === true) add("Deshabilitado: no se ejecuta, el flujo pasa de largo por su arista por defecto");
   return r;
 }
 
@@ -385,7 +459,7 @@ export function catalogoDeclarativo(d: Definicion): Catalogo & { fases: { id: st
       usa_ia: TIPOS_IA.has(n.tipo), categoria: CATEGORIA[n.tipo], tipo_declarativo: n.tipo, config: n.config,
       siguientes: d.aristas.filter((a) => a.desde === n.id).map((a) => a.hacia),
       desenlaces: n.tipo === "salida" ? [{ accion: String((n.config as { desenlace?: string }).desenlace ?? ""), cuando: "al llegar aquí" }] : [],
-      reglas: describirConfig(n), parametros: [],
+      reglas: describirConfig(n, d.aristas), parametros: [],
     })) as Catalogo["nodos"],
     aristas: d.aristas.map((a) => ({ desde: a.desde, hacia: a.hacia, etiqueta: a.cuando && a.cuando !== "*" ? a.cuando : undefined })),
     herramientas_agente: [], proveedores: [{ id: "vertex", nombre: `Vertex AI (${d.modelo})`, tipo: "ia" }],

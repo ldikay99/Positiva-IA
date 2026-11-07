@@ -178,6 +178,41 @@ export const TONO_DESENLACE: Record<string, string> = {
   aplazado: "ambar",
 };
 
+/** Los motivos con que el motor manda un correo a revisión manual, en palabras. */
+const MOTIVOS: Record<string, string> = {
+  SIN_NOMBRE_REMITENTE: "No se sabe quién escribe",
+  SIN_NOMBRE_AFECTADO: "No se identificó a la persona afectada",
+  SIN_DOCUMENTO: "Falta el documento de identidad",
+  DOCUMENTO_AMBIGUO: "Varios documentos posibles",
+  DOCUMENTO_DE_OTRA_PERSONA: "El documento es de otra persona",
+  EMPRESA_CON_DOCUMENTO_DE_PERSONA: "Empresa con documento de persona",
+  SIN_TIPO_SOLICITUD: "No se pudo clasificar la solicitud",
+  SOLO_EMPRESA_SIN_AFECTADO: "Solo identifica una empresa",
+  ADJUNTO_PROTEGIDO: "Adjunto con contraseña",
+  ANEXO_DE_RADICADO: "Anexo de un radicado anterior",
+  POSIBLE_SOLICITUD_NUEVA: "Posible solicitud nueva en el hilo",
+  ADJUNTO_ILEGIBLE: "Adjunto que no se pudo leer",
+  ADJUNTO_NO_LEIDO: "Adjunto en un formato no compatible",
+  SIN_OCR: "Imagen sin lectura de texto",
+  VALIDACION_RECHAZO: "La validación final rechazó los datos",
+  INYECCION_DETECTADA: "Intento de manipular a la IA",
+  CLOUDFLARE_403: "SGDEA pidió verificación (captcha)",
+  SGDEA_CAIDO: "SGDEA no respondió",
+  PETICION_MAL_FORMADA: "SGDEA rechazó la petición",
+  RADICACION_SIN_CONFIRMAR: "Radicación sin número de confirmación",
+  SIN_TELEFONO: "Falta el teléfono",
+  REGLA_PERSONALIZADA: "Lo pidió una regla propia",
+};
+
+/** «SIN_NOMBRE_AFECTADO» → «No se identificó a la persona afectada»; lo desconocido, en minúsculas legibles. */
+export function motivoLegible(codigo: string): string {
+  if (!codigo) return "";
+  if (MOTIVOS[codigo]) return MOTIVOS[codigo];
+  if (!/^[A-Za-z0-9_-]+$/.test(codigo) || !/[_-]/.test(codigo)) return codigo;
+  const t = codigo.replace(/[_-]+/g, " ").toLowerCase();
+  return t[0]!.toUpperCase() + t.slice(1);
+}
+
 export function segundos(ms: number): string {
   return ms < 1000 ? `${ms} ms` : `${(ms / 1000).toFixed(1).replace(".", ",")} s`;
 }

@@ -2,7 +2,8 @@
 La biblioteca de nodos de los flujos declarativos, en un solo lugar.
 
 - `TIPOS`: la especificación de cada tipo (qué hace, su config, por dónde sale,
-  qué variables deja y un ejemplo).
+  qué variables deja, un ejemplo de nodo, `ejemplos` de config para copiar y
+  `consejos` cortos).
 - `DOCUMENTACION`: el texto que el asistente del chat pone en su prompt para
   crear flujos (`from nodos_declarativos import DOCUMENTACION`).
 - `esquema()`: la misma especificación en JSON, para la web o para pruebas.
@@ -16,7 +17,7 @@ import copy
 import json
 from typing import Any, Dict
 
-VERSION = 2
+VERSION = 3
 
 DESENLACES = ["radicar", "manual", "reenviar", "descartar", "responder", "duplicado"]
 
@@ -27,6 +28,10 @@ COMUNES: Dict[str, Dict[str, Any]] = {
     "salida": {"tipo": "nombre de variable", "descripcion": "Dónde deja su resultado (letras, números y guion bajo)."},
     "modelo": {"tipo": "texto", "descripcion": "Solo nodos de IA: modelo de este nodo (si no, el del flujo)."},
     "temperatura": {"tipo": "número 0..2", "descripcion": "Solo nodos de IA: creatividad (0,1 por defecto; 0,4–0,7 para redactar)."},
+    "deshabilitado": {"tipo": "booleano", "defecto": False, "descripcion": "No se ejecuta: sigue por la arista por defecto (o la primera). No vale en entrada_correo ni salida."},
+    "continuar_si_falla": {"tipo": "booleano", "defecto": False, "descripcion": "Si el nodo falla, sigue por su arista normal y anota el fallo como aviso (y en {{fallo.*}})."},
+    "reintentos": {"tipo": "{intentos 1..5, espera_ms, backoff, maximo_ms}", "descripcion": "Solo IA, enviar, notificar y http: repite ante fallos pasajeros "
+                   "(429, 5xx, tiempo agotado, conexión) con espera exponencial al azar; intentos cuenta el primero. Nunca reintenta errores de datos."},
 }
 
 PLANTILLAS = {
@@ -35,6 +40,10 @@ PLANTILLAS = {
     "adjuntos.texto": "texto leído de los adjuntos (con OCR si se pidió)", "adjuntos.nombres": "nombres de los adjuntos, separados por coma",
     "adjuntos.cantidad": "cuántos adjuntos trae", "adjuntos.leidos": "nombres de los adjuntos que sí se leyeron",
     "<variable>": "una variable de un nodo anterior", "<variable>.<campo>": "un campo de una variable JSON (p. ej. la fila de buscar_en_tabla)",
+    "<lista>.0.<campo>": "un elemento de una lista por su posición (desde 0); también <lista>[0]",
+    "<lista>[campo=valor].<otro>": "el primer elemento cuyo campo vale eso (sin distinguir mayúsculas ni tildes); con espacios: [campo=\"dos palabras\"]",
+    "<variable>[\"a.b\"]": "una clave que tiene puntos o espacios, entre comillas",
+    "fallo.motivo": "en la rama de error: por qué falló (también fallo.nodo, fallo.nombre, fallo.tipo, fallo.error)",
 }
 
 TIPOS: Dict[str, Dict[str, Any]] = {
@@ -214,6 +223,27 @@ TIPOS: Dict[str, Dict[str, Any]] = {
         "salidas": ["ok"], "produce": "salida (el mensaje armado)",
         "ejemplo": {"id": "responder", "tipo": "enviar", "nombre": "Responder al remitente", "config": {"cuerpo": "{{respuesta}}"}},
     },
+    "http": {
+        "nombre": "Petición HTTP", "categoria": "integracion",
+        "descripcion": "Consulta una API. Solo los GET a hosts de HTTP_HOSTS_PERMITIDOS salen de verdad (nunca a IP privadas, loopback ni metadatos, "
+                       "sin seguir redirecciones); POST/PUT/PATCH/DELETE y los hosts no permitidos se arman y quedan como escritura bloqueada.",
+        "config": {"metodo": {"tipo": "GET|POST|PUT|PATCH|DELETE", "defecto": "GET"},
+                   "url": {"tipo": "plantilla http(s)://…", "obligatorio": True},
+                   "query": {"tipo": "{nombre: plantilla}"}, "encabezados": {"tipo": "{nombre: plantilla}", "descripcion": "sin Authorization ni claves: usa credencial"},
+                   "cuerpo": {"tipo": "plantilla u objeto JSON con plantillas", "descripcion": "no se envía en GET"},
+                   "credencial": {"tipo": "nombre de variable de entorno", "descripcion": "p. ej. HTTP_TOKEN_X; se manda como Bearer. Nunca el valor en el flujo"},
+                   "timeout_ms": {"tipo": "entero 100..60000", "defecto": 15000},
+                   "mapeo": {"tipo": "lista [{variable, ruta, defecto, obligatorio}]", "descripcion": "ruta dentro del cuerpo de la respuesta: «items.0.id», «items[estado=activo].id»; "
+                             "un obligatorio que falta hace fallar el nodo"},
+                   "reintentos": {"tipo": "como en la config común"},
+                   "salida": {"tipo": "variable", "defecto": "id del nodo", "descripcion": "{status, ok, datos, encabezados, ms} o la petición simulada"}},
+        "salidas": ["ok", "error_http"], "produce": "salida, <variable de cada mapeo>",
+        "ejemplo": {"id": "consultar_afiliado", "tipo": "http", "nombre": "Consultar afiliado", "config": {
+            "metodo": "GET", "url": "https://api.ejemplo.gov.co/afiliados", "query": {"documento": "{{documento}}"},
+            "credencial": "HTTP_TOKEN_AFILIADOS", "timeout_ms": 10000, "salida": "afiliado",
+            "reintentos": {"intentos": 3, "espera_ms": 500, "backoff": 2, "maximo_ms": 5000},
+            "mapeo": [{"variable": "empresa", "ruta": "empresa.nombre", "defecto": ""}]}},
+    },
     "salida": {
         "nombre": "Salida", "categoria": "salida",
         "descripcion": "Termina el flujo con un desenlace. Entrega la solicitud con los campos indicados y, si se da, la respuesta armada con la plantilla.",
@@ -226,6 +256,111 @@ TIPOS: Dict[str, Dict[str, Any]] = {
             "desenlace": "radicar", "campos": ["nombre", "documento"], "plantilla_respuesta": "{{respuesta}}"}},
     },
 }
+
+# La ayuda de cada tipo: configs para copiar (ejemplos) y consejos cortos.
+AYUDA: Dict[str, Dict[str, Any]] = {
+    "entrada_correo": {
+        "ejemplos": [{"leer_adjuntos": False}, {"leer_adjuntos": True, "ocr": False}],
+        "consejos": ["Si vas a filtrar antes de leer los adjuntos, pon leer_adjuntos: false y un nodo leer_adjuntos después del filtro.",
+                     "No se puede deshabilitar: es donde empieza todo flujo."],
+    },
+    "leer_adjuntos": {
+        "ejemplos": [{"tipos": ["pdf", "imagen"], "max_paginas": 10}, {"nombre_patron": "incapacidad", "ocr": False, "salida": "texto_incapacidad"}],
+        "consejos": ["Sale por «sin_adjuntos» si no leyó ninguno: dale una arista a revisión manual.",
+                     "Bajar max_paginas acelera mucho los PDF escaneados largos."],
+    },
+    "filtro": {
+        "ejemplos": [{"campo": "asunto", "operador": "contiene", "valor": "incapacidad"},
+                     {"campo": "correo.remitente_correo", "operador": "coincide", "valor": "@(cendoj\\.)?ramajudicial\\.gov\\.co$"}],
+        "consejos": ["contiene e igual no distinguen mayúsculas ni tildes; coincide usa regex.", "campo «texto» mira asunto, cuerpo y adjuntos juntos."],
+    },
+    "condicion": {
+        "ejemplos": [{"campo": "documento", "operador": "no_vacio"}, {"campo": "{{area.area}}", "operador": "igual", "valor": "Prestaciones"}],
+        "consejos": ["Úsala con variables ya obtenidas; para el correo crudo, filtro es lo mismo."],
+    },
+    "ia_clasificar": {
+        "ejemplos": [{"variable": "tema", "categorias": [{"valor": "incapacidad", "descripcion": "pide pago o transcripción"}, {"valor": "otro", "descripcion": "lo demás"}]},
+                     {"variable": "tono", "entradas": ["correo.cuerpo"], "categorias": ["queja", "consulta"], "reintentos": {"intentos": 3}}],
+        "consejos": ["Incluye siempre una categoría «otro» para lo que no encaja.", "Describe cada categoría con lo que la distingue, no con su nombre repetido.",
+                     "No uses «error» como categoría: es la rama de fallo."],
+    },
+    "ia_decidir": {
+        "ejemplos": [{"pregunta": "¿Hay que responder hoy?", "salida": "prioridad", "opciones": [
+            {"valor": "hoy", "criterio": "hay un plazo judicial o riesgo para la vida"}, {"valor": "normal", "criterio": "lo demás"}]}],
+        "consejos": ["Los criterios se aplican en orden: pon el más específico primero.", "La justificación queda en <salida>_justificacion para el motivo o la respuesta."],
+    },
+    "ia_extraer": {
+        "ejemplos": [{"entradas": ["correo", "adjuntos.texto"], "salida": "datos", "campos": [
+            {"nombre": "nombre", "descripcion": "nombre completo", "obligatorio": True}, {"nombre": "documento", "descripcion": "cédula", "tipo": "numero"}]}],
+        "consejos": ["Lo que no está queda vacío (no se inventa): valídalo después con un nodo validar.",
+                     "Con entradas limitas lo que ve la IA: menos texto, menos costo y menos errores."],
+    },
+    "extraer_regex": {
+        "ejemplos": [{"de": "{{correo.asunto}} {{correo.cuerpo}}", "campos": [{"nombre": "radicado", "patron": "\\b(\\d{23})\\b", "obligatorio": True}]},
+                     {"de": "adjuntos.texto", "campos": [{"nombre": "cie10", "patron": "\\b[A-Z]\\d{2}(?:\\.\\d)?\\b", "todos": True}]}],
+        "consejos": ["Es gratis y determinista: úsalo antes que la IA para números con formato fijo.", "todos: true deja una lista sin repetidos."],
+    },
+    "validar": {
+        "ejemplos": [{"reglas": [{"campo": "documento", "regla": "patron", "valor": "[0-9]{6,10}", "codigo": "DOCUMENTO_INVALIDO"}]},
+                     {"reglas": [{"campo": "tema", "regla": "en_lista", "valor": ["incapacidad", "afiliacion"]}, {"campo": "nombre", "regla": "longitud", "valor": [3, 120]}]}],
+        "consejos": ["El código del primer reparo queda en el motivo de la salida.", "patron exige que todo el texto coincida, no un pedazo."],
+    },
+    "transformar": {
+        "ejemplos": [{"operaciones": [{"op": "solo_digitos", "de": "documento", "salida": "documento"}, {"op": "titulo", "de": "nombre", "salida": "nombre"}]},
+                     {"operaciones": [{"op": "plantilla", "plantilla": "{{lista[estado=activo].id}}", "salida": "id_activo"}]}],
+        "consejos": ["Las operaciones corren en orden: una puede usar la salida de la anterior.", "defecto rellena una variable vacía con un valor fijo o plantilla."],
+    },
+    "buscar_en_tabla": {
+        "ejemplos": [{"buscar": "tema", "columna": "tema", "traer": ["area", "correo"], "salida": "area",
+                      "tabla": [{"tema": "incapacidad", "area": "Prestaciones", "correo": "prestaciones@ejemplo.gov.co"}]},
+                     {"buscar": "{{correo.asunto}}", "modo": "contiene", "columna": "palabra", "salida": "ruta",
+                      "tabla": [{"palabra": "tutela", "area": "Jurídica"}, {"palabra": "incapacidad", "area": "Prestaciones"}]}],
+        "consejos": ["La fila queda como JSON: úsala con {{salida.columna}}.", "modo contiene sirve cuando el valor viene dentro de un texto más largo."],
+    },
+    "bifurcar_por_valor": {
+        "ejemplos": [{"variable": "tema", "casos": ["incapacidad", "afiliacion"]}],
+        "consejos": ["Lo que no coincide sale por «otro»: dale siempre una arista.", "No uses «error» como caso: es la rama de fallo."],
+    },
+    "ia_generar": {
+        "ejemplos": [{"instrucciones": "Redacta una respuesta formal y breve. No inventes datos.", "entradas": ["correo.asunto", "datos"], "salida": "respuesta", "temperatura": 0.4},
+                     {"instrucciones": "Arma la ficha del caso.", "esquema": {"resumen": "dos frases", "prioridad": "alta|media|baja"}, "salida": "ficha",
+                      "reintentos": {"intentos": 3, "espera_ms": 1000}}],
+        "consejos": ["Con esquema devuelve JSON y puedes usar {{ficha.campo}} después.", "Ponle reintentos si el modelo suele dar 429 en horas pico."],
+    },
+    "resumir": {
+        "ejemplos": [{"entradas": ["correo", "adjuntos.texto"], "longitud": "3 viñetas", "salida": "resumen"}],
+        "consejos": ["enfoque dice qué priorizar (p. ej. «los plazos y montos»)."],
+    },
+    "ia_redactar": {
+        "ejemplos": [{"instrucciones": "Redacta una respuesta breve y formal.", "variable": "respuesta"}],
+        "consejos": ["Para flujos nuevos usa ia_generar, que admite JSON y esquema."],
+    },
+    "notificar": {
+        "ejemplos": [{"para": "{{area.correo}}", "asunto": "Nuevo caso: {{correo.asunto}}", "cuerpo": "{{resumen}}"},
+                     {"para": "soporte@ejemplo.gov.co", "asunto": "Falló {{fallo.nodo}}", "cuerpo": "{{fallo.motivo}}"}],
+        "consejos": ["Nunca se envía: queda como escritura bloqueada para revisar.", "Detrás de una arista «error» sirve para avisar del fallo con {{fallo.motivo}}."],
+    },
+    "enviar": {
+        "ejemplos": [{"cuerpo": "{{respuesta}}\n\nAtentamente,\nPositiva"}],
+        "consejos": ["Por defecto va al remitente con «RE: asunto».", "Nunca se envía: queda como escritura bloqueada."],
+    },
+    "http": {
+        "ejemplos": [{"metodo": "GET", "url": "https://api.ejemplo.gov.co/afiliados/{{documento}}", "timeout_ms": 8000, "salida": "afiliado",
+                      "mapeo": [{"variable": "estado", "ruta": "estado", "defecto": "desconocido"}, {"variable": "id_activo", "ruta": "polizas[estado=activa].id"}]},
+                     {"metodo": "POST", "url": "https://api.ejemplo.gov.co/casos", "credencial": "HTTP_TOKEN_CASOS",
+                      "cuerpo": {"documento": "{{documento}}", "resumen": "{{resumen}}"}}],
+        "consejos": ["Los POST/PUT/PATCH/DELETE nunca salen: se arman y quedan como escritura bloqueada.",
+                     "El GET sale solo si su host está en HTTP_HOSTS_PERMITIDOS; si no, se simula.",
+                     "Dale una arista a «error_http» (status ≥ 400) y otra a «error» (tiempo agotado, destino bloqueado)."],
+    },
+    "salida": {
+        "ejemplos": [{"desenlace": "radicar", "campos": ["nombre", "documento"]}, {"desenlace": "manual", "motivo": "{{fallo.motivo}}"}],
+        "consejos": ["campos como objeto {nombre: plantilla} arma la solicitud con otros nombres.", "No se puede deshabilitar ni tiene aristas que salgan."],
+    },
+}
+for _t, _a in AYUDA.items():
+    TIPOS[_t]["ejemplos"] = _a["ejemplos"]
+    TIPOS[_t]["consejos"] = _a["consejos"]
 
 EJEMPLO_FLUJO: Dict[str, Any] = {
     "id": "respuesta-con-datos", "nombre": "Respuesta con datos", "descripcion": "Lee los PDF, extrae los datos, redacta la respuesta y avisa al área.",
@@ -253,9 +388,16 @@ REGLAS = """Un flujo declarativo es {id, nombre, descripcion, modelo, nodos: [{i
 - Paso de datos: cada nodo puede declarar en config "entradas" (lo que recibe) y "salida" (la variable donde deja su resultado).
   En los nodos de IA, con "entradas" el modelo ve SOLO eso; sin "entradas" ve el correo, los adjuntos y las variables.
 - Plantillas {{...}} en instrucciones, textos, motivos, destinos y mensajes: {{correo.asunto}}, {{correo.cuerpo}}, {{correo.remitente}},
-  {{correo.remitente_correo}}, {{correo.remitente_nombre}}, {{adjuntos.texto}}, {{adjuntos.nombres}}, {{<variable>}}, {{<variable>.<campo>}}.
+  {{correo.remitente_correo}}, {{correo.remitente_nombre}}, {{adjuntos.texto}}, {{adjuntos.nombres}}, {{<variable>}}, {{<variable>.<campo>}},
+  {{<lista>.0.<campo>}}, {{<lista>[campo=valor].<otro>}}, {{<variable>["clave.con.puntos"]}}.
   Toda variable usada tiene que salir de un nodo anterior en algún camino; si en la corrida no tiene valor, queda vacía.
-- Nada se envía ni se escribe en sistemas reales: notificar y enviar solo arman el mensaje y lo anotan como escritura bloqueada.
+- Fallos: cualquier nodo (salvo salida) puede tener una arista con cuando "error": si el nodo falla, el flujo sigue por ella con
+  {{fallo.motivo}}, {{fallo.nodo}} y {{fallo.tipo}}. Con config.continuar_si_falla: true sigue por su arista normal y lo anota como aviso.
+  Sin ninguna de las dos, la corrida termina en error. No uses "error" como categoría, opción ni caso.
+- config.reintentos {intentos 1..5, espera_ms, backoff, maximo_ms} (IA, enviar, notificar, http) repite solo fallos pasajeros (429, 5xx, tiempo, conexión).
+- config.deshabilitado: true salta el nodo (sigue por la arista por defecto o la primera); no vale en entrada_correo ni salida.
+- Nada se envía ni se escribe en sistemas reales: notificar y enviar solo arman el mensaje y lo anotan como escritura bloqueada;
+  http hace de verdad solo GET a hosts de HTTP_HOSTS_PERMITIDOS (lo demás se simula) y la credencial es el nombre de una variable de entorno.
 - Modelos: gemini-2.5-flash (por defecto), gemini-2.5-pro, gemini-3-flash-preview, gemini-3.1-flash-lite."""
 
 
@@ -291,7 +433,7 @@ DOCUMENTACION = _documentacion()
 
 
 def esquema() -> Dict[str, Any]:
-    """La especificación de tipos, serializable a JSON."""
+    """La especificación de tipos (con sus ejemplos y consejos), serializable a JSON."""
     return copy.deepcopy({"version": VERSION, "reglas": REGLAS, "comunes": COMUNES, "plantillas": PLANTILLAS,
                           "desenlaces": DESENLACES, "tipos": TIPOS, "ejemplo_flujo": EJEMPLO_FLUJO})
 

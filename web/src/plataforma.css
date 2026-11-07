@@ -34,8 +34,84 @@
 .chat-conv-acciones button { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 7px; color: var(--texto-3); }
 .chat-conv-acciones button:hover { background: var(--superficie-2); color: var(--tinta); }
 .chat-sin { padding: 14px 10px; font-size: 12.5px; color: var(--texto-3); }
-.chat-modelo { align-self: flex-start; padding: 2px 4px; border: 0; border-radius: 6px; background: transparent; color: var(--texto-3); font-size: 11px; font-weight: 600; }
-.chat-modelo:hover { background: var(--superficie-2); color: var(--texto-2); }
+.chat-conv-confirma { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 10px; font-size: 12px; color: var(--texto); }
+.chat-conv-confirma span { flex: 1 1 100%; }
+
+/* ------------------------------------------------ el desplegable propio */
+.selector { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; padding: 7px 10px 7px 12px; border: 0; border-radius: 11px; font: inherit; font-size: 13px; font-weight: 600; text-align: left; color: var(--texto); background: var(--pliego); box-shadow: inset 0 0 0 1px var(--linea-2, var(--linea)); cursor: pointer; transition: box-shadow 0.15s, background 0.15s; }
+.selector:hover:not(:disabled) { box-shadow: inset 0 0 0 1px var(--azul); }
+.selector:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--azul); }
+.selector.abierto { box-shadow: inset 0 0 0 2px var(--azul); }
+.selector:disabled { opacity: 0.5; cursor: default; }
+.selector.chico { padding: 4px 6px 4px 8px; border-radius: 8px; font-size: 11.5px; }
+.selector.tono-plano { background: transparent; box-shadow: none; color: var(--texto-2); }
+.selector.tono-plano:hover:not(:disabled), .selector.tono-plano.abierto { background: var(--superficie-2); box-shadow: none; }
+.selector.tono-oscuro { background: rgba(255, 255, 255, 0.1); box-shadow: none; color: #fff; }
+.selector.tono-oscuro:hover:not(:disabled), .selector.tono-oscuro.abierto { background: rgba(255, 255, 255, 0.18); box-shadow: none; }
+.selector-valor { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.selector-valor.vacio { color: var(--texto-3); font-weight: 500; }
+.selector-flecha { flex: none; opacity: 0.6; transition: transform 0.18s; }
+.selector.abierto .selector-flecha { transform: rotate(180deg); }
+.selector-lista { position: fixed; z-index: 2147483600; margin: 0; padding: 5px; list-style: none; overflow-y: auto; overscroll-behavior: contain; border-radius: 13px; background: var(--pliego); box-shadow: 0 18px 44px -14px rgba(24, 32, 58, 0.45), 0 0 0 1px rgba(24, 32, 58, 0.08); transform-origin: top; }
+.selector-opcion { display: flex; align-items: center; gap: 8px; min-height: 34px; padding: 6px 10px; border-radius: 9px; font-size: 13px; color: var(--texto); cursor: pointer; }
+.selector-opcion.activa { background: var(--superficie-2); }
+.selector-opcion.elegida { color: var(--azul); font-weight: 650; }
+.selector-opcion.deshabilitada { opacity: 0.45; cursor: default; }
+.selector-texto { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.selector-texto > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.selector-texto small { font-size: 11px; font-weight: 500; color: var(--texto-3); }
+
+/* Pie de la entrada: cómo responde por escrito y con qué voz habla en la llamada. */
+.chat-pie { display: flex; align-items: center; gap: 2px 4px; flex-wrap: wrap; padding: 0 2px; font-size: 11px; color: var(--texto-3); }
+.chat-pie > span { margin-left: 4px; }
+.chat-pie > span:first-child { margin-left: 0; }
+
+/* La llamada. */
+.chat-icono.llamar { color: #fff; background: rgba(255, 255, 255, 0.1); }
+.chat-icono.llamar:hover { background: #2f7a55; }
+.chat-icono.llamar.activa { background: #c4452f; }
+.chat-icono:disabled { opacity: 0.4; }
+.chat-burbuja.en-llamada { background: #2f7a55; animation: latido 1.8s ease-in-out infinite; }
+.chat-burbuja.en-llamada::after { display: none; }
+@keyframes latido { 0%, 100% { box-shadow: 0 0 0 0 rgba(47, 122, 85, 0.45), 0 18px 38px -12px rgba(24, 32, 58, 0.65); } 50% { box-shadow: 0 0 0 10px rgba(47, 122, 85, 0), 0 18px 38px -12px rgba(24, 32, 58, 0.65); } }
+.llamada { display: flex; align-items: center; gap: 8px; min-width: 0; margin: 0 10px 8px; padding: 6px 6px 6px 12px; border-radius: 16px; background: var(--pliego); box-shadow: inset 0 0 0 1px var(--linea), 0 6px 18px -10px rgba(24, 32, 58, 0.35); }
+.llamada-indicador { display: inline-flex; align-items: center; gap: 3px; flex: none; height: 26px; }
+.llamada-indicador i { display: block; width: 4px; height: 24px; border-radius: 4px; background: var(--texto-3); transform: scaleY(0.18); transform-origin: center; transition: background 0.2s; }
+.llamada-indicador[data-habla="tu"] i { background: var(--azul); }
+.llamada-indicador[data-habla="vera"] i { background: var(--lacre); }
+.llamada-estado { flex: 1; min-width: 0; font-size: 12px; font-weight: 600; color: var(--texto-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.llamada-boton { display: grid; place-items: center; flex: none; width: 34px; height: 34px; border-radius: 50%; color: var(--texto-2); background: var(--superficie-2); transition: background 0.15s, color 0.15s; }
+.llamada-boton:hover { background: var(--linea); color: var(--tinta); }
+.llamada-boton:focus-visible { outline: 2px solid var(--azul); outline-offset: 2px; }
+.llamada-boton.apagado { background: var(--tinta); color: #fff; }
+.llamada-boton.colgar { background: #c4452f; color: #fff; }
+.llamada-boton.colgar:hover { background: #d9533c; color: #fff; }
+.chat-msj.en-vivo .chat-texto { opacity: 0.78; }
+.chat-msj.en-vivo.asistente .chat-texto { box-shadow: inset 0 0 0 1px var(--lacre); }
+.chat-de-voz { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 600; color: var(--texto-3); }
+.chat-aviso { display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 12px; font-size: 12px; background: var(--rojo-suave); color: var(--rojo); }
+.chat-aviso span { flex: 1; }
+
+/* Lo que Vera propone y la persona confirma. */
+.chat-propuestas { display: flex; flex-direction: column; gap: 6px; }
+.chat-propuesta { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-radius: 13px; background: var(--pliego); box-shadow: inset 0 0 0 1px var(--rojo); font-size: 12.5px; }
+.chat-propuesta div { display: flex; gap: 6px; }
+.chat-propuesta-hecha { font-size: 11.5px; color: var(--texto-3); }
+
+/* Markdown de las respuestas. */
+.chat-texto > * + * { margin-top: 6px; }
+.chat-texto ul, .chat-texto ol { margin: 0; padding-left: 18px; }
+.chat-texto li + li { margin-top: 2px; }
+.chat-texto .md-titulo { font-family: var(--titulos); font-weight: 720; color: var(--tinta); }
+.chat-texto .md-titulo.n1 { font-size: 15px; }
+.chat-texto .md-titulo.n2, .chat-texto .md-titulo.n3, .chat-texto .md-titulo.n4 { font-size: 13.5px; }
+.chat-texto blockquote { margin: 0; padding: 4px 10px; border-radius: 8px; background: var(--superficie-2); color: var(--texto-2); }
+.chat-texto .md-codigo { margin: 0; padding: 8px 10px; border-radius: 9px; background: var(--tinta); color: #e8ecf8; font-family: var(--mono); font-size: 11px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-texto .md-codigo code { background: none; padding: 0; color: inherit; }
+.chat-texto .md-tabla { max-width: 100%; overflow-x: auto; }
+.chat-texto table { border-collapse: collapse; font-size: 12px; }
+.chat-texto th, .chat-texto td { padding: 4px 8px; text-align: left; vertical-align: top; box-shadow: inset 0 -1px 0 var(--linea); }
+.chat-texto th { font-weight: 700; color: var(--texto-2); }
 
 .chat-cabeza { display: flex; align-items: center; gap: 6px; min-width: 0; padding: 9px 8px; background: var(--tinta); color: #fff; }
 .chat-sello { display: grid; place-items: center; flex: none; width: 34px; height: 34px; border-radius: 11px; background: var(--lacre); color: var(--tinta); }
@@ -134,15 +210,24 @@
   .chat-panel { right: 0; bottom: 0; width: 100vw; height: 100dvh; border-radius: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .chat-puntos i, .chat-paso-punto.en-curso, .chat-burbuja.ocupada::after, .girando { animation: none; }
+  .chat-puntos i, .chat-paso-punto.en-curso, .chat-burbuja.ocupada::after, .chat-burbuja.en-llamada, .girando { animation: none; }
 }
 
 /* ------------------------------------------------------------------ tablero */
 
 .vista.tablero { padding: 26px 28px 120px; overflow: auto; height: 100%; }
-.tab-portada { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; flex-wrap: wrap; margin-bottom: 22px; }
-.tab-portada h1 { font-size: 34px; letter-spacing: -0.03em; }
-.tab-portada p { margin-top: 6px; color: var(--texto-2); max-width: 62ch; }
+.tab-portada { display: flex; align-items: center; justify-content: space-between; gap: 14px 18px; flex-wrap: wrap; margin-bottom: 22px; }
+.tab-portada p { color: var(--texto-2); font-size: 15px; line-height: 1.55; max-width: 64ch; }
+.tab-portada p b { color: var(--tinta); font-weight: 700; }
+.tab-anillo-caja { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.tab-anillo-caja > small { font-size: 11.5px; font-weight: 600; color: var(--texto-3); }
+.tab-grafico { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.tab-grafico figcaption { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 11.5px; color: var(--texto-3); }
+.tab-grafico figcaption span { display: inline-flex; align-items: center; gap: 5px; }
+.tab-grafico figcaption i { width: 9px; height: 9px; border-radius: 3px; }
+.clave-radicadas { background: var(--verde); }
+.clave-otras { background: var(--azul-medio); }
+.tab-sin { font-size: 12.5px; color: var(--texto-3); padding: 8px 0; }
 .tab-crear { padding: 11px 16px; background: var(--lacre) !important; color: var(--tinta) !important; box-shadow: 0 12px 24px -12px rgba(217, 146, 46, 0.95) !important; }
 .tab-rejilla { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
 .tab-flujo { display: flex; flex-direction: column; gap: 12px; padding: 18px; border-radius: 22px; background: var(--pliego); box-shadow: var(--sombra-2); }
@@ -181,6 +266,7 @@
 .tab-nuevo small { max-width: 30ch; line-height: 1.45; }
 @media (max-width: 760px) {
   .vista.tablero { padding: 18px 14px 120px; }
-  .tab-portada h1 { font-size: 27px; }
+  .tab-portada p { font-size: 14px; }
   .tab-rejilla { grid-template-columns: 1fr; }
+  .tab-flujo { padding: 16px; border-radius: 18px; }
 }

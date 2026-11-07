@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { motion } from "motion/react";
 import { usar } from "../estado.ts";
 import { Icono } from "../iconos.tsx";
-import { NOMBRES_CORTOS_DESENLACE, TONO_DESENLACE } from "../progreso.ts";
+import { NOMBRES_CORTOS_DESENLACE, TONO_DESENLACE, motivoLegible } from "../progreso.ts";
 import type { TableroFlujo } from "../tipos.ts";
 
 /** Pide algo al asistente: abre la burbuja con el texto ya escrito y lo envía. */
@@ -20,15 +20,22 @@ function hace(t: number): string {
 
 function Actividad({ dias }: { dias: TableroFlujo["porDia"] }) {
   const max = Math.max(1, ...dias.map((d) => d.n));
+  if (!dias.length) return <p className="tab-sin">Sin corridas todavía. Ábrelo y corre un correo para empezar.</p>;
   return (
-    <div className="tab-actividad" aria-label="Corridas por día">
-      {dias.map((d) => (
-        <span key={d.dia} title={`${d.dia}: ${d.n} corridas, ${d.radicados} radicadas`}>
-          <i style={{ height: `${(d.n / max) * 100}%` }}><b style={{ height: `${d.n ? (d.radicados / d.n) * 100 : 0}%` }} /></i>
-        </span>
-      ))}
-      {!dias.length && <em>Sin corridas todavía</em>}
-    </div>
+    <figure className="tab-grafico">
+      <figcaption>
+        Corridas por día
+        <span><i className="clave-radicadas" />radicadas</span>
+        <span><i className="clave-otras" />otro resultado</span>
+      </figcaption>
+      <div className="tab-actividad" role="img" aria-label={dias.map((d) => `${d.dia}: ${d.n} corridas, ${d.radicados} radicadas`).join("; ")}>
+        {dias.map((d) => (
+          <span key={d.dia} title={`${d.dia}: ${d.n} corridas, ${d.radicados} radicadas`}>
+            <i style={{ height: `${(d.n / max) * 100}%` }}><b style={{ height: `${d.n ? (d.radicados / d.n) * 100 : 0}%` }} /></i>
+          </span>
+        ))}
+      </div>
+    </figure>
   );
 }
 
@@ -50,31 +57,34 @@ function TarjetaFlujo({ f, i }: { f: TableroFlujo; i: number }) {
   return (
     <motion.article className="tab-flujo" initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: i * 0.05, type: "spring", stiffness: 380, damping: 32 }}>
       <header>
-        <span className={`tab-tipo ${f.tipo}`}>{f.tipo === "codigo" ? "Motor del job" : `Creado aquí · v${info?.version ?? 1}`}</span>
+        <span className={`tab-tipo ${f.tipo}`}>{f.tipo === "codigo" ? "Motor de producción" : `Creado aquí, versión ${info?.version ?? 1}`}</span>
         {f.enCurso > 0 && <span className="tab-vivo"><span className="girando" />{f.enCurso} corriendo</span>}
       </header>
       <h2>{f.nombre}</h2>
       <p className="tab-desc">{info?.descripcion}</p>
       <div className="tab-cifras">
-        <div className="tab-anillo" style={{ ["--pct" as string]: `${pct}%` }} title={`${radicados} de ${terminadas} terminadas se radican`}>
-          <span><b>{pct}</b><small>%</small></span>
+        <div className="tab-anillo-caja">
+          <div className="tab-anillo" style={{ ["--pct" as string]: `${pct}%` }} role="img" aria-label={`${pct} % radicado: ${radicados} de ${terminadas} terminadas`}>
+            <span><b>{pct}</b><small>%</small></span>
+          </div>
+          <small>radicado</small>
         </div>
         <dl>
           <div><dt>Corridas</dt><dd>{f.corridas.toLocaleString("es-CO")}</dd></div>
-          <div><dt>A manual</dt><dd>{manual}</dd></div>
-          <div><dt>Errores</dt><dd className={errores ? "malo" : ""}>{errores}</dd></div>
-          <div><dt>Mediana</dt><dd>{f.segundosMediana ? `${Math.round(f.segundosMediana)} s` : "—"}</dd></div>
+          <div><dt>A revisión manual</dt><dd>{manual}</dd></div>
+          <div><dt>Con error</dt><dd className={errores ? "malo" : ""}>{errores}</dd></div>
+          <div><dt>Tiempo típico</dt><dd>{f.segundosMediana ? `${Math.round(f.segundosMediana)} s` : "—"}</dd></div>
         </dl>
       </div>
       <Actividad dias={f.porDia} />
       {!!f.ultimas.length && (
-        <ul className="tab-ultimas">
+        <ul className="tab-ultimas" aria-label="Últimas corridas">
           {f.ultimas.slice(0, 4).map((u) => (
             <li key={u.id}>
               <button onClick={async () => { await abrir(); void verCorrida(u.id); }}>
                 <span className={`punto tono-${TONO_DESENLACE[u.accion] ?? "gris"}`} />
                 <span className="tab-caso">{u.caso}</span>
-                <span className="tab-accion">{NOMBRES_CORTOS_DESENLACE[u.accion] ?? u.accion}{u.motivo ? ` · ${u.motivo.replace(/_/g, " ").toLowerCase()}` : ""}</span>
+                <span className="tab-accion">{NOMBRES_CORTOS_DESENLACE[u.accion] ?? u.accion}{u.motivo ? <span className="texto-3">: {motivoLegible(u.motivo).toLowerCase()}</span> : null}</span>
                 <span className="tab-cuando">{hace(u.t)}</span>
               </button>
             </li>
@@ -108,12 +118,11 @@ export function VistaTablero() {
   return (
     <div className="vista tablero">
       <section className="tab-portada">
-        <div>
-          <h1>Tus flujos</h1>
-          <p>
-            {flujos.length} flujo{flujos.length === 1 ? "" : "s"} · {total.toLocaleString("es-CO")} corridas · {radicados.toLocaleString("es-CO")} radicadas. Cada flujo corre con su propio motor y sus propias corridas.
-          </p>
-        </div>
+        <p>
+          {total
+            ? <>Entre tus {flujos.length} flujos se han corrido <b>{total.toLocaleString("es-CO")} correos</b> y <b>{radicados.toLocaleString("es-CO")}</b> quedaron radicados. Abre un flujo para correr correos nuevos o revisar los anteriores.</>
+            : <>Tienes {flujos.length} flujo{flujos.length === 1 ? "" : "s"}. Abre uno para elegir correos y correrlos.</>}
+        </p>
         <button className="boton primario tab-crear" onClick={() => pedirAlAsistente("Quiero crear un flujo nuevo. Pregúntame lo necesario y ármalo.")}>
           <Icono n="chispa" tam={15} />Crear un flujo con IA
         </button>

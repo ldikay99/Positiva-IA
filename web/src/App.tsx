@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
-import { AnimatePresence, motion } from "motion/react";
+import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { guardarLocal, leerLocal, usar, type Vista } from "./estado.ts";
 import { Icono, type NombreIcono } from "./iconos.tsx";
 import { Bandeja } from "./componentes/Bandeja.tsx";
@@ -13,16 +13,25 @@ import { VistaConfiguracion, VistaCorridas, VistaHerramientas, VistaLogs, VistaP
 import { VistaTablero, pedirAlAsistente } from "./componentes/Tablero.tsx";
 import { Chat } from "./componentes/Chat.tsx";
 
-const NAVEGACION: { id: Vista; nombre: string; icono: NombreIcono; titulo: string }[] = [
-  { id: "tablero", nombre: "Tablero", icono: "corridas", titulo: "Tablero" },
-  { id: "flujo", nombre: "Flujo", icono: "flujo", titulo: "" },
-  { id: "adjuntos", nombre: "Adjuntos", icono: "documento", titulo: "Adjuntos, hoja por hoja" },
-  { id: "corridas", nombre: "Corridas", icono: "historial", titulo: "Corridas" },
-  { id: "logs", nombre: "Logs", icono: "logs", titulo: "Todo lo que pasa, en vivo" },
-  { id: "herramientas", nombre: "Herramientas", icono: "herramientas", titulo: "Herramientas de la IA" },
-  { id: "proveedores", nombre: "Sistemas", icono: "proveedores", titulo: "Sistemas que consulta" },
-  { id: "configuracion", nombre: "Ajustes", icono: "ajustes", titulo: "Ajustes del motor" },
+const NAVEGACION: { id: Vista; nombre: string; icono: NombreIcono; pista: string; principal: boolean }[] = [
+  { id: "tablero", nombre: "Tablero", icono: "corridas", pista: "Todos los flujos y cómo les va", principal: true },
+  { id: "flujo", nombre: "Flujo", icono: "flujo", pista: "Elegir correos, correrlos y ver cada etapa", principal: true },
+  { id: "corridas", nombre: "Corridas", icono: "historial", pista: "Resultados de cada correo corrido", principal: true },
+  { id: "adjuntos", nombre: "Adjuntos", icono: "documento", pista: "Cada adjunto hoja por hoja", principal: true },
+  { id: "logs", nombre: "Logs", icono: "logs", pista: "Todo lo que hace el motor, en vivo", principal: false },
+  { id: "herramientas", nombre: "Herramientas", icono: "herramientas", pista: "Con qué busca datos la IA", principal: false },
+  { id: "proveedores", nombre: "Sistemas", icono: "proveedores", pista: "Sistemas que consulta el flujo", principal: false },
+  { id: "configuracion", nombre: "Ajustes", icono: "ajustes", pista: "Modelo de IA, capacidad y reglas", principal: false },
 ];
+
+/** «gemini-3.1-flash-lite» se lee «Gemini 3.1 Flash Lite». */
+function nombreModelo(m: string | undefined): string {
+  if (!m) return "";
+  return m
+    .split("-")
+    .map((p) => (/^[a-z]/.test(p) ? p[0]!.toUpperCase() + p.slice(1) : p))
+    .join(" ");
+}
 
 const CLAVE_MEDIDAS = "positiva-ia:medidas:v1";
 type Medidas = { bandeja: number; dock: number; inspector: number };
@@ -110,20 +119,21 @@ function BarraSuperior({ alternarBandeja, bandejaVisible }: { alternarBandeja: (
   const listos = motor?.trabajadores.filter((t) => t.listo).length ?? 0;
   const ajustes = Object.keys(configuracion?.parametros ?? {}).length + Object.keys(configuracion?.entorno ?? {}).length;
   const reglas = configuracion?.reglas.filter((r) => r.activa).length ?? 0;
+  const enCola = motor?.enCola.length ?? 0;
   return (
     <header className="barra">
       {vista === "flujo" && (
-        <button className={`boton-mini grande ${bandejaVisible ? "activo" : ""}`} aria-label="Mostrar u ocultar la bandeja" title="Bandeja" onClick={alternarBandeja}>
+        <button className={`boton-mini grande ${bandejaVisible ? "activo" : ""}`} aria-label={bandejaVisible ? "Ocultar la correspondencia" : "Mostrar la correspondencia"} aria-pressed={bandejaVisible} title={bandejaVisible ? "Ocultar la correspondencia" : "Mostrar la correspondencia"} onClick={alternarBandeja}>
           <Icono n="lado" tam={17} />
         </button>
       )}
-      <AnimatePresence mode="wait" initial={false}>
-        <motion.h1 key={vista} className="barra-titulo" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.18, ease: [0.2, 0.8, 0.2, 1] }}>
-          {NAVEGACION.find((n) => n.id === vista)?.titulo || flujoActual?.nombre}
-        </motion.h1>
-      </AnimatePresence>
+      {vista === "tablero" ? (
+        <h1 className="barra-titulo">Tus flujos</h1>
+      ) : (
       <button
         className="selector-flujo"
+        aria-haspopup="menu"
+        title="Cambiar de flujo"
         onClick={(e) => {
           const r = e.currentTarget.getBoundingClientRect();
           setMenu({
@@ -131,61 +141,106 @@ function BarraSuperior({ alternarBandeja, bandejaVisible }: { alternarBandeja: (
             y: r.bottom + 6,
             opciones: [
               { titulo: "Flujos" },
-              ...flujos.map((f) => ({ etiqueta: f.nombre, icono: (f.tipo === "codigo" ? "terminal" : "flujo") as NombreIcono, marcado: f.id === flujo, pista: f.tipo === "codigo" ? "Motor del job" : `Creado aquí · v${f.version ?? 1}`, alHacer: () => { void cambiarFlujo(f.id); if (vista === "tablero") irA("flujo"); } })),
+              ...flujos.map((f) => ({ etiqueta: f.nombre, icono: (f.tipo === "codigo" ? "terminal" : "flujo") as NombreIcono, marcado: f.id === flujo, pista: f.tipo === "codigo" ? "Motor de producción" : `Creado aquí, versión ${f.version ?? 1}`, alHacer: () => void cambiarFlujo(f.id) })),
               { separador: true },
               { etiqueta: "Crear un flujo con IA", icono: "chispa", alHacer: () => pedirAlAsistente("Quiero crear un flujo nuevo. Pregúntame lo necesario y ármalo.") },
             ],
           });
         }}
       >
-        <span>Flujo</span>
-        <b>{flujoActual?.nombre ?? flujo}</b>
-        <Icono n="abajo" tam={12} />
+        <span className="flujo-nombre">
+          <small>Flujo</small>
+          <b>{flujoActual?.nombre ?? flujo}</b>
+        </span>
+        <Icono n="abajo" tam={14} />
       </button>
-      <span className="pastilla verde diminuto solo-ancho" title="Nada se escribe en SGDEA ni en el buzón real"><Icono n="candado" tam={11} />Solo lectura</span>
+      )}
       <span className="espacio" />
       <div className="estado-barra">
         {motor?.errorInicio ? (
-          <span className="pastilla rojo" title={motor.errorInicio}><span className="punto" />Motor detenido</span>
+          <span className="pastilla rojo" title={motor.errorInicio}><span className="punto" />El motor no arrancó</span>
+        ) : !listos ? (
+          <span className="pastilla ambar" title="El motor se está preparando"><span className="girando" />Preparando el motor</span>
+        ) : ocupados ? (
+          <span className="pastilla azul" title={`Corre hasta ${listos} correos a la vez`}><span className="girando" />Corriendo {ocupados} de {listos}</span>
         ) : (
-          <span className={`pastilla ${listos ? (ocupados ? "azul" : "verde") : "ambar"}`} title="Trabajadores del motor ocupados / disponibles">
-            {ocupados ? <span className="girando" /> : <span className="punto" />}
-            {listos ? `${ocupados} de ${listos} procesando` : "Arrancando motor"}
-          </span>
+          <span className="pastilla verde" title={`Corre hasta ${listos} correos a la vez`}><span className="punto" />Listo para correr</span>
         )}
-        {(motor?.enCola.length ?? 0) > 0 && <span className="pastilla azul">{motor?.enCola.length} en cola</span>}
-        <button className="pastilla violeta boton-pastilla solo-ancho" onClick={() => irA("configuracion")} title="Modelo de Vertex AI"><Icono n="chispa" tam={12} />{configuracion?.ia.modelo}</button>
-        {ajustes + reglas > 0 && <button className="pastilla ambar boton-pastilla solo-ancho" onClick={() => irA("configuracion")}>{ajustes} ajuste{ajustes === 1 ? "" : "s"} · {reglas} regla{reglas === 1 ? "" : "s"}</button>}
+        {enCola > 0 && <span className="pastilla azul" title="Correos que esperan turno">{enCola} en espera</span>}
+        <span className="pastilla solo-ancho" title="Nada se escribe en SGDEA ni en el buzón real: lo que se radicaría o movería queda registrado aquí, sin enviarse"><Icono n="candado" tam={11} />Solo lectura</span>
+        <button className="pastilla boton-pastilla solo-ancho" onClick={() => irA("configuracion")} title="Modelo de IA en uso. Cámbialo en Ajustes"><Icono n="chispa" tam={12} />{nombreModelo(configuracion?.ia.modelo)}</button>
+        {ajustes + reglas > 0 && <button className="pastilla ambar boton-pastilla solo-ancho" onClick={() => irA("configuracion")} title="Cambios propios sobre el código de producción. Revísalos en Ajustes">{ajustes + reglas} cambio{ajustes + reglas === 1 ? "" : "s"} propio{ajustes + reglas === 1 ? "" : "s"}</button>}
       </div>
       {menu && <MenuContextual x={menu.x} y={menu.y} opciones={menu.opciones} cerrar={() => setMenu(null)} />}
     </header>
   );
 }
 
-function Riel() {
+function Riel({ movil }: { movil: boolean }) {
   const vista = usar((s) => s.vista);
   const irA = usar((s) => s.irA);
   const motor = usar((s) => s.motor);
   const conectado = usar((s) => s.conectado);
   const ocupados = motor?.trabajadores.filter((t) => t.corrida).length ?? 0;
+  const [mas, setMas] = useState(false);
+  const secundarias = NAVEGACION.filter((n) => !n.principal);
+  const enSecundaria = secundarias.some((n) => n.id === vista);
+  const visibles = movil ? NAVEGACION.filter((n) => n.principal) : NAVEGACION;
+
+  useEffect(() => {
+    if (!mas) return;
+    const tecla = (e: KeyboardEvent) => e.key === "Escape" && setMas(false);
+    window.addEventListener("keydown", tecla);
+    return () => window.removeEventListener("keydown", tecla);
+  }, [mas]);
+  useEffect(() => {
+    if (!movil) setMas(false);
+  }, [movil]);
+
+  const boton = (n: (typeof NAVEGACION)[number]) => (
+    <button key={n.id} className={vista === n.id ? "activo" : ""} onClick={() => { irA(n.id); setMas(false); }} title={n.pista} aria-current={vista === n.id ? "page" : undefined}>
+      {vista === n.id && <motion.span layoutId="riel-activo" className="riel-fondo" transition={{ type: "spring", stiffness: 500, damping: 38 }} />}
+      <Icono n={n.icono} tam={19} />
+      <span>{n.nombre}</span>
+      {n.id === "corridas" && ocupados > 0 && <i className="indicador" />}
+    </button>
+  );
+
   return (
     <nav className="riel" aria-label="Secciones">
-      <div className="riel-marca" title="Positiva IA · plataforma de agentes">
+      <div className="riel-marca" title="Positiva IA">
         <span className="riel-logo" aria-hidden>
           <svg viewBox="0 0 32 32" width="22" height="22"><path d="M5 9.5 16 17l11-7.5" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /><rect x="4" y="7" width="24" height="18" rx="3.5" fill="none" stroke="currentColor" strokeWidth="2.2" /><circle cx="24.5" cy="22.5" r="5" fill="var(--lacre)" stroke="var(--tinta)" strokeWidth="2" /></svg>
         </span>
         <b>Positiva IA</b>
       </div>
       <div className="riel-secciones">
-        {NAVEGACION.map((n) => (
-          <button key={n.id} className={vista === n.id ? "activo" : ""} onClick={() => irA(n.id)} title={n.nombre} aria-current={vista === n.id ? "page" : undefined}>
-            {vista === n.id && <motion.span layoutId="riel-activo" className="riel-fondo" transition={{ type: "spring", stiffness: 500, damping: 38 }} />}
-            <Icono n={n.icono} tam={19} />
-            <span>{n.nombre}</span>
-            {n.id === "corridas" && ocupados > 0 && <i className="indicador" />}
+        {visibles.map(boton)}
+        {movil && (
+          <button className={enSecundaria || mas ? "activo" : ""} onClick={() => setMas(!mas)} aria-expanded={mas} aria-haspopup="dialog" title="Más secciones">
+            {(enSecundaria || mas) && <motion.span layoutId="riel-activo" className="riel-fondo" transition={{ type: "spring", stiffness: 500, damping: 38 }} />}
+            <Icono n="menu" tam={19} />
+            <span>{enSecundaria && !mas ? NAVEGACION.find((n) => n.id === vista)?.nombre : "Más"}</span>
           </button>
-        ))}
+        )}
       </div>
+      <AnimatePresence>
+        {movil && mas && (
+          <>
+            <motion.button key="fondo" className="mas-fondo" aria-label="Cerrar" onClick={() => setMas(false)} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} />
+            <motion.div key="hoja" className="mas-hoja" role="dialog" aria-label="Más secciones" initial={{ y: "100%" }} animate={{ y: 0 }} exit={{ y: "100%" }} transition={{ type: "spring", stiffness: 460, damping: 40 }}>
+              <span className="mas-asa" aria-hidden />
+              {secundarias.map((n) => (
+                <button key={n.id} className={`mas-opcion ${vista === n.id ? "activa" : ""}`} onClick={() => { irA(n.id); setMas(false); }} aria-current={vista === n.id ? "page" : undefined}>
+                  <span className="mas-icono"><Icono n={n.icono} tam={18} /></span>
+                  <span className="crece"><b>{n.nombre}</b><small>{n.pista}</small></span>
+                  <Icono n="derecha" tam={14} />
+                </button>
+              ))}
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
       <div className={`riel-estado ${conectado ? "vivo" : "caido"}`} title={conectado ? "Recibiendo los eventos del motor en vivo" : "Reconectando con el motor"}>
         <span className="riel-pulso" />
         <span>{conectado ? (ocupados ? `${ocupados} corriendo` : "En vivo") : "Sin conexión"}</span>
@@ -202,6 +257,16 @@ function EspacioFlujo({ ancho, bandejaVisible, cerrarBandeja }: { ancho: number;
   const [medidas, setMedidas] = useState<Medidas>(() => ({ ...MEDIDAS, ...leerLocal<Partial<Medidas>>(CLAVE_MEDIDAS, {}) }));
   const [dockPlegado, setDockPlegado] = useState(() => leerLocal(`${CLAVE_MEDIDAS}:dock-plegado`, false));
   const compacto = ancho < 1100;
+  // Sin corrida a la vista el panel de abajo queda como una barra delgada;
+  // se abre solo cuando aparece una corrida para mostrar.
+  const corridaVisible = usar((s) => s.corridaVisible);
+  const sinCorrida = !corridaVisible;
+  const plegado = dockPlegado || sinCorrida;
+  const anterior = useRef(corridaVisible);
+  useEffect(() => {
+    if (corridaVisible && corridaVisible !== anterior.current) setDockPlegado(false);
+    anterior.current = corridaVisible;
+  }, [corridaVisible]);
 
   const fijar = useCallback((k: keyof Medidas, v: number) => {
     setMedidas((m) => {
@@ -233,6 +298,17 @@ function EspacioFlujo({ ancho, bandejaVisible, cerrarBandeja }: { ancho: number;
       return !v;
     });
 
+  // El asistente abre o pliega el panel de abajo: {accion:"proceso"} o {accion:"panel", panel:"proceso", abierto}.
+  useEffect(() => {
+    const oir = (e: Event) => {
+      const d = (e as CustomEvent<{ accion?: string; panel?: string; abierto?: boolean }>).detail;
+      if (d?.accion === "proceso") setDockPlegado(false);
+      else if (d?.accion === "panel" && d.panel === "proceso") setDockPlegado(!d.abierto);
+    };
+    window.addEventListener("positiva:control", oir);
+    return () => window.removeEventListener("positiva:control", oir);
+  }, []);
+
   return (
     <div ref={espacio} className={`espacio-flujo ${bandejaVisible && !compacto ? "" : "sin-bandeja"} ${compacto ? "compacto" : ""}`}>
       {!compacto && bandejaVisible && (
@@ -241,14 +317,14 @@ function EspacioFlujo({ ancho, bandejaVisible, cerrarBandeja }: { ancho: number;
           <Divisor contenedor={espacio} medida="bandeja" eje="x" min={260} max={() => Math.min(620, window.innerWidth * 0.45)} calcular={(e, caja) => e.clientX - caja.left} alSoltar={(v) => fijar("bandeja", v)} titulo="Arrastra para cambiar el ancho de la bandeja" />
         </>
       )}
-      <div ref={centro} className={`centro ${dockPlegado ? "dock-plegado" : ""}`}>
+      <div ref={centro} className={`centro ${plegado ? "dock-plegado" : ""}`}>
         <div className="lienzo">
           <ReactFlowProvider>
             <Lienzo />
           </ReactFlowProvider>
         </div>
-        {!dockPlegado && <Divisor contenedor={centro} medida="dock" eje="y" min={140} max={() => (centro.current?.clientHeight ?? 800) - 160} calcular={(e, caja) => caja.bottom - e.clientY} alSoltar={(v) => fijar("dock", v)} titulo="Arrastra para cambiar el alto del panel" />}
-        <Dock plegado={dockPlegado} alternar={alternarDock} />
+        {!plegado && <Divisor contenedor={centro} medida="dock" eje="y" min={140} max={() => (centro.current?.clientHeight ?? 800) - 160} calcular={(e, caja) => caja.bottom - e.clientY} alSoltar={(v) => fijar("dock", v)} titulo="Arrastra para cambiar el alto del panel" />}
+        <Dock plegado={plegado} alternar={alternarDock} />
         <AnimatePresence>
           {foco && (
             <motion.aside key="hoja" className="hoja" initial={{ opacity: 0, x: 28 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 28, transition: { duration: 0.16 } }} transition={{ type: "spring", stiffness: 420, damping: 38 }}>
@@ -291,6 +367,19 @@ export default function App() {
     if (ancho < 1100 && foco?.tipo === "correo") setBandeja(false);
   }, [foco, ancho]);
 
+  // El asistente muestra u oculta la correspondencia y cierra el inspector.
+  const enfocar = usar((s) => s.enfocar);
+  useEffect(() => {
+    const oir = (e: Event) => {
+      const d = (e as CustomEvent<{ accion?: string; panel?: string; abierto?: boolean }>).detail;
+      if (d?.accion === "correspondencia" || d?.accion === "filtrar_correos") setBandeja(true);
+      else if (d?.accion === "panel" && d.panel === "correspondencia") setBandeja(Boolean(d.abierto));
+      else if (d?.accion === "panel" && d.panel === "inspector" && !d.abierto) enfocar(null);
+    };
+    window.addEventListener("positiva:control", oir);
+    return () => window.removeEventListener("positiva:control", oir);
+  }, [enfocar]);
+
   const alternar = () =>
     setBandeja((v) => {
       if (ancho >= 1100) guardarLocal("positiva-ia:bandeja-visible", !v);
@@ -298,8 +387,9 @@ export default function App() {
     });
 
   return (
+    <MotionConfig reducedMotion="user">
     <div className="app">
-      <Riel />
+      <Riel movil={ancho <= 760} />
       <div className="marco">
         <BarraSuperior alternarBandeja={alternar} bandejaVisible={bandeja} />
         <main className="contenido">
@@ -320,5 +410,6 @@ export default function App() {
       <Avisos />
       <Chat />
     </div>
+    </MotionConfig>
   );
 }

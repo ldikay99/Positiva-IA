@@ -24,7 +24,7 @@ import { CLAVE_POSICIONES, guardarLocal, leerLocal, usar } from "../estado.ts";
 import { ACCIONES, ANCLA_DEL_PUNTO, CATEGORIAS, FASES, FASE_DEL_FINAL, PUNTOS, categoria, fraseDeRegla, type Categoria } from "../flujo.ts";
 import { Icono } from "../iconos.tsx";
 import { ajustado, conValor } from "../parametros.ts";
-import { NOMBRES_DESENLACE, TONO_DESENLACE, progreso, segundos, type Progreso } from "../progreso.ts";
+import { NOMBRES_DESENLACE, TONO_DESENLACE, motivoLegible, progreso, segundos, type Progreso } from "../progreso.ts";
 import type { Catalogo, Corrida, EstadoNodo, Nodo as NodoCatalogo, Regla } from "../tipos.ts";
 import { MenuContextual, type Opcion } from "./MenuContextual.tsx";
 import { lectura, urlArchivo } from "../adjuntos.ts";
@@ -198,7 +198,7 @@ const NodoExtremo = memo(function NodoExtremo({ data, selected }: NodeProps<Node
         <div className="crece">
           <span className="nodo-cat">Correo entrante</span>
           <div className="extremo-titulo">{c ? c.caso : "Ningún correo en proceso"}</div>
-          <div className="nodo-desc">{c ? data.asunto || "(sin asunto)" : "Elige correos en la bandeja y pulsa Procesar"}</div>
+          <div className="nodo-desc">{c ? data.asunto || "(sin asunto)" : "Elige correos en la correspondencia y pulsa «Correr»"}</div>
         </div>
       </div>
     );
@@ -590,10 +590,19 @@ function Leyenda() {
       window.removeEventListener("keydown", tecla);
     };
   }, [abierta]);
+  // {accion:"panel", panel:"leyenda", abierto}
+  useEffect(() => {
+    const oir = (e: Event) => {
+      const d = (e as CustomEvent<{ accion?: string; panel?: string; abierto?: boolean }>).detail;
+      if (d?.accion === "panel" && d.panel === "leyenda") setAbierta(Boolean(d.abierto));
+    };
+    window.addEventListener("positiva:control", oir);
+    return () => window.removeEventListener("positiva:control", oir);
+  }, []);
   const usadas: Categoria[] = ["entrada", "filtro", "ruta", "documentos", "ocr", "busqueda", "ia", "datos", "validacion", "integracion", "salida", "regla"];
   return (
     <div className="leyenda" ref={caja}>
-      <button className={`boton flotante chico ${abierta ? "activo" : ""}`} onClick={() => setAbierta(!abierta)}><Icono n="info" tam={14} />Leyenda</button>
+      <button className={`boton flotante chico ${abierta ? "activo" : ""}`} aria-expanded={abierta} onClick={() => setAbierta(!abierta)}><Icono n="info" tam={14} />Leyenda</button>
       <AnimatePresence>
         {abierta && (
           <motion.div className="leyenda-caja" initial={{ opacity: 0, y: -4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.14 }}>
@@ -636,7 +645,7 @@ function Banda({ corrida, p, catalogo }: { corrida: Corrida | undefined; p: Prog
     <motion.button layout className={`banda tono-${r ? (TONO_DESENLACE[accion] ?? "gris") : "azul"}`} onClick={() => enfocar({ tipo: "corrida", id: corrida.id })} initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }}>
       {r ? <Icono n={accion === "radicado" ? "ok" : "bandera"} tam={14} /> : <span className="girando" />}
       <b>{corrida.caso}</b>
-      <span className="banda-texto">{r ? `${NOMBRES_DESENLACE[accion] ?? accion}${r.motivo ? ` · ${String(r.motivo)}` : ""}` : corrida.estado === "en_cola" ? "En cola" : etapa ? etapa : "Arrancando…"}</span>
+      <span className="banda-texto">{r ? `${NOMBRES_DESENLACE[accion] ?? accion}${r.motivo ? ` · ${motivoLegible(String(r.motivo))}` : ""}` : corrida.estado === "en_cola" ? "En cola" : etapa ? etapa : "Arrancando…"}</span>
       <span className="banda-t mono">{r ? `${String(r.segundos ?? "")} s` : t0 ? `${((ahora / 1000 - t0) | 0)} s` : ""}</span>
       {!r && <span className="banda-progreso"><i style={{ width: `${Math.min(100, (hechas / total) * 100)}%` }} /></span>}
     </motion.button>
@@ -886,6 +895,56 @@ export function Lienzo() {
     void flujo.fitView({ padding: { top: "64px", left: "60px", right: "24px", bottom: "20px" }, duration: 450, nodes: sinReglas ? flujo.getNodes().filter((n) => n.id !== "__fase-reglas") : undefined });
   }, [flujo, reglas.length, notas.length]);
 
+  /**
+   * Al llegar, el diagrama se ve a un tamaño que se lee: si todas las fases
+   * caben así, se muestran completas; si no, se arranca por la primera fase y
+   * el resto queda a la derecha (el minimapa y «Encuadrar todo» lo muestran).
+   */
+  const vistaInicial = useCallback((animada = false) => {
+    const caja = document.querySelector(".lienzo") as HTMLElement | null;
+    const fases = flujo.getNodes().filter((n) => n.type === "fase" && n.id !== "__fase-reglas" && n.id !== "__fase-salidas");
+    if (!caja || !fases.length) {
+      encuadrar();
+      return;
+    }
+    const w = caja.clientWidth;
+    const movil = w < 600;
+    const izq = Math.min(...fases.map((f) => f.position.x));
+    const der = Math.max(...fases.map((f) => f.position.x + (f.data as DatosFase).ancho));
+    const margen = movil ? 12 : 28;
+    const minimo = movil ? 0.8 : 0.86;
+    const zoom = Math.min(1, Math.max(minimo, (w - margen * 2) / (der - izq)));
+    const anchoVisto = (der - izq) * zoom;
+    const x = anchoVisto < w - margen * 2 ? (w - anchoVisto) / 2 - izq * zoom : margen - izq * zoom;
+    const arriba = reglas.length || notas.length ? -280 : 0;
+    void flujo.setViewport({ x, y: (movil ? 60 : 68) - arriba * zoom, zoom }, { duration: animada ? 450 : 0 });
+  }, [flujo, encuadrar, reglas.length, notas.length]);
+
+  // El asistente mueve la cámara y abre o cierra el minimapa:
+  // {accion:"lienzo", modo} y {accion:"panel", panel:"minimapa", abierto}.
+  const camara = useRef({ encuadrar, vistaInicial });
+  camara.current = { encuadrar, vistaInicial };
+  useEffect(() => {
+    const oir = (e: Event) => {
+      const d = (e as CustomEvent<{ accion?: string; modo?: string; panel?: string; abierto?: boolean }>).detail;
+      if (d?.accion === "lienzo") {
+        if (d.modo === "ver_todo") camara.current.encuadrar();
+        else if (d.modo === "acercar") void flujo.zoomIn({ duration: 250 });
+        else if (d.modo === "alejar") void flujo.zoomOut({ duration: 250 });
+        else if (d.modo === "restablecer") camara.current.vistaInicial(true);
+      } else if (d?.accion === "panel" && d.panel === "minimapa") setMinimapa(Boolean(d.abierto));
+    };
+    window.addEventListener("positiva:control", oir);
+    return () => window.removeEventListener("positiva:control", oir);
+  }, [flujo]);
+
+  // Una sola vez por catálogo, cuando los nodos ya tienen su alto real.
+  useEffect(() => {
+    if (encuadrado.current || ySalidas === null || !nodos.length) return;
+    encuadrado.current = true;
+    setTimeout(() => vistaInicial(), 40);
+  }, [ySalidas, nodos.length, vistaInicial]);
+
   /** Lo que tapa la hoja del inspector por la derecha, en píxeles de pantalla. */
   const anchoHoja = useCallback(() => {
     const lienzo = document.querySelector(".lienzo") as HTMLElement | null;
@@ -1086,14 +1145,8 @@ export function Lienzo() {
           setMenu(null);
           if (foco) enfocar(null);
         }}
-        onInit={() => {
-          if (!encuadrado.current) {
-            encuadrado.current = true;
-            setTimeout(encuadrar, 60);
-          }
-        }}
         nodesDraggable={!bloqueado}
-        minZoom={0.1}
+        minZoom={0.15}
         maxZoom={2}
         nodesConnectable={false}
         deleteKeyCode={null}
@@ -1113,7 +1166,7 @@ export function Lienzo() {
         </Panel>
         <Panel position="top-right" className="lienzo-barra">
           <button className={`boton flotante chico ${seguir ? "activo" : ""}`} onClick={() => setSeguir(!seguir)} title="La cámara acompaña la etapa en curso y el lienzo muestra cada corrida que empieza">
-            <span className={`punto ${seguir ? "latiendo" : ""}`} />En vivo
+            <span className={`punto ${seguir ? "latiendo" : ""}`} /><span className="etq">En vivo</span>
           </button>
           <button
             className="boton flotante chico"
@@ -1132,7 +1185,7 @@ export function Lienzo() {
               });
             }}
           >
-            <Icono n="mas" tam={14} />Agregar
+            <Icono n="mas" tam={14} /><span className="etq">Agregar</span>
           </button>
         </Panel>
         <Panel position="bottom-left" className="controles">

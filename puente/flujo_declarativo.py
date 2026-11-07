@@ -14,8 +14,20 @@ escritura bloqueada.
 
 Paso de datos: cada nodo puede declarar en config `entradas` (lo que recibe) y
 `salida` (la variable donde deja su resultado). Los textos admiten plantillas
-`{{variable}}`, `{{variable.campo}}`, `{{correo.asunto}}`, `{{adjuntos.texto}}`…
+`{{variable}}`, `{{variable.campo}}`, `{{lista.0.campo}}`, `{{lista[campo=valor].otro}}`,
+`{{datos["a.b"]}}`, `{{correo.asunto}}`, `{{adjuntos.texto}}`…
 La biblioteca de tipos está documentada en `nodos_declarativos.py`.
+
+Fallos: si un nodo lanza un error y tiene una arista `cuando: "error"`, el
+flujo sigue por ella con `{{fallo.nodo}}`, `{{fallo.tipo}}` y `{{fallo.motivo}}`;
+con `config.continuar_si_falla` sigue por la arista normal y lo anota como
+aviso; sin ninguna de las dos, la corrida termina en error como siempre.
+`config.reintentos` repite las llamadas de IA y HTTP ante fallos pasajeros y
+`config.deshabilitado` salta el nodo sin ejecutarlo.
+
+El nodo `http` solo hace GET de verdad a los hosts de `HTTP_HOSTS_PERMITIDOS`
+(nunca a IP privadas, de loopback o de metadatos, y sin seguir redirecciones);
+cualquier otro método o host se arma y se anota como escritura bloqueada.
 
 Protocolo: una orden JSON por línea en stdin
   {"cmd": "procesar", "corrida", "caso", "definicion", "ia": {"modelo"}}
@@ -27,12 +39,18 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import csv
+import http.client
 import io
+import ipaddress
 import json
 import os
+import random
 import re
+import socket
+import ssl
 import sys
 import threading
+import urllib.parse
 import time
 import traceback
 import unicodedata
@@ -61,8 +79,14 @@ _corrida: contextvars.ContextVar = contextvars.ContextVar("corrida", default=Non
 
 TIPOS = {"entrada_correo", "leer_adjuntos", "filtro", "condicion", "ia_clasificar", "ia_decidir", "ia_extraer",
          "extraer_regex", "validar", "transformar", "buscar_en_tabla", "bifurcar_por_valor", "ia_generar", "resumir",
-         "ia_redactar", "notificar", "enviar", "salida"}
+         "ia_redactar", "notificar", "enviar", "http", "salida"}
 TIPOS_IA = {"ia_clasificar", "ia_decidir", "ia_extraer", "ia_generar", "resumir", "ia_redactar"}
+# Los que hablan con algo de afuera y por eso aceptan reintentos.
+TIPOS_CON_REINTENTOS = TIPOS_IA | {"notificar", "enviar", "http"}
+# Ni la entrada ni las salidas se pueden saltar.
+NO_DESHABILITABLES = {"entrada_correo", "salida"}
+RAMA_ERROR = "error"
+FALLO_CAMPOS = {"nodo", "nombre", "tipo", "motivo", "error"}
 DESENLACES = {"radicar": "radicado", "manual": "manual", "reenviar": "reenviado", "descartar": "descartado",
               "responder": "respondido", "duplicado": "duplicado"}
 MAX_PASOS = 60
@@ -80,13 +104,99 @@ INTEGRADAS = {"correo": {"asunto", "cuerpo", "remitente", "remitente_correo", "r
 # Los nombres cortos de antes, que siguen valiendo en filtro y condición.
 LEGADO = {"asunto": "correo.asunto", "cuerpo": "correo.cuerpo", "remitente": "correo.remitente",
           "adjuntos": "adjuntos.nombres", "texto": "texto"}
-RESERVADAS = set(INTEGRADAS) | set(LEGADO)
+# «fallo» lo llena el motor cuando un nodo falla y el flujo sigue por la rama de error.
+RESERVADAS = set(INTEGRADAS) | set(LEGADO) | {"fallo"}
 PLANTILLA = re.compile(r"\{\{\s*([^{}]*?)\s*\}\}")
 NOMBRE_VAR = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-RUTA = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)*$")
 # Claves de config cuyo texto no es plantilla (datos o patrones).
-NO_PLANTILLA = {"tabla", "esquema", "patron", "valor_regex", "categorias", "opciones", "casos", "reemplazo"}
+NO_PLANTILLA = {"tabla", "esquema", "patron", "valor_regex", "categorias", "opciones", "casos", "reemplazo", "credencial", "mapeo"}
 MAX_ENTRADA = 12000
+
+# Rutas dentro de una variable: nombre.campo, lista.0, lista[0], lista[campo=valor]
+# (o [campo="valor con espacios"]) y claves con puntos entre comillas: datos["a.b"].
+_ENTRE_CORCHETES = (r"""\[\s*(?:"(?P<c1>[^"]*)"|'(?P<c2>[^']*)'|(?P<i>\d+)|"""
+                    r"""(?P<fc>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:"(?P<f1>[^"]*)"|'(?P<f2>[^']*)'|(?P<f3>[^\]"']*?)))\s*\]""")
+_PRIMER_SEGMENTO = re.compile(r"(?P<k>[A-Za-z0-9_]+)|" + _ENTRE_CORCHETES)
+_SEGMENTO = re.compile(r"\.(?P<k>[A-Za-z0-9_]+)|" + _ENTRE_CORCHETES)
+
+# HTTP: tiempos, tamaños y lo que nunca se toca.
+METODOS_HTTP = ("GET", "POST", "PUT", "PATCH", "DELETE")
+HTTP_TIMEOUT_MS, HTTP_TIMEOUT_MAX_MS = 15000, 60000
+HTTP_MAX_BYTES = 2_000_000
+HOSTS_METADATOS = {"metadata", "metadata.google.internal", "metadata.goog", "169.254.169.254", "fd00:ec2::254",
+                   "100.100.100.200", "instance-data", "instance-data.ec2.internal"}
+ENCABEZADOS_SECRETOS = {"authorization", "proxy-authorization", "cookie", "x-api-key", "api-key", "apikey", "x-auth-token"}
+CREDENCIAL = re.compile(r"^[A-Z][A-Z0-9_]{2,63}$")
+# Solo las pruebas lo llenan (p. ej. con 127.0.0.1 para un servidor local): IP que
+# se dejan pasar aunque sean de loopback. En la plataforma queda siempre vacío.
+_IPS_PERMITIDAS_PRUEBAS: Set[str] = set()
+# Reintentos: lo que vale si el nodo no lo dice y los topes.
+REINTENTO_ESPERA_MS, REINTENTO_FACTOR, REINTENTO_MAXIMO_MS = 500, 2.0, 10000
+_dormir = time.sleep  # las pruebas lo cambian para no esperar
+
+
+class ErrorDeNegocio(Exception):
+    """Un fallo que no se arregla reintentando: datos que faltan, destino bloqueado, config imposible."""
+
+
+class ErrorTransitorio(Exception):
+    """Un fallo pasajero (429, 5xx, tiempo agotado, conexión caída): vale la pena reintentar."""
+
+
+class RespuestaTransitoria(ErrorTransitorio):
+    """Una respuesta HTTP 408/425/429/5xx; si se acaban los intentos, el nodo sale por error_http con ella."""
+
+    def __init__(self, respuesta: dict) -> None:
+        super().__init__(f"HTTP {respuesta.get('status')}")
+        self.respuesta = respuesta
+
+
+def segmentos(ruta: Any) -> Optional[List[tuple]]:
+    """Parte una ruta en segmentos: ("clave", k), ("indice", i) o ("filtro", campo, valor). None si no es válida."""
+    ruta = str(ruta or "").strip()
+    if not ruta:
+        return None
+    r: List[tuple] = []
+    pos, rx = 0, _PRIMER_SEGMENTO
+    while pos < len(ruta):
+        m = rx.match(ruta, pos)
+        if not m or m.end() == pos:
+            return None
+        g = m.groupdict()
+        if g["k"] is not None:
+            r.append(("clave", g["k"]))
+        elif g["c1"] is not None or g["c2"] is not None:
+            r.append(("clave", g["c1"] if g["c1"] is not None else g["c2"]))
+        elif g["i"] is not None:
+            r.append(("indice", int(g["i"])))
+        else:
+            r.append(("filtro", g["fc"], next(x for x in (g["f1"], g["f2"], g["f3"]) if x is not None).strip()))
+        pos, rx = m.end(), _SEGMENTO
+    return r
+
+
+def navegar(v: Any, segs: List[tuple]) -> Any:
+    """Sigue los segmentos dentro de un valor; None si algo no está."""
+    for s in segs:
+        if s[0] == "filtro":
+            if not isinstance(v, list):
+                return None
+            v = next((x for x in v if isinstance(x, dict) and _norm(_a_texto(x.get(s[1]))) == _norm(s[2])), None)
+        elif s[0] == "indice" or (isinstance(v, list) and str(s[1]).isdigit()):
+            i = int(s[1])
+            if isinstance(v, list):
+                v = v[i] if i < len(v) else None
+            elif isinstance(v, dict):
+                v = v.get(str(i))
+            else:
+                return None
+        elif isinstance(v, dict):
+            v = v.get(s[1])
+        else:
+            return None
+        if v is None:
+            return None
+    return v
 
 
 def evento(tipo: str, **datos: Any) -> None:
@@ -134,9 +244,7 @@ def _lista_valores(xs: Any, clave: str = "valor") -> List[str]:
     return [str(x.get(clave) if isinstance(x, dict) else x) for x in (xs or [])]
 
 
-def salidas_posibles(n: dict) -> Tuple[List[str], List[str]]:
-    """Por dónde puede salir un nodo: (las que necesitan arista, las opcionales)."""
-    t, c = n.get("tipo"), n.get("config") or {}
+def _salidas_propias(t: Any, c: dict) -> Tuple[List[str], List[str]]:
     if t == "salida":
         return [], []
     if t in ("filtro", "condicion"):
@@ -149,6 +257,8 @@ def salidas_posibles(n: dict) -> Tuple[List[str], List[str]]:
         return ["ok", "incompleto"], []
     if t == "buscar_en_tabla":
         return ["encontrado", "no_encontrado"], []
+    if t == "http":
+        return ["ok", "error_http"], []
     if t == "ia_clasificar":
         return _lista_valores(c.get("categorias")), ["sin_categoria"]
     if t == "ia_decidir":
@@ -156,6 +266,16 @@ def salidas_posibles(n: dict) -> Tuple[List[str], List[str]]:
     if t == "bifurcar_por_valor":
         return _lista_valores(c.get("casos")) + ["otro"], []
     return ["ok"], []
+
+
+def salidas_posibles(n: dict) -> Tuple[List[str], List[str]]:
+    """Por dónde puede salir un nodo: (las que necesitan arista, las opcionales).
+    Todo nodo, salvo la salida, puede tener además la rama «error»."""
+    c = n.get("config") if isinstance(n.get("config"), dict) else {}
+    obligatorias, opcionales = _salidas_propias(n.get("tipo"), c)
+    if n.get("tipo") != "salida":
+        opcionales = opcionales + [RAMA_ERROR]
+    return obligatorias, opcionales
 
 
 def _operaciones(c: dict) -> List[dict]:
@@ -198,6 +318,9 @@ def produce(n: dict) -> Set[str]:
         r.add(c.get("salida") or "resumen")
     elif t in ("ia_generar", "buscar_en_tabla", "notificar", "enviar"):
         r.add(c.get("salida") or nid)
+    elif t == "http":
+        r.add(c.get("salida") or nid)
+        r |= {m.get("variable") for m in c.get("mapeo") or [] if isinstance(m, dict) and m.get("variable")}
     elif t == "validar":
         r.add("_motivo")
     return {x for x in r if isinstance(x, str)}
@@ -215,6 +338,19 @@ def _plantillas_en(valor: Any, clave: str = "") -> Iterable[str]:
     elif isinstance(valor, list):
         for v in valor:
             yield from _plantillas_en(v, clave)
+
+
+def _plantillas_todas(valor: Any) -> Iterable[str]:
+    """Como _plantillas_en, pero sin excepciones por clave (cuerpos y encabezados HTTP)."""
+    if isinstance(valor, str):
+        for m in PLANTILLA.finditer(valor):
+            yield m.group(1)
+    elif isinstance(valor, dict):
+        for v in valor.values():
+            yield from _plantillas_todas(v)
+    elif isinstance(valor, list):
+        for v in valor:
+            yield from _plantillas_todas(v)
 
 
 def _ref_de_fuente(x: Any) -> List[str]:
@@ -242,6 +378,14 @@ def referencias(n: dict) -> List[Tuple[str, Set[str]]]:
             if o.get("salida"):
                 locales.add(o["salida"])
         return refs
+    if t == "http":
+        for k in ("url", "query", "encabezados", "cuerpo"):
+            refs += [(r, set()) for r in _plantillas_todas(c.get(k))]
+        for m in c.get("mapeo") or []:
+            if isinstance(m, dict):
+                refs += [(r, set()) for r in _plantillas_todas(m.get("defecto"))]
+        refs += [(_ref_limpia(e), set()) for e in c.get("entradas") or [] if isinstance(e, str)]
+        return refs
     for r in _plantillas_en(c):
         refs.append((r, set()))
     for e in c.get("entradas") or []:
@@ -264,15 +408,23 @@ def referencias(n: dict) -> List[Tuple[str, Set[str]]]:
 
 def _problema_ref(ref: str, disponibles: Set[str]) -> Optional[str]:
     ref = ref.strip()
-    if not RUTA.match(ref):
-        return f"la referencia «{ref}» no es válida (usa nombre o nombre.campo)"
+    segs = segmentos(ref)
+    if not segs or segs[0][0] != "clave" or not NOMBRE_VAR.match(segs[0][1]):
+        return (f"la referencia «{ref}» no es válida (usa nombre, nombre.campo, lista.0.campo, "
+                "lista[campo=valor].otro o datos[\"a.b\"])")
     if ref in LEGADO:
         return None
-    raiz, _, resto = ref.partition(".")
+    raiz = segs[0][1]
+    sub = segs[1] if len(segs) > 1 else None
     if raiz in INTEGRADAS:
-        sub = resto.split(".")[0] if resto else ""
-        if sub and sub not in INTEGRADAS[raiz]:
+        if sub and (sub[0] != "clave" or sub[1] not in INTEGRADAS[raiz]):
             return f"«{ref}» no existe (de {raiz} hay: {', '.join(sorted(INTEGRADAS[raiz]))})"
+        return None
+    if raiz == "fallo":
+        if "fallo" not in disponibles:
+            return f"usa «{ref}», pero «fallo» solo existe después de una arista cuando «error» o de un nodo con continuar_si_falla"
+        if sub and (sub[0] != "clave" or sub[1] not in FALLO_CAMPOS):
+            return f"«{ref}» no existe (de fallo hay: {', '.join(sorted(FALLO_CAMPOS))})"
         return None
     if raiz not in disponibles:
         hay = ", ".join(sorted(x for x in disponibles if not x.startswith("_"))) or "ninguna"
@@ -308,6 +460,72 @@ def _leer_csv(ruta: str) -> List[Dict[str, str]]:
     return [dict(f) for f in csv.DictReader(io.StringIO(texto), delimiter=sep)]
 
 
+def _entero(x: Any, minimo: float, maximo: float) -> bool:
+    return isinstance(x, int) and not isinstance(x, bool) and minimo <= x <= maximo
+
+
+def _numero(x: Any, minimo: float, maximo: float) -> bool:
+    return isinstance(x, (int, float)) and not isinstance(x, bool) and minimo <= x <= maximo
+
+
+def _problemas_reintentos(r: Any) -> List[str]:
+    if not isinstance(r, dict):
+        return ["reintentos tiene que ser un objeto {intentos, espera_ms, backoff, maximo_ms}"]
+    p = []
+    if not _entero(r.get("intentos"), 1, 5):
+        p.append("reintentos.intentos tiene que ser un entero entre 1 y 5 (intentos en total, contando el primero)")
+    if "espera_ms" in r and not _entero(r["espera_ms"], 0, 60000):
+        p.append("reintentos.espera_ms tiene que ser un entero entre 0 y 60000")
+    if "backoff" in r and not _numero(r["backoff"], 1, 10):
+        p.append("reintentos.backoff tiene que ser un número entre 1 y 10 (factor por intento)")
+    if "maximo_ms" in r and not _entero(r["maximo_ms"], 0, 120000):
+        p.append("reintentos.maximo_ms tiene que ser un entero entre 0 y 120000")
+    return p
+
+
+def _validar_http(c: dict, q) -> None:
+    metodo = c.get("metodo", "GET")
+    if metodo not in METODOS_HTTP:
+        q(f"metodo «{metodo}» (válidos: {', '.join(METODOS_HTTP)})")
+    url = c.get("url")
+    if not (isinstance(url, str) and url.strip()):
+        q("http necesita url (admite plantillas)")
+    elif not url.strip().startswith("{{") and not re.match(r"^https?://[^\s/]", url.strip(), re.I):
+        q("url tiene que empezar por http:// o https://")
+    for k in ("query", "encabezados"):
+        if k in c and not (isinstance(c[k], dict) and all(isinstance(x, str) for x in c[k].values())):
+            q(f"{k} tiene que ser un objeto {{nombre: plantilla}}")
+    if isinstance(c.get("encabezados"), dict):
+        secretos = [k for k in c["encabezados"] if str(k).strip().lower() in ENCABEZADOS_SECRETOS]
+        if secretos:
+            q(f"encabezados: {', '.join(secretos)} no va en el flujo; usa credencial con el nombre de la variable de entorno")
+    if "cuerpo" in c and not isinstance(c["cuerpo"], (str, dict, list)):
+        q("cuerpo tiene que ser texto (plantilla) o un objeto JSON con plantillas")
+    if "credencial" in c and not (isinstance(c["credencial"], str) and CREDENCIAL.match(c["credencial"])):
+        q("credencial es el NOMBRE de una variable de entorno (p. ej. HTTP_TOKEN_X), nunca el valor")
+    if "timeout_ms" in c and not _entero(c["timeout_ms"], 100, HTTP_TIMEOUT_MAX_MS):
+        q(f"timeout_ms tiene que ser un entero entre 100 y {HTTP_TIMEOUT_MAX_MS}")
+    if "mapeo" in c:
+        if not isinstance(c["mapeo"], list):
+            q("mapeo tiene que ser una lista [{variable, ruta, defecto, obligatorio}]")
+        else:
+            vistos = set()
+            for i, m in enumerate(c["mapeo"], 1):
+                if not isinstance(m, dict):
+                    q(f"mapeo {i}: tiene que ser un objeto {{variable, ruta}}")
+                    continue
+                if not _es_var(m.get("variable")):
+                    q(f"mapeo {i}: variable «{m.get('variable')}» no es un nombre de variable válido")
+                elif m["variable"] in vistos:
+                    q(f"mapeo {i}: la variable «{m['variable']}» se repite")
+                else:
+                    vistos.add(m["variable"])
+                if not segmentos(m.get("ruta")):
+                    q(f"mapeo {i}: ruta «{m.get('ruta')}» no es válida (p. ej. «items.0.id», «items[estado=activo].id», «[\"a.b\"]»)")
+                if "obligatorio" in m and not isinstance(m["obligatorio"], bool):
+                    q(f"mapeo {i}: obligatorio tiene que ser true o false")
+
+
 def _validar_config(n: dict) -> List[str]:
     t, c, nid = n.get("tipo"), n.get("config") or {}, n.get("id")
     p: List[str] = []
@@ -326,6 +544,19 @@ def _validar_config(n: dict) -> List[str]:
     for k, v in c.items():
         if isinstance(v, str) and k not in NO_PLANTILLA and v.count("{{") != v.count("}}"):
             q(f"{k}: plantilla mal cerrada (cada «{{{{» necesita su «}}}}»)")
+    for k in ("deshabilitado", "continuar_si_falla"):
+        if k in c and not isinstance(c[k], bool):
+            q(f"{k} tiene que ser true o false")
+    if c.get("deshabilitado") is True and t in NO_DESHABILITABLES:
+        q(f"un nodo {t} no se puede deshabilitar")
+    if c.get("continuar_si_falla") is True and t == "salida":
+        q("una salida no puede continuar si falla: no tiene por dónde seguir")
+    if "reintentos" in c:
+        if t not in TIPOS_CON_REINTENTOS:
+            q("reintentos solo aplica a los nodos de IA, enviar, notificar y http")
+        else:
+            for m in _problemas_reintentos(c["reintentos"]):
+                q(m)
 
     if t == "entrada_correo":
         for k in ("leer_adjuntos", "ocr"):
@@ -522,6 +753,8 @@ def _validar_config(n: dict) -> List[str]:
             q("notificar necesita para (destino, admite plantillas)")
         if not (isinstance(c.get("cuerpo"), str) and c["cuerpo"].strip()):
             q(f"{t} necesita cuerpo (admite plantillas, p. ej. «{{{{respuesta}}}}»)")
+    elif t == "http":
+        _validar_http(c, q)
     elif t == "salida":
         if c.get("desenlace") not in DESENLACES:
             q(f"desenlace '{c.get('desenlace')}' (válidos: {', '.join(DESENLACES)})")
@@ -614,6 +847,8 @@ def validar(defi: Dict[str, Any], al_ejecutar: bool = False) -> List[str]:
             problemas.append(f"{nid}: no tiene arista de salida")
             continue
         obligatorias, opcionales = salidas_posibles(n)
+        if any(_norm(x) == RAMA_ERROR for x in obligatorias):
+            tolerables.append(f"{nid}: «{RAMA_ERROR}» es la rama de fallo de todo nodo; ponle otro valor a esa categoría, opción o caso")
         posibles = {_norm(x) for x in obligatorias + opcionales}
         explicitas = [_norm(_cuando(a)) for a in suyas if _cuando(a)]
         por_defecto = [a for a in suyas if not _cuando(a)]
@@ -643,14 +878,20 @@ def validar(defi: Dict[str, Any], al_ejecutar: bool = False) -> List[str]:
         for n in nodos:
             if n.get("id") not in vistos:
                 problemas.append(f"{n.get('id')}: no se llega desde la entrada")
-        # variables: cada referencia tiene que salir de un nodo anterior en algún camino
+        # variables: cada referencia tiene que salir de un nodo anterior en algún camino.
+        # Por la rama de error no llega lo que el nodo iba a producir, sino «fallo».
         antes: Dict[str, Set[str]] = {i: set() for i in ids if i is not None}
         for _ in range(len(nodos) + 2):
             cambio = False
             for a in aristas:
                 d, h = a.get("desde"), a.get("hacia")
                 if d in por_id and h in antes:
-                    nuevo = antes[h] | antes.get(d, set()) | produce(por_id[d])
+                    cd = por_id[d].get("config") if isinstance(por_id[d].get("config"), dict) else {}
+                    if _norm(_cuando(a)) == RAMA_ERROR:
+                        deja = {"fallo"}
+                    else:
+                        deja = produce(por_id[d]) | ({"fallo"} if cd.get("continuar_si_falla") is True else set())
+                    nuevo = antes[h] | antes.get(d, set()) | deja
                     if nuevo != antes[h]:
                         antes[h], cambio = nuevo, True
             if not cambio:
@@ -788,6 +1029,185 @@ def _limpiar_esquema(e: Any) -> Optional[dict]:
     return r
 
 
+# ------------------------------------------------- fallos y reintentos
+
+_NOMBRES_TRANSITORIOS = {"ResourceExhausted", "ServiceUnavailable", "DeadlineExceeded", "InternalServerError", "TooManyRequests",
+                         "ServerError", "BadGateway", "GatewayTimeout", "RemoteDisconnected", "IncompleteRead"}
+
+
+def _codigo_http(e: BaseException) -> Optional[int]:
+    if isinstance(e, RespuestaTransitoria):
+        return e.respuesta.get("status")
+    for a in ("code", "status_code", "status"):
+        x = getattr(e, a, None)
+        if isinstance(x, int) and not isinstance(x, bool) and 100 <= x <= 599:
+            return x
+    return None
+
+
+def es_transitorio(e: BaseException) -> bool:
+    """Si vale la pena reintentar: 408/425/429, 5xx, tiempo agotado o conexión caída. Nunca un error de negocio."""
+    if isinstance(e, ErrorDeNegocio):
+        return False
+    if isinstance(e, (ErrorTransitorio, TimeoutError, ConnectionError, http.client.IncompleteRead)):
+        return True
+    codigo = _codigo_http(e)
+    if codigo is not None:
+        return codigo in (408, 425, 429) or codigo >= 500
+    return type(e).__name__ in _NOMBRES_TRANSITORIOS
+
+
+def describir_fallo(n: dict, e: BaseException) -> str:
+    """El porqué de un fallo, en palabras de persona (lo que queda en {{fallo.motivo}})."""
+    t = n.get("tipo")
+    quien = "La IA" if t in TIPOS_IA else ("La petición HTTP" if t == "http" else f"El nodo {n.get('nombre') or n.get('id')}")
+    codigo = _codigo_http(e)
+    detalle = str(e).strip()
+    if isinstance(e, ErrorDeNegocio):
+        return detalle or f"{quien} no pudo terminar"
+    if isinstance(e, TimeoutError):
+        return f"{quien} no respondió a tiempo (se agotó la espera)"
+    if isinstance(e, ConnectionError):
+        return f"{quien} no pudo conectarse ({type(e).__name__})"
+    if codigo == 429:
+        return f"{quien}: el servicio pidió esperar (429, demasiadas solicitudes)"
+    if codigo is not None and codigo >= 500:
+        return f"{quien}: el servicio respondió {codigo} (error del servidor)"
+    if codigo is not None:
+        return f"{quien}: el servicio respondió {codigo}" + (f" — {detalle[:200]}" if detalle else "")
+    if isinstance(e, KeyError):
+        return f"{quien}: falta el dato {detalle}"
+    if isinstance(e, FileNotFoundError):
+        return f"{quien}: no se encontró {e.filename or detalle}"
+    if isinstance(e, (json.JSONDecodeError, ValueError)) and t in TIPOS_IA:
+        return f"La IA devolvió algo que no se pudo leer ({detalle[:200]})"
+    return f"{quien} falló: {type(e).__name__}" + (f": {detalle[:300]}" if detalle else "")
+
+
+def politica_reintentos(c: dict) -> Tuple[int, int, float, int]:
+    """(intentos en total, espera inicial en ms, factor, tope de espera en ms)."""
+    r = c.get("reintentos") if isinstance(c.get("reintentos"), dict) else {}
+    intentos = r.get("intentos") if _entero(r.get("intentos"), 1, 5) else 1
+    espera = r.get("espera_ms") if _entero(r.get("espera_ms"), 0, 60000) else REINTENTO_ESPERA_MS
+    factor = float(r.get("backoff")) if _numero(r.get("backoff"), 1, 10) else REINTENTO_FACTOR
+    maximo = r.get("maximo_ms") if _entero(r.get("maximo_ms"), 0, 120000) else REINTENTO_MAXIMO_MS
+    return intentos, espera, factor, maximo
+
+
+def espera_con_jitter(k: int, espera_ms: int, factor: float, maximo_ms: int) -> int:
+    """Full jitter: un tiempo al azar entre 0 y min(tope, espera · factor^(k-1))."""
+    return int(random.uniform(0, min(maximo_ms, espera_ms * factor ** (k - 1))))
+
+
+# ------------------------------------------------- la muestra de cada nodo
+
+MUESTRA_TEXTO, MUESTRA_LISTA, MUESTRA_CLAVES, MUESTRA_PROFUNDIDAD = 300, 20, 40, 4
+
+
+def muestra(v: Any, prof: int = 1) -> Any:
+    """Un adelanto acotado de un valor: textos hasta 300, listas hasta 20, 4 niveles."""
+    if isinstance(v, str):
+        return v if len(v) <= MUESTRA_TEXTO else v[:MUESTRA_TEXTO] + "…"
+    if v is None or isinstance(v, (bool, int, float)):
+        return v
+    if prof > MUESTRA_PROFUNDIDAD:
+        return "…"
+    if isinstance(v, dict):
+        items = list(v.items())
+        r = {str(k): muestra(x, prof + 1) for k, x in items[:MUESTRA_CLAVES]}
+        if len(items) > MUESTRA_CLAVES:
+            r["…"] = f"+{len(items) - MUESTRA_CLAVES} claves"
+        return r
+    if isinstance(v, (list, tuple, set)):
+        v = list(v)
+        r = [muestra(x, prof + 1) for x in v[:MUESTRA_LISTA]]
+        if len(v) > MUESTRA_LISTA:
+            r.append(f"… +{len(v) - MUESTRA_LISTA}")
+        return r
+    return muestra(str(v), prof)
+
+
+# ------------------------------------------------------------------ HTTP
+
+def hosts_permitidos() -> Set[str]:
+    return {h.strip().lower().rstrip(".") for h in os.environ.get("HTTP_HOSTS_PERMITIDOS", "").split(",") if h.strip()}
+
+
+def ip_bloqueada(ip: str) -> Optional[str]:
+    """Por qué no se puede llamar a una IP (SSRF), o None si es pública."""
+    if ip in _IPS_PERMITIDAS_PRUEBAS:
+        return None
+    try:
+        a = ipaddress.ip_address(ip.split("%")[0])
+    except ValueError:
+        return "no es una IP válida"
+    if isinstance(a, ipaddress.IPv6Address) and a.ipv4_mapped:
+        a = a.ipv4_mapped
+    if str(a) in HOSTS_METADATOS:
+        return "es un servicio de metadatos"
+    for prop, motivo in (("is_loopback", "es de loopback"), ("is_link_local", "es de enlace local"), ("is_private", "es privada"),
+                         ("is_multicast", "es multicast"), ("is_unspecified", "no está especificada"), ("is_reserved", "es reservada")):
+        if getattr(a, prop):
+            return motivo
+    if not a.is_global:
+        return "no es pública"
+    return None
+
+
+def destino_seguro(host: str, puerto: int) -> str:
+    """Resuelve el host y devuelve la IP a la que conectar; ErrorDeNegocio si alguna es interna."""
+    h = host.lower().rstrip(".")
+    if h in HOSTS_METADATOS or h.endswith(".internal") or h == "localhost" or h.endswith(".localhost"):
+        raise ErrorDeNegocio(f"bloqueado por seguridad: {host} es un destino interno")
+    try:
+        infos = socket.getaddrinfo(h, puerto, type=socket.SOCK_STREAM)
+    except socket.gaierror as e:
+        if e.errno == getattr(socket, "EAI_AGAIN", object()):
+            raise ErrorTransitorio(f"no se pudo resolver {host} por ahora") from e
+        raise ErrorDeNegocio(f"no se pudo resolver {host}") from e
+    ips = sorted({str(i[4][0]) for i in infos})
+    if not ips:
+        raise ErrorDeNegocio(f"no se pudo resolver {host}")
+    for ip in ips:
+        motivo = ip_bloqueada(ip)
+        if motivo:
+            raise ErrorDeNegocio(f"bloqueado por seguridad: {host} apunta a {ip}, que {motivo}")
+    return ips[0]
+
+
+class _ConexionHTTP(http.client.HTTPConnection):
+    """Conecta a la IP ya revisada (evita que el DNS cambie entre la revisión y la conexión)."""
+
+    def __init__(self, host: str, ip: str, puerto: int, timeout: float) -> None:
+        super().__init__(host, puerto, timeout=timeout)
+        self._ip = ip
+
+    def connect(self) -> None:
+        self.sock = socket.create_connection((self._ip, self.port), self.timeout)
+
+
+class _ConexionHTTPS(http.client.HTTPSConnection):
+    def __init__(self, host: str, ip: str, puerto: int, timeout: float) -> None:
+        super().__init__(host, puerto, timeout=timeout, context=ssl.create_default_context())
+        self._ip = ip
+
+    def connect(self) -> None:
+        crudo = socket.create_connection((self._ip, self.port), self.timeout)
+        self.sock = self._context.wrap_socket(crudo, server_hostname=self.host)
+
+
+def _sin_secretos(encabezados: Dict[str, str], credencial: str = "") -> Dict[str, str]:
+    r = {}
+    for k, v in encabezados.items():
+        if k.lower() == "authorization" and credencial:
+            r[k] = f"Bearer ‹{credencial}›"
+        elif k.lower() in ENCABEZADOS_SECRETOS:
+            r[k] = "‹oculto›"
+        else:
+            r[k] = v
+    return r
+
+
 # -------------------------------------------------------------- la ejecución
 
 _paginas = threading.Lock()
@@ -800,6 +1220,7 @@ class Ejecucion:
         self.hallazgos: Dict[str, dict] = {}
         self.avisos: List[str] = []
         self.mensajes: List[dict] = []
+        self.peticiones: List[dict] = []
         self.tokens = {"entrada": 0, "salida": 0}
         self.correo: Dict[str, Any] = {}
         self.msg: Dict[str, Any] = {}
@@ -823,21 +1244,14 @@ class Ejecucion:
         if ref == "texto":
             return self.contexto()
         ref = LEGADO.get(ref, ref)
-        raiz, _, resto = ref.partition(".")
-        if raiz == "correo":
-            v: Any = self._vista_correo()
-        elif raiz == "adjuntos":
-            v = self._vista_adjuntos()
-        else:
-            v, resto = self.vars, ref
-        for p in resto.split(".") if resto else []:
-            if isinstance(v, dict):
-                v = v.get(p)
-            elif isinstance(v, list) and p.isdigit():
-                v = v[int(p)] if int(p) < len(v) else None
-            else:
-                return None
-        return v
+        segs = segmentos(ref)
+        if not segs or segs[0][0] != "clave":
+            return None
+        if segs[0][1] == "correo":
+            return navegar(self._vista_correo(), segs[1:])
+        if segs[0][1] == "adjuntos":
+            return navegar(self._vista_adjuntos(), segs[1:])
+        return navegar(self.vars, segs)
 
     def render(self, plantilla: Any) -> str:
         if not isinstance(plantilla, str):
@@ -880,10 +1294,27 @@ class Ejecucion:
     def _ia(self, n: dict, sistema: str, esquema: Optional[dict] = None, temperatura: float = 0.1, json_libre: bool = False) -> Any:
         c = n.get("config") or {}
         temp = c.get("temperatura", temperatura)
-        r, tok = preguntar(c.get("modelo") or self.modelo, n["id"], sistema, self.tarea(c), esquema, float(temp), json_libre)
+        modelo, tarea = c.get("modelo") or self.modelo, self.tarea(c)
+        r, tok = self._con_reintentos(n, lambda: preguntar(modelo, n["id"], sistema, tarea, esquema, float(temp), json_libre), f"el modelo {modelo}")
         self.tokens["entrada"] += tok.get("entrada", 0)
         self.tokens["salida"] += tok.get("salida", 0)
         return r
+
+    def _con_reintentos(self, n: dict, fn, que: str = "la llamada") -> Any:
+        """Corre fn; si falla por algo pasajero y el nodo pide reintentos, espera (backoff con jitter) y repite."""
+        intentos, espera, factor, maximo = politica_reintentos(n.get("config") or {})
+        for k in range(1, intentos + 1):
+            try:
+                return fn()
+            except Exception as e:
+                if k >= intentos or not es_transitorio(e):
+                    raise
+                ms = espera_con_jitter(k, espera, factor, maximo)
+                _paso(n["id"], f"Reintento {k} de {intentos - 1}", "aviso",
+                      f"{que}: {describir_fallo(n, e)} · nuevo intento en {ms} ms", reintento=k, intentos=intentos, espera_ms=ms,
+                      error=f"{type(e).__name__}: {e}"[:300])
+                _dormir(ms / 1000)
+        raise RuntimeError("sin intentos")  # no se llega: el último intento devuelve o lanza
 
     # ------------------------------------------------------------- los nodos
     def entrada_correo(self, n: dict) -> str:
@@ -1270,10 +1701,163 @@ class Ejecucion:
         return "ok"
 
     def notificar(self, n: dict) -> str:
-        return self._mensaje(n, "notificar")
+        # Hoy solo se arma (no hay E/S que falle); los reintentos quedan listos para cuando haya un envío real.
+        return self._con_reintentos(n, lambda: self._mensaje(n, "notificar"), "el aviso")
 
     def enviar(self, n: dict) -> str:
-        return self._mensaje(n, "enviar", "{{correo.remitente_correo}}", "RE: {{correo.asunto}}")
+        return self._con_reintentos(n, lambda: self._mensaje(n, "enviar", "{{correo.remitente_correo}}", "RE: {{correo.asunto}}"), "la respuesta")
+
+    # ------------------------------------------------------------------ http
+    def _render_profundo(self, v: Any) -> Any:
+        if isinstance(v, str):
+            return self.render(v)
+        if isinstance(v, dict):
+            return {k: self._render_profundo(x) for k, x in v.items()}
+        if isinstance(v, list):
+            return [self._render_profundo(x) for x in v]
+        return v
+
+    def _armar_http(self, c: dict) -> dict:
+        """La petición tal como saldría: método, URL con query, encabezados y cuerpo (sin la credencial)."""
+        metodo = str(c.get("metodo") or "GET").upper()
+        url = self.render(c.get("url") or "").strip()
+        u = urllib.parse.urlsplit(url)
+        if u.scheme.lower() not in ("http", "https") or not u.hostname:
+            raise ErrorDeNegocio(f"la url «{url[:200]}» no es http(s) con un host")
+        if u.username or u.password:
+            raise ErrorDeNegocio("la url no puede llevar usuario ni clave: usa credencial")
+        query = urllib.parse.urlencode({k: self.render(v) for k, v in (c.get("query") or {}).items()})
+        consulta = "&".join(x for x in (u.query, query) if x)
+        encabezados = {"User-Agent": "Positiva-IA/flujos", "Accept": "application/json, text/plain;q=0.9, */*;q=0.5"}
+        for k, v in (c.get("encabezados") or {}).items():
+            valor = self.render(v)
+            if "\r" in valor or "\n" in valor or "\r" in str(k) or "\n" in str(k):
+                raise ErrorDeNegocio(f"el encabezado {k} tiene saltos de línea")
+            encabezados[str(k)] = valor
+        cuerpo: Optional[bytes] = None
+        vista_cuerpo: Any = None
+        if c.get("cuerpo") is not None and metodo != "GET":
+            if isinstance(c["cuerpo"], str):
+                vista_cuerpo = self.render(c["cuerpo"])
+                cuerpo = vista_cuerpo.encode("utf-8")
+                encabezados.setdefault("Content-Type", "text/plain; charset=utf-8")
+            else:
+                vista_cuerpo = self._render_profundo(c["cuerpo"])
+                cuerpo = json.dumps(vista_cuerpo, ensure_ascii=False).encode("utf-8")
+                if not any(k.lower() == "content-type" for k in encabezados):
+                    encabezados["Content-Type"] = "application/json; charset=utf-8"
+        credencial = str(c.get("credencial") or "")
+        if credencial:
+            encabezados["Authorization"] = f"Bearer ‹{credencial}›"
+        esquema = u.scheme.lower()
+        puerto = u.port or (443 if esquema == "https" else 80)
+        ruta = (u.path or "/") + (f"?{consulta}" if consulta else "")
+        url_final = urllib.parse.urlunsplit((esquema, u.netloc, u.path or "/", consulta, ""))
+        return {"metodo": metodo, "url": url_final, "host": u.hostname.lower().rstrip("."), "puerto": puerto, "esquema": esquema,
+                "ruta": ruta, "encabezados": encabezados, "cuerpo": cuerpo, "vista_cuerpo": vista_cuerpo, "credencial": credencial,
+                "cuerpo_ignorado": c.get("cuerpo") is not None and metodo == "GET"}
+
+    def _pedir(self, p: dict, timeout_s: float) -> dict:
+        ip = destino_seguro(p["host"], p["puerto"])
+        encabezados = dict(p["encabezados"])
+        if p["credencial"]:
+            secreto = os.environ.get(p["credencial"], "")
+            if not secreto:
+                raise ErrorDeNegocio(f"la credencial {p['credencial']} no está definida en el entorno")
+            encabezados["Authorization"] = f"Bearer {secreto}"
+        clase = _ConexionHTTPS if p["esquema"] == "https" else _ConexionHTTP
+        con = clase(p["host"], ip, p["puerto"], timeout_s)
+        t = time.time()
+        try:
+            con.request(p["metodo"], p["ruta"], body=p["cuerpo"], headers=encabezados)
+            resp = con.getresponse()  # http.client nunca sigue redirecciones
+            crudo = resp.read(HTTP_MAX_BYTES + 1)
+            status, cabeceras = resp.status, {k.lower(): v for k, v in resp.getheaders()}
+        finally:
+            con.close()
+        truncado = len(crudo) > HTTP_MAX_BYTES
+        crudo = crudo[:HTTP_MAX_BYTES]
+        tipo = cabeceras.get("content-type", "")
+        m = re.search(r"charset=([\w-]+)", tipo, re.I)
+        try:
+            texto = crudo.decode(m.group(1) if m else "utf-8", errors="replace")
+        except LookupError:
+            texto = crudo.decode("utf-8", errors="replace")
+        datos: Any = texto
+        if "json" in tipo.lower() or texto.lstrip()[:1] in ("{", "["):
+            try:
+                datos = json.loads(texto)
+            except ValueError:
+                datos = texto
+        return {"metodo": p["metodo"], "url": p["url"], "status": status, "ok": 200 <= status < 400, "simulado": False,
+                "ms": int((time.time() - t) * 1000), "bytes": len(crudo), "truncado": truncado, "datos": datos,
+                "encabezados": {k: v for k, v in cabeceras.items() if k in ("content-type", "content-length", "location", "retry-after", "date", "etag")},
+                **({"redireccion": cabeceras.get("location", "")} if 300 <= status < 400 else {})}
+
+    def _mapear(self, n: dict, datos: Any, simulado: bool) -> None:
+        c = n.get("config") or {}
+        faltan = []
+        for m in c.get("mapeo") or []:
+            v = navegar(datos, segmentos(m.get("ruta")) or []) if datos is not None else None
+            if v in (None, "") and "defecto" in m:
+                v = self._render_profundo(m["defecto"])
+            if v in (None, "") and m.get("obligatorio") and not simulado:
+                faltan.append(m["variable"])
+            self.vars[m["variable"]] = "" if v is None else v
+            evento("busqueda", funcion=n["id"], que=f"{m.get('ruta')} en la respuesta", campo=m["variable"], encontrado=v not in (None, ""),
+                   valor=_a_texto(v)[:300], confianza=1 if v not in (None, "") else 0, metodo="http", evidencia="", aceptado=v not in (None, ""))
+        if faltan:
+            raise ErrorDeNegocio(f"la respuesta no trae {', '.join(faltan)} (obligatorio en el mapeo)")
+
+    def http(self, n: dict) -> str:
+        c = n.get("config") or {}
+        p = self._armar_http(c)
+        salida = c.get("salida") or n["id"]
+        vista = {"metodo": p["metodo"], "url": p["url"], "encabezados": _sin_secretos(p["encabezados"], p["credencial"]), "cuerpo": p["vista_cuerpo"]}
+        permitidos = hosts_permitidos()
+        if p["metodo"] != "GET" or p["host"] not in permitidos:
+            if p["metodo"] != "GET":
+                motivo = f"{p['metodo']} escribe en otro sistema: se arma y se bloquea, esta plataforma nunca escribe en sistemas reales"
+            elif permitidos:
+                motivo = f"el host {p['host']} no está en HTTP_HOSTS_PERMITIDOS"
+            else:
+                motivo = "HTTP_HOSTS_PERMITIDOS está vacío: ninguna petición sale"
+            registro = {**vista, "simulado": True, "bloqueado": True, "motivo": motivo, "status": None, "ok": False, "datos": None, "nodo": n["id"]}
+            self.vars[salida] = registro
+            self.peticiones.append(registro)
+            evento("escritura", sistema="http", operacion=p["metodo"], destino=p["url"], bloqueada=True, simulada=True, detalle=vista,
+                   nodo=n["id"], motivo=motivo)
+            _paso(n["id"], f"{p['metodo']} {p['host']} · simulado, no sale", "aviso",
+                  f"{motivo}\n{p['metodo']} {p['url']}" + (f"\n\n{_a_texto(p['vista_cuerpo'])[:1000]}" if p["vista_cuerpo"] is not None else ""),
+                  bloqueado=True, destino=p["url"], metodo=p["metodo"])
+            self._mapear(n, None, simulado=True)
+            return "ok"
+        timeout = int(c.get("timeout_ms") or HTTP_TIMEOUT_MS)
+        timeout = max(100, min(timeout, HTTP_TIMEOUT_MAX_MS)) / 1000
+
+        def una() -> dict:
+            r = self._pedir(p, timeout)
+            if r["status"] in (408, 425, 429) or r["status"] >= 500:
+                raise RespuestaTransitoria(r)
+            return r
+
+        try:
+            r = self._con_reintentos(n, una, f"{p['metodo']} {p['host']}")
+        except RespuestaTransitoria as e:
+            r = e.respuesta
+        self.vars[salida] = r
+        self.peticiones.append({**vista, **{k: r[k] for k in ("status", "ok", "ms", "bytes", "simulado")}, "nodo": n["id"]})
+        error = r["status"] >= 400
+        _paso(n["id"], f"{p['metodo']} {p['host']} → {r['status']}", "error" if error else ("aviso" if r.get("redireccion") else "ok"),
+              f"{p['url']} · {r['ms']} ms · {r['bytes']:,} bytes" + (" · truncado" if r["truncado"] else "")
+              + (f"\nRedirección a {r['redireccion']} (no se sigue)" if r.get("redireccion") else "")
+              + (" · el cuerpo de un GET no se envía" if p["cuerpo_ignorado"] else "")
+              + f"\n\n{_a_texto(r['datos'])[:900]}", status=r["status"], metodo=p["metodo"], destino=p["url"])
+        if error:
+            self._mapear(n, None, simulado=True)
+            return "error_http"
+        self._mapear(n, r["datos"], simulado=False)
+        return "ok"
 
     def salida(self, n: dict) -> dict:
         c = n.get("config") or {}
@@ -1288,10 +1872,66 @@ class Ejecucion:
         evento("etapa_inicio", etapa=n["id"])
         _paso(n["id"], n.get("nombre") or accion, "ok" if accion in ("radicado", "respondido") else "aviso",
               (motivo or "") + (f"\n\n{respuesta[:1200]}" if respuesta else ""), desenlace=accion)
-        evento("etapa_fin", etapa=n["id"], ms=0, fallo="")
+        evento("etapa_fin", etapa=n["id"], ms=0, fallo="", muestra=muestra(solicitud))
         return {"accion": accion, "motivo": motivo, "destino": self.render(c.get("destino") or ""), "solicitud": solicitud, "respuesta": respuesta}
 
     # ------------------------------------------------------------- recorrer
+    def _muestra_de(self, n: dict, antes: Dict[str, Any]) -> Dict[str, Any]:
+        """Lo que el nodo dejó: sus variables nuevas o cambiadas (y el correo, si es la entrada o la lectura)."""
+        suyas = produce(n) | {k for k, v in self.vars.items() if k not in antes or antes[k] is not v}
+        r = {k: self.vars[k] for k in sorted(suyas) if k in self.vars and not k.startswith("_")}
+        if n.get("tipo") == "entrada_correo":
+            r = {"correo": self._vista_correo(), "adjuntos": self._vista_adjuntos(), **r}
+        elif n.get("tipo") == "leer_adjuntos":
+            r = {"adjuntos": self._vista_adjuntos(), **r}
+        return muestra(r, 0)
+
+    @staticmethod
+    def _arista(candidatas: List[dict], salida: str) -> Optional[dict]:
+        return (next((a for a in candidatas if _cuando(a) and _norm(_cuando(a)) == _norm(salida)), None)
+                or next((a for a in candidatas if not _cuando(a)), None))
+
+    def _omitir(self, n: dict, candidatas: List[dict]) -> str:
+        """Un nodo deshabilitado no corre: sigue por la arista por defecto (o la primera que no sea de error)."""
+        elegida = (next((a for a in candidatas if not _cuando(a)), None)
+                   or next((a for a in candidatas if _norm(_cuando(a)) != RAMA_ERROR), None)
+                   or (candidatas[0] if candidatas else None))
+        if not elegida:
+            raise RuntimeError(f"el nodo {n['id']} está deshabilitado y no tiene arista de salida")
+        _paso(n["id"], f"{n.get('nombre') or n['id']}: deshabilitado, se omite", "info",
+              f"No se ejecuta; el flujo sigue a {elegida['hacia']}. Lo que este nodo iba a dejar queda vacío.", omitido=True)
+        evento("etapa_fin", etapa=n["id"], ms=0, fallo="", salida="omitido", omitido=True, siguiente=elegida["hacia"], muestra={})
+        return elegida["hacia"]
+
+    def _tras_fallo(self, n: dict, e: Exception, candidatas: List[dict], ms: int, antes: Dict[str, Any]) -> Optional[str]:
+        """Si el nodo tiene rama de error o continuar_si_falla, anota el fallo y dice a dónde seguir; si no, None."""
+        c = n.get("config") or {}
+        motivo = describir_fallo(n, e)
+        rama = next((a for a in candidatas if _norm(_cuando(a)) == RAMA_ERROR), None)
+        if rama:
+            elegida, como = rama, "error"
+        elif c.get("continuar_si_falla") is True:
+            obligatorias = salidas_posibles(n)[0]
+            elegida = next((a for a in candidatas if not _cuando(a)), None) or (self._arista(candidatas, obligatorias[0]) if obligatorias else None)
+            como = "continuar"
+        else:
+            return None
+        if not elegida:
+            return None
+        self.vars["fallo"] = {"nodo": n["id"], "nombre": n.get("nombre") or n["id"], "tipo": n["tipo"], "motivo": motivo,
+                              "error": f"{type(e).__name__}: {e}"[:400]}
+        if como == "error":
+            self.avisos.append(f"{n['id']}: {motivo} (siguió por la rama de error)")
+            _paso(n["id"], f"Falló: sigue por la rama de error → {elegida['hacia']}", "error", motivo, fallo=motivo, rama=RAMA_ERROR,
+                  siguiente=elegida["hacia"])
+        else:
+            self.avisos.append(f"{n['id']}: {motivo} (continuó sin ese resultado)")
+            _paso(n["id"], f"Falló, pero continúa → {elegida['hacia']}", "aviso", motivo, fallo=motivo, continua=True,
+                  siguiente=elegida["hacia"])
+        evento("etapa_fin", etapa=n["id"], ms=ms, fallo=motivo[:400], salida=RAMA_ERROR if como == "error" else "",
+               rama_error=como == "error", continua=como == "continuar", siguiente=elegida["hacia"], muestra=self._muestra_de(n, antes))
+        return elegida["hacia"]
+
     def correr(self) -> dict:
         nodos = {n["id"]: n for n in self.defi["nodos"]}
         aristas = self.defi.get("aristas") or []
@@ -1300,18 +1940,27 @@ class Ejecucion:
             n = nodos[actual]
             if n["tipo"] == "salida":
                 return self.salida(n)
+            candidatas = [a for a in aristas if a.get("desde") == actual]
             evento("etapa_inicio", etapa=n["id"])
+            if (n.get("config") or {}).get("deshabilitado") is True:
+                actual = self._omitir(n, candidatas)
+                continue
             t = time.time()
+            antes = dict(self.vars)
             try:
                 salida = getattr(self, n["tipo"])(n)
             except Exception as e:
-                evento("etapa_fin", etapa=n["id"], ms=int((time.time() - t) * 1000), fallo=f"{type(e).__name__}: {e}"[:400])
-                raise
-            candidatas = [a for a in aristas if a.get("desde") == actual]
-            elegida = (next((a for a in candidatas if _cuando(a) and _norm(_cuando(a)) == _norm(salida)), None)
-                       or next((a for a in candidatas if not _cuando(a)), None))
+                ms = int((time.time() - t) * 1000)
+                siguiente = self._tras_fallo(n, e, candidatas, ms, antes)
+                if siguiente is None:
+                    evento("etapa_fin", etapa=n["id"], ms=ms, fallo=describir_fallo(n, e)[:400], error=f"{type(e).__name__}: {e}"[:400])
+                    raise
+                actual = siguiente
+                continue
+            # la rama de error solo se toma si el nodo falla
+            elegida = self._arista([a for a in candidatas if _norm(_cuando(a)) != RAMA_ERROR or _norm(salida) == RAMA_ERROR], salida)
             evento("etapa_fin", etapa=n["id"], ms=int((time.time() - t) * 1000), fallo="", salida=salida,
-                   siguiente=elegida["hacia"] if elegida else "")
+                   siguiente=elegida["hacia"] if elegida else "", muestra=self._muestra_de(n, antes))
             if not elegida:
                 raise RuntimeError(f"el nodo {actual} salió por «{salida}» y ninguna arista sale por ahí")
             actual = elegida["hacia"]
@@ -1348,7 +1997,7 @@ async def procesar(orden: dict) -> None:
         evento("resultado", caso=caso, accion=r["accion"], motivo=r["motivo"], area_destino=r.get("destino", ""),
                hallazgos=e.hallazgos, atribucion={k: h.get("metodo") or "ia" for k, h in e.hallazgos.items() if h.get("valor")},
                sin_resolver=[k for k, h in e.hallazgos.items() if not h.get("valor")], solicitud=r["solicitud"],
-               respuesta=r.get("respuesta", ""), mensajes=e.mensajes,
+               respuesta=r.get("respuesta", ""), mensajes=e.mensajes, peticiones=[_corto(x) for x in e.peticiones],
                variables={k: _corto(v) for k, v in e.vars.items() if not k.startswith("_")},
                avisos=e.avisos, tokens_entrada=e.tokens["entrada"], tokens_salida=e.tokens["salida"],
                vueltas=sum(_vueltas.values()), segundos=round(time.time() - t, 1), radicado="SIMULADO" if r["accion"] == "radicado" else "")

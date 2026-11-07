@@ -303,6 +303,7 @@ const pedidoDeMensaje = z.object({
   adjuntos: z.array(z.string()).max(20).default([]),
   flujo: z.string().nullish(),
   modelo: z.string().max(60).nullish(),
+  pantalla: z.record(z.string(), z.unknown()).nullish(),
 });
 
 /**
@@ -345,12 +346,13 @@ app.post<{ Params: { id: string } }>("/api/chats/:id/mensajes", async (req, res)
     pendiente = lineas.pop() ?? "";
     for (const l of lineas) {
       try {
-        const d = JSON.parse(l) as { tipo: string; texto?: string; nombre?: string; argumentos?: unknown; resultado?: string; flujos_cambiados?: string[] };
+        const d = JSON.parse(l) as { tipo: string; texto?: string; nombre?: string; argumentos?: unknown; resultado?: string; flujos_cambiados?: string[]; propuesta?: { accion: string; id: string } };
         if (d.tipo === "herramienta") respuesta.pasos!.push({ nombre: d.nombre ?? "", argumentos: d.argumentos });
         else if (d.tipo === "resultado_herramienta" && respuesta.pasos!.length) respuesta.pasos![respuesta.pasos!.length - 1]!.resultado = d.resultado;
         else if (d.tipo === "texto") respuesta.texto = (respuesta.texto ? `${respuesta.texto}\n\n` : "") + (d.texto ?? "");
         else if (d.tipo === "error") { respuesta.texto = `No pude terminar: ${d.texto}`; respuesta.error = true; }
         else if (d.tipo === "fin") respuesta.cambiados = d.flujos_cambiados ?? [];
+        else if (d.tipo === "propuesta" && d.propuesta) (respuesta.propuestas ??= []).push({ accion: d.propuesta.accion, id: d.propuesta.id });
       } catch {
         /* línea cortada */
       }
@@ -372,8 +374,136 @@ app.post<{ Params: { id: string } }>("/api/chats/:id/mensajes", async (req, res)
   res.raw.on("close", () => {
     if (p.exitCode === null) p.kill();
   });
-  p.stdin.end(JSON.stringify({ mensajes: contexto, flujo: r.data.flujo ?? c.flujo, modelo: r.data.modelo, conversacion: c.id }));
+  p.stdin.end(JSON.stringify({ mensajes: contexto, flujo: r.data.flujo ?? c.flujo, modelo: r.data.modelo, conversacion: c.id, pantalla: r.data.pantalla ?? {} }));
 });
+
+/** El resultado de una propuesta (la persona confirmó o descartó el botón). */
+app.post<{ Params: { id: string } }>("/api/chats/:id/propuestas", async (req, res) => {
+  const c = await chats.leer(req.params.id);
+  const b = req.body as { mensaje?: number; accion?: string; objetivo?: string; estado?: "hecha" | "descartada" };
+  if (!c) return res.code(404).send({ error: "esa conversación no existe" });
+  const m = c.mensajes[Number(b?.mensaje)];
+  const p = m?.propuestas?.find((x) => x.accion === b.accion && x.id === b.objetivo);
+  if (!p || (b.estado !== "hecha" && b.estado !== "descartada")) return res.code(400).send({ error: "esa propuesta no existe" });
+  p.estado = b.estado;
+  await chats.guardar(c);
+  return { ok: true };
+});
+
+// ------------------------------------------------------------- voz en vivo
+//
+// Un turno de una llamada: lo guarda el puente de voz al terminar cada respuesta.
+const turnoDeVoz = z.object({
+  usuario: z.object({ texto: z.string().max(20000) }),
+  asistente: z.object({
+    texto: z.string().max(60000),
+    pasos: z.array(z.object({ nombre: z.string(), argumentos: z.unknown().optional(), resultado: z.string().optional() })).max(60).default([]),
+    cambiados: z.array(z.string()).max(20).default([]),
+    propuestas: z.array(z.object({ accion: z.string(), id: z.string() })).max(10).default([]),
+  }),
+});
+
+app.post<{ Params: { id: string } }>("/api/chats/:id/turno", async (req, res) => {
+  if (!["127.0.0.1", "::1", "::ffff:127.0.0.1"].includes(req.ip)) return res.code(403).send({ error: "solo el puente de voz guarda turnos" });
+  const c = await chats.leer(req.params.id);
+  const r = turnoDeVoz.safeParse(req.body);
+  if (!c) return res.code(404).send({ error: "esa conversación no existe" });
+  if (!r.success) return res.code(400).send({ error: "turno inválido" });
+  const t = Date.now();
+  if (r.data.usuario.texto.trim()) c.mensajes.push({ rol: "usuario", texto: r.data.usuario.texto, t, voz: true });
+  if (r.data.asistente.texto.trim() || r.data.asistente.pasos.length) c.mensajes.push({ rol: "asistente", texto: r.data.asistente.texto, t: t + 1, voz: true, pasos: r.data.asistente.pasos, cambiados: r.data.asistente.cambiados, propuestas: r.data.asistente.propuestas });
+  if (c.titulo === "Nueva conversación" && r.data.usuario.texto.trim()) c.titulo = r.data.usuario.texto.trim().replace(/\s+/g, " ").slice(0, 60);
+  await chats.guardar(c);
+  return { ok: true };
+});
+
+/**
+ * La llamada: el navegador manda el micrófono (PCM 16 kHz) y mensajes de control;
+ * `puente/voz.py` habla con Gemini Live y devuelve la voz (PCM 24 kHz) y eventos.
+ * Entre este servidor y Python van tramas: 1 byte de tipo (J/A) + 4 de longitud.
+ */
+let llamadasActivas = 0;
+app.get<{ Params: { id: string } }>("/api/voz/:id", { websocket: true }, (socket, req) => {
+  // Los manejadores se ponen de inmediato: lo que llegue antes de tener la
+  // conversación y el proceso de voz se guarda y se entrega después.
+  const antes: { datos: Buffer; binario: boolean }[] = [];
+  let entregar: ((datos: Buffer, binario: boolean) => void) | null = null;
+  let cerrada = false;
+  socket.on("message", (datos: Buffer, binario: boolean) => (entregar ? entregar(datos, binario) : antes.length < 400 && antes.push({ datos, binario })));
+  socket.on("close", () => (cerrada = true));
+  void iniciarLlamada(socket, req.params.id, antes, (f) => (entregar = f), () => cerrada);
+});
+
+type SocketDeVoz = { readyState: number; OPEN: number; send: (d: Buffer | string, o?: { binary: boolean }) => void; close: (codigo?: number, motivo?: string) => void; on: (ev: "close", f: () => void) => void };
+
+async function iniciarLlamada(
+  socket: SocketDeVoz,
+  id: string,
+  antes: { datos: Buffer; binario: boolean }[],
+  alListo: (f: (datos: Buffer, binario: boolean) => void) => void,
+  cerrada: () => boolean,
+): Promise<void> {
+  const c = await chats.leer(id);
+  if (!c) return socket.close(4404, "esa conversación no existe");
+  if (llamadasActivas >= 3) return socket.close(4429, "hay demasiadas llamadas abiertas");
+  if (cerrada()) return;
+  llamadasActivas++;
+  const p = spawn(config.python, [resolve(config.raiz, "puente", "voz.py")], {
+    env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUNBUFFERED: "1", API_INTERNA: `http://127.0.0.1:${config.puerto}` },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const trama = (tipo: "J" | "A", datos: Buffer) => {
+    if (!p.stdin.writable) return;
+    const cab = Buffer.alloc(5);
+    cab.write(tipo, 0, "latin1");
+    cab.writeUInt32BE(datos.length, 1);
+    p.stdin.write(Buffer.concat([cab, datos]));
+  };
+  let pendiente = Buffer.alloc(0);
+  p.stdout.on("data", (b: Buffer) => {
+    pendiente = Buffer.concat([pendiente, b]);
+    while (pendiente.length >= 5) {
+      const n = pendiente.readUInt32BE(1);
+      if (pendiente.length < 5 + n) break;
+      const tipo = String.fromCharCode(pendiente[0]!);
+      const datos = pendiente.subarray(5, 5 + n);
+      pendiente = pendiente.subarray(5 + n);
+      if (socket.readyState !== socket.OPEN) continue;
+      if (tipo === "A") socket.send(datos, { binary: true });
+      else socket.send(datos.toString("utf8"));
+    }
+  });
+  let errores = "";
+  p.stderr.setEncoding("utf8").on("data", (t: string) => (errores = (errores + t).slice(-4000)));
+  const recibir = (datos: Buffer, binario: boolean) => {
+    if (binario) {
+      if (datos.length <= 64 * 1024) trama("A", datos);
+      return;
+    }
+    try {
+      const m = JSON.parse(datos.toString("utf8")) as { tipo?: string };
+      if (m.tipo === "inicio") (m as Record<string, unknown>).conversacion = c.id;
+      trama("J", Buffer.from(JSON.stringify(m)));
+    } catch {
+      /* mensaje inválido */
+    }
+  };
+  for (const x of antes.splice(0)) recibir(x.datos, x.binario);
+  alListo(recibir);
+  const cerrar = () => {
+    if (p.exitCode === null) {
+      trama("J", Buffer.from(JSON.stringify({ tipo: "fin" })));
+      setTimeout(() => p.exitCode === null && p.kill(), 4000);
+    }
+  };
+  socket.on("close", cerrar);
+  p.on("exit", (codigo) => {
+    llamadasActivas--;
+    if (codigo && errores) app.log.warn({ voz: errores.split("\n").slice(-5).join(" | ") }, "la voz terminó con error");
+    if (socket.readyState === socket.OPEN) socket.close(1000, "fin de la llamada");
+  });
+  if (cerrada()) cerrar();
+}
 
 // ----------------------------------------------------------- buzón real
 

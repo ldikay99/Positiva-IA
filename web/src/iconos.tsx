@@ -52,11 +52,18 @@ const RUTAS = {
   info: "M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18zM12 11v6M12 7.5v.5",
   flecha: "M5 12h14M13 6l6 6-6 6",
   abajo: "M6 9l6 6 6-6",
+  check: "M5 12.5l4.5 4.5L19 7.5",
   derecha: "M9 6l6 6-6 6",
   expandir: "M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7",
   pausa: "M8 5v14M16 5v14",
   punto: "M12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2z",
   terminal: "M4 5h16v14H4zM7 9l3 3-3 3M12 15h5",
+  telefono: "M5 4h4l2 5-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2",
+  colgar: "M3 14.5c5-4.7 13-4.7 18 0l-2.4 2.6-3.6-1.4v-2.6a10 10 0 0 0-6 0v2.6l-3.6 1.4z",
+  mic: "M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3zM5 11a7 7 0 0 0 14 0M12 18v3",
+  micMudo: "M3 3l18 18M9 9v3a3 3 0 0 0 5 2.2M15 10V6a3 3 0 0 0-5.7-1.3M5 11a7 7 0 0 0 11.5 5.4M19 11a7 7 0 0 1-.6 2.8M12 18v3",
+  altavoz: "M4 9h4l5-4v14l-5-4H4zM16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11",
+  altavozMudo: "M4 9h4l5-4v14l-5-4H4zM17 9l5 6M22 9l-5 6",
 } as const;
 
 export type NombreIcono = keyof typeof RUTAS;

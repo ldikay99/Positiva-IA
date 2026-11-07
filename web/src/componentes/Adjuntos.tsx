@@ -2,7 +2,8 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { guardarLocal, leerLocal, usar } from "../estado.ts";
 import { Icono, type NombreIcono } from "../iconos.tsx";
-import { NOMBRES_DESENLACE, TONO_DESENLACE, segundos } from "../progreso.ts";
+import { NOMBRES_DESENLACE, TONO_DESENLACE, motivoLegible, segundos } from "../progreso.ts";
+import { Selector } from "./Selector.tsx";
 import {
   busquedas as derivarBusquedas,
   dictamen as derivarDictamen,
@@ -270,32 +271,32 @@ function VisorHoja({ corrida, d, numero, enCurso, imagenEnCurso, marcas, mover, 
   const tieneImagen = Boolean(h?.img) || (enCurso && !d.esCuerpo);
   const campos = recorridos.filter((r) => r.ubicacion && r.ubicacion.id === d.id && (r.ubicacion.pagina === numero || d.sinHojas));
   return (
-    <div className="visor">
-      <header className="visor-cabeza">
+    <div className="adj-visor">
+      <header className="adj-visor-cabeza">
         <div className="crece">
-          <b className="visor-titulo">{d.nombre}</b>
-          <span className="visor-sub">
+          <b className="adj-visor-titulo">{d.nombre}</b>
+          <span className="adj-visor-sub">
             {d.esCuerpo ? "Texto del correo" : `Hoja ${numero}${total ? ` de ${total}` : ""}`}
             {h && !d.esCuerpo ? ` · ${NOMBRE_METODO[h.metodo]}` : ""}
             {h?.confianza ? ` · confianza ${pct(h.confianza)}` : ""}
             {h?.ms ? ` · ${segundos(h.ms)}` : ""}
           </span>
         </div>
-        {campos.length > 0 && <span className="visor-campos">{campos.map((c) => <span key={c.campo} className="ficha tono-verde">{c.nombre}</span>)}</span>}
+        {campos.length > 0 && <span className="adj-visor-campos">{campos.map((c) => <span key={c.campo} className="ficha tono-verde">{c.nombre}</span>)}</span>}
         {!d.esCuerpo && total > 1 && (
-          <span className="visor-nav">
+          <span className="adj-visor-nav">
             <button className="boton-mini" disabled={numero <= 1} onClick={() => mover(numero - 1)} aria-label="Hoja anterior"><Icono n="derecha" tam={14} style={{ transform: "scaleX(-1)" }} /></button>
             <button className="boton-mini" disabled={numero >= total} onClick={() => mover(numero + 1)} aria-label="Hoja siguiente"><Icono n="derecha" tam={14} /></button>
           </span>
         )}
       </header>
       {h && <Recorrido h={h} d={d} />}
-      {h?.dudosa && <p className="visor-aviso">Lectura dudosa: la confianza del OCR quedó por debajo del umbral; el motor marca la hoja para verificar sus cifras.</p>}
-      {h?.motivo && h.metodo === "ilegible" && <p className="visor-aviso error">{h.motivo}</p>}
-      <div ref={cuerpo} className={`visor-cuerpo ${tieneImagen ? "" : "sin-imagen"}`}>
+      {h?.dudosa && <p className="adj-visor-aviso">Lectura dudosa: la confianza del OCR quedó por debajo del umbral; el motor marca la hoja para verificar sus cifras.</p>}
+      {h?.motivo && h.metodo === "ilegible" && <p className="adj-visor-aviso error">{h.motivo}</p>}
+      <div ref={cuerpo} className={`adj-visor-cuerpo ${tieneImagen ? "" : "sin-imagen"}`}>
         {tieneImagen && (
           <>
-            <div className={`visor-imagen ${zoom ? "zoom" : ""}`}>
+            <div className={`adj-visor-imagen ${zoom ? "zoom" : ""}`}>
               {h?.img ? (
                 <motion.img key={h.img} src={urlArchivo(corrida, h.img)} alt={`Hoja ${numero}`} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.25 }} onClick={() => setZoom(!zoom)} draggable={false} />
               ) : (
@@ -313,7 +314,7 @@ function VisorHoja({ corrida, d, numero, enCurso, imagenEnCurso, marcas, mover, 
             <Divisor contenedor={cuerpo} variable="--imagen" min={20} max={() => 80} calcular={(e, caja) => ((e.clientX - caja.left) / caja.width) * 100} alSoltar={(v) => { setImagenPct(v); guardarLocal(`${CLAVE_MEDIDAS}:imagen`, v); }} />
           </>
         )}
-        <div className="visor-texto desplazable">
+        <div className="adj-visor-texto desplazable">
           {texto === null && d.archivo ? <div className="vacio chico"><span className="girando" />Cargando el texto…</div> : !d.archivo ? <div className="vacio chico">{enCurso ? "El texto aparece cuando termine de leerse el adjunto." : "Este adjunto no produjo texto."}</div> : <TextoDeHoja texto={textoHoja} tramos={marcas} marcaN={marcas.length} />}
         </div>
       </div>
@@ -409,6 +410,7 @@ export function VistaAdjuntos() {
   const orden = usar((s) => s.orden);
   const corridas = usar((s) => s.corridas);
   const verCorrida = usar((s) => s.verCorrida);
+  const bandeja = usar((s) => s.bandeja);
   const irA = usar((s) => s.irA);
   const lect = useMemo(() => derivarLectura(corrida), [corrida]);
   const lista = useMemo(() => derivarBusquedas(corrida), [corrida]);
@@ -507,7 +509,7 @@ export function VistaAdjuntos() {
           <span className="adj-correo-icono"><Icono n="correo" tam={16} /></span>
           <div className="crece">
             <b>{corrida ? corrida.caso : "Ningún correo elegido"}</b>
-            <span className="texto-3 diminuto">{corrida ? String(corrida.eventos.find((e) => e.tipo === "inicio")?.asunto ?? "") || "(sin asunto)" : "Procesa un correo desde el flujo o elige una corrida"}</span>
+            <span className="texto-3 diminuto">{corrida ? String(corrida.eventos.find((e) => e.tipo === "inicio")?.asunto ?? "") || "(sin asunto)" : "Corre un correo en el flujo o elige uno ya corrido"}</span>
           </div>
         </div>
         {corrida && (
@@ -518,22 +520,46 @@ export function VistaAdjuntos() {
             <span><b>{consultasIa}</b> consultas de la IA</span>
           </div>
         )}
-        <select className="campo chico-campo" value={corrida?.id ?? ""} onChange={(e) => verCorrida(e.target.value || null)} aria-label="Corrida">
-          <option value="">Elegir corrida…</option>
-          {orden.slice(0, 120).map((id) => {
+        <Selector
+          valor={corrida?.id ?? null}
+          placeholder="Elegir un correo corrido…"
+          opciones={orden.slice(0, 120).flatMap((id) => {
             const c = corridas[id];
-            if (!c) return null;
-            return <option key={id} value={id}>{c.caso} · {c.resultado ? (NOMBRES_DESENLACE[String(c.resultado.accion)] ?? String(c.resultado.accion)) : c.estado === "en_cola" ? "en cola" : "procesando"}</option>;
+            if (!c) return [];
+            return [{ valor: id, etiqueta: c.caso, texto: c.caso, detalle: c.resultado ? (NOMBRES_DESENLACE[String(c.resultado.accion)] ?? String(c.resultado.accion)) : c.estado === "en_cola" ? "En espera" : "Corriendo" }];
           })}
-        </select>
-        <button className={`boton chico ${seguir && corrida && !corrida.resultado ? "activo" : ""}`} onClick={() => setSeguir(!seguir)} title="El visor acompaña la hoja que se está leyendo"><span className={`punto ${seguir ? "latiendo" : ""}`} />En vivo</button>
-        <button className="boton chico" onClick={() => irA("flujo")}><Icono n="flujo" tam={13} />Ver en el flujo</button>
+          alCambiar={(v) => verCorrida(v)}
+          etiqueta="Correo corrido a la vista"
+          tamano="chico"
+          ancho={260}
+        />
+        {corrida && <button className={`boton chico ${seguir && !corrida.resultado ? "activo" : ""}`} aria-pressed={seguir} onClick={() => setSeguir(!seguir)} title="El visor acompaña la hoja que se está leyendo"><span className={`punto ${seguir ? "latiendo" : ""}`} />En vivo</button>}
+        {corrida && <button className="boton chico" onClick={() => irA("flujo")}><Icono n="flujo" tam={13} />Ver en el flujo</button>}
       </header>
       {!corrida ? (
-        <div className="vacio grande">
-          <Icono n="documento" tam={28} />
-          <p>Aquí se ve cómo el motor toma cada adjunto: cada hoja con su imagen, cómo se leyó (texto propio, OCR, giro, relectura o visión), qué buscó la IA en el índice y de qué hoja salió cada dato.</p>
-          <button className="boton primario" onClick={() => irA("flujo")}>Ir a la bandeja</button>
+        <div className="estado-vacio">
+          <span className="estado-vacio-icono"><Icono n="documento" tam={22} /></span>
+          <h2>Elige un correo corrido para ver sus adjuntos</h2>
+          <p>Verás cada hoja con su imagen, cómo se leyó (texto del PDF, OCR o visión de la IA), qué buscó la IA y de qué hoja salió cada dato de la solicitud.</p>
+          {orden.length > 0 ? (
+            <div className="elegir-corrida">
+              <small>Últimos correos corridos</small>
+              {orden.slice(0, 5).map((id) => {
+                const c = corridas[id];
+                if (!c) return null;
+                const a = c.resultado ? String(c.resultado.accion) : "";
+                return (
+                  <button key={id} onClick={() => verCorrida(id)}>
+                    <span className="ficha mono">{c.caso}</span>
+                    <span className="crece">{String(c.resultado?.asunto ?? "") || String(c.eventos.find((e) => e.tipo === "inicio")?.asunto ?? "") || bandeja.find((b) => b.caso === c.caso)?.asunto || "(sin asunto)"}</span>
+                    <span className="texto-3">{c.resultado ? (NOMBRES_DESENLACE[a] ?? a) : "corriendo"}</span>
+                  </button>
+                );
+              })}
+            </div>
+          ) : (
+            <button className="boton primario" onClick={() => irA("flujo")}><Icono n="flujo" tam={14} />Ir al flujo a correr un correo</button>
+          )}
         </div>
       ) : (
         <div ref={espacio} className="adj-cuerpo">
@@ -553,13 +579,13 @@ export function VistaAdjuntos() {
                 <Icono n={dic.accion === "radicado" ? "ok" : "bandera"} tam={18} />
                 <div className="crece">
                   <b>{dic.titulo}</b>
-                  {dic.motivo && <span>{dic.motivo}</span>}
+                  {dic.motivo && <span title={dic.motivo}>{motivoLegible(dic.motivo)}</span>}
                   {dic.explicacion && <span className="dictamen-explicacion">{dic.explicacion}</span>}
                 </div>
                 <span className={`pastilla ${TONO_DESENLACE[dic.accion] ?? ""} diminuto`}>{String(corrida.resultado?.segundos ?? "")} s</span>
               </div>
             ) : (
-              <div className="dictamen tono-azul"><span className="girando" /><div className="crece"><b>Procesando</b><span>El dictamen aparece al terminar.</span></div></div>
+              <div className="dictamen tono-azul"><span className="girando" /><div className="crece"><b>Corriendo</b><span>El resultado aparece cuando el motor termine.</span></div></div>
             )}
             <nav className="pestanas adj-pestanas" role="tablist">
               <button role="tab" aria-selected={panel === "campos"} className={panel === "campos" ? "activa" : ""} onClick={() => setPanel("campos")}><Icono n="escudo" tam={13} />Campos<span className="contador">{campos.length}</span>{panel === "campos" && <motion.i layoutId="pestana-adj" className="pestana-linea" />}</button>

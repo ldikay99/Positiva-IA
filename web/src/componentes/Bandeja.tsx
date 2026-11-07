@@ -2,8 +2,25 @@ import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type React
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { usar } from "../estado.ts";
 import { Icono } from "../iconos.tsx";
-import { NOMBRES_CORTOS_DESENLACE, NOMBRES_DESENLACE, TONO_DESENLACE } from "../progreso.ts";
+import { NOMBRES_CORTOS_DESENLACE, NOMBRES_DESENLACE, TONO_DESENLACE, motivoLegible } from "../progreso.ts";
+import { Selector } from "./Selector.tsx";
 import type { Correo, CorreoDelBuzon, Corrida } from "../tipos.ts";
+
+// ------------------------------------------------- control desde el asistente
+
+type Control = { accion?: string; fuente?: string; filtro?: string; texto?: string };
+/**
+ * Si la bandeja estaba oculta, el pedido llega antes de que exista: se guarda
+ * un momento y lo toma al montarse.
+ */
+let ultimoControl: { d: Control; t: number } | null = null;
+window.addEventListener("positiva:control", (e) => {
+  const d = (e as CustomEvent<Control>).detail;
+  if (d?.accion === "correspondencia" || d?.accion === "filtrar_correos") ultimoControl = { d, t: Date.now() };
+});
+function pendiente(accion: string): Control | null {
+  return ultimoControl && ultimoControl.d.accion === accion && Date.now() - ultimoControl.t < 4000 ? ultimoControl.d : null;
+}
 
 /** Alto de cada sobre en la lista larga (se dibujan solo los visibles). */
 const ALTO_SOBRE = 112;
@@ -194,9 +211,10 @@ function BandejaDeSalida({ elegidos, modo, setModo, alLimpiar, alCorrer, ocupado
               ))}
             </div>
           )}
+          {n === 0 && <span className="salida-pista">Ningún correo elegido</span>}
           <div className="salida-acciones">
             {extra}
-            {n > 0 && <button className="boton fantasma chico" onClick={alLimpiar}>Soltar</button>}
+            {n > 0 && <button className="boton fantasma chico" onClick={alLimpiar} title="Quitar la selección">Quitar</button>}
             {n > 0 && (
               <button className="boton primario salida-correr" disabled={ocupado} onClick={alCorrer}>
                 {ocupado ? <span className="girando" /> : <Icono n="play" tam={14} />}
@@ -219,7 +237,7 @@ function BandejaDeSalida({ elegidos, modo, setModo, alLimpiar, alCorrer, ocupado
  * las consultas al buzón de verdad. Nada se escribe: lo que el job marcaría,
  * movería o reenviaría aparece en el flujo como bloqueado.
  */
-function PanelBuzon({ porCaso }: { porCaso: Record<string, Corrida> }) {
+function PanelBuzon({ porCaso, verDescargados }: { porCaso: Record<string, Corrida>; verDescargados?: () => void }) {
   const buzon = usar((s) => s.buzon);
   const cargando = usar((s) => s.cargandoBuzon);
   const cargar = usar((s) => s.cargarBuzon);
@@ -264,18 +282,36 @@ function PanelBuzon({ porCaso }: { porCaso: Record<string, Corrida> }) {
       <div className="buzon-controles">
         <label className="buzon-cuantos">
           <span>Próximos</span>
-          <select value={n} onChange={(e) => setN(Number(e.target.value))} aria-label="Cuántos correos mirar">
-            {[5, 10, 20, 50].map((x) => <option key={x} value={x}>{x}</option>)}
-          </select>
-          {typeof buzon?.total === "number" && <span className="buzon-total">de {buzon.total} en la carpeta</span>}
+          <Selector valor={n} opciones={[5, 10, 20, 50].map((x) => ({ valor: x, etiqueta: String(x) }))} alCambiar={setN} etiqueta="Cuántos correos mirar" tamano="chico" tono="plano" />
+          {typeof buzon?.total === "number" && <span className="buzon-total" title={`${buzon.total} correos en la carpeta que lee el job`}>de {buzon.total}</span>}
         </label>
         <button className="boton fantasma chico" disabled={cargando} onClick={() => void cargar(n, true)} aria-label="Volver a leer el buzón">
           {cargando ? <span className="girando" /> : <Icono n="reordenar" tam={13} />}Leer de nuevo
         </button>
       </div>
-      <div className="lista-sobres estatica" role="listbox" aria-multiselectable>
-        {buzon?.error && <div className="vacio">No se pudo leer el buzón: {buzon.error}. Revisa la conexión y lee de nuevo.</div>}
-        {!buzon && cargando && <div className="vacio"><span className="girando" /> Leyendo el buzón</div>}
+      <div className="lista-sobres estatica" role="listbox" aria-multiselectable aria-busy={!buzon && cargando}>
+        {buzon?.error && (
+          <div className="bandeja-estado">
+            <span className="bandeja-estado-icono rojo"><Icono n="alerta" tam={18} /></span>
+            <b>No se pudo leer el buzón</b>
+            <p>{buzon.error}</p>
+            <div className="fila envuelve">
+              <button className="boton chico" onClick={() => void cargar(n, true)}><Icono n="reordenar" tam={13} />Intentar de nuevo</button>
+              {verDescargados && <button className="boton fantasma chico" onClick={verDescargados}>Usar los descargados</button>}
+            </div>
+          </div>
+        )}
+        {!buzon && (
+          <>
+            <p className="bandeja-cargando"><span className="girando" />Trayendo los próximos {n} correos de la carpeta que lee el job. Solo se leen: nada se marca ni se mueve.</p>
+            {Array.from({ length: Math.min(n, 5) }, (_, i) => (
+              <div key={i} className="sobre sobre-fantasma" aria-hidden style={{ animationDelay: `${i * 0.12}s` }}>
+                <span className="sobre-avatar" />
+                <span className="fantasma-lineas"><i /><i /><i /></span>
+              </div>
+            ))}
+          </>
+        )}
         {correos.map((c: CorreoDelBuzon, i) => (
           <SobreDeCorreo
             key={c.id}
@@ -297,7 +333,14 @@ function PanelBuzon({ porCaso }: { porCaso: Record<string, Corrida> }) {
             }
           />
         ))}
-        {buzon && !buzon.error && !correos.length && <div className="vacio">La carpeta del job está vacía: no hay nada por radicar.</div>}
+        {buzon && !buzon.error && !correos.length && (
+          <div className="bandeja-estado">
+            <span className="bandeja-estado-icono"><Icono n="ok" tam={18} /></span>
+            <b>No hay correos esperando</b>
+            <p>La carpeta que lee el job está al día. Cuando llegue un correo aparecerá aquí; mientras tanto puedes correr correos ya descargados.</p>
+            {verDescargados && <button className="boton chico" onClick={verDescargados}><Icono n="bandeja" tam={13} />Ver los descargados</button>}
+          </div>
+        )}
       </div>
       <BandejaDeSalida
         elegidos={elegidos.map((id) => ({ clave: id, nombre: porId.get(id)?.remitente || porId.get(id)?.remitenteCorreo || "?" }))}
@@ -329,6 +372,18 @@ function PanelDescargados({ porCaso, conLote }: { porCaso: Record<string, Corrid
   const cancelarCola = usar((s) => s.cancelarCola);
   const [busqueda, setBusqueda] = useState("");
   const [filtro, setFiltro] = useState<Filtro>("todos");
+  // El asistente filtra la lista: {accion:"filtrar_correos", filtro, texto?}.
+  useEffect(() => {
+    const aplicar = (d: Control | null) => {
+      if (d?.accion !== "filtrar_correos") return;
+      if (d.filtro && ["todos", "sin_procesar", "procesados", "radicado", "manual"].includes(d.filtro)) setFiltro(d.filtro);
+      if (typeof d.texto === "string") setBusqueda(d.texto);
+    };
+    aplicar(pendiente("filtrar_correos"));
+    const oir = (e: Event) => aplicar((e as CustomEvent<Control>).detail);
+    window.addEventListener("positiva:control", oir);
+    return () => window.removeEventListener("positiva:control", oir);
+  }, []);
   const [modo, setModo] = useState<Modo>("job");
   const [enviando, setEnviando] = useState(false);
   const lista = useRef<HTMLDivElement>(null);
@@ -406,14 +461,22 @@ function PanelDescargados({ porCaso, conLote }: { porCaso: Record<string, Corrid
               {f.nombre}<span>{f.n}</span>
             </button>
           ))}
-          <select className={`filtro-produccion ${["radicado", "manual"].includes(filtro) || motivos.includes(filtro) ? "activo" : ""}`} value={["radicado", "manual"].includes(filtro) || motivos.includes(filtro) ? filtro : ""} onChange={(e) => setFiltro(e.target.value || "todos")} aria-label="Filtrar por lo que pasó en producción">
-            <option value="">En producción…</option>
-            <option value="radicado">Radicados allá</option>
-            <option value="manual">A manual allá</option>
-            <optgroup label="A manual por">
-              {motivos.map((m) => <option key={m} value={m}>{m.replace(/_/g, " ").toLowerCase()}</option>)}
-            </optgroup>
-          </select>
+          <Selector
+            className={`filtro-produccion ${["radicado", "manual"].includes(filtro) || motivos.includes(filtro) ? "activo" : ""}`}
+            valor={["radicado", "manual"].includes(filtro) || motivos.includes(filtro) ? filtro : null}
+            placeholder="En producción…"
+            opciones={[
+              ...(["radicado", "manual"].includes(filtro) || motivos.includes(filtro) ? [{ valor: "todos", etiqueta: "Cualquier resultado" }] : []),
+              { valor: "radicado", etiqueta: "Radicados en producción" },
+              { valor: "manual", etiqueta: "A revisión manual en producción" },
+              ...motivos.map((m) => ({ valor: m, etiqueta: motivoLegible(m), texto: motivoLegible(m), detalle: "A revisión manual por este motivo" })),
+            ]}
+            alCambiar={(v) => setFiltro(v)}
+            etiqueta="Filtrar por lo que pasó en producción"
+            tamano="chico"
+            tono="plano"
+            ancho={280}
+          />
         </div>
         <div className="bandeja-seleccion">
           <span>{visibles.length} de {bandeja.length}</span>
@@ -455,7 +518,23 @@ function PanelDescargados({ porCaso, conLote }: { porCaso: Record<string, Corrid
             );
           })}
         </div>
-        {!visibles.length && <div className="vacio">Nada con ese filtro. Prueba con «Todos» o borra la búsqueda.</div>}
+        {!visibles.length && (
+          <div className="bandeja-estado">
+            <span className="bandeja-estado-icono neutro"><Icono n="buscar" tam={18} /></span>
+            {bandeja.length ? (
+              <>
+                <b>Ningún correo coincide</b>
+                <p>{busqueda ? `Nada contiene «${busqueda}» con este filtro.` : "No hay correos en este grupo."}</p>
+                <button className="boton chico" onClick={() => { setBusqueda(""); setFiltro("todos"); }}>Ver todos los correos</button>
+              </>
+            ) : (
+              <>
+                <b>Aún no hay correos descargados</b>
+                <p>Los correos que se descarguen del buzón aparecerán aquí para correrlos cuantas veces quieras.</p>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
       <BandejaDeSalida
@@ -479,6 +558,17 @@ export function Bandeja() {
   const flujo = usar((s) => s.flujos.find((f) => f.id === s.flujo));
   const conBuzon = flujo?.buzonReal ?? false;
   const [elegida, setFuente] = useState<"buzon" | "local">("buzon");
+  // El asistente cambia la fuente: {accion:"correspondencia", fuente}; filtrar los correos lleva a los descargados.
+  useEffect(() => {
+    const aplicar = (d: Control | null) => {
+      if (d?.accion === "correspondencia" && (d.fuente === "buzon" || d.fuente === "descargados")) setFuente(d.fuente === "buzon" ? "buzon" : "local");
+      else if (d?.accion === "filtrar_correos") setFuente("local");
+    };
+    aplicar(pendiente("correspondencia") ?? pendiente("filtrar_correos"));
+    const oir = (e: Event) => aplicar((e as CustomEvent<Control>).detail);
+    window.addEventListener("positiva:control", oir);
+    return () => window.removeEventListener("positiva:control", oir);
+  }, []);
   // El buzón real solo existe en los flujos que saben leerlo.
   const fuente = conBuzon ? elegida : "local";
   const porCaso = useMemo(() => ultimas(corridas, orden), [corridas, orden]);
@@ -486,7 +576,10 @@ export function Bandeja() {
   return (
     <section className="bandeja" aria-label="Correos por radicar">
       <header className="bandeja-titulo">
-        <h2>Correspondencia</h2>
+        <div>
+          <h2>Correspondencia</h2>
+          <p className="bandeja-ayuda">Elige uno o varios correos y pulsa «Correr» para ver cómo los procesa el motor.</p>
+        </div>
         {conBuzon && <div className="fuentes" role="tablist" aria-label="De dónde salen los correos">
           {([["buzon", "Buzón real", "correo"], ["local", "Descargados", "bandeja"]] as const).map(([id, nombre, icono]) => (
             <button key={id} role="tab" aria-selected={fuente === id} className={fuente === id ? "activo" : ""} onClick={() => setFuente(id)}>
@@ -497,7 +590,7 @@ export function Bandeja() {
           ))}
         </div>}
       </header>
-      {fuente === "buzon" ? <PanelBuzon porCaso={porCaso} /> : <PanelDescargados porCaso={porCaso} conLote={flujo?.lote ?? false} />}
+      {fuente === "buzon" ? <PanelBuzon porCaso={porCaso} verDescargados={() => setFuente("local")} /> : <PanelDescargados porCaso={porCaso} conLote={flujo?.lote ?? false} />}
     </section>
   );
 }
