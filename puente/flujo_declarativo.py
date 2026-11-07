@@ -803,7 +803,8 @@ def _validar_nuevos(t: str, c: dict, q) -> None:
         else:
             nombres = [f.get("nombre") for f in campos]
             for f in campos:
-                if not _es_var(f.get("nombre")):
+                # Viven en {{entrada.<nombre>}}: un nombre como «texto» o «asunto» no choca con nada.
+                if not (isinstance(f.get("nombre"), str) and NOMBRE_VAR.match(f["nombre"])):
                     q(f"el campo «{f.get('nombre')}» necesita un nombre válido (letras, números y _)")
                 if f.get("tipo", "texto") not in TIPOS_CAMPO_ENTRADA:
                     q(f"campo {f.get('nombre')}: tipo «{f.get('tipo')}» (válidos: {', '.join(TIPOS_CAMPO_ENTRADA)})")

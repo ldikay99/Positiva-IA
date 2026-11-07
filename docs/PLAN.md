@@ -41,7 +41,8 @@ Una plataforma de flujos de IA con nodos, más potente que n8n, donde **Vera** (
 - [x] Voz en paralelo sin choques: los resultados se entregan solo cuando no hay un turno abierto, una tarea idéntica en curso no se repite, el proceso escrito no repite lo que la voz ya lanzó y no se guardan marcadores ni ruido.
 - [x] Conectores SQL probados contra bases reales (Postgres 16 y MariaDB 11 temporales): leen filas reales; sin permiso la escritura queda retenida; con permiso de una persona la escritura llega a la base.
 - [x] Bases de datos y servidores de correo de una credencial pueden estar en IP privadas (redes internas); loopback, metadatos, enlace local, Positiva y SGDEA siguen vetados; el nodo http mantiene el bloqueo estricto.
-- [ ] Probar Graph y Drive con cuentas reales (Graph: con los secretos de PQRD y tutelas copiados, en solo lectura; Drive: necesita una cuenta de servicio de prueba).
+- [x] Graph probado de verdad (lectura del buzón real de PQRD con sus secretos copiados).
+- [ ] Probar Drive con una cuenta de servicio real (falta una cuenta de prueba).
 
 ## 2. Motor de flujos
 
@@ -84,12 +85,13 @@ Al buscar, el nodo encuentra lo que se busca sin importar mayúsculas, tildes, e
 - [x] Opciones iguales en todos los nodos que comparan o extraen, para construir cualquier automatización con IA o sin ella.
 - [x] Panel del nodo: «Agregar condición» y «Agregar campo» salen del esquema; ayuda y ejemplos de cada operador; Vera los conoce por la ficha del nodo.
 - [x] Pruebas con textos mixtos («PETICIÓN», «peticion», «Petición  urgente», «peticiòn»).
-- [ ] Reconstruir la imagen para que el servidor use el zod nuevo de `servidor/src/flujos.ts` (hasta entonces rechaza `condiciones`).
+- [x] Imagen reconstruida: el servidor acepta `condiciones` (verificado con /api/flujos/validar).
 
 ### 2b-bis. Vera arma flujos (evaluación)
 
 - [x] Batería `scripts/evaluar_vera.py`: pedidos realistas medidos por su resultado (el flujo se guarda, valida y corre con lo esperado).
-- [ ] Primera medición: 5 de 6. Falló «extraer cédula y nombre»: la corrida terminó fallida. Investigar, corregir y llevar a 6 de 6; repetir la batería después de cada cambio grande.
+- [x] Evaluación en 6 de 6: el caso que fallaba era que «texto» estaba reservado como nombre de campo; los campos de entrada viven en `{{entrada.<nombre>}}` y ahora aceptan cualquier nombre (Python y zod).
+- [ ] Un caso tardó 233 s («filtro sin tildes en lista»): ver por qué y bajarlo.
 
 ### 2c. Proveedores y modelos de IA por flujo (pedido 2026-11-07)
 
@@ -205,7 +207,7 @@ Pedido de Jonathan (2026-11-07): que desde aquí se puedan hacer TODOS los flujo
 - [x] Programación de PQRD y tutelas igual a la del job (`*/30 * * * *` y `5,25,45 6-17 * * *`, America/Bogota), configurable por flujo, sin solapes y con tope de 3600 s. Queda apagada hasta que Jonathan la encienda.
 - [x] PQRD de punta a punta en simulación con el entorno real: leyó Graph y Supabase de verdad, detectó un duplicado real y retuvo sus 12 escrituras; ningún secreto en la corrida.
 - [ ] Tutelas de punta a punta en simulación con el entorno real (su carpeta estaba vacía el 2026-11-07; repetir cuando llegue un correo).
-- [ ] Cualquier flujo creado aquí puede usar el mismo esquema: entorno real, programación como job y escrituras habilitadas por una persona.
+- [x] Cualquier flujo creado aquí usa el mismo esquema: entorno propio (variables y secretos), disparador programado como job, conexiones con escritura que solo habilita una persona y compuerta cuando es copia de PQRD o tutelas.
 
 ## 5. Flujos de producción
 

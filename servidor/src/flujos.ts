@@ -244,7 +244,8 @@ const expresionTexto = z.string({ error: "falta expresion" }).trim().min(1, "fal
   .refine((s) => !/(^|[^A-Za-z0-9_])_/.test(s), "expresion: nada que empiece por _ (ni __import__, ni __class__…)")
   .refine((s) => !/\blambda\b|\bfor\b.+\bin\b|:=|\bf['"]/.test(s), "expresion: sin lambdas, comprensiones, := ni f-strings");
 const CAMPO_ENTRADA = z.looseObject({
-  nombre: variable, tipo: z.enum(["texto", "numero", "booleano", "fecha", "lista", "objeto", "archivo", "archivos"], { error: "tipo: texto, numero, booleano, fecha, lista, objeto, archivo o archivos" }).optional(),
+  // Los campos viven en {{entrada.<nombre>}}: los nombres reservados de variables no aplican aquí.
+  nombre: z.string({ error: "tiene que ser un nombre" }).regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "nombre: letras, números y guion bajo, sin espacios"), tipo: z.enum(["texto", "numero", "booleano", "fecha", "lista", "objeto", "archivo", "archivos"], { error: "tipo: texto, numero, booleano, fecha, lista, objeto, archivo o archivos" }).optional(),
   obligatorio: opcional, descripcion: z.string().optional(),
 });
 const unicos = (xs: string[]) => new Set(xs.map((x) => x.trim().toLowerCase())).size === xs.length;
