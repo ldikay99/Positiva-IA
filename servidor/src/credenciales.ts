@@ -28,6 +28,8 @@ export interface CampoDeCredencial {
   defecto?: string | number | boolean;
   opciones?: string[];
   ayuda?: string;
+  /** Lo llena la plataforma (tokens de OAuth, cuenta conectada): no se muestra en el formulario ni se acepta en un PUT. */
+  interno?: boolean;
 }
 
 export interface TipoDeCredencial {
@@ -43,6 +45,20 @@ const puerto = (defecto: number): CampoDeCredencial => ({ nombre: "puerto", titu
 const usuario = (obligatorio = true): CampoDeCredencial => ({ nombre: "usuario", titulo: "Usuario", tipo: "texto", obligatorio });
 const clave = (obligatorio = true): CampoDeCredencial => ({ nombre: "clave", titulo: "Clave", tipo: "texto", secreto: true, obligatorio });
 const hosts: CampoDeCredencial = { nombre: "hosts", titulo: "Hosts permitidos", tipo: "texto", obligatorio: true, ayuda: "a qué hosts se puede mandar esta credencial, separados por coma (p. ej. api.ejemplo.com)" };
+
+/** Los alcances por defecto de las conexiones OAuth (nombres cortos; Google les antepone https://www.googleapis.com/auth/). */
+export const ALCANCES_GOOGLE = "openid email gmail.modify gmail.send calendar drive documents spreadsheets forms.responses.readonly forms.body.readonly";
+export const ALCANCES_MICROSOFT = "offline_access openid email User.Read Mail.ReadWrite Mail.Send Calendars.ReadWrite Files.ReadWrite.All Sites.ReadWrite.All ChannelMessage.Send ChatMessage.Send";
+/** Lo que deja la conexión OAuth (cifrado como todo lo demás; los tokens son secretos y el motor los enmascara). */
+export const CAMPOS_OAUTH: CampoDeCredencial[] = [
+  { nombre: "refresh_token", titulo: "Token de renovación", tipo: "texto", secreto: true, interno: true },
+  { nombre: "access_token", titulo: "Token de acceso", tipo: "texto", secreto: true, interno: true },
+  { nombre: "expira", titulo: "Vence", tipo: "texto", interno: true },
+  { nombre: "cuenta", titulo: "Cuenta conectada", tipo: "texto", interno: true },
+  { nombre: "alcances", titulo: "Permisos otorgados", tipo: "texto", interno: true },
+  { nombre: "conectada", titulo: "Conectada", tipo: "texto", interno: true },
+];
+export const TIPOS_OAUTH = new Set(["google_oauth", "microsoft_oauth"]);
 
 export const TIPOS_CREDENCIAL: TipoDeCredencial[] = [
   { tipo: "imap", nombre: "Buzón IMAP", descripcion: "Leer correo por IMAP (solo lectura).", ayuda: "Para Gmail usa imap.gmail.com:993 con una contraseña de aplicación. Nunca buzones de Positiva.",
@@ -78,6 +94,38 @@ export const TIPOS_CREDENCIAL: TipoDeCredencial[] = [
     campos: [{ nombre: "url", titulo: "URL", tipo: "texto", secreto: true, obligatorio: true, ayuda: "https://…" },
       { nombre: "token", titulo: "Token", tipo: "texto", secreto: true },
       { nombre: "encabezado", titulo: "Encabezado del token", tipo: "texto", defecto: "Authorization", ayuda: "p. ej. Authorization o X-Api-Key" }] },
+  { tipo: "google_oauth", nombre: "Google (OAuth)", descripcion: "Gmail, Calendar, Drive, Docs, Hojas y Forms de una cuenta de Google, con «Conectar con Google».",
+    ayuda: "En Google Cloud crea un cliente OAuth «Aplicación web» con la URI de redirección que se muestra aquí, pega su client_id y client_secret y pulsa «Conectar con Google». Nunca cuentas de Positiva.",
+    campos: [{ nombre: "client_id", titulo: "Client ID", tipo: "texto", obligatorio: true, ayuda: "…apps.googleusercontent.com" },
+      { nombre: "client_secret", titulo: "Client secret", tipo: "texto", secreto: true, obligatorio: true },
+      { nombre: "scopes", titulo: "Permisos (alcances)", tipo: "texto", defecto: ALCANCES_GOOGLE, ayuda: "separados por espacio; los cortos (gmail.modify, calendar, drive…) se completan con https://www.googleapis.com/auth/" },
+      ...CAMPOS_OAUTH] },
+  { tipo: "microsoft_oauth", nombre: "Microsoft 365 (OAuth)", descripcion: "Outlook, calendario, OneDrive, SharePoint, Teams y Excel en línea de una cuenta de Microsoft 365, con «Conectar con Microsoft».",
+    ayuda: "En Entra ID registra una aplicación (plataforma Web) con la URI de redirección que se muestra aquí y permisos delegados, crea un secreto y pulsa «Conectar con Microsoft». Nunca buzones de Positiva.",
+    campos: [{ nombre: "tenant", titulo: "Tenant", tipo: "texto", defecto: "common", ayuda: "common, organizations o el id / dominio del inquilino" },
+      { nombre: "client_id", titulo: "Client ID", tipo: "texto", obligatorio: true },
+      { nombre: "client_secret", titulo: "Client secret", tipo: "texto", secreto: true, obligatorio: true },
+      { nombre: "scopes", titulo: "Permisos (alcances)", tipo: "texto", defecto: ALCANCES_MICROSOFT, ayuda: "separados por espacio; offline_access se agrega siempre" },
+      ...CAMPOS_OAUTH] },
+  { tipo: "http_oauth2", nombre: "API con OAuth2 (cliente)", descripcion: "OAuth2 de credenciales de cliente para el nodo http: el token se pide y se renueva solo.",
+    ayuda: "Solo se manda a los hosts que digas aquí. El token se pide a token_url con client_id y client_secret.",
+    campos: [{ nombre: "token_url", titulo: "URL del token", tipo: "texto", obligatorio: true, ayuda: "https://…/oauth/token" },
+      { nombre: "client_id", titulo: "Client ID", tipo: "texto", obligatorio: true }, { nombre: "client_secret", titulo: "Client secret", tipo: "texto", secreto: true, obligatorio: true },
+      { nombre: "scope", titulo: "Alcance", tipo: "texto", ayuda: "opcional" }, hosts] },
+  { tipo: "api_openapi", nombre: "API (OpenAPI)", descripcion: "Cualquier API con especificación OpenAPI o Swagger: sus operaciones quedan como pasos (nodo api_operacion).",
+    ayuda: "Pega la URL de la especificación (JSON o YAML) o la especificación misma, y la autenticación. GET lee; lo demás escribe y necesita que una persona habilite la escritura.",
+    campos: [{ nombre: "spec_url", titulo: "URL de la especificación", tipo: "texto", ayuda: "https://…/openapi.json (o pega la especificación abajo)" },
+      { nombre: "spec", titulo: "Especificación (JSON o YAML)", tipo: "texto-largo" },
+      { nombre: "base_url", titulo: "URL base", tipo: "texto", ayuda: "opcional: si no, la de «servers» de la especificación" },
+      { nombre: "auth", titulo: "Autenticación", tipo: "opcion", opciones: ["ninguna", "api_key", "bearer", "basico", "oauth2"], defecto: "ninguna" },
+      { nombre: "llave_nombre", titulo: "Nombre de la llave", tipo: "texto", defecto: "X-API-Key", ayuda: "api_key: el encabezado o parámetro" },
+      { nombre: "llave_en", titulo: "La llave va en", tipo: "opcion", opciones: ["encabezado", "consulta"], defecto: "encabezado" },
+      { nombre: "token", titulo: "Llave o token", tipo: "texto", secreto: true, ayuda: "api_key o bearer" },
+      { nombre: "usuario", titulo: "Usuario", tipo: "texto", ayuda: "basico" }, { nombre: "clave", titulo: "Clave", tipo: "texto", secreto: true, ayuda: "basico" },
+      { nombre: "token_url", titulo: "URL del token", tipo: "texto", ayuda: "oauth2 (credenciales de cliente)" },
+      { nombre: "client_id", titulo: "Client ID", tipo: "texto", ayuda: "oauth2" }, { nombre: "client_secret", titulo: "Client secret", tipo: "texto", secreto: true, ayuda: "oauth2" },
+      { nombre: "scope", titulo: "Alcance", tipo: "texto", ayuda: "oauth2, opcional" },
+      { nombre: "red_privada", titulo: "Red privada", tipo: "booleano", defecto: false, ayuda: "aceptar IP privadas (10/8, 172.16/12, 192.168/16): solo si la crea una persona desde la web" }] },
   // Proveedores de IA (ia_<proveedor>): ver ia_credenciales.ts.
   ...TIPOS_CREDENCIAL_IA,
 ];
@@ -88,7 +136,7 @@ const ID_FLUJO = /^[a-z][a-z0-9-]{1,40}$/;
 const VETADO = (h: string) => /(^|\.)positiva\.gov\.co$/i.test(h) || /sgdea/i.test(h) || /^(localhost|metadata(\.google\.internal)?)$/i.test(h) || /\.internal$/i.test(h);
 const CORREO_VETADO = (d: string) => /@([\w-]+\.)*positiva\.gov\.co$/i.test(d.trim());
 /** Campos que se pueden mostrar en el manifiesto de un flujo (dónde se conecta), nunca secretos. */
-const CAMPOS_DE_DESTINO = ["host", "puerto", "base", "buzon", "hosts", "ruta", "tenant", "remitente", "usuario", "base_url", "endpoint", "url"];
+const CAMPOS_DE_DESTINO = ["host", "puerto", "base", "buzon", "hosts", "ruta", "tenant", "remitente", "usuario", "base_url", "endpoint", "url", "cuenta", "spec_url", "token_url"];
 
 interface Cifrado { iv: string; tag: string; datos: string }
 interface Guardada {
@@ -101,6 +149,19 @@ interface Guardada {
   usada: number | null;
   campos: string[];
   valores: Cifrado;
+  /** La guardó una persona desde la web (X-Confirmado-Por-Persona: si) en su último cambio. */
+  creada_por_persona?: boolean;
+  /** OAuth: lo que se puede mostrar de la conexión (sin tokens), para no descifrar al listar. */
+  conexion?: Conexion;
+}
+
+/** El estado visible de una conexión OAuth: nunca lleva tokens. */
+export interface Conexion {
+  conectada: boolean;
+  cuenta?: string;
+  alcances?: string[];
+  conectada_en?: number;
+  expira?: number;
 }
 
 export interface Resumen {
@@ -113,6 +174,8 @@ export interface Resumen {
   creada: number;
   actualizada: number;
   usada: number | null;
+  creada_por_persona: boolean;
+  conexion?: Conexion;
 }
 
 const ruta = () => join(config.datos, "credenciales.json");
@@ -183,8 +246,20 @@ function persistir(): Promise<void> {
 
 const resumen = (nombre: string, g: Guardada): Resumen => ({
   nombre, tipo: g.tipo, campos: g.campos, permitir_escritura: g.permitir_escritura, alcance: g.alcance, descripcion: g.descripcion,
-  creada: g.creada, actualizada: g.actualizada, usada: g.usada,
+  creada: g.creada, actualizada: g.actualizada, usada: g.usada, creada_por_persona: g.creada_por_persona === true,
+  ...(TIPOS_OAUTH.has(g.tipo) ? { conexion: g.conexion ?? { conectada: false } } : {}),
 });
+
+/** Lo visible de una conexión OAuth a partir de sus valores (sin tokens). */
+function conexionDe(v: Record<string, unknown>): Conexion {
+  const conectada = typeof v.refresh_token === "string" && v.refresh_token !== "" || typeof v.access_token === "string" && v.access_token !== "";
+  if (!conectada) return { conectada: false };
+  return {
+    conectada: true, ...(typeof v.cuenta === "string" && v.cuenta ? { cuenta: v.cuenta } : {}),
+    alcances: String(v.alcances ?? "").split(/\s+/).filter(Boolean),
+    ...(typeof v.conectada === "number" ? { conectada_en: v.conectada } : {}), ...(typeof v.expira === "number" ? { expira: v.expira } : {}),
+  };
+}
 
 /** Las credenciales (sin valores). Con flujo: las que ese flujo puede usar (globales y las suyas). */
 export function listar(flujo?: string): Resumen[] {
@@ -205,7 +280,7 @@ export function existe(nombre: string): boolean {
 export type Resultado = { ok: true; credencial: Resumen } | { ok: false; error: string; codigo?: number };
 
 /** Crea o reemplaza una credencial. Un campo secreto vacío conserva el valor anterior (si el tipo no cambia). */
-export async function guardar(nombre: string, cuerpo: unknown): Promise<Resultado> {
+export async function guardar(nombre: string, cuerpo: unknown, porPersona = false): Promise<Resultado> {
   if (!NOMBRE.test(nombre)) return { ok: false, error: "nombre inválido: minúsculas, números, -, _ y . (hasta 63)" };
   const b = (cuerpo ?? {}) as { tipo?: unknown; valores?: unknown; descripcion?: unknown; alcance?: unknown };
   const t = TIPOS_CREDENCIAL.find((x) => x.tipo === b.tipo);
@@ -214,12 +289,13 @@ export async function guardar(nombre: string, cuerpo: unknown): Promise<Resultad
   const alcance = b.alcance === undefined || b.alcance === null || b.alcance === "" ? (todas[nombre]?.alcance ?? "global") : String(b.alcance);
   if (alcance !== "global" && !ID_FLUJO.test(alcance)) return { ok: false, error: "alcance: «global» o el id de un flujo" };
   const entrada = b.valores as Record<string, unknown>;
-  const ajenos = Object.keys(entrada).filter((k) => !t.campos.some((c) => c.nombre === k));
+  const ajenos = Object.keys(entrada).filter((k) => !t.campos.some((c) => c.nombre === k && !c.interno));
   if (ajenos.length) return { ok: false, error: `campos desconocidos para ${t.tipo}: ${ajenos.join(", ")}` };
   const previo = todas[nombre];
   const anteriores: Record<string, unknown> = previo && previo.tipo === t.tipo ? (JSON.parse(descifrar(previo.valores)) as Record<string, unknown>) : {};
   const valores: Record<string, unknown> = {};
   for (const c of t.campos) {
+    if (c.interno) continue;  // los tokens y la cuenta los pone la conexión OAuth (abajo)
     let v = entrada[c.nombre];
     // Al editar, un campo que no viene conserva su valor (los secretos nunca se devuelven a la web).
     if ((v === undefined || (v === "" && c.secreto)) && anteriores[c.nombre] !== undefined) v = anteriores[c.nombre];
@@ -242,7 +318,21 @@ export async function guardar(nombre: string, cuerpo: unknown): Promise<Resultad
     valores[c.nombre] = v;
   }
   // Destinos vetados desde ya (el motor los vuelve a bloquear al correr).
-  const destinos = [valores.host, ...String(valores.hosts ?? "").split(/[,\s]+/)].filter((x): x is string => typeof x === "string" && x.trim() !== "");
+  const hostDeUrl = (x: unknown): string | null => {
+    if (typeof x !== "string" || !x.trim()) return null;
+    try {
+      return new URL(x.trim()).hostname.toLowerCase();
+    } catch {
+      return "";
+    }
+  };
+  for (const k of ["spec_url", "base_url", "token_url"]) {
+    const h = hostDeUrl(valores[k]);
+    if (h === "") return { ok: false, error: `${k}: no es una URL válida` };
+    if (h && (k === "spec_url" || k === "token_url") && !String(valores[k]).trim().toLowerCase().startsWith("https://")) return { ok: false, error: `${k}: tiene que ser https://` };
+  }
+  const destinos = [valores.host, ...String(valores.hosts ?? "").split(/[,\s]+/), ...["spec_url", "base_url", "token_url"].map((k) => hostDeUrl(valores[k]))]
+    .filter((x): x is string => typeof x === "string" && x.trim() !== "");
   const malo = destinos.find((h) => VETADO(h.trim().toLowerCase()));
   if (malo) return { ok: false, error: `bloqueado por seguridad: ${malo} es un destino que esta plataforma nunca toca (Positiva, SGDEA, metadatos o interno)` };
   for (const k of ["buzon", "usuario", "remitente"]) {
@@ -273,15 +363,65 @@ export async function guardar(nombre: string, cuerpo: unknown): Promise<Resultad
       return { ok: false, error: "json: no es un JSON válido" };
     }
   }
+  if (t.tipo === "api_openapi") {
+    if (!valores.spec_url && !valores.spec) return { ok: false, error: "falta spec_url o spec (la URL de la especificación o la especificación pegada)" };
+    const auth = String(valores.auth ?? "ninguna");
+    if ((auth === "api_key" || auth === "bearer") && !valores.token) return { ok: false, error: `con autenticación ${auth} falta token (la llave o el token)` };
+    if (auth === "basico" && (!valores.usuario || !valores.clave)) return { ok: false, error: "con autenticación basico faltan usuario y clave" };
+    if (auth === "oauth2" && (!valores.token_url || !valores.client_id || !valores.client_secret)) return { ok: false, error: "con autenticación oauth2 faltan token_url, client_id y client_secret" };
+    if (valores.red_privada === true && !porPersona) return { ok: false, error: "red_privada: solo una persona puede permitir IP privadas, desde la web (X-Confirmado-Por-Persona: si)" };
+  }
+  if (TIPOS_OAUTH.has(t.tipo)) {
+    // Los tokens siguen mientras no cambie la aplicación ni los permisos; si cambian, hay que volver a conectar.
+    const misma = ["client_id", "client_secret", "tenant", "scopes"].every((k) => JSON.stringify(anteriores[k]) === JSON.stringify(valores[k]));
+    if (misma) for (const c of t.campos) if (c.interno && anteriores[c.nombre] !== undefined) valores[c.nombre] = anteriores[c.nombre];
+  }
   const ahora = Date.now();
   todas[nombre] = {
     tipo: t.tipo, descripcion: typeof b.descripcion === "string" ? b.descripcion.slice(0, 300) : (previo?.descripcion ?? ""), alcance,
     // Si cambia cualquier valor, la escritura se apaga y una persona tiene que volver a habilitarla.
     permitir_escritura: Boolean(previo?.permitir_escritura) && previo?.tipo === t.tipo && JSON.stringify(anteriores) === JSON.stringify(valores), creada: previo?.creada ?? ahora, actualizada: ahora, usada: previo?.usada ?? null,
-    campos: Object.keys(valores), valores: cifrar(JSON.stringify(valores)),
+    campos: Object.keys(valores).filter((k) => !t.campos.find((c) => c.nombre === k)?.interno), valores: cifrar(JSON.stringify(valores)),
+    creada_por_persona: porPersona,
+    ...(TIPOS_OAUTH.has(t.tipo) ? { conexion: conexionDe(valores) } : {}),
   };
   await persistir();
   return { ok: true, credencial: resumen(nombre, todas[nombre]!) };
+}
+
+/** Los valores descifrados de una credencial (para el módulo OAuth y las pruebas de conexión; nunca salen por la API). */
+export function valoresDe(nombre: string): { tipo: string; valores: Record<string, unknown>; alcance: string; creada_por_persona: boolean } | null {
+  const g = todas[nombre];
+  if (!g) return null;
+  return { tipo: g.tipo, valores: JSON.parse(descifrar(g.valores)) as Record<string, unknown>, alcance: g.alcance, creada_por_persona: g.creada_por_persona === true };
+}
+
+/** Los nombres de las credenciales de unos tipos (el refresco automático de OAuth). */
+export function nombresDeTipo(tipos: Set<string>): string[] {
+  return Object.entries(todas).filter(([, g]) => tipos.has(g.tipo)).map(([n]) => n);
+}
+
+/**
+ * Cambia los campos internos de una conexión OAuth (tokens, cuenta, permisos) sin tocar lo demás. `null` borra el campo.
+ * Con `apagarEscritura` la escritura vuelve a solo lectura (al desconectar o al cambiar de cuenta).
+ */
+export async function actualizarInternos(nombre: string, cambios: Record<string, unknown>, apagarEscritura = false): Promise<Resultado> {
+  const g = todas[nombre];
+  if (!g) return { ok: false, error: "esa credencial no existe", codigo: 404 };
+  const t = TIPOS_CREDENCIAL.find((x) => x.tipo === g.tipo);
+  const internos = new Set((t?.campos ?? []).filter((c) => c.interno).map((c) => c.nombre));
+  const v = JSON.parse(descifrar(g.valores)) as Record<string, unknown>;
+  for (const [k, x] of Object.entries(cambios)) {
+    if (!internos.has(k)) continue;
+    if (x === null || x === undefined) delete v[k];
+    else v[k] = x;
+  }
+  g.valores = cifrar(JSON.stringify(v));
+  g.conexion = conexionDe(v);
+  if (apagarEscritura) g.permitir_escritura = false;
+  g.actualizada = Date.now();
+  await persistir();
+  return { ok: true, credencial: resumen(nombre, g) };
 }
 
 export async function permitirEscritura(nombre: string, permitir: boolean): Promise<Resultado> {
@@ -305,6 +445,8 @@ export interface ParaCorrida {
   valores: Record<string, unknown>;
   secretos: string[];
   permitir_escritura: boolean;
+  /** La guardó una persona desde la web: el motor solo acepta IP privadas (red_privada) si es así. */
+  creada_por_persona: boolean;
 }
 
 /** Lo que recibe el trabajador: solo las credenciales pedidas que el flujo puede usar (globales o suyas). Marca su uso. */
@@ -315,7 +457,7 @@ export function paraCorrida(flujo: string, nombres: Iterable<string>): Record<st
     const g = todas[n];
     if (!g || (g.alcance !== "global" && g.alcance !== flujo)) continue;
     const t = TIPOS_CREDENCIAL.find((x) => x.tipo === g.tipo);
-    r[n] = { tipo: g.tipo, valores: JSON.parse(descifrar(g.valores)) as Record<string, unknown>, secretos: (t?.campos ?? []).filter((c) => c.secreto).map((c) => c.nombre), permitir_escritura: g.permitir_escritura };
+    r[n] = { tipo: g.tipo, valores: JSON.parse(descifrar(g.valores)) as Record<string, unknown>, secretos: (t?.campos ?? []).filter((c) => c.secreto).map((c) => c.nombre), permitir_escritura: g.permitir_escritura, creada_por_persona: g.creada_por_persona === true };
     g.usada = Date.now();
     cambio = true;
   }

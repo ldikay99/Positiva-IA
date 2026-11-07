@@ -84,6 +84,39 @@ class ClienteDrive:
 fabrica: Callable[[dict, float], Any] = ClienteDrive
 
 
+class ClienteDriveToken(ClienteDrive):
+    """El mismo Drive con un token (una conexión google_oauth): por el cliente REST seguro de los conectores."""
+
+    def __init__(self, token_de: Callable[[List[str]], str], timeout: float) -> None:  # noqa: D107 — no llama al padre (no hay cuenta de servicio)
+        self.token_de, self.timeout = token_de, timeout
+
+    def _r(self, metodo: str, url: str, **kw) -> Any:
+        from . import rest
+        from .google import BASES
+
+        url = url.replace(SUBIDA, BASES["drive_subida"]).replace(API, BASES["drive"])
+        r = rest.pedir(metodo, url, token=self.token_de(ALCANCE), timeout=self.timeout, servicio="Drive", errores=False,
+                       params=kw.get("params"), data=kw.get("data"), headers=kw.get("headers"), json=kw.get("json"))
+        if r.status_code in (408, 429) or r.status_code >= 500:
+            raise ErrorTransitorio(f"Drive respondió {r.status_code}")
+        if r.status_code >= 400:
+            try:
+                detalle = r.json().get("error", {}).get("message", "")
+            except (ValueError, AttributeError):
+                detalle = r.text[:200]
+            raise ErrorDeNegocio(f"Drive respondió {r.status_code}: {detalle}")
+        return r
+
+
+def cliente(cred: dict, timeout: float) -> Any:
+    """El cliente de Drive de una credencial: google_servicio (fabrica) o google_oauth (token de la persona que conectó)."""
+    if cred.get("tipo") == "google_oauth":
+        from . import oauth
+
+        return ClienteDriveToken(lambda alcances: oauth.google(cred, alcances, timeout), timeout)
+    return fabrica(cred.get("valores") or {}, timeout)
+
+
 def revisar_id(x: Any, que: str) -> str:
     v = str(x or "").strip()
     if not ID.match(v):

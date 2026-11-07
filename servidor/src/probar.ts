@@ -95,7 +95,7 @@ export async function registrar(app: FastifyInstance, deps: Dependencias): Promi
       if (!ids.length) ids = espacio.resolverArchivos(f.id, c.entrada, d).map((a) => a.id);
     }
     const disp = flujos.disparadorDe(d);
-    const deCorreo = disp?.tipo === "entrada_correo" || disp?.tipo === "correo_nuevo";
+    const deCorreo = flujos.DISPARADORES_DE_CORREO.has(disp?.tipo ?? "");
     if (caso && (!deCorreo || !(await bandeja.esDe({ id: f.id, tipo: f.tipo }, caso)))) {
       // solo un correo de SU correspondencia: nunca el universo de PQRD ni lo de otro flujo
       if (b.caso) return res.code(400).send({ error: deCorreo ? `el correo «${caso}» no es de la correspondencia de este flujo` : "este flujo no arranca con un correo" });

@@ -29,6 +29,9 @@ import * as notificaciones from "./notificaciones.ts";
 import * as aprobaciones from "./aprobaciones.ts";
 import * as aplazadas from "./aplazadas.ts";
 import * as probar from "./probar.ts";
+import * as oauth from "./oauth.ts";
+import * as conectores from "./conectores.ts";
+import { DISPARADORES_DE_SONDEO } from "./flujos_integraciones.ts";
 import { consumoDe, obtenerVera } from "./ia.ts";
 import { EventEmitter } from "node:events";
 
@@ -254,7 +257,7 @@ async function loQueSeBorra(id: string) {
     tabla_del_flujo: usoDelEspacio.tabla,
     credenciales: credenciales.listar(id).filter((c) => c.alcance === id).map((c) => c.nombre),
     compuerta: flujos.esDeCodigo(id),
-    programacion: flujos.esDeCodigo(id) || ["programado", "correo_nuevo"].includes(f.disparador ?? ""),
+    programacion: flujos.esDeCodigo(id) || (f.disparador === "programado" || DISPARADORES_DE_SONDEO.has(f.disparador ?? "")),
   };
 }
 
@@ -327,7 +330,7 @@ app.post<{ Params: { id: string } }>("/api/flujos/:id/correr", async (req, res) 
   const disp = flujos.disparadorDe(f.definicion);
   const m = motorDe(f.id)!;
   if (!m.cabe(1)) return res.code(429).send(colaLlena(m));
-  if (disp?.tipo === "entrada_correo" || disp?.tipo === "correo_nuevo") {
+  if (flujos.DISPARADORES_DE_CORREO.has(disp?.tipo ?? "")) {
     if (!r.data.caso || !bandeja.casoValido(r.data.caso)) return res.code(400).send({ error: `este flujo empieza con ${disp.tipo}: manda caso (un correo de SU correspondencia: GET /api/bandeja?flujo=${f.id})` });
     // solo un correo de su propia correspondencia (nunca el universo de PQRD ni lo de otro flujo)
     if (!(await bandeja.esDe(deBandeja(f), r.data.caso))) return res.code(400).send({ error: `el caso «${r.data.caso}» no es de la correspondencia de este flujo (súbelo a su bandeja de prueba o tráelo de su buzón)` });
@@ -462,7 +465,7 @@ app.get("/api/credenciales/tipos", async () => credenciales.tipos());
 app.put<{ Params: { nombre: string } }>("/api/credenciales/:nombre", async (req, res) => {
   const alcance = (req.body as { alcance?: unknown })?.alcance;
   if (typeof alcance === "string" && alcance !== "global" && !flujos.obtener(alcance)) return res.code(400).send({ error: `alcance: no existe el flujo «${alcance}»` });
-  const r = await credenciales.guardar(req.params.nombre, req.body);
+  const r = await credenciales.guardar(req.params.nombre, req.body, confirmadoPorPersona(req));
   return r.ok ? r.credencial : res.code(r.codigo ?? 400).send({ error: r.error });
 });
 
@@ -482,6 +485,8 @@ app.delete<{ Params: { nombre: string } }>("/api/credenciales/:nombre", async (r
 // ---------------------------------------------------------- webhooks
 
 await rutasIa.registrar(app);  // IA: proveedores, modelos, probar, global y Vera (rutas_ia.ts)
+await oauth.registrar(app);  // Conexiones OAuth (Google, Microsoft 365) y «Probar conexión» (oauth.ts)
+await conectores.registrar(app);  // OpenAPI: analizar una especificación (conectores.ts)
 
 // Producto: historial por flujo, plantillas y notificaciones (historial.ts, plantillas.ts, notificaciones.ts)
 await historial.registrar(app, { motorDe, motores: () => motores.values() });
@@ -797,6 +802,21 @@ app.patch<{ Params: { id: string } }>("/api/chats/:id", async (req, res) => {
   return c;
 });
 
+// Qué está viendo la persona en este momento: el navegador lo reporta cada vez que cambia la pantalla
+// (y justo después de aplicar algo que pidió Vera). Vera lo consulta antes de afirmar que algo está en pantalla.
+const pantallas = new Map<string, { pantalla: Record<string, unknown>; t: number }>();
+app.put<{ Params: { id: string } }>("/api/chats/:id/pantalla", async (req) => {
+  const p = req.body && typeof req.body === "object" ? (req.body as Record<string, unknown>) : {};
+  if (JSON.stringify(p).length > 8000) return { ok: false };
+  pantallas.set(req.params.id, { pantalla: p, t: Date.now() });
+  if (pantallas.size > 200) pantallas.delete(pantallas.keys().next().value as string);
+  return { ok: true };
+});
+app.get<{ Params: { id: string } }>("/api/chats/:id/pantalla", async (req) => {
+  const x = pantallas.get(req.params.id);
+  return x ? { pantalla: x.pantalla, hace_ms: Date.now() - x.t } : { pantalla: null, nota: "el navegador no ha reportado su pantalla en esta conversación" };
+});
+
 app.delete<{ Params: { id: string } }>("/api/chats/:id", async (req, res) => ((await chats.borrar(req.params.id)) ? { ok: true } : res.code(404).send({ error: "esa conversación no existe" })));
 
 // Un adjunto llega como JSON con su contenido en base64 (hasta 25 MB).
@@ -906,6 +926,8 @@ app.post<{ Params: { id: string } }>("/api/chats/:id/mensajes", async (req, res)
   res.raw.on("close", () => {
     if (p.exitCode === null) p.kill();
   });
+  // Lo que vino con el mensaje es la pantalla de este instante.
+  if (r.data.pantalla) pantallas.set(c.id, { pantalla: r.data.pantalla, t: Date.now() });
   // La IA de Vera (aparte de la de los flujos) y, si usa una conexión, sus valores solo para este proceso.
   const iaVera = obtenerVera().texto;
   const credVera = iaVera.credencial ? credenciales.paraCorrida("vera", [iaVera.credencial])[iaVera.credencial]?.valores : undefined;
@@ -1024,6 +1046,8 @@ async function iniciarLlamada(
         x.ia_voz = iaVoz;
         x.credencial_ia = iaVoz.credencial ? (credenciales.paraCorrida("vera", [iaVoz.credencial])[iaVoz.credencial]?.valores ?? null) : null;
       }
+      const pant = (m as { pantalla?: unknown }).pantalla;
+      if ((m.tipo === "inicio" || m.tipo === "pantalla") && pant && typeof pant === "object") pantallas.set(c.id, { pantalla: pant as Record<string, unknown>, t: Date.now() });
       trama("J", Buffer.from(JSON.stringify(m)));
     } catch {
       /* mensaje inválido */

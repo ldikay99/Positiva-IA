@@ -398,7 +398,7 @@ async function reintentar(deps: Dependencias, c: Corrida): Promise<{ ok: true; c
     nueva = m.encolar(c.caso, conf, { origen: "reintento" });
   } else {
     const disp = f.definicion ? flujos.disparadorDe(f.definicion) : undefined;
-    const deCorreo = disp?.tipo === "entrada_correo" || disp?.tipo === "correo_nuevo";
+    const deCorreo = flujos.DISPARADORES_DE_CORREO.has(disp?.tipo ?? "");
     if (deCorreo) {
       if (!bandeja.casoValido(c.caso) || !(await bandeja.esDe({ id: f.id, tipo: f.tipo }, c.caso))) return { ok: false, codigo: 400, error: "ese correo ya no está en la correspondencia de este flujo" };
       nueva = m.encolar(c.caso, conf, { origen: "reintento", entrada: c.entrada ?? {} });

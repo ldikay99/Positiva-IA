@@ -66,6 +66,38 @@ class ClienteSheets:
 
 
 fabrica: Callable[[dict, float], Any] = ClienteSheets
+BASE_TOKEN = API  # las pruebas lo cambian por un servidor local
+
+
+class ClienteSheetsToken(ClienteSheets):
+    """Las mismas Sheets con un token (una conexión google_oauth), por el cliente REST seguro de los conectores."""
+
+    def __init__(self, token_de: Callable[[List[str]], str], timeout: float) -> None:  # noqa: D107
+        self.token_de, self.timeout = token_de, timeout
+
+    def _r(self, metodo: str, url: str, **kw) -> Any:
+        from . import rest
+
+        r = rest.pedir(metodo, url.replace(API, BASE_TOKEN), token=self.token_de(ALCANCE), timeout=self.timeout, servicio="Sheets", errores=False,
+                       params=kw.get("params"), json=kw.get("json"))
+        if r.status_code in (408, 429) or r.status_code >= 500:
+            raise ErrorTransitorio(f"Sheets respondió {r.status_code}")
+        if r.status_code >= 400:
+            try:
+                detalle = r.json().get("error", {}).get("message", "")
+            except (ValueError, AttributeError):
+                detalle = r.text[:200]
+            raise ErrorDeNegocio(f"Sheets respondió {r.status_code}: {detalle}")
+        return r.json() if r.content else {}
+
+
+def cliente(cred: dict, timeout: float) -> Any:
+    """El cliente de Sheets de una credencial: google_servicio (fabrica) o google_oauth."""
+    if cred.get("tipo") == "google_oauth":
+        from . import oauth
+
+        return ClienteSheetsToken(lambda alcances: oauth.google(cred, alcances, timeout), timeout)
+    return fabrica(cred.get("valores") or {}, timeout)
 
 
 def revisar_id(x: Any) -> str:

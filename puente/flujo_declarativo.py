@@ -91,7 +91,8 @@ from conectores import hojas as c_hojas  # noqa: E402
 from conectores import sql as c_sql  # noqa: E402
 from conectores import tablas as c_tablas  # noqa: E402
 import proveedores as ia_proveedores  # noqa: E402  (la capa de proveedores de IA: Vertex, Gemini, OpenAI, Claude…)
-import nodos_producto as np_  # noqa: E402  (aprobación humana, documentos, datos personales, hojas, mensajería, IA, datos y control)
+import nodos_producto as np_  # noqa: E402
+import nodos_integraciones as ni_  # noqa: E402  (Google Workspace, Microsoft 365, OpenAPI y disparadores por evento)  (aprobación humana, documentos, datos personales, hojas, mensajería, IA, datos y control)
 import cache_conversion  # noqa: E402  (conversión, OCR y visión por huella del archivo)
 from conectores.base import (HOSTS_METADATOS, ErrorDeNegocio, ErrorTransitorio, destino_seguro, direccion_vetada,  # noqa: E402,F401
                              host_vetado, ip_bloqueada, ruta_estado, timeout_de)
@@ -120,26 +121,29 @@ _salida = sys.stdout
 _cerrojo = threading.Lock()
 _corrida: contextvars.ContextVar = contextvars.ContextVar("corrida", default=None)
 
-DISPARADORES = {"entrada_correo", "entrada_manual", "programado", "webhook", "correo_nuevo", "entrada_archivos"}
+DISPARADORES = {"entrada_correo", "entrada_manual", "programado", "webhook", "correo_nuevo", "entrada_archivos"} | ni_.DISPARADORES
+# Los que arrancan con un correo (su bandeja, «Correspondencia», responder en el hilo).
+DISPARADORES_CORREO = {"entrada_correo", "correo_nuevo"} | ni_.DISPARADORES_DE_CORREO
 CONECTORES = {"correo_leer", "correo_enviar", "drive_listar", "drive_leer", "drive_subir", "hoja_leer", "sql_consulta", "sql_ejecutar"}
 TIPOS = DISPARADORES | CONECTORES | {
     "leer_adjuntos", "filtro", "condicion", "ia_clasificar", "ia_decidir", "ia_extraer", "extraer_regex", "validar", "transformar",
     "buscar_en_tabla", "bifurcar_por_valor", "ia_generar", "resumir", "ia_redactar", "notificar", "enviar", "http", "salida",
     "para_cada", "fin_ciclo", "paralelo", "unir", "esperar", "expresion", "json", "fecha", "llamar_flujo", "respuesta_webhook",
-    "tabla_guardar", "tabla_consultar", "archivo_leer", "archivo_guardar"} | np_.TIPOS
+    "tabla_guardar", "tabla_consultar", "archivo_leer", "archivo_guardar"} | np_.TIPOS | ni_.TIPOS
 TIPOS_IA = {"ia_clasificar", "ia_decidir", "ia_extraer", "ia_generar", "resumir", "ia_redactar"}
 # Los que hablan con algo de afuera y por eso aceptan reintentos.
-TIPOS_CON_REINTENTOS = TIPOS_IA | {"notificar", "enviar", "http", "llamar_flujo"} | CONECTORES | np_.CON_REINTENTOS
+TIPOS_CON_REINTENTOS = TIPOS_IA | {"notificar", "enviar", "http", "llamar_flujo"} | CONECTORES | np_.CON_REINTENTOS | ni_.CON_REINTENTOS
 # Los que escriben afuera (solo con una credencial con permitir_escritura; notificar y enviar nunca).
-TIPOS_ESCRITURA = {"correo_enviar", "drive_subir", "sql_ejecutar", "http", "enviar", "notificar"} | np_.ESCRITURA
+TIPOS_ESCRITURA = {"correo_enviar", "drive_subir", "sql_ejecutar", "http", "enviar", "notificar"} | np_.ESCRITURA | ni_.ESCRITURA
 # Ni los disparadores, ni las salidas, ni la estructura de bucles y ramas se pueden saltar.
 NO_DESHABILITABLES = DISPARADORES | {"salida", "fin_ciclo", "para_cada", "paralelo", "unir"} | np_.TERMINALES
 # Donde termina un camino: la salida (el flujo), fin_ciclo (la vuelta) y detener_con_alerta (el flujo, con un aviso).
 TERMINALES = {"salida", "fin_ciclo"} | np_.TERMINALES
 CREDENCIALES_DE = {"correo_leer": ("imap", "microsoft_graph"), "correo_nuevo": ("imap", "microsoft_graph"), "entrada_correo": ("imap", "microsoft_graph"),
-                   "correo_enviar": ("smtp", "microsoft_graph"), "drive_listar": ("google_servicio",), "drive_leer": ("google_servicio",),
-                   "drive_subir": ("google_servicio",), "hoja_leer": ("google_servicio",), "sql_consulta": ("postgres", "mysql", "sqlite"),
-                   "sql_ejecutar": ("postgres", "mysql", "sqlite"), "http": ("http_bearer", "http_basico")}
+                   "correo_enviar": ("smtp", "microsoft_graph"), "drive_listar": ("google_servicio", "google_oauth"),
+                   "drive_leer": ("google_servicio", "google_oauth"), "drive_subir": ("google_servicio", "google_oauth"),
+                   "hoja_leer": ("google_servicio", "google_oauth"), "sql_consulta": ("postgres", "mysql", "sqlite"),
+                   "sql_ejecutar": ("postgres", "mysql", "sqlite"), "http": ("http_bearer", "http_basico", "http_oauth2")}
 NOMBRE_CREDENCIAL = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,62}$")
 NOMBRE_ENTORNO = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$")
 ID_FLUJO = re.compile(r"^[a-z][a-z0-9-]{1,40}$")
@@ -428,6 +432,8 @@ def _salidas_propias(t: Any, c: dict) -> Tuple[List[str], List[str]]:
         return [], []
     if t in np_.TIPOS:
         return np_.salidas(t, c)
+    if t in ni_.TIPOS:
+        return ni_.salidas(t, c)
     if t == "para_cada":
         return ["cada", "listo"], []
     if t == "paralelo":
@@ -542,6 +548,8 @@ def produce(n: dict) -> Set[str]:
         r.add(c.get("salida") or nid)
     elif t in np_.TIPOS:
         r = np_.produce(t, c, nid)
+    elif t in ni_.TIPOS:
+        r |= ni_.produce(t, c, nid)
     return {x for x in r if isinstance(x, str)}
 
 
@@ -587,6 +595,8 @@ def referencias(n: dict) -> List[Tuple[str, Set[str]]]:
     refs: List[Tuple[str, Set[str]]] = []
     if t in np_.TIPOS:
         return np_.referencias(t, c, _plantillas_en, _ref_de_fuente)
+    if t in ni_.TIPOS:
+        return ni_.referencias(t, c, _plantillas_en, _ref_de_fuente)
     if t == "transformar":
         locales: Set[str] = set()
         for o in _operaciones(c):
@@ -1362,6 +1372,8 @@ def _validar_config(n: dict) -> List[str]:
         np_.problemas_archivos(c, "adjuntos", q)
     elif t == "http":
         _validar_http(c, q)
+    elif t in ni_.TIPOS:
+        ni_.validar(t, c, q)
     elif t in NUEVOS:
         _validar_nuevos(t, c, q)
     elif t in np_.TIPOS:
@@ -1893,7 +1905,7 @@ def _sin_secretos(encabezados: Dict[str, str], credencial: str = "") -> Dict[str
 _paginas = threading.Lock()
 
 
-class Ejecucion(np_.NodosProducto):
+class Ejecucion(np_.NodosProducto, ni_.NodosIntegraciones):
     def __init__(self, defi: dict, caso: str, modelo: str, entrada: Any = None, credenciales: Optional[Dict[str, dict]] = None,
                  entorno: Optional[Dict[str, str]] = None, subflujos: Optional[Dict[str, dict]] = None,
                  pila: Optional[List[str]] = None, flujo: str = "", ia_global: Optional[dict] = None) -> None:
@@ -2673,7 +2685,7 @@ class Ejecucion(np_.NodosProducto):
                 "ruta": ruta, "encabezados": encabezados, "cuerpo": cuerpo, "vista_cuerpo": vista_cuerpo, "credencial": credencial,
                 "cuerpo_ignorado": c.get("cuerpo") is not None and metodo == "GET"}
 
-    def _pedir(self, p: dict, timeout_s: float, con_crudo: bool = False) -> dict:
+    def _pedir(self, p: dict, timeout_s: float, con_crudo: bool = False, max_bytes: int = HTTP_MAX_BYTES) -> dict:
         ip = destino_seguro(p["host"], p["puerto"])
         encabezados = dict(p["encabezados"])
         if p["credencial"]:
@@ -2684,12 +2696,12 @@ class Ejecucion(np_.NodosProducto):
         try:
             con.request(p["metodo"], p["ruta"], body=p["cuerpo"], headers=encabezados)
             resp = con.getresponse()  # http.client nunca sigue redirecciones
-            crudo = resp.read(HTTP_MAX_BYTES + 1)
+            crudo = resp.read(max_bytes + 1)
             status, cabeceras = resp.status, {k.lower(): v for k, v in resp.getheaders()}
         finally:
             con.close()
-        truncado = len(crudo) > HTTP_MAX_BYTES
-        crudo = crudo[:HTTP_MAX_BYTES]
+        truncado = len(crudo) > max_bytes
+        crudo = crudo[:max_bytes]
         tipo = cabeceras.get("content-type", "")
         m = re.search(r"charset=([\w-]+)", tipo, re.I)
         try:
@@ -2704,7 +2716,7 @@ class Ejecucion(np_.NodosProducto):
                 datos = texto
         return {"metodo": p["metodo"], "url": p["url"], "status": status, "ok": 200 <= status < 400, "simulado": False,
                 "ms": int((time.time() - t) * 1000), "bytes": len(crudo), "truncado": truncado, "datos": datos,
-                "encabezados": {k: v for k, v in cabeceras.items() if k in ("content-type", "content-length", "location", "retry-after", "date", "etag")},
+                "encabezados": {k: v for k, v in cabeceras.items() if k in ("content-type", "content-length", "location", "retry-after", "date", "etag", "link", "content-disposition")},
                 **({"redireccion": cabeceras.get("location", "")} if 300 <= status < 400 else {}),
                 **({"crudo": crudo} if con_crudo else {})}
 
@@ -2734,13 +2746,19 @@ class Ejecucion(np_.NodosProducto):
         v = cred.get("valores") or {}
         if cred["tipo"] == "http_bearer":
             return f"Bearer {v.get('token', '')}"
+        if cred["tipo"] == "http_oauth2":  # OAuth2 de cliente: el token se pide (y se guarda en memoria hasta que venza)
+            from conectores import oauth as c_oauth
+            return "Bearer " + c_oauth.cliente(str(v.get("token_url") or ""), str(v.get("client_id") or ""), str(v.get("client_secret") or ""),
+                                               str(v.get("scope") or ""))
         return "Basic " + base64.b64encode(f"{v.get('usuario', '')}:{v.get('clave', '')}".encode()).decode()
 
     def http(self, n: dict) -> str:
         c = n.get("config") or {}
         p = self._armar_http(c)
         salida = c.get("salida") or n["id"]
-        vista = {"metodo": p["metodo"], "url": p["url"], "encabezados": _sin_secretos(p["encabezados"], p["credencial"]), "cuerpo": p["vista_cuerpo"]}
+        resumen_archivos = self._http_archivos(c, p)  # multipart o binario con archivos de la ejecución (POST, PUT, PATCH)
+        vista = {"metodo": p["metodo"], "url": p["url"], "encabezados": _sin_secretos(p["encabezados"], p["credencial"]), "cuerpo": p["vista_cuerpo"],
+                 **({"archivos": resumen_archivos, "modo_archivos": c.get("modo_archivos") or "multipart"} if resumen_archivos else {})}
         permitidos = hosts_permitidos()
         vetado = host_vetado(p["host"])
         if vetado:
@@ -2780,8 +2798,10 @@ class Ejecucion(np_.NodosProducto):
         timeout = int(c.get("timeout_ms") or HTTP_TIMEOUT_MS)
         timeout = max(100, min(timeout, HTTP_TIMEOUT_MAX_MS)) / 1000
 
-        def una() -> dict:
-            r = self._pedir(p, timeout)
+        descargar = c.get("descargar") is True
+
+        def una(pp: dict = p) -> dict:
+            r = self._pedir(pp, timeout, con_crudo=descargar, max_bytes=np_.MAX_BYTES if descargar else HTTP_MAX_BYTES)
             if r["status"] in (408, 425, 429) or r["status"] >= 500:
                 raise RespuestaTransitoria(r)
             return r
@@ -2790,6 +2810,10 @@ class Ejecucion(np_.NodosProducto):
             r = self._con_reintentos(n, una, f"{p['metodo']} {p['host']}")
         except RespuestaTransitoria as e:
             r = e.respuesta
+        if r["status"] < 400 and isinstance(c.get("paginacion"), dict) and p["metodo"] == "GET":
+            r = self._paginar_http(n, c, p, r, una)
+        if descargar and r["status"] < 400:
+            r = self._descarga_http(c, p, r)
         if p["metodo"] != "GET":
             evento("escritura", sistema="http", operacion=p["metodo"], destino=p["url"], bloqueada=False, simulada=False, detalle=vista,
                    nodo=n["id"], credencial=p["credencial"], status=r["status"])
@@ -3026,8 +3050,8 @@ class Ejecucion(np_.NodosProducto):
         return "ok"
 
     def _drive(self, n: dict, c: dict) -> Tuple[Any, dict]:
-        cred = self.cred(c.get("credencial"), ("google_servicio",))
-        return c_drive.fabrica(cred["valores"], timeout_de(c)), cred
+        cred = self.cred(c.get("credencial"), ("google_servicio", "google_oauth"))
+        return c_drive.cliente(cred, timeout_de(c)), cred
 
     def drive_listar(self, n: dict) -> str:
         c = n.get("config") or {}
@@ -3062,7 +3086,7 @@ class Ejecucion(np_.NodosProducto):
 
     def drive_subir(self, n: dict) -> str:
         c = n.get("config") or {}
-        cred = self.cred(c.get("credencial"), ("google_servicio",))
+        cred = self.cred(c.get("credencial"), ("google_servicio", "google_oauth"))
         archivo = None
         if c.get("archivo") not in (None, ""):
             # un archivo de la corrida (generado, subido o adjunto del correo) o del flujo, tal cual
@@ -3085,7 +3109,7 @@ class Ejecucion(np_.NodosProducto):
         detalle = {"nombre": nombre, "carpeta": carpeta, "tipo": tipo, "bytes": len(datos),
                    **({"archivo": {k: archivo[k] for k in ("id", "nombre", "tipo", "tamano")}} if archivo else {"vista": datos[:600].decode("utf-8", "replace")})}
         r = self._escribir(n, "google_drive", "subir archivo", f"drive:{carpeta or 'raíz'}/{nombre}", detalle, cred,
-                           lambda: c_drive.fabrica(cred["valores"], timeout_de(c)).subir(nombre, carpeta, datos, tipo))
+                           lambda: c_drive.cliente(cred, timeout_de(c)).subir(nombre, carpeta, datos, tipo))
         self.vars[c.get("salida") or n["id"]] = {k: r.get(k) for k in ("id", "nombre", "bloqueado", "motivo", "webViewLink") if k in r}
         return "ok"
 
@@ -3643,7 +3667,7 @@ class Ejecucion(np_.NodosProducto):
         """Lo que el nodo dejó: sus variables nuevas o cambiadas (y el correo, si es la entrada o la lectura)."""
         suyas = produce(n) | {k for k, v in self.vars.items() if k not in antes or antes[k] is not v}
         r = {k: self.vars[k] for k in sorted(suyas) if k in self.vars and not k.startswith("_")}
-        if n.get("tipo") in ("entrada_correo", "correo_nuevo"):
+        if n.get("tipo") in DISPARADORES_CORREO:
             r = {"correo": self._vista_correo(), "adjuntos": self._vista_adjuntos(), **r}
         elif n.get("tipo") == "leer_adjuntos":
             r = {"adjuntos": self._vista_adjuntos(), **({"archivos": self._vista_archivos()} if self.archivos else {}), **r}
@@ -4077,7 +4101,7 @@ def probar(orden: dict) -> dict:
         e._prof = 0
         e._fijados = {k: v for k, v in (orden.get("fijados") or {}).items() if isinstance(v, dict)}
         disp = next((x for x in defi["nodos"] if x["tipo"] in DISPARADORES), None)
-        if disp and disp["tipo"] in ("entrada_correo", "correo_nuevo") and not orden.get("caso"):
+        if disp and disp["tipo"] in DISPARADORES_CORREO and not orden.get("caso"):
             # sin correo elegido: el disparador de correo no tiene qué leer; con datos de prueba (variables o fijados) igual se puede probar
             e.correo = {"asunto": "", "cuerpo": "", "remitente": "", "remitente_correo": "", "remitente_nombre": "", "recibido": "",
                         "adjuntos_nombres": [], "adjuntos_texto": "", "adjuntos_leidos": []}
@@ -4090,7 +4114,7 @@ def probar(orden: dict) -> dict:
             e._parar_en = nid
             antes = {}
             try:
-                if disp and disp["tipo"] in ("entrada_correo", "correo_nuevo") and not orden.get("caso") and disp["id"] not in e._fijados:
+                if disp and disp["tipo"] in DISPARADORES_CORREO and not orden.get("caso") and disp["id"] not in e._fijados:
                     raise ErrorDeNegocio("este flujo arranca con un correo: elige uno de su correspondencia (o fija los datos del disparador)")
                 resultado = e.correr()
                 alcanzado = False  # terminó sin pasar por el paso (otra rama)
@@ -4098,7 +4122,7 @@ def probar(orden: dict) -> dict:
                 salida, resultado = p.salida, p.resultado
         else:
             # el contexto del disparador (el correo elegido o la entrada), luego los datos de prueba, y SOLO el paso
-            if disp and disp["id"] != nid and disp["id"] not in e._fijados and not (disp["tipo"] in ("entrada_correo", "correo_nuevo") and not orden.get("caso")):
+            if disp and disp["id"] != nid and disp["id"] not in e._fijados and not (disp["tipo"] in DISPARADORES_CORREO and not orden.get("caso")):
                 e._nodo_actual = disp["id"]
                 getattr(e, disp["tipo"])(disp)
             e.restaurar(orden.get("variables") or {})
@@ -4108,7 +4132,7 @@ def probar(orden: dict) -> dict:
             salida, resultado = e.correr_un_paso(n)
         propias = produce(n)
         nuevas = {k: v for k, v in e.vars.items() if not k.startswith("_") and (k in propias or k not in antes or antes[k] is not v)}
-        if n["tipo"] in ("entrada_correo", "correo_nuevo", "leer_adjuntos"):
+        if n["tipo"] in DISPARADORES_CORREO | {"leer_adjuntos"}:
             nuevas = {"correo": e._vista_correo(), "adjuntos": e._vista_adjuntos(), **nuevas}
         r = {"ok": True, "nodo": nid, "hasta": bool(orden.get("hasta")), "alcanzado": alcanzado, "salida": salida,
              "variables": {k: _corto_prueba(v) for k, v in nuevas.items()},
@@ -4149,11 +4173,13 @@ def sondear(orden: dict) -> dict:
     preparar_secretos(orden)
     try:
         defi, flujo = orden.get("definicion") or {}, str(orden.get("flujo") or "")
-        n = next((x for x in defi.get("nodos") or [] if x.get("tipo") == "correo_nuevo"), None)
+        n = next((x for x in defi.get("nodos") or [] if x.get("tipo") in {"correo_nuevo"} | ni_.DISPARADORES), None)
         if not n:
-            raise ErrorDeNegocio("el flujo no tiene un disparador correo_nuevo")
+            raise ErrorDeNegocio("el flujo no tiene un disparador que se revise (correo_nuevo, gmail_nuevo, outlook_nuevo o calendar_evento_proximo)")
         c = n.get("config") or {}
         e = Ejecucion(defi, "sondeo", "", credenciales=orden.get("credenciales") or {}, flujo=flujo)
+        if n["tipo"] != "correo_nuevo":
+            return ni_.sondear(e, n, _estado_sondeo(flujo))
         cred = e.cred(c.get("credencial"), CREDENCIALES_DE["correo_nuevo"])
         carpeta = c.get("carpeta") or ("INBOX" if cred["tipo"] == "imap" else "inbox")
         maximo = max(1, min(50, int(c.get("max_por_sondeo") or 10)))
@@ -4203,7 +4229,8 @@ def sondear(orden: dict) -> dict:
 def _hilo_de(m: dict) -> dict:
     """Lo que hace falta para responder en el mismo hilo: el id de Graph, References y Reply-To del correo."""
     return {k: v for k, v in (("_graph_id", str(m.get("graph_id") or "")), ("_referencias", str(m.get("referencias") or "")),
-                              ("_responder_a", str(m.get("responder_a") or ""))) if v}
+                              ("_responder_a", str(m.get("responder_a") or "")), ("_gmail_id", str(m.get("gmail_id") or "")),
+                              ("_gmail_hilo", str(m.get("gmail_hilo") or "")), ("_cc", str(m.get("cc") or ""))) if v}
 
 
 def guardar_correo(dest: Path, m: dict, origen: str) -> List[dict]:
@@ -4288,6 +4315,7 @@ def _validar_cli(entrada: Any) -> List[str]:
 
 
 np_.enlazar(sys.modules[__name__])  # los nodos de producto usan este mismo módulo (y no una segunda copia)
+ni_.enlazar(sys.modules[__name__])  # y los de integración también
 
 
 if __name__ == "__main__":

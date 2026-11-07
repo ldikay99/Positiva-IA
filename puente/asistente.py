@@ -112,6 +112,7 @@ Cómo trabajas:
 6. Si un flujo necesita una conexión (correo, Drive, base de datos, API), revisa listar_credenciales; si falta, usa pedir_credencial (la persona la crea, tú nunca manejas claves) y luego configúrala en el nodo por su nombre. Las escrituras afuera solo ocurren si la persona habilitó la escritura en esa conexión; si no, quedan registradas como bloqueadas.
    IA de los flujos: hay tres niveles separados — la IA global de la plataforma, la de cada flujo (usa la global o una propia) y la de cada nodo de IA (hereda o elige la suya); se resuelve nodo → flujo → global. Tú (Vera) tienes tu propia IA aparte. Con proveedores_ia, modelos_ia, ver_ia_flujo, configurar_ia_flujo y probar_ia eliges y verificas proveedor y modelo según lo que el nodo necesita (visión, JSON, herramientas) y el costo; si falta la llave de un proveedor, pedir_credencial (la persona la escribe). Para un nodo puntual usa editar_nodo con config.proveedor/modelo/credencial.
    Archivos: un flujo puede recibir archivos (entrada_archivos, adjuntos del correo, Drive…) y ENTREGAR archivos: documento_generar (Word/PDF, también desde_ia), hoja_escribir (Excel/CSV, también desde_ia), ia_imagen, y enviarlos con correo_enviar/enviar/responder_correo (adjuntos), drive_subir, Teams/Slack o la salida/webhook. Para probar un paso con lo que te adjuntan en el chat usa probar_paso (usar_adjuntos_chat=true); para mostrar lo que generó una ejecución usa archivos_de_corrida (salen como cápsulas en el chat).
+   Pantalla: NUNCA afirmes qué ve la persona («ya lo tienes en pantalla», «ahí lo ves», «ya te lo abrí») sin haberlo comprobado. Lo que te llega al empezar es de ese instante y puede haber cambiado: ante «aquí», «lo que veo», «volvamos a…» o «no lo veo», usa ver_pantalla primero. «Volvamos al flujo donde estábamos», «regresa al flujo» o «el de antes» es el ÚLTIMO flujo con que se trabajó en esta conversación (el último que abriste, creaste, editaste o corriste), no la pantalla anterior: comprueba dónde está la persona con ver_pantalla y ábreselo con enfocar_flujo sin preguntar; solo pregunta si en la conversación no hubo ningún flujo. Las herramientas que mueven la pantalla devuelven confirmado: solo si es true dices que ya lo ve; si es false o null, di lo que ve realmente (en_pantalla) y corrígelo o pregúntale.
    Producto: para empezar rápido ofrece una plantilla (plantillas, instalar_plantilla) y ajústala; para revisar qué pasó usa historial (y reintentar_corrida); las notificaciones y las aprobaciones pendientes las consultas tú, pero aprobar o rechazar lo decide SIEMPRE la persona en la bandeja (abrir_vista aprobaciones). abrir_vista abre inicio, plantillas, historial, notificaciones, aprobaciones, conexiones o la guía.
    Cada flujo es independiente: su correspondencia (si arranca con correo), sus archivos, su entorno, sus conexiones, su compuerta y sus corridas. Nunca mezcles: los correos de PQRD son de PQRD. Un flujo nuevo que arranca con correo usa su bandeja de prueba (sube .eml con subir_adjuntos_a_flujo destino=bandeja_prueba) o su buzón propio (configura la conexión y carpeta del disparador con editar_nodo y léelo con leer_buzon_flujo). Para procesar documentos o imágenes que te adjunten en el chat, usa un flujo con disparador entrada_archivos (o un campo de tipo archivo en entrada_manual) y subir_adjuntos_a_flujo con correr=true; nunca pidas rutas. Para editar un flujo sin tocar el original, clonar_flujo; renombrar_flujo y proponer_borrado sirven para cualquier flujo salvo borrar los originales PQRD y tutelas.
    Cada flujo tiene su propio entorno (variables y secretos, no globales): en los nodos se usan como {{entorno.NOMBRE}}. Revisa con ver_entorno; define o quita las que NO son secretas con definir_variable / quitar_variable; los secretos los escribe la persona (pedir_secreto). Para la revisión antes de producción, ver_manifiesto.
@@ -203,6 +204,7 @@ HERRAMIENTAS = [
     {"name": "centrar_nodo", "description": "Centra y selecciona un nodo en el lienzo del flujo elegido para mostrárselo a la persona.", "parameters": {"type": "object", "properties": {"nodo": {"type": "string"}}, "required": ["nodo"]}},
     {"name": "renombrar_chat", "description": "Cambia el título de esta conversación.", "parameters": {"type": "object", "properties": {"titulo": {"type": "string"}}, "required": ["titulo"]}},
     {"name": "listar_chats", "description": "Las conversaciones guardadas con su título y fecha.", "parameters": {"type": "object", "properties": {}}},
+    {"name": "ver_pantalla", "description": "Lo que la persona está viendo AHORA MISMO en su navegador: la pantalla, el flujo (si hay uno abierto), lo seleccionado, lo abierto y la dirección. Úsalo SIEMPRE antes de afirmar qué tiene en pantalla, cuando diga «aquí», «lo que veo», «volvamos a…», o cuando diga que no ve algo.", "parameters": {"type": "object", "properties": {}}},
     {"name": "enfocar_flujo", "description": "Abre ese flujo en la pantalla de la persona (por ejemplo, el que acabas de crear).", "parameters": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}},
     {"name": "ajustar_parametro_pqrd", "description": "Cambia un parámetro del motor de PQRD (clave del catálogo, ej. pipeline.compuerta.CONFIANZA_PARA_RADICAR). Rige desde el próximo correo.", "parameters": {"type": "object", "properties": {"clave": {"type": "string"}, "valor": {}, "nota": {"type": "string"}}, "required": ["clave", "valor"]}},
 ]
@@ -270,7 +272,101 @@ def ejecutar(nombre: str, a: Dict[str, Any]) -> Any:
     return _ejecutar(nombre, a)
 
 
+def _pantalla_ahora() -> Optional[Dict[str, Any]]:
+    """Lo último que reportó el navegador de esta conversación (None si nunca reportó)."""
+    if not CONVERSACION.get("id"):
+        return None
+    r = api("GET", f"/api/chats/{CONVERSACION['id']}/pantalla")
+    return r if isinstance(r, dict) and isinstance(r.get("pantalla"), dict) else None
+
+
+def _resumen_pantalla(p: Dict[str, Any]) -> Dict[str, Any]:
+    vista = p.get("vista")
+    r: Dict[str, Any] = {"pantalla": NOMBRES_VISTA.get(vista, vista), "vista": vista, "direccion": p.get("ruta")}
+    if vista in VISTAS_DE_FLUJO:
+        r["flujo_en_pantalla"] = {"id": p.get("flujo"), "nombre": p.get("nombreFlujo")}
+    else:
+        r["flujo_en_pantalla"] = None
+        r["ultimo_flujo_elegido"] = p.get("flujo")
+    for k in ("foco", "abierto", "corrida", "seleccion", "dialogo"):
+        if p.get(k):
+            r[k] = p[k]
+    return r
+
+
+def _cumple(nombre: str, a: Dict[str, Any], p: Dict[str, Any]) -> Optional[bool]:
+    """Si la pantalla quedó como pidió la herramienta (None: no hay nada que comprobar)."""
+    foco = p.get("foco") or {}
+    if nombre == "enfocar_flujo":
+        return p.get("vista") == "flujo" and p.get("flujo") == a.get("id")
+    if nombre == "navegar":
+        return p.get("vista") == a.get("vista") and (not a.get("flujo") or p.get("flujo") == a.get("flujo"))
+    if nombre == "abrir_vista":
+        v = a.get("vista")
+        if v == "guia":
+            return None
+        if p.get("vista") != v or (a.get("flujo") and v in VISTAS_DE_FLUJO and p.get("flujo") != a.get("flujo")):
+            return False
+        if a.get("plantilla") and v == "plantillas":
+            return p.get("abierto") == a["plantilla"]
+        if a.get("corrida") and v == "historial":
+            return p.get("abierto") == a["corrida"]
+        return True
+    if nombre == "abrir_corrida":
+        return p.get("vista") == "flujo" and foco.get("id") == a.get("id")
+    if nombre == "centrar_nodo":
+        return p.get("vista") == "flujo" and foco.get("id") == a.get("nodo")
+    if nombre == "abrir_correo":
+        return p.get("vista") == "flujo" and foco.get("caso") == a.get("caso")
+    return None
+
+
+CONFIRMAN_PANTALLA = {"enfocar_flujo", "navegar", "abrir_vista", "abrir_corrida", "centrar_nodo", "abrir_correo"}
+
+
+def _confirmar_pantalla(nombre: str, a: Dict[str, Any], r: Any, tope_s: float = 4.0) -> Any:
+    """Tras mover la pantalla, espera a que el navegador reporte lo que quedó y lo compara con lo pedido."""
+    if not isinstance(r, dict) or r.get("error") or r.get("propuesto"):
+        return r
+    inicio = time.time()
+    ultima: Optional[Dict[str, Any]] = None
+    while time.time() - inicio < tope_s:
+        time.sleep(0.3)
+        x = _pantalla_ahora()
+        if x is None:
+            if time.time() - inicio > 1.5:
+                r["confirmado"] = None
+                r["nota"] = "No hay un navegador reportando su pantalla en esta conversación: no afirmes que ya lo ve."
+                return r
+            continue
+        # solo cuenta lo reportado DESPUÉS de pedir el cambio
+        if (x.get("hace_ms") or 0) / 1000 > time.time() - inicio:
+            continue
+        ultima = x["pantalla"]
+        ok = _cumple(nombre, a, ultima)
+        if ok is None or ok:
+            r["confirmado"] = True if ok else None
+            r["en_pantalla"] = _resumen_pantalla(ultima)
+            return r
+    r["confirmado"] = False
+    if ultima:
+        r["en_pantalla"] = _resumen_pantalla(ultima)
+    r["nota"] = "La pantalla de la persona NO quedó así. No digas que ya lo ve: dile lo que ve (en_pantalla) e inténtalo de nuevo con la herramienta correcta."
+    return r
+
+
 def _ejecutar(nombre: str, a: Dict[str, Any]) -> Any:
+    if nombre in CONFIRMAN_PANTALLA:
+        return _confirmar_pantalla(nombre, a, _mover_pantalla(nombre, a))
+    return _mover_pantalla(nombre, a)
+
+
+def _mover_pantalla(nombre: str, a: Dict[str, Any]) -> Any:
+    if nombre == "ver_pantalla":
+        x = _pantalla_ahora()
+        if x is None:
+            return {"pantalla": None, "nota": "El navegador no ha reportado su pantalla en esta conversación."}
+        return {**_resumen_pantalla(x["pantalla"]), "reportada_hace_s": round((x.get("hace_ms") or 0) / 1000, 1)}
     if nombre == "editar_nodo":
         d = _definicion(a["flujo"])
         n = next((x for x in d["nodos"] if x["id"] == a["nodo"]), None)
@@ -675,7 +771,7 @@ def _ejecutar(nombre: str, a: Dict[str, Any]) -> Any:
         if v == "conexiones":
             emitir("control", accion="vista_conexiones")
             return {"ok": True}
-        return ejecutar("navegar", {"vista": v, "flujo": a.get("flujo")})
+        return _mover_pantalla("navegar", {"vista": v, "flujo": a.get("flujo")})
     if nombre == "controlar_editor":
         ops = ("seleccionar_nodo", "abrir_panel_nodo", "cerrar_panel", "zoom_nodo", "zoom", "auto_ordenar", "resaltar", "recargar", "abrir_paleta", "abrir_correr")
         if a.get("op") not in ops:
@@ -744,7 +840,7 @@ CONVERSACION: Dict[str, Any] = {"id": None}
 # y los grupos que pide la tarea (por la pantalla y las palabras del pedido) o que Vera
 # carga ella misma con cargar_herramientas.
 GRUPOS: Dict[str, List[str]] = {
-    "nucleo": ["cargar_herramientas", "listar_flujos", "leer_flujo", "navegar", "abrir_vista", "tipos_de_nodo", "ayuda_nodo", "reglas_de_flujos",
+    "nucleo": ["cargar_herramientas", "ver_pantalla", "listar_flujos", "leer_flujo", "navegar", "abrir_vista", "tipos_de_nodo", "ayuda_nodo", "reglas_de_flujos",
                "enfocar_flujo", "controlar_editor", "ajustar_lienzo", "centrar_nodo", "historial", "ver_corrida", "ultimas_corridas", "renombrar_chat"],
     "construir": ["validar_flujo", "guardar_flujo", "editar_nodo", "agregar_nodo", "eliminar_nodo", "editar_aristas", "proponer_borrado",
                   "renombrar_flujo", "clonar_flujo", "versiones_flujo", "restaurar_version", "plantillas", "instalar_plantilla"],
@@ -873,6 +969,12 @@ def _partes_de_adjunto(adj: Dict[str, Any], completo: bool, types) -> List[Any]:
 
 
 NOMBRES_VISTA = {
+    "inicio": "el Inicio (no hay un flujo abierto)",
+    "historial": "el Historial de ejecuciones del flujo",
+    "plantillas": "las Plantillas (no hay un flujo abierto)",
+    "notificaciones": "las Notificaciones (no hay un flujo abierto)",
+    "aprobaciones": "las Aprobaciones (no hay un flujo abierto)",
+    "conexiones": "las Conexiones (no hay un flujo abierto)",
     "tablero": "el Tablero (resumen de todos los flujos; no hay un flujo abierto)",
     "flujo": "el lienzo del flujo",
     "adjuntos": "la vista de Adjuntos (documentos leídos de una corrida)",
@@ -884,16 +986,25 @@ NOMBRES_VISTA = {
 }
 
 
+VISTAS_DE_FLUJO = {"flujo", "historial", "corridas", "logs", "adjuntos", "herramientas", "proveedores", "configuracion"}
+
+
 def describir_pantalla(p: Dict[str, Any], flujo: str) -> str:
     """Dónde está la persona ahora mismo, según lo que manda la web en cada mensaje."""
     vista = p.get("vista") or ""
     nombre = p.get("nombreFlujo") or flujo
     lineas = ["Dónde está la persona AHORA (cambia entre mensajes; no supongas que sigue donde estaba):"]
-    lineas.append(f"- Pantalla: {NOMBRES_VISTA.get(vista, vista or 'desconocida')}.")
-    if vista == "tablero":
-        lineas.append(f"- En el selector de arriba está «{nombre}» ({flujo}), pero en el Tablero ve todos los flujos: no digas «tu flujo abierto».")
+    lineas.append(f"- Pantalla: {NOMBRES_VISTA.get(vista, vista or 'desconocida')}" + (f" (dirección {p['ruta']})." if p.get("ruta") else "."))
+    if vista in VISTAS_DE_FLUJO:
+        lineas.append(f"- Flujo en pantalla: «{nombre}» ({flujo}). Lo que ve es de ese flujo.")
+    elif vista == "tablero":
+        lineas.append(f"- En el Tablero ve todos los flujos, ningún flujo abierto (el último elegido fue «{nombre}», {flujo}): no digas «tu flujo abierto».")
     else:
-        lineas.append(f"- Flujo elegido: «{nombre}» ({flujo}). Lo que ve en pantalla es de ese flujo.")
+        lineas.append(f"- NO tiene ningún flujo en pantalla. El último que eligió fue «{nombre}» ({flujo}); para mostrárselo hay que abrirlo (enfocar_flujo).")
+    if p.get("abierto"):
+        lineas.append(f"- Abierto dentro de la pantalla: {p['abierto']}.")
+    if p.get("dialogo"):
+        lineas.append(f"- Tiene abierto el cuadro «{p['dialogo']}».")
     if p.get("foco"):
         lineas.append(f"- Tiene seleccionado en el lienzo: {json.dumps(p['foco'], ensure_ascii=False)}.")
     if p.get("corrida"):

@@ -1,3 +1,4 @@
+import { iniciarRutas } from "./rutas.ts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ReactFlowProvider } from "@xyflow/react";
 import { AnimatePresence, MotionConfig, motion } from "motion/react";
@@ -531,7 +532,7 @@ export default function App() {
   const [bandeja, setBandeja] = useState(() => window.innerWidth >= 1100 && leerLocal("positiva-ia:bandeja-visible", true));
 
   useEffect(() => {
-    cargar().catch((e: Error) => avisar(`No se pudo cargar: ${e.message}`, "error"));
+    cargar().then(() => iniciarRutas()).catch((e: Error) => avisar(`No se pudo cargar: ${e.message}`, "error"));
     conectar();
   }, [cargar, conectar, avisar]);
 
@@ -556,6 +557,9 @@ export default function App() {
         if (x.vista === "historial" && typeof x.corrida === "string" && x.corrida) void s.abrirEnHistorial(x.corrida, x.flujo);
         else if (x.flujo && x.flujo !== s.flujo && s.flujos.some((f) => f.id === x.flujo)) void s.cambiarFlujo(x.flujo).then(() => irA(x.vista));
         else irA(x.vista);
+        // Lo que se abre dentro de la vista (una plantilla, una conexión) también va en la URL.
+        const dentro = (d as { plantilla?: unknown; conexion?: unknown }).plantilla ?? (d as { conexion?: unknown }).conexion;
+        if (typeof dentro === "string" && dentro && (x.vista === "plantillas" || x.vista === "conexiones")) s.fijarSub(dentro);
       } else if (d?.accion === "guia") {
         const abierta = (d as { abierta?: unknown }).abierta !== false;
         if (abierta && usar.getState().vista === "inicio" && !usarGuia.getState().cerrada) document.querySelector<HTMLElement>(".in-guia")?.scrollIntoView({ behavior: "smooth", block: "nearest" });

@@ -159,7 +159,7 @@ async function encolar(a: Aprobacion): Promise<string | null> {
   const f = flujos.obtener(a.flujo);
   if (!f || f.tipo !== "declarativo") return null;
   const disp = f.definicion ? flujos.disparadorDe(f.definicion)?.tipo : undefined;
-  const de_correo = disp === "entrada_correo" || disp === "correo_nuevo";
+  const de_correo = flujos.DISPARADORES_DE_CORREO.has(String(disp ?? ""));
   const c = deps.reanudar(a.flujo, { entrada: { aprobacion: a.id }, ...(de_correo && a.caso ? { caso: a.caso } : {}) });
   if (!c) return null;
   encoladas.set(a.id, Date.now());

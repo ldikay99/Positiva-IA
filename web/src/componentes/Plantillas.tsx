@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { pedir, usar } from "../estado.ts";
+import { useSubruta } from "../rutas.ts";
 import { Icono, type NombreIcono } from "../iconos.tsx";
 import { arranqueDe, iconoDePaso } from "../lenguaje.ts";
 import type { Plantilla } from "../tipos.ts";
@@ -58,7 +59,10 @@ export function VistaPlantillas() {
   const [lista, setLista] = useState<Plantilla[] | null>(null);
   const [error, setError] = useState("");
   const [categoria, setCategoria] = useState("");
-  const [abierta, setAbierta] = useState<Plantilla | null>(null);
+  // La plantilla abierta vive en la URL: /plantillas/<plantilla>
+  const [sub, setSub] = useSubruta();
+  const abierta = useMemo(() => (sub && lista ? lista.find((x) => x.id === sub) ?? null : null), [sub, lista]);
+  const setAbierta = (p: Plantilla | null) => setSub(p ? p.id : null);
 
   const cargar = () => {
     setError("");

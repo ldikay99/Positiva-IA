@@ -15,6 +15,7 @@ import * as espacio from "./espacio.ts";
 import * as descargas from "./descargas.ts";
 import { programacionDe, estado as estadoDelProgramador, enlace as programadorEnlace } from "./programador.ts";
 import type { Corrida } from "./motor.ts";
+import * as integ from "./flujos_integraciones.ts";
 
 /**
  * Los flujos de la plataforma.
@@ -48,20 +49,22 @@ export const TIPOS_DE_NODO = [
   "ventana_horario", "detener_con_alerta",
   // archivos que salen: responder el correo en su hilo (con adjuntos) e imágenes generadas por IA
   "responder_correo", "ia_imagen",
+  // integraciones (flujos_integraciones.ts): Google Workspace, Microsoft 365, OpenAPI y disparadores por evento
+  ...integ.TIPOS_INTEGRACION,
 ] as const;
 export type TipoDeNodo = (typeof TIPOS_DE_NODO)[number];
-export const DISPARADORES = new Set<string>(["entrada_correo", "entrada_manual", "programado", "webhook", "correo_nuevo", "entrada_archivos"]);
+export const DISPARADORES = new Set<string>(["entrada_correo", "entrada_manual", "programado", "webhook", "correo_nuevo", "entrada_archivos", ...integ.DISPARADORES_INTEGRACION]);
 /** Los disparadores de correo: solo los flujos que arrancan con ellos tienen «Correspondencia». */
-export const DISPARADORES_DE_CORREO = new Set<string>(["entrada_correo", "correo_nuevo"]);
+export const DISPARADORES_DE_CORREO = integ.DISPARADORES_DE_CORREO_TODOS;
 const CONECTORES = ["correo_leer", "correo_enviar", "drive_listar", "drive_leer", "drive_subir", "hoja_leer", "sql_consulta", "sql_ejecutar"];
 const TIPOS_IA = new Set<string>(["ia_clasificar", "ia_decidir", "ia_extraer", "ia_generar", "resumir", "ia_redactar",
   "traducir", "resumir_largo", "preguntar_documentos", "extraer_tablas", "documento_clasificar", "documento_comparar"]);
 /** Los que hablan con algo de afuera y por eso aceptan reintentos. */
 const TIPOS_CON_REINTENTOS = new Set<string>([...TIPOS_IA, "notificar", "enviar", "http", "llamar_flujo", ...CONECTORES,
-  "hoja_escribir", "mensaje_teams", "mensaje_slack", "webhook_saliente", "subflujo", "validar_contra", "responder_correo", "ia_imagen"]);
+  "hoja_escribir", "mensaje_teams", "mensaje_slack", "webhook_saliente", "subflujo", "validar_contra", "responder_correo", "ia_imagen", ...integ.CON_REINTENTOS_INTEGRACION]);
 /** Los que escriben afuera: solo con una credencial cuya escritura habilitó una persona (notificar y enviar nunca). */
 export const TIPOS_ESCRITURA = new Set<string>(["correo_enviar", "drive_subir", "sql_ejecutar", "http", "enviar", "notificar",
-  "hoja_escribir", "mensaje_teams", "mensaje_slack", "webhook_saliente", "responder_correo"]);
+  "hoja_escribir", "mensaje_teams", "mensaje_slack", "webhook_saliente", "responder_correo", ...integ.ESCRITURA_INTEGRACION]);
 /** Ni los disparadores, ni las salidas, ni la estructura de bucles y ramas se pueden saltar. */
 const NO_DESHABILITABLES = new Set<string>([...DISPARADORES, "salida", "fin_ciclo", "para_cada", "paralelo", "unir", "detener_con_alerta"]);
 const TERMINALES = new Set<string>(["salida", "fin_ciclo", "detener_con_alerta"]);
@@ -293,6 +296,8 @@ const desdeIa = z.looseObject({
 }, { error: "desde_ia tiene que ser un objeto {instrucciones, entradas?, proveedor?, modelo?}" })
   .refine((d) => !d.proveedor || Boolean(d.modelo), { message: "desde_ia: con proveedor hace falta también el modelo", path: ["modelo"] });
 
+const httpExtra = integ.extensionHttp({ entre, opcional, archivosRef, RUTA });
+
 export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
   // Su correspondencia es SUYA: la bandeja de prueba (.eml/.msg) y, con credencial, su buzón (solo lectura).
   entrada_correo: conf({
@@ -499,7 +504,9 @@ export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
       defecto: z.unknown().optional(), obligatorio: booleano.optional(),
     }), { error: "mapeo tiene que ser una lista [{variable, ruta, defecto, obligatorio}]" })
       .refine((m) => new Set(m.map((x) => x.variable)).size === m.length, "mapeo: hay variables repetidas").optional(),
-  }),
+    // paginación, archivos que suben (multipart o binario) y descarga como archivo de la ejecución
+    ...httpExtra.forma,
+  }).superRefine(httpExtra.regla),
   // ---------------------------------------------- nodos de producto (puente/nodos_producto.py)
   aprobacion_humana: conf({
     titulo: textoReq("titulo"), detalle: z.string().optional(),
@@ -672,6 +679,8 @@ export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
     if (prov === "vertex" && c.credencial) mal("credencial", "con proveedor vertex no va credencial (usa la identidad del servicio)");
     if (prov !== "vertex" && !c.credencial) mal("credencial", `con proveedor ${prov} hace falta credencial: una conexión ia_${prov}`);
   }),
+  // ---------------------------------------------- integraciones (flujos_integraciones.ts)
+  ...integ.configIntegraciones({ conf, credencialRef, archivosRef, textoReq, entre, opcional, mapaPlantillas, timeoutS, RUTA, variable, filtroCorreo }),
 };
 
 const nodo = z.object({
@@ -996,7 +1005,7 @@ export async function duplicar(id: string, idNuevo: unknown, nombre: unknown): P
   for (const n of d.nodos) {
     const c = n.config as Record<string, unknown>;
     if (n.tipo === "webhook") delete c.secreto;
-    if (n.tipo === "programado" || n.tipo === "correo_nuevo") c.activo = false;
+    if (n.tipo === "programado" || integ.DISPARADORES_DE_SONDEO.has(n.tipo)) c.activo = false;
   }
   // Las variables de entorno no secretas se copian; las secretas no (las vuelve a poner una persona en la copia).
   const original = await entornos.listar(id);
@@ -1284,6 +1293,10 @@ export async function manifiesto(id: string): Promise<Record<string, unknown> | 
       tipo: disp?.tipo ?? null,
       ...(disp?.tipo === "programado" ? { programacion: { cron: cd.cron ?? null, cada_minutos: cd.cada_minutos ?? null, zona: cd.zona ?? "America/Bogota", activo: cd.activo === true } } : {}),
       ...(disp?.tipo === "webhook" ? { webhook: { ruta: `/api/ganchos/${id}/<secreto>`, metodo: "POST", secreto_definido: typeof cd.secreto === "string", responder: cd.responder === true, esperar_ms: cd.esperar_ms ?? 10000 } } : {}),
+      ...(disp && integ.DISPARADORES_INTEGRACION.includes(disp.tipo as (typeof integ.DISPARADORES_INTEGRACION)[number]) ? { [disp.tipo]: {
+        credencial: cd.credencial, cada_minutos: cd.cada_minutos ?? 5, activo: cd.activo === true, solo_lectura: true, sin_repetir: true,
+        ...(disp.tipo === "outlook_nuevo" ? { carpeta: cd.carpeta ?? "inbox" } : disp.tipo === "gmail_nuevo" ? { etiqueta: cd.etiqueta ?? "INBOX", consulta: cd.consulta ?? "" }
+          : { calendario: cd.calendario ?? "primary", minutos_antes: cd.minutos_antes ?? 15 }) } } : {}),
       ...(disp?.tipo === "correo_nuevo" ? { correo_nuevo: { credencial: cd.credencial, carpeta: cd.carpeta ?? "INBOX", cada_minutos: cd.cada_minutos ?? 5, activo: cd.activo === true, solo_lectura: true } } : {}),
       ...(disp?.tipo === "entrada_manual" ? { campos: cd.campos ?? [] } : {}),
       ...(disp?.tipo === "entrada_archivos" ? { archivos: { ...(() => { const r = espacio.reglasDe(d); return { tipos_permitidos: [...r.tipos], max_mb: r.maxMb, max_archivos: r.maxArchivos }; })(), video_y_audio: "siempre rechazados (extensión y contenido)" } } : {}),
@@ -1326,6 +1339,7 @@ const CATEGORIA: Record<TipoDeNodo, string> = {
   deduplicar: "datos", agrupar: "datos", ordenar_filtrar: "datos", mapear: "datos", validar_contra: "validacion", subflujo: "logica",
   reintentar_mas_tarde: "logica", limite_tasa: "logica", ventana_horario: "logica", detener_con_alerta: "salida",
   responder_correo: "conector", ia_imagen: "ia",
+  ...integ.CATEGORIA_INTEGRACION,
 };
 const NOMBRE_TIPO: Record<TipoDeNodo, string> = {
   entrada_correo: "Entrada de correo", leer_adjuntos: "Leer adjuntos", filtro: "Filtro", condicion: "Condición",
@@ -1347,6 +1361,7 @@ const NOMBRE_TIPO: Record<TipoDeNodo, string> = {
   validar_contra: "Validar contra lista, tabla o SQL", subflujo: "Subflujo", reintentar_mas_tarde: "Reintentar más tarde", limite_tasa: "Límite de tasa",
   ventana_horario: "Ventana de horario", detener_con_alerta: "Detener con alerta",
   responder_correo: "Responder correo", ia_imagen: "IA · generar imagen",
+  ...integ.NOMBRE_INTEGRACION,
 };
 
 const valorDe = (x: unknown, clave = "valor") => (typeof x === "object" && x ? String((x as Record<string, unknown>)[clave] ?? "") : String(x));
@@ -1544,6 +1559,8 @@ function describirConfig(n: Definicion["nodos"][number], aristas: Definicion["ar
       if (c.campos) add(`Entrega: ${Array.isArray(c.campos) ? (c.campos as string[]).join(", ") : Object.keys(c.campos as object).join(", ")}`);
       if (c.plantilla_respuesta) add(`Respuesta: ${corto(c.plantilla_respuesta, 300)}`);
       break;
+    default:
+      integ.describirIntegracion(n.tipo, c, add);  // Google, Microsoft 365, OpenAPI y disparadores por evento
   }
   if (c.salida && !["ia_clasificar", "ia_decidir", "ia_extraer", "extraer_regex", "transformar", "buscar_en_tabla", "ia_generar", "resumir", "ia_redactar", "http", "salida"].includes(n.tipo)) add(`Deja su resultado en «${String(c.salida)}»`);
   // Lo común a todo nodo: reintentos, qué hace si falla y si está apagado.

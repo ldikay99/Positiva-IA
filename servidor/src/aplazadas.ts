@@ -87,7 +87,7 @@ export async function revisar(deps: Dependencias, ahora = Date.now()): Promise<s
       continue;
     }
     const disp = f.definicion ? flujos.disparadorDe(f.definicion)?.tipo : undefined;
-    const de_correo = disp === "entrada_correo" || disp === "correo_nuevo";
+    const de_correo = flujos.DISPARADORES_DE_CORREO.has(String(disp ?? ""));
     const c = deps.disparar(a.flujo, "aplazada", { entrada: a.entrada ?? {}, ...(de_correo && a.caso ? { caso: a.caso } : {}) });
     if (!c) continue;  // cola llena: en la próxima revisión
     a.encolada = c.id;

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { pedir, usar } from "../estado.ts";
+import { useSubruta } from "../rutas.ts";
 import { Icono } from "../iconos.tsx";
 import { usarEditor, type Credencial, type TipoCredencial } from "../editor/almacen.ts";
 import { Interruptor } from "./Editores.tsx";
@@ -240,7 +241,8 @@ export function VistaConexiones() {
   const disponibles = usarEditor((s) => s.credencialesDisponibles);
   const cargar = usarEditor((s) => s.cargarCredenciales);
   const [cargado, setCargado] = useState(false);
-  const [editando, setEditando] = useState<string | "nueva" | null>(null);
+  // La conexión abierta vive en la URL: /conexiones/<nombre> o /conexiones/nueva
+  const [editando, setEditando] = useSubruta();
   const [pendiente, setPendiente] = useState<Pendiente>(null);
   const [q, setQ] = useState("");
 

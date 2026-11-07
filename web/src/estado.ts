@@ -110,6 +110,9 @@ interface Estado {
   cargar: () => Promise<void>;
   conectar: () => void;
   irA: (v: Vista) => void;
+  /** Lo abierto dentro de la vista (una plantilla, una conexión, una ejecución del historial). Va en la URL. */
+  sub: string | null;
+  fijarSub: (v: string | null) => void;
   enfocar: (f: Foco) => void;
   verCorrida: (id: string | null) => void;
   setSeguirEnVivo: (v: boolean) => void;
@@ -220,6 +223,7 @@ export const usar = create<Estado>((set, get) => ({
   motor: null,
   conectado: false,
   vista: "inicio",
+  sub: null,
   foco: null,
   corridaVisible: null,
   seguirEnVivo: true,
@@ -267,7 +271,8 @@ export const usar = create<Estado>((set, get) => ({
     ws.onmessage = (m) => recibir(JSON.parse(m.data as string) as Evento);
   },
 
-  irA: (vista) => set({ vista }),
+  irA: (vista) => set((s) => (s.vista === vista ? { vista } : { vista, sub: null })),
+  fijarSub: (sub) => set({ sub }),
   enfocar: (foco) => set({ foco }),
 
   verCorrida: async (id) => {
@@ -431,7 +436,7 @@ export const usar = create<Estado>((set, get) => ({
   historialFoco: null,
   abrirEnHistorial: async (corrida, flujo) => {
     if (flujo && flujo !== get().flujo) await get().cambiarFlujo(flujo);
-    set((s) => ({ historialFoco: { corrida, n: (s.historialFoco?.n ?? 0) + 1 }, vista: "historial" }));
+    set((s) => ({ historialFoco: { corrida, n: (s.historialFoco?.n ?? 0) + 1 }, vista: "historial", sub: corrida }));
   },
 }));
 

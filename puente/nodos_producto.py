@@ -75,7 +75,7 @@ TERMINALES = {"detener_con_alerta"}
 # No pueden ir dentro de un para_cada ni de una rama de paralelo: guardan la corrida entera para seguirla después.
 PAUSAN = {"aprobacion_humana"}
 CREDENCIALES_DE = {"mensaje_teams": ("webhook_teams",), "mensaje_slack": ("webhook_slack",), "webhook_saliente": ("webhook_saliente",),
-                   "hoja_escribir": ("google_servicio",), "validar_contra": ("postgres", "mysql", "sqlite"),
+                   "hoja_escribir": ("google_servicio", "google_oauth"), "validar_contra": ("postgres", "mysql", "sqlite"),
                    "detener_con_alerta": ("webhook_teams", "webhook_slack"), "responder_correo": ("smtp", "microsoft_graph"),
                    "ia_imagen": ("ia_gemini", "ia_openai")}
 AL_VENCER = ("rechazar", "aprobar", "error")
@@ -1359,11 +1359,11 @@ class NodosProducto:
         pestana = self.render(c.get("hoja") or "")
         s = self._np_salida(n)
         if c.get("destino") == "sheets":
-            cred = self.cred(c.get("credencial"), ("google_servicio",))
+            cred = self.cred(c.get("credencial"), ("google_servicio", "google_oauth"))
             hoja_id = c_sheets.revisar_id(self.render(c.get("hoja_id")))
             detalle = {"hoja": hoja_id, "pestana": pestana, "modo": modo, "filas": len(filas), "muestra": fd.muestra(filas[:3])}
             r = self._escribir(n, "google_sheets", f"{modo} filas", f"sheets:{hoja_id}/{pestana or '(primera)'}", detalle, cred,
-                               lambda: c_sheets.escribir(c_sheets.fabrica(cred["valores"], timeout_de(c)), hoja_id, pestana, filas, modo, clave,
+                               lambda: c_sheets.escribir(c_sheets.cliente(cred, timeout_de(c)), hoja_id, pestana, filas, modo, clave,
                                                          c.get("insertar_si_falta", True) is not False))
             self.vars[s] = {"destino": "sheets", "hoja_id": hoja_id, "pestana": pestana, "bloqueado": r["bloqueado"], "motivo": r.get("motivo", ""),
                             "agregadas": r.get("agregadas", 0), "actualizadas": r.get("actualizadas", 0)}
@@ -1397,10 +1397,10 @@ class NodosProducto:
 
     def _hoja_leer_sheets(self, n: dict) -> str:
         c = n.get("config") or {}
-        cred = self.cred(c.get("credencial"), ("google_servicio",))
+        cred = self.cred(c.get("credencial"), ("google_servicio", "google_oauth"))
         hoja_id = c_sheets.revisar_id(self.render(c.get("hoja_id")))
         rango = self.render(c.get("rango") or c.get("hoja") or "") or "A1:ZZ"
-        cliente = c_sheets.fabrica(cred["valores"], timeout_de(c))
+        cliente = c_sheets.cliente(cred, timeout_de(c))
         valores = self._con_reintentos(n, lambda: cliente.valores(hoja_id, rango), "Google Sheets")
         filas, columnas = c_sheets.a_filas(valores, c.get("encabezados", True) is not False, int(c.get("max_filas") or fd.MAX_FILAS_DEFECTO))
         self.vars[c.get("salida") or n["id"]] = filas
@@ -2055,7 +2055,7 @@ class NodosProducto:
         msg = self.msg or {}
         if not (msg.get("id") or self.correo.get("remitente_correo")):
             raise ErrorDeNegocio("responder_correo solo sirve cuando la corrida arranca con un correo (entrada_correo o correo_nuevo): esta no trae uno")
-        disp = next((x.get("config") or {} for x in self.defi.get("nodos") or [] if x.get("tipo") in ("entrada_correo", "correo_nuevo")), {})
+        disp = next((x.get("config") or {} for x in self.defi.get("nodos") or [] if x.get("tipo") in fd.DISPARADORES_CORREO), {})
         nombre_cred = str(c.get("credencial") or disp.get("credencial") or "").strip()
         asunto_original = self.correo.get("asunto") or ""
         asunto = self.render(c.get("asunto") or "").strip() or (asunto_original if re.match(r"^\s*(re|rv|fw|fwd)\s*:", asunto_original, re.I)

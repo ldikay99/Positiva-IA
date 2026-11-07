@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { pedir, usar } from "../estado.ts";
+import { useSubruta } from "../rutas.ts";
 import { Icono } from "../iconos.tsx";
 import { motivoLegible } from "../progreso.ts";
 import { ESTADOS, duracion, fechaHora, hace, iconoDePaso, nombreResultado, origenLegible, ramaLegible, type EstadoLegible } from "../lenguaje.ts";
@@ -52,7 +53,9 @@ export function VistaHistorial() {
   const [datos, setDatos] = useState<RespuestaHistorial | null>(null);
   const [error, setError] = useState("");
   const [cargando, setCargando] = useState(false);
-  const [elegida, setElegida] = useState<string | null>(null);
+  // La ejecución abierta vive en la URL: /flujos/<flujo>/historial/<ejecución>
+  const [elegida, setElegida] = useSubruta();
+  const flujoAntes = useRef(flujo);
   const pedido = useRef(0);
 
   useEffect(() => {
@@ -62,6 +65,8 @@ export function VistaHistorial() {
 
   // Al cambiar de flujo empieza de cero.
   useEffect(() => {
+    if (flujoAntes.current === flujo) return;
+    flujoAntes.current = flujo;
     setElegida(null);
     setDesenlace("");
     setLimite(50);

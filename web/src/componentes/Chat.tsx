@@ -176,10 +176,33 @@ function pantallaActual() {
     flujo: s.flujo,
     nombreFlujo: s.flujos.find((f) => f.id === s.flujo)?.nombre ?? s.flujo,
     foco: s.foco,
+    abierto: s.sub,
+    ruta: location.pathname,
     corrida: corrida ? `${corrida.id} (correo ${corrida.caso}, ${corrida.estado})` : null,
     seleccion: s.seleccion.length ? s.seleccion.slice(0, 20) : null,
+    dialogo: document.querySelector<HTMLElement>("[role=dialog] h2, [role=dialog] h3")?.innerText?.slice(0, 80) ?? null,
   };
 }
+
+/**
+ * La pantalla real se reporta al servidor para la conversación activa: cada vez que cambia
+ * y justo después de aplicar algo que pidió Vera. Ella la consulta (ver_pantalla) antes de afirmar qué se ve.
+ */
+let chatDePantalla: string | null = null;
+let temporizadorPantalla: ReturnType<typeof setTimeout> | undefined;
+function reportarPantalla(inmediato = false) {
+  clearTimeout(temporizadorPantalla);
+  const enviar = () => {
+    if (!chatDePantalla) return;
+    void fetch(`/api/chats/${encodeURIComponent(chatDePantalla)}/pantalla`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(pantallaActual()) }).catch(() => undefined);
+  };
+  if (inmediato) enviar();
+  else temporizadorPantalla = setTimeout(enviar, 120);
+}
+usar.subscribe((s, antes) => {
+  if (s.vista !== antes.vista || s.flujo !== antes.flujo || s.foco !== antes.foco || s.sub !== antes.sub || s.corridaVisible !== antes.corridaVisible || s.flujos !== antes.flujos) reportarPantalla();
+});
+window.addEventListener("popstate", () => reportarPantalla());
 
 /** Lo que Vera hace en la pantalla de la persona (igual en el chat escrito y en la llamada). */
 async function aplicarEnPantalla(d: { tipo: string; [k: string]: unknown }) {
@@ -235,7 +258,11 @@ async function aplicarEnPantalla(d: { tipo: string; [k: string]: unknown }) {
 // En orden: si Vera cambia de flujo y luego centra un nodo, lo segundo espera a lo primero.
 let colaDePantalla: Promise<void> = Promise.resolve();
 function enPantalla(d: { tipo: string; [k: string]: unknown }) {
-  colaDePantalla = colaDePantalla.then(() => aplicarEnPantalla(d)).catch(() => undefined);
+  colaDePantalla = colaDePantalla
+    .then(() => aplicarEnPantalla(d))
+    .catch(() => undefined)
+    .then(() => new Promise<void>((r) => requestAnimationFrame(() => setTimeout(r, 60))))
+    .then(() => reportarPantalla(true));
 }
 
 export function Chat() {
@@ -250,6 +277,10 @@ export function Chat() {
   const [lista, setLista] = useState<Resumen[]>([]);
   const [verLista, setVerLista] = useState(false);
   const [actual, setActual] = useState<Conversacion | null>(null);
+  useEffect(() => {
+    chatDePantalla = actual?.id ?? null;
+    if (chatDePantalla) reportarPantalla(true);
+  }, [actual?.id]);
   const [texto, setTexto] = useState("");
   const [subiendo, setSubiendo] = useState<Subiendo[]>([]);
   const [modelo, setModelo] = useState(() => leerLocal(`${CLAVE}:modelo`, MODELOS[0]!.id));

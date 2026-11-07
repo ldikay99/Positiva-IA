@@ -30,8 +30,42 @@ def api(m, r, b=None, h=None):
             return {"http": e.code}
 
 
-def hablar(cid, texto, pantalla, modelo):
+VISTAS_DE_FLUJO = {"flujo", "historial", "corridas", "logs", "adjuntos", "herramientas", "proveedores", "configuracion"}
+
+
+def reportar(cid, p):
+    p = dict(p)
+    p["ruta"] = (f"/flujos/{p.get('flujo')}" + ("" if p.get("vista") == "flujo" else f"/{p.get('vista')}")) if p.get("vista") in VISTAS_DE_FLUJO else f"/{p.get('vista')}"
+    api("PUT", f"/api/chats/{cid}/pantalla", p)
+
+
+def navegador(cid, e, p, obedece):
+    """Un navegador simulado: aplica lo que Vera mueve en pantalla y reporta lo que quedó (o, si no obedece, reporta lo mismo de antes)."""
+    t = e.get("tipo")
+    mueve = t in ("enfocar", "navegar", "abrir_corrida", "centrar_nodo", "abrir_correo") or (t == "control" and e.get("accion") in ("vista", "vista_conexiones"))
+    if not mueve:
+        return
+    if obedece:
+        if t == "enfocar":
+            p.update(vista="flujo", flujo=e.get("flujo"), nombreFlujo=e.get("flujo"), foco=None)
+        elif t == "navegar":
+            p.update(vista=e.get("vista"), **({"flujo": e["flujo"], "nombreFlujo": e["flujo"]} if e.get("flujo") else {}))
+        elif t == "abrir_corrida":
+            p.update(vista="flujo", foco={"tipo": "corrida", "id": e.get("id")}, **({"flujo": e["flujo"]} if e.get("flujo") else {}))
+        elif t == "centrar_nodo":
+            p.update(vista="flujo", foco={"tipo": "nodo", "id": e.get("nodo")})
+        elif t == "abrir_correo":
+            p.update(vista="flujo", foco={"tipo": "correo", "caso": e.get("caso")})
+        elif e.get("accion") == "vista_conexiones":
+            p.update(vista="conexiones")
+        else:
+            p.update(vista=e.get("vista"), abierto=e.get("plantilla") or e.get("corrida"), **({"flujo": e["flujo"]} if e.get("flujo") else {}))
+    reportar(cid, p)
+
+
+def hablar(cid, texto, pantalla, modelo, obedece=True):
     eventos = []
+    p = dict(pantalla)
     q = urllib.request.Request(B + f"/api/chats/{cid}/mensajes", method="POST",
                                data=json.dumps({"texto": texto, "flujo": pantalla.get("flujo", "pqrd"), "pantalla": pantalla, "modelo": modelo}).encode(),
                                headers={"Content-Type": "application/json"})
@@ -39,6 +73,9 @@ def hablar(cid, texto, pantalla, modelo):
         for l in x:
             if l.strip():
                 eventos.append(json.loads(l))
+                navegador(cid, eventos[-1], p, obedece)
+    pantalla.clear()
+    pantalla.update(p)
     return eventos
 
 
@@ -104,10 +141,24 @@ CASOS = [
      "pedido": "Crea un flujo 'ev-informe' manual que reciba 'tema' y con IA genere un informe corto en Word (título, dos secciones y una tabla) y lo entregue en la salida. Córrelo con el tema «beneficios de la radicación automática» y muéstrame el archivo aquí en el chat.",
      "espera_eventos": lambda evs: any(e.get("tipo") == "archivos" and any(str(x.get("nombre", "")).lower().endswith((".docx", ".doc")) for x in e.get("archivos") or []) for e in evs),
      "limpiar": lambda: api("DELETE", "/api/flujos/ev-informe")},
+    {"nombre": "volver al flujo", "flujo": None,
+     "previo": [("Ábreme el flujo de tutelas.", {"vista": "inicio", "flujo": "tutelas", "nombreFlujo": "Tutelas"})],
+     "pantalla": {"vista": "inicio", "flujo": "tutelas", "nombreFlujo": "Tutelas"},
+     "pedido": "volvamos al flujo donde estábamos",
+     "espera_eventos": lambda evs: any(e.get("tipo") in ("enfocar", "navegar") and e.get("flujo") == "tutelas" for e in evs)
+     and any(e.get("tipo") == "herramienta" and e.get("nombre") in ("ver_pantalla", "enfocar_flujo", "navegar") for e in evs)},
+    {"nombre": "no afirma sin ver", "flujo": None, "obedece": False,
+     "pantalla": {"vista": "inicio", "flujo": "pqrd", "nombreFlujo": "PQRD"},
+     "pedido": "Ábreme el flujo de tutelas.",
+     "espera_eventos": lambda evs: any(e.get("tipo") in ("enfocar", "navegar") for e in evs)
+     and not AFIRMA.search(" ".join(e.get("texto", "") for e in evs if e.get("tipo") == "texto").lower())},
     {"nombre": "navegar", "flujo": None,
      "pedido": "Llévame a las corridas de tutelas.",
      "espera_eventos": lambda evs: any(e.get("tipo") == "navegar" and e.get("vista") == "corridas" and e.get("flujo") == "tutelas" for e in evs)},
 ]
+
+
+AFIRMA = re.compile(r"ya (lo |la )?(tienes|ves|est[aá]s viendo)|ah[ií] (lo |la )?tienes|ya te (lo |la )?abr[ií]|ya deber[ií]as (estar )?ver")
 
 
 def main():
@@ -122,7 +173,15 @@ def main():
             continue
         c = api("POST", "/api/chats", {"flujo": "pqrd"})
         t0 = time.monotonic()
-        evs = hablar(c["id"], caso["pedido"], TABLERO, x.modelo)
+        pantalla = dict(caso.get("pantalla") or TABLERO)
+        reportar(c["id"], pantalla)
+        for previo, donde in caso.get("previo") or []:
+            hablar(c["id"], previo, pantalla, x.modelo)
+            if donde:
+                pantalla.clear()
+                pantalla.update(donde)
+                reportar(c["id"], pantalla)
+        evs = hablar(c["id"], caso["pedido"], pantalla, x.modelo, caso.get("obedece", True))
         texto = " ".join(e.get("texto", "") for e in evs if e.get("tipo") == "texto").lower()
         herramientas = [e.get("nombre") for e in evs if e.get("tipo") == "herramienta"]
         ok, detalle = False, ""

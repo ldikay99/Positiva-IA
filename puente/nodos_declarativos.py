@@ -19,18 +19,24 @@ from __future__ import annotations
 
 import copy
 import json
+import sys
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 VERSION = 8
 
 DESENLACES = ["radicar", "manual", "reenviar", "descartar", "responder", "duplicado"]
-DISPARADORES = ["entrada_correo", "entrada_manual", "programado", "webhook", "correo_nuevo", "entrada_archivos"]
+DISPARADORES = ["entrada_correo", "entrada_manual", "programado", "webhook", "correo_nuevo", "entrada_archivos", "gmail_nuevo", "outlook_nuevo",
+                "calendar_evento_proximo"]
 # Lo que acepta entrada_archivos por defecto (video y audio nunca).
 TIPOS_PERMITIDOS = ["jpg", "jpeg", "png", "webp", "tif", "tiff", "bmp", "gif", "heic", "pdf", "doc", "docx", "xls", "xlsx", "csv",
                     "ppt", "pptx", "txt", "md", "json", "xml", "html", "eml", "msg", "zip", "rtf", "odt", "ods"]
 TIPOS_CREDENCIAL_IA = ["ia_gemini", "ia_openai", "ia_azure_openai", "ia_anthropic", "ia_deepseek", "ia_mistral", "ia_groq", "ia_openrouter",
                        "ia_ollama", "ia_compatible", "ia_cohere", "ia_personalizado"]
-TIPOS_CREDENCIAL = ["imap", "smtp", "microsoft_graph", "google_servicio", "postgres", "mysql", "sqlite", "http_bearer", "http_basico",
+TIPOS_CREDENCIAL = ["imap", "smtp", "microsoft_graph", "google_servicio", "google_oauth", "microsoft_oauth", "api_openapi", "http_oauth2",
+                    "postgres", "mysql", "sqlite", "http_bearer", "http_basico",
                     "webhook_teams", "webhook_slack", "webhook_saliente", *TIPOS_CREDENCIAL_IA]
 # Los proveedores de IA (los registra puente/proveedores/; una prueba compara las listas).
 PROVEEDORES_IA = ["vertex", "gemini", "openai", "azure_openai", "deepseek", "mistral", "groq", "openrouter", "ollama", "openai_compatible",
@@ -682,7 +688,7 @@ TIPOS: Dict[str, Dict[str, Any]] = {
                        "del espacio de archivos o de una URL de HTTP_HOSTS_PERMITIDOS.",
         "config": conf({"origen": opcion(["adjunto", "drive", "archivo", "url", "sheets"], "de dónde sale"),
                         "adjunto": texto("adjunto: regex del nombre (por defecto el primer .csv/.xlsx)"),
-                        "credencial": credencial(["google_servicio"], "drive y sheets: la cuenta de servicio (la hoja tiene que estar compartida con ella)"),
+                        "credencial": credencial(["google_servicio", "google_oauth"], "drive y sheets: la cuenta de servicio (la hoja compartida con ella) o una conexión Google (OAuth)"),
                         "hoja_id": plantilla("sheets: el id de la hoja de Google o su enlace"), "rango": plantilla("sheets: pestaña o rango, p. ej. «Datos» o «Datos!A1:F200»"),
                         "archivo": plantilla("drive: id del archivo; archivo: ruta relativa"), "url": plantilla("url: https://… de un host permitido"),
                         "hoja": texto("hoja del XLSX (por defecto la primera)"), "encabezados": booleano("la primera fila son los nombres de columna", True),
@@ -718,7 +724,7 @@ TIPOS: Dict[str, Dict[str, Any]] = {
     "drive_listar": {
         "nombre": "Drive · listar", "categoria": "conector",
         "descripcion": "Lista archivos de Google Drive (cuenta de servicio): de una carpeta, por nombre o tipo.",
-        "config": conf({"credencial": credencial(["google_servicio"]), "carpeta": plantilla("id de la carpeta"), "nombre": plantilla("el nombre contiene"),
+        "config": conf({"credencial": credencial(["google_servicio", "google_oauth"]), "carpeta": plantilla("id de la carpeta"), "nombre": plantilla("el nombre contiene"),
                         "tipo_mime": texto("p. ej. application/pdf"), "max": entero("", 1, 200, 50), "timeout_s": TIMEOUT, "salida": SALIDA()}, ["credencial"]),
         "salidas": ["ok", "vacio"], "produce": "salida (lista de {id, nombre, tipo, modificado, tamano, enlace})", "x-credencial": True,
         "ejemplo": {"id": "archivos", "tipo": "drive_listar", "nombre": "Archivos de la carpeta", "config": {"credencial": "drive-operaciones", "carpeta": "1AbCdEfGhIjKlMnOp", "salida": "archivos"}},
@@ -726,7 +732,7 @@ TIPOS: Dict[str, Dict[str, Any]] = {
     "drive_leer": {
         "nombre": "Drive · leer", "categoria": "conector",
         "descripcion": "Lee un archivo de Drive como texto: Docs y Hojas se exportan; PDF, Word e imágenes pasan por la conversión del motor (con OCR si se pide).",
-        "config": conf({"credencial": credencial(["google_servicio"]), "archivo": plantilla("id del archivo"), "ocr": booleano("OCR en escaneos", True),
+        "config": conf({"credencial": credencial(["google_servicio", "google_oauth"]), "archivo": plantilla("id del archivo"), "ocr": booleano("OCR en escaneos", True),
                         "max_caracteres": entero("", 1, 500000, 60000), "timeout_s": TIMEOUT, "salida": SALIDA()}, ["credencial", "archivo"]),
         "salidas": ["ok"], "produce": "salida {id, nombre, tipo, texto}", "x-credencial": True,
         "ejemplo": {"id": "contrato", "tipo": "drive_leer", "nombre": "Leer contrato", "config": {"credencial": "drive-operaciones", "archivo": "{{archivo.id}}", "salida": "contrato"}},
@@ -735,7 +741,7 @@ TIPOS: Dict[str, Dict[str, Any]] = {
         "nombre": "Drive · subir", "categoria": "conector",
         "descripcion": "Sube a Drive un archivo de la corrida tal cual (un documento o una imagen generados, un archivo subido o un adjunto del correo) "
                        "o un texto, JSON o CSV. ESCRIBE AFUERA: solo sale si una persona habilitó la escritura de la credencial.",
-        "config": conf({"credencial": credencial(["google_servicio"]), "carpeta": plantilla("id de la carpeta destino"),
+        "config": conf({"credencial": credencial(["google_servicio", "google_oauth"]), "carpeta": plantilla("id de la carpeta destino"),
                         "archivo": ARCHIVOS("el archivo a subir tal cual: «{{documento}}», «{{imagenes.0.id}}», «{{adjuntos}}» o un filtro (se sube el primero)"),
                         "nombre": plantilla("nombre del archivo (con archivo, por defecto el suyo)"),
                         "contenido": plantilla("o un texto (o usa de)", largo=True), "de": plantilla("variable a subir"),
@@ -820,8 +826,21 @@ TIPOS: Dict[str, Dict[str, Any]] = {
         "config": conf({"metodo": opcion(["GET", "POST", "PUT", "PATCH", "DELETE"], "", "GET"), "url": plantilla("http(s)://…"),
                         "query": mapa(plantilla(), "{nombre: plantilla}"), "encabezados": mapa(plantilla(), "sin Authorization ni claves: usa credencial"),
                         "cuerpo": libre("plantilla u objeto JSON con plantillas (no se envía en GET)"),
-                        "credencial": {**credencial(["http_bearer", "http_basico"], "una credencial guardada (http_bearer o http_basico) o el NOMBRE de una variable de entorno (HTTP_TOKEN_X)")},
+                        "credencial": {**credencial(["http_bearer", "http_basico", "http_oauth2"], "una credencial guardada (http_bearer, http_basico u http_oauth2: OAuth2 de cliente, el token se pide y renueva solo) o el NOMBRE de una variable de entorno (HTTP_TOKEN_X)")},
                         "timeout_ms": entero("", 100, 60000, 15000),
+                        "paginacion": objeto({
+                            "tipo": opcion(["cursor", "pagina", "enlace"], "cursor: la respuesta trae el siguiente cursor; pagina: número de página; enlace: el encabezado Link rel=next o una URL en la respuesta"),
+                            "parametro": texto("el parámetro de la consulta que lleva el cursor o la página (p. ej. «cursor», «page»)"),
+                            "ruta_cursor": texto("cursor: dónde viene el siguiente cursor (p. ej. «meta.next_cursor»)"),
+                            "ruta_siguiente": texto("enlace: dónde viene la URL siguiente en la respuesta (si no, el encabezado Link)"),
+                            "ruta_items": texto("dónde está la lista en cada respuesta (p. ej. «data»); se juntan en «items»"),
+                            "inicio": entero("pagina: la primera página", 0, 1000000, 1), "max_paginas": entero("tope de páginas", 1, 50, 5)}, ["tipo"],
+                            "solo GET: traer varias páginas (siempre del mismo host) y juntar sus elementos"),
+                        "archivos": ARCHIVOS("archivos de la ejecución que se suben con la petición (POST/PUT/PATCH)"),
+                        "modo_archivos": opcion(["multipart", "binario"], "multipart: form-data (el cuerpo JSON en «datos» y cada archivo en campo_archivo); binario: el primer archivo es el cuerpo", "multipart"),
+                        "campo_archivo": texto("multipart: nombre del campo de cada archivo", "archivo"),
+                        "descargar": booleano("guardar la respuesta como archivo de la ejecución (PDF, imagen, Excel…) en vez de leerla como texto", False),
+                        "nombre_archivo": plantilla("descargar: nombre del archivo (por defecto el de la URL o Content-Disposition)"),
                         "mapeo": lista(objeto({"variable": variable(), "ruta": texto("«items.0.id», «items[estado=activo].id»"), "defecto": libre(),
                                                "obligatorio": booleano("", False)}, ["variable", "ruta"]), "variables a sacar de la respuesta"),
                         "salida": variable("{status, ok, datos, encabezados, ms} o la petición simulada (por defecto: id del nodo)")}, ["url"]),
@@ -967,7 +986,7 @@ TIPOS: Dict[str, Dict[str, Any]] = {
                         "desde_ia": DESDE_IA,
                         "archivo": texto("archivo: el id de una hoja del flujo (si no, se crea una con nombre)", None, "Hoja del flujo", "archivo-flujo"),
                         "nombre": plantilla("archivo nuevo: su nombre", "hoja"), "formato": opcion(["xlsx", "csv"], "archivo nuevo: xlsx o csv", "xlsx"),
-                        "credencial": credencial(["google_servicio"], "sheets: la cuenta de servicio (la hoja tiene que estar compartida con ella)"),
+                        "credencial": credencial(["google_servicio", "google_oauth"], "sheets: la cuenta de servicio (la hoja compartida con ella) o una conexión Google (OAuth)"),
                         "hoja_id": plantilla("sheets: el id de la hoja de Google o su enlace"), "hoja": plantilla("la pestaña (por defecto la primera)"),
                         "modo": opcion(["anexar", "actualizar", "reemplazar"], "", "anexar"), "clave": texto("actualizar: la columna que identifica cada fila"),
                         "insertar_si_falta": booleano("actualizar: agregar las filas cuya clave no está", True),
@@ -1500,9 +1519,9 @@ AYUDA: Dict[str, Dict[str, Any]] = {
                       "mapeo": [{"variable": "estado", "ruta": "estado", "defecto": "desconocido"}, {"variable": "id_activo", "ruta": "polizas[estado=activa].id"}]},
                      {"metodo": "POST", "url": "https://api.ejemplo.gov.co/casos", "credencial": "api-casos",
                       "cuerpo": {"documento": "{{documento}}", "resumen": "{{resumen}}"}}],
-        "consejos": ["POST/PUT/PATCH/DELETE solo salen con una credencial guardada con la escritura habilitada por una persona.",
-                     "Una credencial guardada solo se manda a los hosts que dice la credencial.",
-                     "Dale una arista a «error_http» (status ≥ 400) y otra a «error» (tiempo agotado, destino bloqueado)."],
+        "consejos": ["POST/PUT/PATCH/DELETE solo salen con una credencial guardada con la escritura habilitada por una persona; con archivos van como multipart.",
+                     "Una credencial guardada solo se manda a los hosts que dice la credencial; paginacion junta las páginas en «items» (solo GET, mismo host).",
+                     "Dale una arista a «error_http» (status ≥ 400) y otra a «error» (tiempo agotado, destino bloqueado); con descargar la respuesta queda como archivo."],
     },
     "respuesta_webhook": {
         "ejemplos": [{"estado": 200, "cuerpo": {"ok": True, "total": "{{total}}"}},
@@ -1685,6 +1704,13 @@ AYUDA: Dict[str, Dict[str, Any]] = {
     },
 }
 
+# Integraciones (Google Workspace, Microsoft 365, OpenAPI y disparadores por evento): su ficha completa vive en especificacion_integraciones.py.
+import especificacion_integraciones as _integ  # noqa: E402
+
+TIPOS.update(_integ.tipos(sys.modules[__name__]))
+ESCRITURA |= _integ.ESCRITURA
+CON_REINTENTOS |= _integ.CON_REINTENTOS
+
 for _t, _a in AYUDA.items():
     TIPOS[_t]["ejemplos"] = _a["ejemplos"]
     TIPOS[_t]["consejos"] = _a["consejos"]
@@ -1751,7 +1777,8 @@ EJEMPLO_AUTOMATIZACION: Dict[str, Any] = {
 
 REGLAS = """Un flujo declarativo es {id, nombre, descripcion, ia, nodos: [{id, tipo, nombre, descripcion, config}], aristas: [{desde, hacia, cuando}]}.
 - id del flujo: minúsculas con guiones (ej. "derechos-de-peticion"); id de nodo: minúsculas con guion bajo.
-- Exactamente un DISPARADOR (entrada_correo, entrada_manual, entrada_archivos, programado, webhook o correo_nuevo) y al menos una salida. Todo nodo alcanzable desde el disparador;
+- Exactamente un DISPARADOR (entrada_correo, entrada_manual, entrada_archivos, programado, webhook, correo_nuevo, gmail_nuevo, outlook_nuevo o
+  calendar_evento_proximo) y al menos una salida. Todo nodo alcanzable desde el disparador;
   sin ciclos (los bucles se hacen con para_cada); las salidas (y detener_con_alerta, que termina con un aviso) no tienen aristas que salgan.
 - Una arista se toma si "cuando" es igual a la salida del nodo (sin distinguir mayúsculas ni tildes); una arista sin "cuando" (o "*") es la de por defecto.
   Cada salida posible del nodo necesita su arista o una por defecto (p. ej. ia_clasificar: una por categoría o una por defecto).
@@ -1790,12 +1817,20 @@ REGLAS = """Un flujo declarativo es {id, nombre, descripcion, ia, nodos: [{id, t
 - Datos personales: antes de mandar textos con datos de personas a una IA externa (proveedor distinto de vertex), pásalos por anonimizar (modo seudonimo,
   guardar_mapa) y, si hace falta, revierte la respuesta con otro anonimizar (operacion revertir).
 - LÍMITES (no se negocian): los nodos que escriben afuera (correo_enviar, responder_correo, drive_subir, sql_ejecutar, http distinto de GET, mensaje_teams, mensaje_slack,
-  webhook_saliente, hoja_escribir con destino sheets y la alerta de detener_con_alerta con credencial) solo escriben si una PERSONA habilitó
+  webhook_saliente, hoja_escribir con destino sheets, la alerta de detener_con_alerta con credencial y los de integración marcados [ESCRIBE AFUERA]) solo escriben si una PERSONA habilitó
   la escritura de su credencial; si no, arman la acción y la anotan como escritura bloqueada. notificar y enviar nunca envían. Nunca se tocan hosts de Positiva
   (positiva.gov.co), SGDEA, metadatos ni IP privadas, ni los buzones de PQRD y tutelas. Archivos solo dentro de /datos/archivos. SQL: una sola sentencia,
   solo lectura en sql_consulta, tiempos de espera (20 s) y tope de filas (500).
 - http: un GET sale de verdad solo a hosts de HTTP_HOSTS_PERMITIDOS o a los hosts de su credencial; "credencial" puede ser una credencial guardada
-  (http_bearer, http_basico) o el nombre de una variable de entorno (HTTP_TOKEN_X).
+  (http_bearer, http_basico, http_oauth2) o el nombre de una variable de entorno (HTTP_TOKEN_X). Con paginacion junta páginas (cursor, página o Link);
+  con archivos sube archivos de la ejecución (multipart); con descargar deja la respuesta como archivo.
+- Integraciones: Google (conexión google_oauth con «Conectar con Google», o google_servicio para Drive, Hojas, Calendar, Docs y Forms compartidos):
+  gmail_buscar, gmail_enviar, gmail_responder, gmail_etiquetar, calendar_eventos, calendar_crear, calendar_actualizar, calendar_disponibilidad,
+  docs_crear_desde_plantilla, forms_respuestas y drive_*/hoja_*; Microsoft 365 (microsoft_oauth con «Conectar con Microsoft», o microsoft_graph de
+  aplicación): outlook_buscar, outlook_enviar, outlook_responder, outlook_mover, outlook_categorizar, outlook_calendario_eventos, outlook_calendario_crear,
+  onedrive_listar, onedrive_leer, onedrive_subir, sharepoint_archivos, sharepoint_lista, excel_en_linea y teams_mensaje (solo OAuth); cualquier API
+  con OpenAPI: api_operacion (conexión api_openapi). Disparadores por evento: gmail_nuevo, outlook_nuevo (sin repetir correos) y calendar_evento_proximo.
+  Pide la ficha con ayuda_nodo: trae «preparar» (cómo dejar lista la conexión) además de ejemplos y consejos.
 - IA: "ia" del flujo es {"usar": "global"} (la IA global de la plataforma, lo normal) o {"proveedor", "modelo", "credencial", "temperatura"} propia;
   cada nodo de IA (y leer_adjuntos para la visión) puede poner config.proveedor, config.modelo y config.credencial (si no, hereda: nodo → flujo → global).
   Proveedores: vertex (sin credencial), gemini, openai, azure_openai, deepseek, mistral, groq, openrouter, ollama, openai_compatible, anthropic,
