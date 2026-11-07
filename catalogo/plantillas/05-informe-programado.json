@@ -1,0 +1,33 @@
+{
+  "id": "informe-programado",
+  "orden": 5,
+  "nombre": "Informe programado",
+  "categoria": "Informes",
+  "resumen": "Cada mañana de lunes a viernes junta los registros guardados y arma un informe corto para el equipo.",
+  "descripcion": "A la hora que elijas consulta la tabla de registros de la plataforma, la IA resume lo importante en viñetas y arma el aviso para el equipo. Nace apagado: lo enciendes en su primer paso cuando esté a tu gusto. El aviso queda armado y registrado; no se envía.",
+  "como_probar": "Instálala y pulsa «Correr» para verla funcionar sin esperar el horario. Si la tabla «registros» está vacía, instala también «Webhook a base de datos» y mándale un par de registros.",
+  "necesita": [
+    { "tipo": "datos", "texto": "Registros en la tabla «registros» de la plataforma (los guarda, por ejemplo, la plantilla «Webhook a base de datos»)." },
+    { "tipo": "conexion", "texto": "Para enviar el informe de verdad: cambia «Avisar al equipo» por «Enviar correo» con una conexión con escritura habilitada." }
+  ],
+  "definicion": {
+    "nombre": "Informe programado",
+    "descripcion": "Resume cada mañana los registros guardados y arma el aviso para el equipo.",
+    "ia": { "usar": "global" },
+    "nodos": [
+      { "id": "cada_manana", "tipo": "programado", "nombre": "Cada mañana hábil", "config": { "cron": "0 7 * * 1-5", "zona": "America/Bogota", "activo": false } },
+      { "id": "registros", "tipo": "tabla_consultar", "nombre": "Registros recientes", "config": { "tabla": "registros", "ambito": "compartida", "limite": 200, "orden": "-creada", "salida": "filas" } },
+      { "id": "informe", "tipo": "resumir", "nombre": "Escribir el informe", "config": { "entradas": ["filas"], "longitud": "5 viñetas", "enfoque": "cuántos registros llegaron, de qué tipo y qué requiere atención", "salida": "informe" } },
+      { "id": "avisar", "tipo": "notificar", "nombre": "Avisar al equipo", "config": { "para": "equipo@ejemplo.gov.co", "asunto": "Informe del día", "cuerpo": "{{informe}}" } },
+      { "id": "fin", "tipo": "salida", "nombre": "Informe listo", "config": { "desenlace": "manual", "motivo": "Informe armado", "plantilla_respuesta": "{{informe}}" } },
+      { "id": "sin_datos", "tipo": "salida", "nombre": "Sin registros", "config": { "desenlace": "descartar", "motivo": "No hubo registros para informar" } }
+    ],
+    "aristas": [
+      { "desde": "cada_manana", "hacia": "registros" },
+      { "desde": "registros", "hacia": "informe", "cuando": "encontrado" },
+      { "desde": "registros", "hacia": "sin_datos", "cuando": "vacio" },
+      { "desde": "informe", "hacia": "avisar" },
+      { "desde": "avisar", "hacia": "fin" }
+    ]
+  }
+}

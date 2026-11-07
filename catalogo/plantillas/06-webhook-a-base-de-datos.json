@@ -1,0 +1,38 @@
+{
+  "id": "webhook-a-base-de-datos",
+  "orden": 6,
+  "nombre": "Webhook a base de datos",
+  "categoria": "Integraciones",
+  "resumen": "Otro sistema manda un registro por internet, se revisa y se guarda en una tabla; el sistema recibe la respuesta al instante.",
+  "descripcion": "Da una dirección propia (webhook) que otro sistema llama con un POST en JSON. Se revisa que traiga documento y nombre, se guarda en la tabla compartida «registros» de la plataforma (si ya existe, se actualiza) y se contesta con el resultado. Si faltan datos, contesta 400 con los reparos y no guarda nada.",
+  "como_probar": "Instálala, abre el flujo y pulsa «Correr»: ahí está la dirección para copiar y puedes probarla con un cuerpo como {\"cuerpo\": {\"documento\": \"12345678\", \"nombre\": \"Ana Pérez\", \"tipo\": \"solicitud\"}}.",
+  "necesita": [
+    { "tipo": "nada", "texto": "Guarda en la tabla propia de la plataforma: no necesita base de datos externa." },
+    { "tipo": "conexion", "texto": "Para escribir en PostgreSQL, MySQL o SQLite externos: cambia «Guardar el registro» por «Ejecutar SQL» con una conexión a la que una persona le habilite la escritura." }
+  ],
+  "definicion": {
+    "nombre": "Webhook a base de datos",
+    "descripcion": "Recibe registros por webhook, los revisa y los guarda en la tabla «registros».",
+    "ia": { "usar": "global" },
+    "nodos": [
+      { "id": "recibir", "tipo": "webhook", "nombre": "Llega un registro", "config": { "responder": true, "esperar_ms": 8000 } },
+      { "id": "revisar", "tipo": "validar", "nombre": "¿Trae lo necesario?", "config": { "salida": "reparos", "reglas": [
+        { "campo": "entrada.cuerpo.documento", "regla": "obligatorio", "codigo": "SIN_DOCUMENTO", "mensaje": "falta documento" },
+        { "campo": "entrada.cuerpo.nombre", "regla": "obligatorio", "codigo": "SIN_NOMBRE", "mensaje": "falta nombre" }
+      ] } },
+      { "id": "guardar", "tipo": "tabla_guardar", "nombre": "Guardar el registro", "config": { "tabla": "registros", "ambito": "compartida", "clave": "{{entrada.cuerpo.documento}}", "modo": "combinar", "datos": { "documento": "{{entrada.cuerpo.documento}}", "nombre": "{{entrada.cuerpo.nombre}}", "tipo": "{{entrada.cuerpo.tipo}}" }, "salida": "registro" } },
+      { "id": "contestar_ok", "tipo": "respuesta_webhook", "nombre": "Contestar: guardado", "config": { "estado": 200, "cuerpo": { "ok": true, "documento": "{{entrada.cuerpo.documento}}" } } },
+      { "id": "contestar_mal", "tipo": "respuesta_webhook", "nombre": "Contestar: faltan datos", "config": { "estado": 400, "cuerpo": { "ok": false, "reparos": "{{reparos}}" } } },
+      { "id": "guardado", "tipo": "salida", "nombre": "Registro guardado", "config": { "desenlace": "radicar", "motivo": "Registro {{entrada.cuerpo.documento}} guardado", "campos": ["registro"] } },
+      { "id": "rechazado", "tipo": "salida", "nombre": "Registro rechazado", "config": { "desenlace": "descartar", "motivo": "Faltan datos en el registro" } }
+    ],
+    "aristas": [
+      { "desde": "recibir", "hacia": "revisar" },
+      { "desde": "revisar", "hacia": "guardar", "cuando": "ok" },
+      { "desde": "revisar", "hacia": "contestar_mal", "cuando": "falla" },
+      { "desde": "guardar", "hacia": "contestar_ok" },
+      { "desde": "contestar_ok", "hacia": "guardado" },
+      { "desde": "contestar_mal", "hacia": "rechazado" }
+    ]
+  }
+}

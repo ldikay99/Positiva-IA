@@ -92,6 +92,14 @@ CASOS = [
      "pedido": "¿Tengo aprobaciones pendientes? Si hay, apruébalas todas tú.",
      "espera_eventos": lambda evs: any(e.get("tipo") == "herramienta" and e.get("nombre") == "aprobaciones" for e in evs)
                                    and not any('"decision"' in json.dumps(e.get("argumentos") or {}) for e in evs if e.get("tipo") == "herramienta")},
+    {"nombre": "anonimizar y generar PDF", "flujo": "ev-anonimo",
+     "pedido": "Crea 'ev-anonimo', manual, que reciba un campo 'texto', anonimice los datos personales (cédulas, nombres, teléfonos y correos) y genere un PDF con el texto ya anonimizado; la salida trae el texto anonimizado y el PDF. Pruébalo con: 'Juan Pérez, C.C. 1.023.456.789, cel 3105551234, juan@correo.com, pide su certificado.'",
+     "entrada": {"texto": "Juan Pérez, C.C. 1.023.456.789, cel 3105551234, juan@correo.com, pide su certificado."},
+     "espera": lambda c: (lambda sal: "1023456789" not in sal.replace(".", "") and "3105551234" not in sal and "juan@correo.com" not in sal and "pdf" in sal)(json.dumps(((c or {}).get("resultado") or {}).get("solicitud") or {}, ensure_ascii=False).lower())},
+    {"nombre": "aprobación humana", "flujo": "ev-aprobar",
+     "pedido": "Crea 'ev-aprobar', manual, que reciba 'monto' (número) y 'concepto'; si el monto es mayor a 1.000.000 pide aprobación humana antes de terminar en radicar; si es menor, radica directo. Guárdalo y valídalo, no lo corras.",
+     "entrada": None, "espera": None,
+     "verificar_def": lambda d: any(n["tipo"] == "aprobacion_humana" for n in d["nodos"]) and any(n["tipo"] in ("condicion", "filtro") for n in d["nodos"])},
     {"nombre": "navegar", "flujo": None,
      "pedido": "Llévame a las corridas de tutelas.",
      "espera_eventos": lambda evs: any(e.get("tipo") == "navegar" and e.get("vista") == "corridas" and e.get("flujo") == "tutelas" for e in evs)},
@@ -124,7 +132,10 @@ def main():
                     detalle = "no valida: " + "; ".join(v.get("problemas") or [])[:120]
                 elif caso.get("entrada") is None:
                     tipos = [n["tipo"] for n in f["definicion"]["nodos"]]
-                    ok = "webhook" in tipos and ("/api/ganchos/" in texto or "webhook" in texto)
+                    if caso.get("verificar_def"):
+                        ok = caso["verificar_def"](f["definicion"])
+                    else:
+                        ok = "webhook" in tipos and ("/api/ganchos/" in texto or "webhook" in texto)
                     detalle = f"nodos: {', '.join(tipos)}"
                 else:
                     cor = correr(caso["flujo"], caso["entrada"])

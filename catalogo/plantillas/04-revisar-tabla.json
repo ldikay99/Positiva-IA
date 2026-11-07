@@ -1,0 +1,44 @@
+{
+  "id": "revisar-tabla",
+  "orden": 4,
+  "nombre": "Revisar una tabla",
+  "categoria": "Datos",
+  "resumen": "Llega un correo con un Excel o CSV y se revisa fila por fila que cada registro tenga sus datos en orden.",
+  "descripcion": "Toma el Excel o CSV adjunto al correo, recorre cada fila y revisa que tenga nombre, un documento con solo dígitos y un correo con forma de correo. Al final entrega las filas con su estado y un resumen de lo que hay que corregir.",
+  "como_probar": "Instálala, abre el flujo y sube a su bandeja de prueba un correo .eml o .msg con un .xlsx o .csv adjunto (columnas nombre, documento y correo). Elígelo y pulsa «Correr». Cambia las reglas en el paso «¿Fila en orden?».",
+  "necesita": [
+    { "tipo": "correos", "texto": "Un correo de prueba (.eml o .msg) con un Excel o CSV adjunto, con encabezados en la primera fila." },
+    { "tipo": "conexion", "texto": "Opcional: una conexión IMAP o Microsoft 365 para tomar los correos de un buzón real (solo lectura)." }
+  ],
+  "definicion": {
+    "nombre": "Revisar una tabla",
+    "descripcion": "Revisa fila por fila el Excel o CSV que llega por correo y resume lo que hay que corregir.",
+    "ia": { "usar": "global" },
+    "nodos": [
+      { "id": "correo", "tipo": "entrada_correo", "nombre": "Correo con la tabla", "config": { "leer_adjuntos": false } },
+      { "id": "hoja", "tipo": "hoja_leer", "nombre": "Leer la hoja", "config": { "origen": "adjunto", "adjunto": "\\.(xlsx|csv)$", "encabezados": true, "max_filas": 2000, "salida": "filas" } },
+      { "id": "por_fila", "tipo": "para_cada", "nombre": "Por cada fila", "config": { "lista": "filas", "variable": "fila", "salida": "revisadas", "max_iteraciones": 1000, "al_fallar": "continuar" } },
+      { "id": "en_orden", "tipo": "validar", "nombre": "¿Fila en orden?", "config": { "salida": "reparos", "reglas": [
+        { "campo": "fila.nombre", "regla": "obligatorio", "codigo": "SIN_NOMBRE", "mensaje": "falta el nombre" },
+        { "campo": "fila.documento", "regla": "patron", "valor": "[0-9]{5,12}", "codigo": "DOCUMENTO_INVALIDO", "mensaje": "el documento debe tener entre 5 y 12 dígitos" },
+        { "campo": "fila.correo", "regla": "patron", "valor": "[^@ ]+@[^@ ]+[.][^@ ]+", "codigo": "CORREO_INVALIDO", "mensaje": "el correo no tiene forma de correo" }
+      ] } },
+      { "id": "bien", "tipo": "transformar", "nombre": "Marcar en orden", "config": { "op": "plantilla", "plantilla": "en orden", "salida": "estado" } },
+      { "id": "mal", "tipo": "transformar", "nombre": "Marcar para corregir", "config": { "op": "plantilla", "plantilla": "corregir", "salida": "estado" } },
+      { "id": "resumen", "tipo": "resumir", "nombre": "Resumen de la revisión", "config": { "entradas": ["revisadas"], "longitud": "5 viñetas", "enfoque": "cuántas filas están en orden, cuántas hay que corregir y los problemas más comunes", "salida": "resumen" } },
+      { "id": "fin", "tipo": "salida", "nombre": "Revisión lista", "config": { "desenlace": "manual", "motivo": "Revisión terminada: mira el resumen", "campos": ["resumen", "revisadas"] } },
+      { "id": "vacia", "tipo": "salida", "nombre": "Sin tabla", "config": { "desenlace": "descartar", "motivo": "El correo no trae una tabla con filas" } }
+    ],
+    "aristas": [
+      { "desde": "correo", "hacia": "hoja" },
+      { "desde": "hoja", "hacia": "por_fila", "cuando": "ok" },
+      { "desde": "hoja", "hacia": "vacia", "cuando": "vacio" },
+      { "desde": "hoja", "hacia": "vacia", "cuando": "error" },
+      { "desde": "por_fila", "hacia": "en_orden", "cuando": "cada" },
+      { "desde": "en_orden", "hacia": "bien", "cuando": "ok" },
+      { "desde": "en_orden", "hacia": "mal", "cuando": "falla" },
+      { "desde": "por_fila", "hacia": "resumen", "cuando": "listo" },
+      { "desde": "resumen", "hacia": "fin" }
+    ]
+  }
+}

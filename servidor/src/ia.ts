@@ -30,7 +30,8 @@ export const CREDENCIAL_DE: Record<ProveedorIa, string | null> = {
   groq: "ia_groq", openrouter: "ia_openrouter", ollama: "ia_ollama", openai_compatible: "ia_compatible", anthropic: "ia_anthropic",
   cohere: "ia_cohere", personalizado: "ia_personalizado",
 };
-const TIPOS_IA = new Set(["ia_clasificar", "ia_decidir", "ia_extraer", "ia_generar", "resumir", "ia_redactar"]);
+const TIPOS_IA = new Set(["ia_clasificar", "ia_decidir", "ia_extraer", "ia_generar", "resumir", "ia_redactar",
+  "traducir", "resumir_largo", "preguntar_documentos", "extraer_tablas", "documento_clasificar", "documento_comparar"]);
 const CON_IA = new Set([...TIPOS_IA, "leer_adjuntos"]);
 const NOMBRE_CREDENCIAL = /^[a-z0-9][a-z0-9_.-]{0,62}$/;
 

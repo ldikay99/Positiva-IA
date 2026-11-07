@@ -1,0 +1,43 @@
+{
+  "id": "aprobacion-de-pagos",
+  "orden": 7,
+  "nombre": "Aprobación de pagos",
+  "categoria": "Aprobaciones",
+  "resumen": "Cada solicitud de pago se detiene hasta que una persona la apruebe o la rechace; solo lo aprobado se registra.",
+  "descripcion": "Llega una solicitud con proveedor, monto y concepto. El flujo la pone en la bandeja «Aprobaciones» y espera: quien decide puede corregir el monto y dejar un comentario. Si la aprueban, queda registrada en la tabla «pagos_aprobados»; si la rechazan o nadie decide en 24 horas, termina descartada con el motivo.",
+  "como_probar": "Instálala, pulsa «Correr» y llena proveedor, monto y concepto. Luego abre «Aprobaciones» (o la campana), revisa el caso y apruébalo o recházalo: el flujo sigue solo.",
+  "necesita": [
+    { "tipo": "datos", "texto": "Una solicitud de prueba: proveedor, monto y concepto (el formulario de «Correr» los pide)." },
+    { "tipo": "nada", "texto": "Una persona que decida en «Aprobaciones». Vera puede mostrarte las pendientes, pero no decide." }
+  ],
+  "definicion": {
+    "nombre": "Aprobación de pagos",
+    "descripcion": "Detiene cada solicitud de pago hasta que una persona la aprueba o la rechaza.",
+    "ia": { "usar": "global" },
+    "nodos": [
+      { "id": "solicitud", "tipo": "entrada_manual", "nombre": "Solicitud de pago", "config": { "campos": [
+        { "nombre": "proveedor", "tipo": "texto", "obligatorio": true, "descripcion": "a quién se le paga" },
+        { "nombre": "monto", "tipo": "numero", "obligatorio": true, "descripcion": "valor en pesos" },
+        { "nombre": "concepto", "tipo": "texto", "obligatorio": true, "descripcion": "por qué se paga (factura, servicio…)" }
+      ] } },
+      { "id": "aprobar", "tipo": "aprobacion_humana", "nombre": "¿Se aprueba el pago?", "config": {
+        "titulo": "Pago de {{entrada.monto}} a {{entrada.proveedor}}",
+        "detalle": "Concepto: {{entrada.concepto}}",
+        "datos": { "proveedor": "{{entrada.proveedor}}", "monto": "{{entrada.monto}}", "concepto": "{{entrada.concepto}}" },
+        "campos_editables": ["monto"],
+        "tiempo_limite_h": 24,
+        "al_vencer": "rechazar",
+        "asignado_a": "Tesorería"
+      } },
+      { "id": "registrar", "tipo": "tabla_guardar", "nombre": "Registrar el pago aprobado", "config": { "tabla": "pagos_aprobados", "modo": "insertar", "datos": { "proveedor": "{{aprobacion.datos.proveedor}}", "monto": "{{aprobacion.datos.monto}}", "concepto": "{{aprobacion.datos.concepto}}", "comentario": "{{aprobacion.comentario}}" }, "salida": "pago" } },
+      { "id": "aprobado", "tipo": "salida", "nombre": "Pago aprobado", "config": { "desenlace": "radicar", "motivo": "Aprobado: {{aprobacion.comentario}}", "campos": ["pago"] } },
+      { "id": "rechazado", "tipo": "salida", "nombre": "Pago rechazado", "config": { "desenlace": "descartar", "motivo": "Rechazado: {{aprobacion.comentario}}" } }
+    ],
+    "aristas": [
+      { "desde": "solicitud", "hacia": "aprobar" },
+      { "desde": "aprobar", "hacia": "registrar", "cuando": "aprobado" },
+      { "desde": "aprobar", "hacia": "rechazado", "cuando": "rechazado" },
+      { "desde": "registrar", "hacia": "aprobado" }
+    ]
+  }
+}

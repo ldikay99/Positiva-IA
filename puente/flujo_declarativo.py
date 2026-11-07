@@ -90,6 +90,7 @@ from conectores import hojas as c_hojas  # noqa: E402
 from conectores import sql as c_sql  # noqa: E402
 from conectores import tablas as c_tablas  # noqa: E402
 import proveedores as ia_proveedores  # noqa: E402  (la capa de proveedores de IA: Vertex, Gemini, OpenAI, Claude…)
+import nodos_producto as np_  # noqa: E402  (aprobación humana, documentos, datos personales, hojas, mensajería, IA, datos y control)
 import cache_conversion  # noqa: E402  (conversión, OCR y visión por huella del archivo)
 from conectores.base import (HOSTS_METADATOS, ErrorDeNegocio, ErrorTransitorio, destino_seguro, direccion_vetada,  # noqa: E402,F401
                              host_vetado, ip_bloqueada, ruta_estado, timeout_de)
@@ -124,16 +125,16 @@ TIPOS = DISPARADORES | CONECTORES | {
     "leer_adjuntos", "filtro", "condicion", "ia_clasificar", "ia_decidir", "ia_extraer", "extraer_regex", "validar", "transformar",
     "buscar_en_tabla", "bifurcar_por_valor", "ia_generar", "resumir", "ia_redactar", "notificar", "enviar", "http", "salida",
     "para_cada", "fin_ciclo", "paralelo", "unir", "esperar", "expresion", "json", "fecha", "llamar_flujo", "respuesta_webhook",
-    "tabla_guardar", "tabla_consultar", "archivo_leer", "archivo_guardar"}
+    "tabla_guardar", "tabla_consultar", "archivo_leer", "archivo_guardar"} | np_.TIPOS
 TIPOS_IA = {"ia_clasificar", "ia_decidir", "ia_extraer", "ia_generar", "resumir", "ia_redactar"}
 # Los que hablan con algo de afuera y por eso aceptan reintentos.
-TIPOS_CON_REINTENTOS = TIPOS_IA | {"notificar", "enviar", "http", "llamar_flujo"} | CONECTORES
+TIPOS_CON_REINTENTOS = TIPOS_IA | {"notificar", "enviar", "http", "llamar_flujo"} | CONECTORES | np_.CON_REINTENTOS
 # Los que escriben afuera (solo con una credencial con permitir_escritura; notificar y enviar nunca).
-TIPOS_ESCRITURA = {"correo_enviar", "drive_subir", "sql_ejecutar", "http", "enviar", "notificar"}
+TIPOS_ESCRITURA = {"correo_enviar", "drive_subir", "sql_ejecutar", "http", "enviar", "notificar"} | np_.ESCRITURA
 # Ni los disparadores, ni las salidas, ni la estructura de bucles y ramas se pueden saltar.
-NO_DESHABILITABLES = DISPARADORES | {"salida", "fin_ciclo", "para_cada", "paralelo", "unir"}
-# Donde termina un camino: la salida (el flujo) y fin_ciclo (la vuelta).
-TERMINALES = {"salida", "fin_ciclo"}
+NO_DESHABILITABLES = DISPARADORES | {"salida", "fin_ciclo", "para_cada", "paralelo", "unir"} | np_.TERMINALES
+# Donde termina un camino: la salida (el flujo), fin_ciclo (la vuelta) y detener_con_alerta (el flujo, con un aviso).
+TERMINALES = {"salida", "fin_ciclo"} | np_.TERMINALES
 CREDENCIALES_DE = {"correo_leer": ("imap", "microsoft_graph"), "correo_nuevo": ("imap", "microsoft_graph"), "entrada_correo": ("imap", "microsoft_graph"),
                    "correo_enviar": ("smtp", "microsoft_graph"), "drive_listar": ("google_servicio",), "drive_leer": ("google_servicio",),
                    "drive_subir": ("google_servicio",), "hoja_leer": ("google_servicio",), "sql_consulta": ("postgres", "mysql", "sqlite"),
@@ -402,6 +403,8 @@ def _lista_valores(xs: Any, clave: str = "valor") -> List[str]:
 def _salidas_propias(t: Any, c: dict) -> Tuple[List[str], List[str]]:
     if t in TERMINALES:
         return [], []
+    if t in np_.TIPOS:
+        return np_.salidas(t, c)
     if t == "para_cada":
         return ["cada", "listo"], []
     if t == "paralelo":
@@ -514,6 +517,8 @@ def produce(n: dict) -> Set[str]:
     elif t in CONECTORES or t in ("unir", "json", "fecha", "llamar_flujo", "tabla_guardar", "tabla_consultar",
                                   "archivo_leer", "archivo_guardar"):
         r.add(c.get("salida") or nid)
+    elif t in np_.TIPOS:
+        r = np_.produce(t, c, nid)
     return {x for x in r if isinstance(x, str)}
 
 
@@ -557,6 +562,8 @@ def referencias(n: dict) -> List[Tuple[str, Set[str]]]:
     """Lo que un nodo lee: [(referencia, variables propias ya disponibles)]."""
     t, c = n.get("tipo"), n.get("config") or {}
     refs: List[Tuple[str, Set[str]]] = []
+    if t in np_.TIPOS:
+        return np_.referencias(t, c, _plantillas_en, _ref_de_fuente)
     if t == "transformar":
         locales: Set[str] = set()
         for o in _operaciones(c):
@@ -628,6 +635,11 @@ def _problema_ref(ref: str, disponibles: Set[str], entorno: Optional[Set[str]] =
         if entorno is not None and sub[1] not in entorno:
             hay = ", ".join(sorted(entorno)) or "ninguna"
             return f"«{ref}»: el flujo no tiene la variable de entorno {sub[1]} (tiene: {hay})"
+        return None
+    if raiz == "aplazamiento" and raiz not in disponibles:
+        # siempre existe: el intento y el motivo de una corrida que volvió tras reintentar_mas_tarde (intento 0 la primera vez)
+        if sub and (sub[0] != "clave" or sub[1] not in np_.APLAZAMIENTO_CAMPOS):
+            return f"«{ref}» no existe (de aplazamiento hay: {', '.join(sorted(np_.APLAZAMIENTO_CAMPOS))})"
         return None
     if raiz in INTEGRADAS:
         if sub and (sub[0] != "clave" or sub[1] not in INTEGRADAS[raiz]):
@@ -898,9 +910,14 @@ def _validar_nuevos(t: str, c: dict, q) -> None:
         if not (c.get("contenido") or c.get("de")):
             q("drive_subir necesita contenido (plantilla) o de (variable)")
     elif t == "hoja_leer":
-        opcion("origen", ["adjunto", "drive", "archivo", "url"], True)
+        opcion("origen", ["adjunto", "drive", "archivo", "url", "sheets"], True)
         o = c.get("origen")
-        if o == "drive":
+        if o == "sheets":
+            _validar_credencial(t, c, q)
+            texto_req("hoja_id", "el id (o el enlace) de la hoja de Google")
+            if "rango" in c and not isinstance(c["rango"], str):
+                q("rango tiene que ser texto, p. ej. «Datos» o «Datos!A1:F200»")
+        elif o == "drive":
             _validar_credencial(t, c, q)
             texto_req("archivo", "id del archivo de Drive")
         elif o == "archivo":
@@ -1019,8 +1036,8 @@ def _validar_nuevos(t: str, c: dict, q) -> None:
     elif t in ("archivo_leer", "archivo_guardar"):
         if t == "archivo_leer" and c.get("archivo") not in (None, ""):
             # un archivo guardado en el espacio del flujo (subido desde el editor), no una ruta escrita a mano
-            if not (isinstance(c["archivo"], str) and ID_ARCHIVO.fullmatch(c["archivo"])):
-                q("archivo tiene que ser el id de un archivo subido al flujo")
+            if not (isinstance(c["archivo"], str) and (ID_ARCHIVO.fullmatch(c["archivo"]) or PLANTILLA.fullmatch(c["archivo"].strip()))):
+                q("archivo tiene que ser el id de un archivo subido al flujo o una plantilla como «{{entrada.archivos.0.id}}» (un archivo subido a la corrida)")
             if c.get("ruta") not in (None, ""):
                 q("usa archivo o ruta, no los dos")
         else:
@@ -1312,6 +1329,8 @@ def _validar_config(n: dict) -> List[str]:
         _validar_http(c, q)
     elif t in NUEVOS:
         _validar_nuevos(t, c, q)
+    elif t in np_.TIPOS:
+        np_.validar(t, c, q)
     elif t == "salida":
         if c.get("desenlace") not in DESENLACES:
             q(f"desenlace '{c.get('desenlace')}' (válidos: {', '.join(DESENLACES)})")
@@ -1407,9 +1426,10 @@ def validar(defi: Dict[str, Any], al_ejecutar: bool = False, entorno: Optional[I
     entradas = [n for n in nodos if n.get("tipo") in DISPARADORES]
     if len(entradas) != 1:
         problemas.append(f"debe haber exactamente un disparador ({', '.join(sorted(DISPARADORES))}); hay {len(entradas)}")
-    if not any(n.get("tipo") == "salida" for n in nodos):
+    if not any(n.get("tipo") in ("salida", "detener_con_alerta") for n in nodos):
         problemas.append("no hay ningún nodo de salida")
     dentro = _cuerpos(nodos, aristas)
+    problemas += np_.problemas_de_flujo(nodos, dentro)
     for n in nodos:
         if n.get("tipo") not in TIPOS:
             problemas.append(f"{n.get('id')}: tipo desconocido '{n.get('tipo')}' (válidos: {', '.join(sorted(TIPOS))})")
@@ -1723,7 +1743,7 @@ def es_transitorio(e: BaseException) -> bool:
 def describir_fallo(n: dict, e: BaseException) -> str:
     """El porqué de un fallo, en palabras de persona (lo que queda en {{fallo.motivo}})."""
     t = n.get("tipo")
-    quien = "La IA" if t in TIPOS_IA else ("La petición HTTP" if t == "http" else f"El nodo {n.get('nombre') or n.get('id')}")
+    quien = "La IA" if t in TIPOS_IA or t in np_.TIPOS_IA else ("La petición HTTP" if t == "http" else f"El nodo {n.get('nombre') or n.get('id')}")
     codigo = _codigo_http(e)
     detalle = str(e).strip()
     if isinstance(e, ErrorDeNegocio):
@@ -1837,7 +1857,7 @@ def _sin_secretos(encabezados: Dict[str, str], credencial: str = "") -> Dict[str
 _paginas = threading.Lock()
 
 
-class Ejecucion:
+class Ejecucion(np_.NodosProducto):
     def __init__(self, defi: dict, caso: str, modelo: str, entrada: Any = None, credenciales: Optional[Dict[str, dict]] = None,
                  entorno: Optional[Dict[str, str]] = None, subflujos: Optional[Dict[str, dict]] = None,
                  pila: Optional[List[str]] = None, flujo: str = "", ia_global: Optional[dict] = None) -> None:
@@ -1938,6 +1958,8 @@ class Ejecucion:
             return navegar(self._vista_archivos(), segs[1:])
         if segs[0][1] == "entorno":
             return navegar(self.entorno, segs[1:]) if len(segs) > 1 else None
+        if segs[0][1] == "aplazamiento" and "aplazamiento" not in self.vars:
+            return navegar(self._vista_aplazamiento(), segs[1:])
         return navegar(self.vars, segs)
 
     def valor_de(self, fuente: Any) -> Any:
@@ -2195,6 +2217,16 @@ class Ejecucion:
         self.correo["adjuntos_texto"] = "\n\n".join(x for x in [self.correo.get("adjuntos_texto")] + textos if x)
         self.correo["adjuntos_leidos"] = (self.correo.get("adjuntos_leidos") or []) + leidos
         return textos
+
+    def ruta_adjunto(self, a: dict) -> Optional[Path]:
+        """Dónde está un adjunto: un archivo subido a la corrida trae su ruta en el espacio del flujo; uno de correo vive en adj/."""
+        if a.get("_ruta"):
+            p = Path(a["_ruta"])
+        elif self.carpeta and a.get("archivo"):
+            p = Path(self.carpeta) / "adj" / a["archivo"]
+        else:
+            return None
+        return p if p.is_file() else None
 
     def leer_adjuntos(self, n: dict) -> str:
         c = n.get("config") or {}
@@ -2976,13 +3008,17 @@ class Ejecucion:
     def hoja_leer(self, n: dict) -> str:
         c = n.get("config") or {}
         origen = c.get("origen")
+        if origen == "sheets":
+            return self._hoja_leer_sheets(n)
         if origen == "adjunto":
             patron = c.get("adjunto") or r"\.(csv|tsv|xlsx|xlsm)$"
             rx = c_busqueda.Patron(patron)
-            adj = next((a for a in self.msg.get("_adjuntos", []) if a.get("archivo") and rx.search(a.get("name") or "")), None)
-            if not adj or not self.carpeta:
-                raise ErrorDeNegocio(f"no hay un adjunto que coincida con «{patron}»")
-            nombre, datos = adj.get("name") or "", (self.carpeta / "adj" / adj["archivo"]).read_bytes()
+            # los adjuntos del correo y los archivos subidos a la corrida (entrada_archivos, campos archivo, webhook) por igual
+            adj = next((a for a in self.msg.get("_adjuntos", []) if a.get("archivo") and not a.get("isInline") and rx.search(a.get("name") or "")
+                        and self.ruta_adjunto(a)), None)
+            if not adj:
+                raise ErrorDeNegocio(f"no hay un adjunto ni un archivo subido que coincida con «{patron}»")
+            nombre, datos = adj.get("name") or "", self.ruta_adjunto(adj).read_bytes()
         elif origen == "drive":
             cliente, _ = self._drive(n, c)
             meta, datos, tipo = self._con_reintentos(n, lambda: c_drive.contenido(cliente, self.render(c.get("archivo") or "").strip()), "Drive")
@@ -3073,7 +3109,8 @@ class Ejecucion:
         Lo privado de otro flujo (<otro>/entradas, <otro>/bandeja) nunca se toca."""
         if c.get("archivo"):
             from conectores.base import ruta_archivos
-            aid = str(c["archivo"])
+            v = self.valor_de(c["archivo"]) if "{{" in str(c["archivo"]) else c["archivo"]
+            aid = str((v.get("id") if isinstance(v, dict) else v) or "").strip()
             if not ID_ARCHIVO.fullmatch(aid) or not ID_FLUJO.match(self.flujo or ""):
                 raise ErrorDeNegocio("archivo: el id no es de un archivo del flujo")
             carpeta = ruta_archivos() / self.flujo / "entradas" / aid
@@ -3571,10 +3608,11 @@ class Ejecucion:
                rama_error=como == "error", continua=como == "continuar", siguiente=elegida["hacia"], muestra=self._muestra_de(n, antes))
         return elegida["hacia"]
 
-    def correr(self) -> dict:
+    def correr(self, desde: Optional[str] = None) -> dict:
+        """Corre desde el disparador (o desde `desde`, al seguir una corrida que esperó una aprobación)."""
         self._nodos = {n["id"]: n for n in self.defi["nodos"]}
         self._prof = 0
-        inicio = next(n["id"] for n in self.defi["nodos"] if n["tipo"] in DISPARADORES)
+        inicio = desde or next(n["id"] for n in self.defi["nodos"] if n["tipo"] in DISPARADORES)
         try:
             fin, valor = self._recorrer(inicio, 0, False)
         except _Terminar as t:
@@ -3746,15 +3784,22 @@ async def procesar(orden: dict) -> None:
     e = Ejecucion(defi, caso, modelo, entrada=orden.get("entrada"), credenciales=orden.get("credenciales") or {}, entorno=entorno,
                   subflujos=orden.get("subflujos") or {}, flujo=str(orden.get("flujo") or defi.get("id") or ""), ia_global=orden.get("ia_global"))
     e.cargar_archivos(orden.get("archivos") or [])
+    if isinstance(orden.get("aplazamiento"), dict):  # la corrida vuelve tras reintentar_mas_tarde: {{aplazamiento.intento}}
+        e.aplazamiento = orden["aplazamiento"]
     if isinstance(orden.get("tiempo_max_s"), (int, float)) and orden["tiempo_max_s"] > 0:
         e.max_segundos = float(min(orden["tiempo_max_s"], 7200))
     modelo = e.modelo
     e.avisos += [f"flujo: {x}" for x in validar(defi) if x not in problemas]
+    reanudar = (orden.get("reanudar") or {}).get("aprobacion") if isinstance(orden.get("reanudar"), dict) else None
     evento("inicio", caso=caso, asunto="", modelo=modelo, proveedor=e.ia.get("proveedor"), ia_origen=e.ia.get("origen"), flujo=defi.get("id"), origen=orden.get("origen") or "",
-           disparador=next((n["tipo"] for n in defi.get("nodos") or [] if n.get("tipo") in DISPARADORES), ""))
+           disparador=next((n["tipo"] for n in defi.get("nodos") or [] if n.get("tipo") in DISPARADORES), ""),
+           **({"reanuda": reanudar} if reanudar else {}))
     try:
-        r = await asyncio.to_thread(e.correr)
-        evento("resultado", caso=caso, accion=r["accion"], motivo=r["motivo"], area_destino=r.get("destino", ""),
+        # una corrida que sigue a la que esperó una aprobación: su estado guardado y desde el nodo que toca según la decisión
+        desde = await asyncio.to_thread(e.reanudar_aprobacion, reanudar) if reanudar else None
+        r = await asyncio.to_thread(e.correr, desde)
+        extra = {k: r[k] for k in ("aprobacion", "aplazamiento", "alerta") if k in r}
+        evento("resultado", caso=caso, accion=r["accion"], motivo=r["motivo"], area_destino=r.get("destino", ""), **extra,
                hallazgos=e.hallazgos, atribucion={k: h.get("metodo") or "ia" for k, h in e.hallazgos.items() if h.get("valor")},
                sin_resolver=[k for k, h in e.hallazgos.items() if not h.get("valor")], solicitud=r["solicitud"],
                respuesta=r.get("respuesta", ""), mensajes=e.mensajes, peticiones=[_corto(x) for x in e.peticiones],
@@ -3916,6 +3961,9 @@ def _validar_cli(entrada: Any) -> List[str]:
     if isinstance(entrada, dict) and "definicion" in entrada and "nodos" not in entrada:
         return validar(entrada["definicion"], entorno=entrada.get("entorno"), credenciales=entrada.get("credenciales"), ia_global=entrada.get("ia_global"))
     return validar(entrada)
+
+
+np_.enlazar(sys.modules[__name__])  # los nodos de producto usan este mismo módulo (y no una segunda copia)
 
 
 if __name__ == "__main__":

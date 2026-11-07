@@ -23,6 +23,11 @@ import * as programador from "./programador.ts";
 import * as ganchos from "./ganchos.ts";
 import * as compuerta from "./compuerta.ts";
 import * as rutasIa from "./rutas_ia.ts";
+import * as historial from "./historial.ts";
+import * as plantillas from "./plantillas.ts";
+import * as notificaciones from "./notificaciones.ts";
+import * as aprobaciones from "./aprobaciones.ts";
+import * as aplazadas from "./aplazadas.ts";
 import { consumoDe, obtenerVera } from "./ia.ts";
 import { EventEmitter } from "node:events";
 
@@ -476,6 +481,15 @@ app.delete<{ Params: { nombre: string } }>("/api/credenciales/:nombre", async (r
 // ---------------------------------------------------------- webhooks
 
 await rutasIa.registrar(app);  // IA: proveedores, modelos, probar, global y Vera (rutas_ia.ts)
+
+// Producto: historial por flujo, plantillas y notificaciones (historial.ts, plantillas.ts, notificaciones.ts)
+await historial.registrar(app, { motorDe, motores: () => motores.values() });
+await plantillas.registrar(app, { avisarFlujo });
+await notificaciones.registrar(app, { motores: () => motores.values(), escuchar: (f) => { bus.on("evento", f); return () => bus.off("evento", f); }, emitir: (e) => bus.emit("evento", e) });
+
+// Aprobación humana y corridas aplazadas (aprobaciones.ts, aplazadas.ts)
+await aprobaciones.registrar(app, { reanudar: (id, datos) => dispararFlujo(id, "aprobacion", datos), emitir: (e) => bus.emit("evento", e) });
+await aplazadas.registrar(app, { disparar: dispararFlujo, escuchar: (f) => { bus.on("evento", f); return () => bus.off("evento", f); }, emitir: (e) => bus.emit("evento", e) });
 
 await ganchos.registrar(app, {
   obtener: (id) => flujos.obtener(id),

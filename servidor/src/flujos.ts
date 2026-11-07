@@ -40,20 +40,28 @@ export const TIPOS_DE_NODO = [
   "correo_leer", "correo_enviar", "drive_listar", "drive_leer", "drive_subir", "hoja_leer", "sql_consulta", "sql_ejecutar",
   // integración y fin
   "notificar", "enviar", "http", "respuesta_webhook", "salida",
+  // de producto (puente/nodos_producto.py): aprobación, documentos, datos personales, hojas, mensajería, IA, datos y control
+  "aprobacion_humana", "documento_generar", "pdf_unir", "pdf_dividir", "documento_convertir", "documento_clasificar", "documento_comparar",
+  "anonimizar", "hoja_escribir", "mensaje_teams", "mensaje_slack", "webhook_saliente", "traducir", "resumir_largo", "preguntar_documentos",
+  "extraer_tablas", "deduplicar", "agrupar", "ordenar_filtrar", "mapear", "validar_contra", "subflujo", "reintentar_mas_tarde", "limite_tasa",
+  "ventana_horario", "detener_con_alerta",
 ] as const;
 export type TipoDeNodo = (typeof TIPOS_DE_NODO)[number];
 export const DISPARADORES = new Set<string>(["entrada_correo", "entrada_manual", "programado", "webhook", "correo_nuevo", "entrada_archivos"]);
 /** Los disparadores de correo: solo los flujos que arrancan con ellos tienen «Correspondencia». */
 export const DISPARADORES_DE_CORREO = new Set<string>(["entrada_correo", "correo_nuevo"]);
 const CONECTORES = ["correo_leer", "correo_enviar", "drive_listar", "drive_leer", "drive_subir", "hoja_leer", "sql_consulta", "sql_ejecutar"];
-const TIPOS_IA = new Set<string>(["ia_clasificar", "ia_decidir", "ia_extraer", "ia_generar", "resumir", "ia_redactar"]);
+const TIPOS_IA = new Set<string>(["ia_clasificar", "ia_decidir", "ia_extraer", "ia_generar", "resumir", "ia_redactar",
+  "traducir", "resumir_largo", "preguntar_documentos", "extraer_tablas", "documento_clasificar", "documento_comparar"]);
 /** Los que hablan con algo de afuera y por eso aceptan reintentos. */
-const TIPOS_CON_REINTENTOS = new Set<string>([...TIPOS_IA, "notificar", "enviar", "http", "llamar_flujo", ...CONECTORES]);
+const TIPOS_CON_REINTENTOS = new Set<string>([...TIPOS_IA, "notificar", "enviar", "http", "llamar_flujo", ...CONECTORES,
+  "hoja_escribir", "mensaje_teams", "mensaje_slack", "webhook_saliente", "subflujo", "validar_contra"]);
 /** Los que escriben afuera: solo con una credencial cuya escritura habilitó una persona (notificar y enviar nunca). */
-export const TIPOS_ESCRITURA = new Set<string>(["correo_enviar", "drive_subir", "sql_ejecutar", "http", "enviar", "notificar"]);
+export const TIPOS_ESCRITURA = new Set<string>(["correo_enviar", "drive_subir", "sql_ejecutar", "http", "enviar", "notificar",
+  "hoja_escribir", "mensaje_teams", "mensaje_slack", "webhook_saliente"]);
 /** Ni los disparadores, ni las salidas, ni la estructura de bucles y ramas se pueden saltar. */
-const NO_DESHABILITABLES = new Set<string>([...DISPARADORES, "salida", "fin_ciclo", "para_cada", "paralelo", "unir"]);
-const TERMINALES = new Set<string>(["salida", "fin_ciclo"]);
+const NO_DESHABILITABLES = new Set<string>([...DISPARADORES, "salida", "fin_ciclo", "para_cada", "paralelo", "unir", "detener_con_alerta"]);
+const TERMINALES = new Set<string>(["salida", "fin_ciclo", "detener_con_alerta"]);
 /** La rama que toma cualquier nodo cuando falla. */
 const RAMA_ERROR = "error";
 
@@ -249,6 +257,11 @@ const CAMPO_ENTRADA = z.looseObject({
   obligatorio: opcional, descripcion: z.string().optional(),
 });
 const unicos = (xs: string[]) => new Set(xs.map((x) => x.trim().toLowerCase())).size === xs.length;
+/** El id de un archivo guardado en el espacio de un flujo (igual que en el motor). */
+const ID_ARCHIVO = /^a-[0-9a-z]{6,40}$/;
+const listaNombres = (que: string) => z.array(z.string().trim().min(1), { error: `${que} tiene que ser una lista de nombres de campo` });
+/** Uno o varios archivos: un id, una plantilla («{{doc.id}}»), «adjuntos» o una lista de ellos. */
+const textoOLista = (que: string) => z.union([z.string().trim().min(1), z.array(z.string().trim().min(1)).min(1)], { error: `falta ${que}: ids de archivos, plantillas o «adjuntos»` });
 
 export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
   // Su correspondencia es SUYA: la bandeja de prueba (.eml/.msg) y, con credencial, su buzón (solo lectura).
@@ -293,12 +306,14 @@ export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
     formato: z.enum(["texto", "json", "csv"], { error: "formato: texto, json o csv" }).optional(), timeout_s: timeoutS,
   }).refine((c) => c.contenido || c.de, { message: "drive_subir necesita contenido (plantilla) o de (variable)", path: ["contenido"] }),
   hoja_leer: conf({
-    origen: z.enum(["adjunto", "drive", "archivo", "url"], { error: "origen: adjunto, drive, archivo o url" }), adjunto: regex("adjunto").optional(),
+    origen: z.enum(["adjunto", "drive", "archivo", "url", "sheets"], { error: "origen: adjunto, drive, archivo, url o sheets" }), adjunto: regex("adjunto").optional(),
     credencial: credencialRef.optional(), archivo: z.string().optional(), url: z.string().optional(), hoja: z.string().optional(), encabezados: opcional,
+    hoja_id: z.string().optional(), rango: z.string().optional(),
     max_filas: entre("max_filas", 1, 5000).optional(), timeout_s: timeoutS,
   }).superRefine((c, ctx) => {
     const falta = (k: string, m: string) => ctx.addIssue({ code: "custom", path: [k], message: m });
-    if (c.origen === "drive" && !c.credencial) falta("credencial", "con origen drive hace falta credencial (google_servicio)");
+    if ((c.origen === "drive" || c.origen === "sheets") && !c.credencial) falta("credencial", `con origen ${c.origen} hace falta credencial (google_servicio)`);
+    if (c.origen === "sheets" && !c.hoja_id?.trim()) falta("hoja_id", "con origen sheets hace falta hoja_id (el id o el enlace de la hoja de Google)");
     if ((c.origen === "drive" || c.origen === "archivo") && !c.archivo?.trim()) falta("archivo", "falta archivo (id de Drive o ruta)");
     if (c.origen === "archivo" && c.archivo && !rutaRelativa.safeParse(c.archivo).success) falta("archivo", "la ruta tiene que ser relativa al espacio de archivos, sin «..»");
     if (c.origen === "url" && !c.url?.trim()) falta("url", "falta url");
@@ -307,7 +322,7 @@ export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
   sql_ejecutar: conf({ credencial: credencialRef, sentencia: sqlTexto("sentencia"), parametros: mapaPlantillas("parametros").optional(), permitir_sin_where: opcional, timeout_s: timeoutS }),
   // Un archivo subido al flujo (archivo: su id) o, en los flujos de antes, una ruta relativa.
   archivo_leer: conf({
-    archivo: z.string().regex(/^a-[0-9a-z]{6,40}$/, "archivo: el id de un archivo subido al flujo").optional(), ruta: rutaRelativa.optional(),
+    archivo: z.string().regex(/^(a-[0-9a-z]{6,40}|\s*\{\{[^{}]+\}\}\s*)$/, "archivo: el id de un archivo subido al flujo o una plantilla como «{{entrada.archivos.0.id}}»").optional(), ruta: rutaRelativa.optional(),
     formato: z.enum(["auto", "texto", "json", "filas"], { error: "formato: auto, texto, json o filas" }).optional(), hoja: z.string().optional(),
     max_caracteres: entre("max_caracteres", 1, 500000).optional(), max_filas: entre("max_filas", 1, 5000).optional(),
   }).refine((c) => Number(!!c.archivo) + Number(!!c.ruta) === 1, { message: "archivo_leer necesita el archivo subido al flujo (o, en los flujos de antes, una ruta)", path: ["archivo"] }),
@@ -444,6 +459,146 @@ export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
       defecto: z.unknown().optional(), obligatorio: booleano.optional(),
     }), { error: "mapeo tiene que ser una lista [{variable, ruta, defecto, obligatorio}]" })
       .refine((m) => new Set(m.map((x) => x.variable)).size === m.length, "mapeo: hay variables repetidas").optional(),
+  }),
+  // ---------------------------------------------- nodos de producto (puente/nodos_producto.py)
+  aprobacion_humana: conf({
+    titulo: textoReq("titulo"), detalle: z.string().optional(),
+    datos: z.union([z.record(z.string(), z.unknown()), z.string()], { error: "datos tiene que ser un objeto {campo: plantilla o valor} o una variable" }).optional(),
+    campos_editables: listaNombres("campos_editables").optional(), tiempo_limite_h: entre("tiempo_limite_h", 0.01, 720, false).optional(),
+    al_vencer: z.enum(["rechazar", "aprobar", "error"], { error: "al_vencer: rechazar, aprobar o error" }).optional(), asignado_a: z.string().optional(),
+  }).superRefine((c, ctx) => {
+    if (c.datos && typeof c.datos === "object" && c.campos_editables) {
+      const faltan = c.campos_editables.filter((x) => !(x in (c.datos as Record<string, unknown>)));
+      if (faltan.length) ctx.addIssue({ code: "custom", path: ["campos_editables"], message: `campos_editables: ${faltan.join(", ")} no está en datos` });
+    }
+  }),
+  documento_generar: conf({
+    formato: z.enum(["pdf", "docx"], { error: "formato: pdf o docx" }), plantilla: z.string().optional(),
+    plantilla_archivo: z.string().regex(ID_ARCHIVO, "plantilla_archivo: el id de un .docx subido al flujo").optional(), nombre: z.string().optional(), titulo: z.string().optional(),
+  }).refine((c) => Boolean(c.plantilla?.trim()) !== Boolean(c.plantilla_archivo), { message: "documento_generar necesita plantilla o plantilla_archivo (una de las dos)", path: ["plantilla"] }),
+  pdf_unir: conf({ archivos: textoOLista("archivos"), nombre: z.string().optional() }),
+  pdf_dividir: conf({
+    archivo: textoReq("archivo"), modo: z.enum(["cada_pagina", "rangos"], { error: "modo: cada_pagina o rangos" }).optional(),
+    rangos: z.string().optional(), nombre_base: z.string().optional(),
+  }).superRefine((c, ctx) => {
+    if (c.modo === "rangos" && !c.rangos?.trim()) ctx.addIssue({ code: "custom", path: ["rangos"], message: "con modo rangos hace falta rangos («1-3, 4, 5-fin»)" });
+    else if (c.modo === "rangos" && c.rangos && !c.rangos.includes("{{") && !/^\s*\d+\s*(-\s*(\d+|fin))?\s*([,;]\s*\d+\s*(-\s*(\d+|fin))?\s*)*$/i.test(c.rangos))
+      ctx.addIssue({ code: "custom", path: ["rangos"], message: "rangos se escribe como «1-3, 4, 5-fin»" });
+  }),
+  documento_convertir: conf({ archivo: textoReq("archivo"), a: z.enum(["pdf", "docx", "txt", "md", "csv", "xlsx", "png"], { error: "a: pdf, docx, txt, md, csv, xlsx o png" }), nombre: z.string().optional() }),
+  documento_clasificar: conf({
+    archivo: textoOLista("archivo").optional(), texto: z.string().optional(), instrucciones: z.string().optional(), variable: variable.optional(),
+    categorias: z.array(valorOObjeto("valor"), { error: "faltan categorias: [{valor, descripcion}]" }).min(1, "faltan categorias")
+      .refine((xs) => unicos(xs.map((x) => (typeof x === "string" ? x : String(x.valor ?? "")))), "hay categorías repetidas"),
+    max_caracteres: entre("max_caracteres", 500, 200000).optional(),
+  }).refine((c) => !vacio(c.archivo) || Boolean(c.texto?.trim()), { message: "documento_clasificar necesita archivo o texto", path: ["archivo"] }),
+  documento_comparar: conf({ a: textoReq("a"), b: textoReq("b"), resumir: opcional, ignorar_espacios: opcional, instrucciones: z.string().optional() }),
+  anonimizar: conf({
+    de: textoReq("de"), operacion: z.enum(["anonimizar", "revertir"], { error: "operacion: anonimizar o revertir" }).optional(),
+    modo: z.enum(["enmascarar", "etiqueta", "seudonimo"], { error: "modo: enmascarar, etiqueta o seudonimo" }).optional(),
+    tipos: z.array(z.enum(["cedula", "nit", "nombre", "telefono", "correo", "direccion", "cuenta"], { error: "tipos: cedula, nit, nombre, telefono, correo, direccion o cuenta" })).min(1).optional(),
+    campos: listaNombres("campos").optional(), nombres_extra: z.array(z.string()).optional(), guardar_mapa: opcional, mapa_de: variable.optional(),
+  }).superRefine((c, ctx) => {
+    if (c.operacion === "revertir" && !c.mapa_de) ctx.addIssue({ code: "custom", path: ["mapa_de"], message: "revertir necesita mapa_de (la salida del anonimizar con guardar_mapa)" });
+    if (c.guardar_mapa === true && (c.modo ?? "seudonimo") !== "seudonimo") ctx.addIssue({ code: "custom", path: ["guardar_mapa"], message: "guardar_mapa solo sirve con modo seudonimo" });
+  }),
+  hoja_escribir: conf({
+    destino: z.enum(["archivo", "sheets"], { error: "destino: archivo o sheets" }).optional(), archivo: z.string().optional(), nombre: z.string().optional(),
+    formato: z.enum(["xlsx", "csv"], { error: "formato: xlsx o csv" }).optional(), credencial: credencialRef.optional(), hoja_id: z.string().optional(), hoja: z.string().optional(),
+    modo: z.enum(["anexar", "actualizar", "reemplazar"], { error: "modo: anexar, actualizar o reemplazar" }).optional(), clave: z.string().optional(),
+    insertar_si_falta: opcional, filas: z.string().optional(), fila: z.record(z.string(), z.unknown(), { error: "fila tiene que ser un objeto {columna: plantilla}" }).optional(), timeout_s: timeoutS,
+  }).superRefine((c, ctx) => {
+    const mal = (k: string, m: string) => ctx.addIssue({ code: "custom", path: [k], message: m });
+    if (!c.filas && !c.fila) mal("filas", "hoja_escribir necesita filas (una variable) o fila ({columna: plantilla})");
+    if (c.modo === "actualizar" && !c.clave?.trim()) mal("clave", "con modo actualizar hace falta clave");
+    if (c.destino === "sheets") {
+      if (!c.credencial) mal("credencial", "con destino sheets hace falta credencial (google_servicio)");
+      if (!c.hoja_id?.trim()) mal("hoja_id", "con destino sheets hace falta hoja_id");
+    } else {
+      if (c.credencial) mal("credencial", "credencial solo aplica con destino sheets");
+      if (c.archivo && !c.archivo.includes("{{") && !ID_ARCHIVO.test(c.archivo)) mal("archivo", "archivo: el id de una hoja del flujo");
+    }
+  }),
+  mensaje_teams: conf({ credencial: credencialRef, titulo: z.string().optional(), texto: textoReq("texto"), hechos: mapaPlantillas("hechos").optional(), enlace: z.string().optional(), timeout_s: timeoutS }),
+  mensaje_slack: conf({ credencial: credencialRef, titulo: z.string().optional(), texto: textoReq("texto"), hechos: mapaPlantillas("hechos").optional(), enlace: z.string().optional(), timeout_s: timeoutS }),
+  webhook_saliente: conf({
+    credencial: credencialRef,
+    cuerpo: z.union([z.string(), z.record(z.string(), z.unknown()), z.array(z.unknown())], { error: "falta cuerpo: un objeto JSON con plantillas (o un texto)" }),
+    encabezados: z.record(z.string(), z.string(), { error: "encabezados tiene que ser un objeto {nombre: plantilla}" })
+      .refine((e) => !Object.keys(e).some((k) => ENCABEZADOS_SECRETOS.includes(k.trim().toLowerCase())), "encabezados: Authorization y las claves van en la credencial, no en el flujo").optional(),
+    timeout_s: timeoutS,
+  }),
+  traducir: conf({ de: textoReq("de"), a: z.string().trim().min(1).optional(), desde: z.string().trim().min(1).optional(),
+    tono: z.enum(["formal", "neutro", "informal"], { error: "tono: formal, neutro o informal" }).optional(), glosario: mapaPlantillas("glosario").optional() }),
+  resumir_largo: conf({ de: textoReq("de"), tam_parte: entre("tam_parte", 1000, 30000).optional(), max_partes: entre("max_partes", 1, 50).optional(),
+    longitud: z.string().optional(), enfoque: z.string().optional(), instrucciones: z.string().optional() }),
+  preguntar_documentos: conf({
+    pregunta: textoReq("pregunta"), archivos: textoOLista("archivos").optional(), archivo: z.string().optional(), texto: z.string().optional(),
+    max_fragmentos: entre("max_fragmentos", 1, 20).optional(), tam_fragmento: entre("tam_fragmento", 300, 6000).optional(), instrucciones: z.string().optional(),
+  }).refine((c) => !vacio(c.archivos) || Boolean(c.archivo?.trim()) || Boolean(c.texto?.trim()), { message: "preguntar_documentos necesita archivos, archivo o texto", path: ["archivos"] }),
+  extraer_tablas: conf({
+    archivos: textoOLista("archivos").optional(), archivo: z.string().optional(), texto: z.string().optional(), columnas: listaNombres("columnas").optional(),
+    instrucciones: z.string().optional(), max_paginas: entre("max_paginas", 1, 50).optional(),
+  }).refine((c) => !vacio(c.archivos) || Boolean(c.archivo?.trim()) || Boolean(c.texto?.trim()), { message: "extraer_tablas necesita archivos, archivo o texto", path: ["archivos"] }),
+  deduplicar: conf({
+    lista: z.string().optional(), elemento: z.string().optional(), campos: listaNombres("campos").optional(), entre_corridas: opcional, registrar: opcional,
+    tabla: nombreTabla.optional(), olvidar_dias: entre("olvidar_dias", 1, 3650).optional(),
+  }).refine((c) => Boolean(c.lista?.trim()) !== Boolean(c.elemento?.trim()), { message: "deduplicar necesita lista o elemento (uno de los dos)", path: ["lista"] }),
+  agrupar: conf({
+    lista: textoReq("lista"), por: listaNombres("por").optional(),
+    calculos: z.array(z.looseObject({ op: z.enum(["contar", "sumar", "promedio", "minimo", "maximo", "lista", "unicos"], { error: "op: contar, sumar, promedio, minimo, maximo, lista o unicos" }),
+      campo: z.string().optional(), nombre: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/, "nombre: letras, números y _").optional() })
+      .refine((x) => x.op === "contar" || Boolean(x.campo?.trim()), "cada cálculo (salvo contar) necesita campo"), { error: "calculos tiene que ser una lista [{op, campo, nombre}]" }).optional(),
+    orden: z.string().regex(/^-?[A-Za-z_][A-Za-z0-9_]*$/, "orden: un cálculo o campo, con - para de mayor a menor").optional(),
+  }),
+  ordenar_filtrar: conf({
+    lista: textoReq("lista"), condiciones: listaCondiciones("condiciones").optional(), modo: MODO_BUSQUEDA.optional(),
+    orden: z.array(z.looseObject({ campo: textoReq("campo"), direccion: z.enum(["asc", "desc"], { error: "direccion: asc o desc" }).optional(),
+      tipo: z.enum(["auto", "texto", "numero", "fecha"], { error: "tipo: auto, texto, numero o fecha" }).optional() }), { error: "orden tiene que ser una lista [{campo, direccion, tipo}]" }).optional(),
+    limite: entre("limite", 1, 5000).optional(), desde: entre("desde", 0, 100000).optional(), variable: variable.optional(),
+  }),
+  mapear: conf({
+    de: textoReq("de"), variable: variable.optional(), conservar_otros: opcional,
+    campos: z.array(z.looseObject({
+      destino: z.string({ error: "falta destino" }).regex(/^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$/, "destino: nombre, o ruta con puntos («persona.nombre»)"),
+      origen: z.string().regex(RUTA, "origen: una ruta válida dentro del elemento").optional(), plantilla: z.string().optional(), valor: z.unknown().optional(), defecto: z.unknown().optional(),
+      tipo: z.enum(["texto", "numero", "entero", "booleano", "fecha", "lista", "objeto"], { error: "tipo: texto, numero, entero, booleano, fecha, lista u objeto" }).optional(),
+      formato: z.string().includes("%", { message: "formato es un patrón strftime" }).optional(), obligatorio: opcional,
+    }).refine((x) => ["origen", "plantilla", "valor"].filter((k) => k in x).length === 1, "cada campo lleva uno de origen, plantilla o valor"),
+    { error: "faltan campos: [{destino, origen | plantilla | valor}]" }).min(1, "faltan campos")
+      .refine((xs) => new Set(xs.map((x) => x.destino)).size === xs.length, "hay destinos repetidos"),
+  }),
+  validar_contra: conf({
+    valor: textoReq("valor"), contra: z.enum(["lista", "tabla", "sql"], { error: "contra: lista, tabla o sql" }), valores: z.array(z.unknown()).optional(),
+    tabla: nombreTabla.optional(), campo: z.string().optional(), ambito: AMBITO.optional(), credencial: credencialRef.optional(),
+    consulta: sqlTexto("consulta").optional(), parametros: mapaPlantillas("parametros").optional(), ...opcionesBusqueda, timeout_s: timeoutS,
+  }).superRefine((c, ctx) => {
+    const mal = (k: string, m: string) => ctx.addIssue({ code: "custom", path: [k], message: m });
+    if (c.contra === "lista" && !c.valores?.length) mal("valores", "contra lista necesita valores");
+    if (c.contra === "tabla" && !c.tabla) mal("tabla", "contra tabla necesita tabla");
+    if (c.contra === "sql" && (!c.credencial || !c.consulta)) mal("consulta", "contra sql necesita credencial y consulta");
+    if (c.contra !== "sql" && c.credencial) mal("credencial", "credencial solo aplica con contra sql");
+  }),
+  subflujo: conf({
+    flujo: z.string({ error: "falta flujo" }).regex(/^[a-z][a-z0-9-]{1,40}$/, "flujo: el id de otro flujo declarativo"), entrada: mapaPlantillas("entrada").optional(),
+    traer: z.record(variable, z.string().regex(RUTA, "traer: rutas válidas en las variables del otro flujo"), { error: "traer tiene que ser {variable_local: ruta}" }).optional(),
+  }),
+  reintentar_mas_tarde: conf({
+    en_minutos: entre("en_minutos", 1, 10080).optional(), a_las: z.string().optional(), motivo: z.string().optional(), max_intentos: entre("max_intentos", 1, 20).optional(),
+  }).refine((c) => (c.en_minutos !== undefined) !== Boolean(c.a_las?.trim()), { message: "reintentar_mas_tarde necesita en_minutos o a_las (una de las dos)", path: ["en_minutos"] })
+    .refine((c) => !c.a_las || c.a_las.includes("{{") || /^([01]\d|2[0-3]):[0-5]\d$/.test(c.a_las.trim()) || !Number.isNaN(Date.parse(c.a_las)), { message: "a_las: «HH:MM» o una fecha ISO", path: ["a_las"] }),
+  limite_tasa: conf({
+    maximo: entre("maximo", 1, 100000), por: z.enum(["segundo", "minuto", "hora", "dia"], { error: "por: segundo, minuto, hora o dia" }).optional(), clave: z.string().optional(),
+    al_exceder: z.enum(["esperar", "aplazar", "saltar", "error"], { error: "al_exceder: esperar, aplazar, saltar o error" }).optional(),
+  }),
+  ventana_horario: conf({
+    dias: z.array(z.enum(["lun", "mar", "mie", "jue", "vie", "sab", "dom"], { error: "dias: lun, mar, mie, jue, vie, sab o dom" })).min(1, "dias está vacío").optional(),
+    desde: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "desde: hora HH:MM").optional(), hasta: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "hasta: hora HH:MM").optional(),
+    festivos: opcional, zona: zona.optional(), fuera: z.enum(["esperar", "aplazar", "saltar"], { error: "fuera: esperar, aplazar o saltar" }).optional(),
+  }).refine((c) => !c.desde || !c.hasta || c.desde < c.hasta, { message: "desde tiene que ser antes de hasta", path: ["desde"] }),
+  detener_con_alerta: z.looseObject({
+    ...comunesDeSalida, mensaje: textoReq("mensaje"), titulo: z.string().optional(),
+    nivel: z.enum(["info", "aviso", "error"], { error: "nivel: info, aviso o error" }).optional(), credencial: credencialRef.optional(),
   }),
   salida: z.looseObject({
     ...comunesDeSalida,
@@ -873,7 +1028,7 @@ export function credencialesUsadas(d: Definicion): string[] {
 function subflujosDe(d: Definicion, pila: string[], acumulado: Record<string, unknown> = {}): Record<string, unknown> {
   if (pila.length > 4) return acumulado;
   for (const n of d.nodos) {
-    if (n.tipo !== "llamar_flujo") continue;
+    if (n.tipo !== "llamar_flujo" && n.tipo !== "subflujo") continue;
     const id = String((n.config as { flujo?: unknown }).flujo ?? "");
     const sub = declarativos.get(id);
     if (!sub?.definicion || id in acumulado || pila.includes(id)) continue;
@@ -889,9 +1044,21 @@ function subflujosDe(d: Definicion, pila: string[], acumulado: Record<string, un
  * credenciales (solo las que usa y puede usar), entorno del flujo y flujos que llama.
  * De código: su entorno propio, de las variables que el trabajador acepta en caliente.
  */
+/**
+ * Lo que otros módulos agregan a la orden de una corrida declarativa (p. ej. aprobaciones.ts: «reanudar» para seguir
+ * la corrida que esperó una decisión; aplazadas.ts: «aplazamiento» con el intento). Cada uno devuelve undefined si no le toca.
+ */
+export const extrasDeOrden: ((flujo: string, corrida: Corrida) => Record<string, unknown> | undefined)[] = [];
+
 export function ordenPara(id: string, corrida: Corrida): Record<string, unknown> {
   const f = obtener(id);
   if (!f) return {};
+  const base = ordenBase(id, f, corrida);
+  if (f.tipo !== "declarativo" || !f.definicion) return base;
+  return { ...base, ...Object.assign({}, ...extrasDeOrden.map((x) => x(id, corrida) ?? {})) };
+}
+
+function ordenBase(id: string, f: Flujo, corrida: Corrida): Record<string, unknown> {
   if (f.tipo === "codigo") {
     const pqrd = baseDe(id) === "pqrd";
     const permitidas = pqrd ? ajustables().entorno : new Set<string>();
@@ -1045,7 +1212,7 @@ export async function manifiesto(id: string): Promise<Record<string, unknown> | 
     entorno: variables.map((v) => ({ ...v, usado: usadasEntorno.includes(v.nombre) })),
     entorno_sin_definir: usadasEntorno.filter((n) => !variables.some((v) => v.nombre === n)),
     escrituras,
-    flujos_llamados: [...new Set(d.nodos.filter((n) => n.tipo === "llamar_flujo").map((n) => String((n.config as { flujo?: unknown }).flujo)))],
+    flujos_llamados: [...new Set(d.nodos.filter((n) => n.tipo === "llamar_flujo" || n.tipo === "subflujo").map((n) => String((n.config as { flujo?: unknown }).flujo)))],
     archivos: d.nodos.filter((n) => n.tipo === "archivo_leer" || n.tipo === "archivo_guardar").map((n) => ({ nodo: n.id, tipo: n.tipo, ...((n.config as { archivo?: string }).archivo ? { archivo: (n.config as { archivo?: string }).archivo } : { ruta: (n.config as { ruta?: unknown }).ruta }) })),
     tablas: d.nodos.filter((n) => n.tipo === "tabla_guardar" || n.tipo === "tabla_consultar").map((n) => ({ nodo: n.id, tabla: (n.config as { tabla?: unknown }).tabla, ambito: (n.config as { ambito?: unknown }).ambito ?? "flujo" })),
     limites: [
@@ -1069,6 +1236,11 @@ const CATEGORIA: Record<TipoDeNodo, string> = {
   expresion: "datos", json: "datos", fecha: "datos", tabla_guardar: "datos", tabla_consultar: "datos", archivo_leer: "datos", archivo_guardar: "datos",
   correo_leer: "conector", correo_enviar: "conector", drive_listar: "conector", drive_leer: "conector", drive_subir: "conector", hoja_leer: "conector",
   sql_consulta: "conector", sql_ejecutar: "conector", respuesta_webhook: "integracion",
+  aprobacion_humana: "logica", documento_generar: "documentos", pdf_unir: "documentos", pdf_dividir: "documentos", documento_convertir: "documentos",
+  documento_clasificar: "ia", documento_comparar: "documentos", anonimizar: "validacion", hoja_escribir: "conector", mensaje_teams: "integracion",
+  mensaje_slack: "integracion", webhook_saliente: "integracion", traducir: "ia", resumir_largo: "ia", preguntar_documentos: "ia", extraer_tablas: "ia",
+  deduplicar: "datos", agrupar: "datos", ordenar_filtrar: "datos", mapear: "datos", validar_contra: "validacion", subflujo: "logica",
+  reintentar_mas_tarde: "logica", limite_tasa: "logica", ventana_horario: "logica", detener_con_alerta: "salida",
 };
 const NOMBRE_TIPO: Record<TipoDeNodo, string> = {
   entrada_correo: "Entrada de correo", leer_adjuntos: "Leer adjuntos", filtro: "Filtro", condicion: "Condición",
@@ -1082,6 +1254,13 @@ const NOMBRE_TIPO: Record<TipoDeNodo, string> = {
   archivo_leer: "Leer archivo", archivo_guardar: "Guardar archivo", correo_leer: "Leer correos", correo_enviar: "Enviar correo",
   drive_listar: "Drive · listar", drive_leer: "Drive · leer", drive_subir: "Drive · subir", hoja_leer: "Leer hoja de cálculo",
   sql_consulta: "SQL · consultar", sql_ejecutar: "SQL · ejecutar", respuesta_webhook: "Responder al webhook",
+  aprobacion_humana: "Aprobación humana", documento_generar: "Generar documento", pdf_unir: "Unir PDF", pdf_dividir: "Dividir PDF",
+  documento_convertir: "Convertir documento", documento_clasificar: "IA · tipo de documento", documento_comparar: "Comparar documentos",
+  anonimizar: "Anonimizar datos personales", hoja_escribir: "Escribir hoja de cálculo", mensaje_teams: "Mensaje a Teams", mensaje_slack: "Mensaje a Slack",
+  webhook_saliente: "Webhook saliente", traducir: "IA · traducir", resumir_largo: "IA · resumir documento largo", preguntar_documentos: "IA · preguntar a documentos",
+  extraer_tablas: "IA · extraer tablas", deduplicar: "Deduplicar", agrupar: "Agrupar y sumar", ordenar_filtrar: "Ordenar y filtrar", mapear: "Mapear campos",
+  validar_contra: "Validar contra lista, tabla o SQL", subflujo: "Subflujo", reintentar_mas_tarde: "Reintentar más tarde", limite_tasa: "Límite de tasa",
+  ventana_horario: "Ventana de horario", detener_con_alerta: "Detener con alerta",
 };
 
 const valorDe = (x: unknown, clave = "valor") => (typeof x === "object" && x ? String((x as Record<string, unknown>)[clave] ?? "") : String(x));

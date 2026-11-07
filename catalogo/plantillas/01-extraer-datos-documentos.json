@@ -1,0 +1,45 @@
+{
+  "id": "extraer-datos-documentos",
+  "orden": 1,
+  "nombre": "Extraer datos de documentos",
+  "categoria": "Documentos",
+  "resumen": "Sube PDF, fotos o Word y la IA saca los datos que pidas: nombre, documento, fechas, valores.",
+  "descripcion": "Lee cada archivo (también los escaneados, con OCR), la IA extrae los campos de la lista con su evidencia y una revisión final confirma que estén los obligatorios. Lo que sale completo queda listo; lo que no, va a revisión de una persona con el motivo.",
+  "como_probar": "Instálala, pulsa «Correr» y arrastra uno o varios documentos. Cambia los campos en el paso «Datos del documento».",
+  "necesita": [
+    { "tipo": "archivos", "texto": "Documentos para probar (PDF, imágenes, Word o Excel)." },
+    { "tipo": "nada", "texto": "Usa la IA de la plataforma: no hace falta configurar nada más." }
+  ],
+  "definicion": {
+    "nombre": "Extraer datos de documentos",
+    "descripcion": "Saca nombre, documento, fecha, entidad y valor de los documentos que subes.",
+    "ia": { "usar": "global" },
+    "nodos": [
+      { "id": "documentos", "tipo": "entrada_archivos", "nombre": "Documentos recibidos", "config": { "max_archivos": 10, "ocr": true } },
+      { "id": "datos", "tipo": "ia_extraer", "nombre": "Datos del documento", "config": {
+        "entradas": ["archivos.texto"],
+        "salida": "datos",
+        "instrucciones": "Extrae los datos del documento. Si un dato no aparece, déjalo vacío: no lo inventes.",
+        "campos": [
+          { "nombre": "nombre", "descripcion": "nombre completo de la persona o empresa a quien se refiere el documento", "obligatorio": true },
+          { "nombre": "documento", "descripcion": "número de cédula o NIT, solo dígitos", "tipo": "numero", "obligatorio": true },
+          { "nombre": "fecha", "descripcion": "fecha principal del documento", "tipo": "fecha" },
+          { "nombre": "entidad", "descripcion": "entidad o empresa que emite el documento" },
+          { "nombre": "valor_total", "descripcion": "valor total o monto, si lo hay", "tipo": "numero" }
+        ]
+      } },
+      { "id": "revisar", "tipo": "validar", "nombre": "¿Están los datos?", "config": { "reglas": [
+        { "campo": "nombre", "regla": "obligatorio", "codigo": "SIN_NOMBRE", "mensaje": "no se encontró el nombre" },
+        { "campo": "documento", "regla": "obligatorio", "codigo": "SIN_DOCUMENTO", "mensaje": "no se encontró el número de documento" }
+      ] } },
+      { "id": "listo", "tipo": "salida", "nombre": "Datos completos", "config": { "desenlace": "radicar", "motivo": "Datos extraídos de {{archivos.cantidad}} archivo(s)", "campos": ["nombre", "documento", "fecha", "entidad", "valor_total"] } },
+      { "id": "a_revision", "tipo": "salida", "nombre": "Revisión de una persona", "config": { "desenlace": "manual", "motivo": "Faltan datos o no son válidos", "campos": ["nombre", "documento", "fecha", "entidad", "valor_total"] } }
+    ],
+    "aristas": [
+      { "desde": "documentos", "hacia": "datos" },
+      { "desde": "datos", "hacia": "revisar" },
+      { "desde": "revisar", "hacia": "listo", "cuando": "ok" },
+      { "desde": "revisar", "hacia": "a_revision", "cuando": "falla" }
+    ]
+  }
+}

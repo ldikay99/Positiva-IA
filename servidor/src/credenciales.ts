@@ -67,6 +67,17 @@ export const TIPOS_CREDENCIAL: TipoDeCredencial[] = [
     campos: [{ nombre: "token", titulo: "Token", tipo: "texto", secreto: true, obligatorio: true }, hosts] },
   { tipo: "http_basico", nombre: "API con usuario y clave", descripcion: "Autenticación básica para el nodo http.", ayuda: "Solo se manda a los hosts que digas aquí.",
     campos: [usuario(), clave(), hosts] },
+  { tipo: "webhook_teams", nombre: "Microsoft Teams (webhook)", descripcion: "Publicar mensajes en un canal de Teams (nodo mensaje_teams; escritura: hay que habilitarla).",
+    ayuda: "En el canal: Flujos de trabajo › «Publicar en un canal cuando se recibe una solicitud de webhook» (o un webhook entrante) y pega aquí la URL. Quien tiene la URL puede publicar: es secreta.",
+    campos: [{ nombre: "url", titulo: "URL del webhook", tipo: "texto", secreto: true, obligatorio: true, ayuda: "https://…webhook.office.com/… o https://…logic.azure.com/…" }] },
+  { tipo: "webhook_slack", nombre: "Slack (webhook entrante)", descripcion: "Publicar mensajes en un canal de Slack (nodo mensaje_slack; escritura: hay que habilitarla).",
+    ayuda: "En Slack: Aplicaciones › Webhooks entrantes › Agregar a un canal, y pega aquí la URL (https://hooks.slack.com/services/…). Es secreta.",
+    campos: [{ nombre: "url", titulo: "URL del webhook", tipo: "texto", secreto: true, obligatorio: true, ayuda: "https://hooks.slack.com/services/…" }] },
+  { tipo: "webhook_saliente", nombre: "Webhook saliente", descripcion: "Mandar JSON por POST a otro sistema (nodo webhook_saliente; escritura: hay que habilitarla).",
+    ayuda: "Solo https a hosts públicos; nunca Positiva, SGDEA ni redes internas. El token, si lo hay, va como «Bearer» en Authorization o en el encabezado que digas.",
+    campos: [{ nombre: "url", titulo: "URL", tipo: "texto", secreto: true, obligatorio: true, ayuda: "https://…" },
+      { nombre: "token", titulo: "Token", tipo: "texto", secreto: true },
+      { nombre: "encabezado", titulo: "Encabezado del token", tipo: "texto", defecto: "Authorization", ayuda: "p. ej. Authorization o X-Api-Key" }] },
   // Proveedores de IA (ia_<proveedor>): ver ia_credenciales.ts.
   ...TIPOS_CREDENCIAL_IA,
 ];
@@ -236,6 +247,20 @@ export async function guardar(nombre: string, cuerpo: unknown): Promise<Resultad
   if (malo) return { ok: false, error: `bloqueado por seguridad: ${malo} es un destino que esta plataforma nunca toca (Positiva, SGDEA, metadatos o interno)` };
   for (const k of ["buzon", "usuario", "remitente"]) {
     if (typeof valores[k] === "string" && CORREO_VETADO(valores[k] as string)) return { ok: false, error: `bloqueado por seguridad: ${String(valores[k])} es un buzón de Positiva` };
+  }
+  if (t.tipo.startsWith("webhook_")) {
+    // La URL es el secreto: solo https, a un host público y (Teams, Slack) del servicio que dice el tipo.
+    let u: URL;
+    try {
+      u = new URL(String(valores.url));
+    } catch {
+      return { ok: false, error: "url: no es una URL válida" };
+    }
+    const h = u.hostname.toLowerCase();
+    if (u.protocol !== "https:") return { ok: false, error: "url: tiene que ser https://" };
+    if (VETADO(h) || h === "localhost" || /^(\d+\.){3}\d+$/.test(h) || h.includes(":")) return { ok: false, error: `bloqueado por seguridad: ${h} es un destino que esta plataforma nunca toca` };
+    const sufijos = t.tipo === "webhook_teams" ? ["webhook.office.com", "logic.azure.com", "powerplatform.com", "powerautomate.com"] : t.tipo === "webhook_slack" ? ["hooks.slack.com"] : [];
+    if (sufijos.length && !sufijos.some((s) => h === s || h.endsWith(`.${s}`))) return { ok: false, error: `url: un ${t.nombre} va a ${sufijos.join(", ")}` };
   }
   if (t.tipo === "sqlite") {
     const r = String(valores.ruta).replace(/\\/g, "/");

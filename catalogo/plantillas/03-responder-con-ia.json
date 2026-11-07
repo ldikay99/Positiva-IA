@@ -1,0 +1,45 @@
+{
+  "id": "responder-con-ia",
+  "orden": 3,
+  "nombre": "Responder con IA",
+  "categoria": "Correo",
+  "resumen": "La IA decide si un correo se puede contestar solo y, si sí, redacta la respuesta para que una persona la revise.",
+  "descripcion": "Primero la IA decide si el correo es una consulta sencilla que se responde con información general. Si lo es, redacta una respuesta formal y breve; si no, lo deja para una persona con la razón. La respuesta queda armada y registrada: no se envía a nadie hasta que conectes un buzón con permiso de escritura.",
+  "como_probar": "Instálala, sube un correo .eml o .msg a la bandeja de prueba del flujo y córrelo. Ajusta el tono en el paso «Redactar la respuesta».",
+  "necesita": [
+    { "tipo": "correos", "texto": "Correos de prueba (.eml o .msg)." },
+    { "tipo": "conexion", "texto": "Para enviar de verdad: cambia el paso «Responder» por «Enviar correo» con una conexión SMTP o Microsoft 365 a la que una persona le habilite la escritura." }
+  ],
+  "definicion": {
+    "nombre": "Responder con IA",
+    "descripcion": "Redacta respuestas a consultas sencillas y deja las demás a una persona.",
+    "ia": { "usar": "global" },
+    "nodos": [
+      { "id": "correo", "tipo": "entrada_correo", "nombre": "Correo recibido", "config": { "leer_adjuntos": false } },
+      { "id": "decision", "tipo": "ia_decidir", "nombre": "¿Se puede responder solo?", "config": {
+        "pregunta": "¿Este correo es una consulta sencilla que se puede contestar con información general, sin revisar un caso particular?",
+        "salida": "decision",
+        "opciones": [
+          { "valor": "si", "criterio": "pregunta por horarios, requisitos, canales de atención o el estado general de un trámite" },
+          { "valor": "no", "criterio": "pide revisar un caso concreto, trae documentos, reclama o tiene implicaciones legales" }
+        ]
+      } },
+      { "id": "redactar", "tipo": "ia_generar", "nombre": "Redactar la respuesta", "config": {
+        "instrucciones": "Redacta una respuesta formal, cordial y breve (máximo 6 líneas) al correo. Responde solo con información general; no inventes datos, plazos ni números de radicado. Firma como «Equipo de atención».",
+        "entradas": ["correo"],
+        "salida": "respuesta",
+        "temperatura": 0.4
+      } },
+      { "id": "responder", "tipo": "enviar", "nombre": "Responder", "config": { "asunto": "Re: {{correo.asunto}}", "cuerpo": "{{respuesta}}" } },
+      { "id": "respondido", "tipo": "salida", "nombre": "Respuesta lista", "config": { "desenlace": "responder", "motivo": "Consulta sencilla: respuesta redactada", "plantilla_respuesta": "{{respuesta}}" } },
+      { "id": "a_revision", "tipo": "salida", "nombre": "Revisión de una persona", "config": { "desenlace": "manual", "motivo": "{{decision_justificacion}}" } }
+    ],
+    "aristas": [
+      { "desde": "correo", "hacia": "decision" },
+      { "desde": "decision", "hacia": "redactar", "cuando": "si" },
+      { "desde": "decision", "hacia": "a_revision", "cuando": "no" },
+      { "desde": "redactar", "hacia": "responder" },
+      { "desde": "responder", "hacia": "respondido" }
+    ]
+  }
+}

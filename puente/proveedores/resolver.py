@@ -20,9 +20,10 @@ from proveedores.registro import PROVEEDORES
 
 GLOBAL_DEFECTO = {"proveedor": "vertex", "modelo": "gemini-2.5-flash"}
 NOMBRE_CREDENCIAL = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,62}$")
-TIPOS_IA = {"ia_clasificar", "ia_decidir", "ia_extraer", "ia_generar", "resumir", "ia_redactar"}
+TIPOS_IA = {"ia_clasificar", "ia_decidir", "ia_extraer", "ia_generar", "resumir", "ia_redactar",
+            "traducir", "resumir_largo", "preguntar_documentos", "extraer_tablas", "documento_clasificar", "documento_comparar"}
 # Los que necesitan JSON con esquema.
-TIPOS_JSON = {"ia_clasificar", "ia_decidir", "ia_extraer"}
+TIPOS_JSON = {"ia_clasificar", "ia_decidir", "ia_extraer", "documento_clasificar", "preguntar_documentos", "extraer_tablas"}
 CLAVES_IA = ("proveedor", "modelo", "credencial")
 
 

@@ -21,7 +21,7 @@ import copy
 import json
 from typing import Any, Dict, List, Optional, Sequence
 
-VERSION = 6
+VERSION = 7
 
 DESENLACES = ["radicar", "manual", "reenviar", "descartar", "responder", "duplicado"]
 DISPARADORES = ["entrada_correo", "entrada_manual", "programado", "webhook", "correo_nuevo", "entrada_archivos"]
@@ -30,7 +30,8 @@ TIPOS_PERMITIDOS = ["jpg", "jpeg", "png", "webp", "tif", "tiff", "bmp", "gif", "
                     "ppt", "pptx", "txt", "md", "json", "xml", "html", "eml", "msg", "zip", "rtf", "odt", "ods"]
 TIPOS_CREDENCIAL_IA = ["ia_gemini", "ia_openai", "ia_azure_openai", "ia_anthropic", "ia_deepseek", "ia_mistral", "ia_groq", "ia_openrouter",
                        "ia_ollama", "ia_compatible", "ia_cohere", "ia_personalizado"]
-TIPOS_CREDENCIAL = ["imap", "smtp", "microsoft_graph", "google_servicio", "postgres", "mysql", "sqlite", "http_bearer", "http_basico", *TIPOS_CREDENCIAL_IA]
+TIPOS_CREDENCIAL = ["imap", "smtp", "microsoft_graph", "google_servicio", "postgres", "mysql", "sqlite", "http_bearer", "http_basico",
+                    "webhook_teams", "webhook_slack", "webhook_saliente", *TIPOS_CREDENCIAL_IA]
 # Los proveedores de IA (los registra puente/proveedores/; una prueba compara las listas).
 PROVEEDORES_IA = ["vertex", "gemini", "openai", "azure_openai", "deepseek", "mistral", "groq", "openrouter", "ollama", "openai_compatible",
                   "anthropic", "cohere", "personalizado"]
@@ -663,9 +664,12 @@ TIPOS: Dict[str, Dict[str, Any]] = {
     },
     "hoja_leer": {
         "nombre": "Leer hoja de cálculo", "categoria": "conector",
-        "descripcion": "Convierte un CSV o XLSX en filas: de un adjunto del correo, de un archivo de Drive, del espacio de archivos o de una URL de HTTP_HOSTS_PERMITIDOS.",
-        "config": conf({"origen": opcion(["adjunto", "drive", "archivo", "url"], "de dónde sale"),
-                        "adjunto": texto("adjunto: regex del nombre (por defecto el primer .csv/.xlsx)"), "credencial": credencial(["google_servicio"], "drive: la cuenta de servicio"),
+        "descripcion": "Convierte un CSV o XLSX en filas: de un adjunto del correo, de un archivo de Drive, de una hoja de Google Sheets (origen sheets), "
+                       "del espacio de archivos o de una URL de HTTP_HOSTS_PERMITIDOS.",
+        "config": conf({"origen": opcion(["adjunto", "drive", "archivo", "url", "sheets"], "de dónde sale"),
+                        "adjunto": texto("adjunto: regex del nombre (por defecto el primer .csv/.xlsx)"),
+                        "credencial": credencial(["google_servicio"], "drive y sheets: la cuenta de servicio (la hoja tiene que estar compartida con ella)"),
+                        "hoja_id": plantilla("sheets: el id de la hoja de Google o su enlace"), "rango": plantilla("sheets: pestaña o rango, p. ej. «Datos» o «Datos!A1:F200»"),
                         "archivo": plantilla("drive: id del archivo; archivo: ruta relativa"), "url": plantilla("url: https://… de un host permitido"),
                         "hoja": texto("hoja del XLSX (por defecto la primera)"), "encabezados": booleano("la primera fila son los nombres de columna", True),
                         "max_filas": MAX_FILAS, "timeout_s": TIMEOUT, "salida": SALIDA()}, ["origen"]),
@@ -817,6 +821,341 @@ TIPOS: Dict[str, Dict[str, Any]] = {
         "salidas": ["ok"], "produce": "",
         "ejemplo": {"id": "contestar", "tipo": "respuesta_webhook", "nombre": "Contestar", "config": {"estado": 200, "cuerpo": {"ok": True, "total": "{{total}}"}}},
     },
+    # ------------------------------------------------------- aprobación humana
+    "aprobacion_humana": {
+        "nombre": "Aprobación humana", "categoria": "logica",
+        "descripcion": "Detiene el flujo hasta que una persona apruebe o rechace desde la plataforma (bandeja «Aprobaciones»), con comentario y, si se permite, "
+                       "cambios en los datos. La corrida queda «en espera» (no ocupa un trabajador y sobrevive a reinicios); al decidir, una corrida nueva sigue "
+                       "por «aprobado» o «rechazado» con {{aprobacion.decision}}, {{aprobacion.comentario}}, {{aprobacion.cambios}} y {{aprobacion.datos}} "
+                       "(los datos con los cambios). Con tiempo_limite_h, si nadie decide: sale por «vencido» si tiene esa arista o aplica al_vencer. "
+                       "Vera puede listarlas, pero solo una persona decide.",
+        "config": conf({"titulo": plantilla("lo que se decide, p. ej. «Pago de {{entrada.monto}} a {{entrada.proveedor}}»"),
+                        "detalle": plantilla("contexto para quien decide", largo=True),
+                        "datos": mapa(libre(), "{campo: plantilla o valor}: lo que se muestra (y se puede editar)"),
+                        "campos_editables": lista(texto(), "qué campos de datos puede cambiar quien decide"),
+                        "tiempo_limite_h": numero("horas para decidir (si no, espera sin límite)", 0.01, 720),
+                        "al_vencer": opcion(["rechazar", "aprobar", "error"], "si vence y no hay arista «vencido»: rechazar, aprobar o error", "rechazar"),
+                        "asignado_a": plantilla("quién debería decidir (solo informativo)"),
+                        "salida": variable("dónde queda la decisión (por defecto: aprobacion)")}, ["titulo"]),
+        "salidas": ["aprobado", "rechazado", "vencido (opcional)"], "produce": "aprobacion {id, decision, estado, aprobado, comentario, cambios, datos, decidida, por}",
+        "ejemplo": {"id": "aprobar_pago", "tipo": "aprobacion_humana", "nombre": "¿Se aprueba el pago?", "config": {
+            "titulo": "Pago de {{entrada.monto}} a {{entrada.proveedor}}", "detalle": "Factura {{entrada.factura}}",
+            "datos": {"monto": "{{entrada.monto}}", "proveedor": "{{entrada.proveedor}}"}, "campos_editables": ["monto"],
+            "tiempo_limite_h": 24, "al_vencer": "rechazar"}},
+    },
+    # -------------------------------------------------------------- documentos
+    "documento_generar": {
+        "nombre": "Generar documento", "categoria": "documentos",
+        "descripcion": "Genera un PDF o un Word desde una plantilla con {{variables}}: un texto (con «# » títulos, «- » viñetas y líneas con «|» como tablas) "
+                       "o un .docx subido al flujo con {{variables}} en su texto. Queda como archivo del flujo y deja su ficha {id, nombre, tipo, tamano}.",
+        "config": conf({"formato": opcion(["pdf", "docx"], "pdf o docx (Word)"),
+                        "plantilla": plantilla("el texto del documento con {{variables}}", largo=True),
+                        "plantilla_archivo": texto("o un .docx subido al flujo con {{variables}} en su texto", None, "Plantilla Word", "archivo-flujo"),
+                        "nombre": plantilla("nombre del archivo (sin extensión), p. ej. «certificado-{{entrada.documento}}»"),
+                        "titulo": plantilla("título del documento (metadatos)"), "salida": SALIDA()}, ["formato"]),
+        "salidas": ["ok"], "produce": "salida {id, nombre, tipo, tamano, sha256, paginas}",
+        "ejemplo": {"id": "certificado", "tipo": "documento_generar", "nombre": "Certificado", "config": {
+            "formato": "pdf", "nombre": "certificado-{{entrada.documento}}",
+            "plantilla": "# Certificado\n\nSe certifica que {{entrada.nombre}}, con documento {{entrada.documento}}, está afiliado.\n\n- Fecha: {{hoy}}", "salida": "certificado"}},
+    },
+    "pdf_unir": {
+        "nombre": "Unir PDF", "categoria": "documentos",
+        "descripcion": "Une varios PDF en uno, en el orden dado (archivos del flujo, los subidos a la corrida o los adjuntos del correo). Deja la ficha del PDF nuevo.",
+        "config": conf({"archivos": libre("lista de ids o plantillas (p. ej. [\"{{carta.id}}\", \"{{anexo.id}}\"]), una variable con fichas, o «adjuntos»"),
+                        "nombre": plantilla("nombre del PDF unido", "unido"), "salida": SALIDA()}, ["archivos"]),
+        "salidas": ["ok"], "produce": "salida {id, nombre, paginas}",
+        "ejemplo": {"id": "expediente", "tipo": "pdf_unir", "nombre": "Armar expediente", "config": {"archivos": ["{{carta.id}}", "{{anexo.id}}"], "nombre": "expediente", "salida": "expediente"}},
+    },
+    "pdf_dividir": {
+        "nombre": "Dividir PDF", "categoria": "documentos",
+        "descripcion": "Parte un PDF en uno por página o por rangos («1-3, 4, 5-fin»). Deja la lista de fichas de los PDF nuevos (con sus páginas).",
+        "config": conf({"archivo": plantilla("el PDF: id, plantilla como «{{doc.id}}» o «adjuntos»"),
+                        "modo": opcion(["cada_pagina", "rangos"], "", "cada_pagina"), "rangos": plantilla("con modo rangos: «1-3, 4, 5-fin» (páginas desde 1)"),
+                        "nombre_base": plantilla("nombre de los archivos (se les agrega _1, _2…)"), "salida": SALIDA()}, ["archivo"]),
+        "salidas": ["ok"], "produce": "salida (lista de {id, nombre, paginas})",
+        "ejemplo": {"id": "separar", "tipo": "pdf_dividir", "nombre": "Separar anexos", "config": {"archivo": "{{expediente.id}}", "modo": "rangos", "rangos": "1-2, 3-fin", "salida": "partes"}},
+    },
+    "documento_convertir": {
+        "nombre": "Convertir documento", "categoria": "documentos",
+        "descripcion": "Convierte sin LibreOffice: Word → PDF, texto o markdown (conserva texto, títulos, viñetas y tablas, no el diseño exacto); PDF → texto, "
+                       "markdown, Word (texto por página) o PNG (una imagen por página, hasta 20); texto o markdown → PDF o Word; Excel ↔ CSV, Excel o CSV → PDF; "
+                       "imagen → PDF. Otras combinaciones no se pueden y lo dice.",
+        "config": conf({"archivo": plantilla("el documento: id, plantilla como «{{doc.id}}» o «adjuntos»"),
+                        "a": opcion(["pdf", "docx", "txt", "md", "csv", "xlsx", "png"], "a qué formato"),
+                        "nombre": plantilla("nombre del archivo nuevo (sin extensión)"), "salida": SALIDA()}, ["archivo", "a"]),
+        "salidas": ["ok"], "produce": "salida (ficha del archivo nuevo, o lista si son varias imágenes)",
+        "ejemplo": {"id": "a_pdf", "tipo": "documento_convertir", "nombre": "Pasar a PDF", "config": {"archivo": "{{entrada.archivo.id}}", "a": "pdf", "salida": "pdf"}},
+    },
+    "documento_clasificar": {
+        "nombre": "IA · tipo de documento", "categoria": "ia",
+        "descripcion": "La IA dice qué tipo de documento es (entre las categorías dadas) con su confianza y la frase que lo muestra. Sale por la categoría "
+                       "(o «sin_categoria»). Lee PDF por página, Word, Excel, texto e imágenes (con OCR).",
+        "config": conf({"archivo": plantilla("el documento: id, plantilla como «{{doc.id}}» o «adjuntos»"), "texto": plantilla("o su texto", largo=True),
+                        "categorias": lista(objeto({"valor": texto("el tipo (también es el nombre de la salida)"), "descripcion": texto("cómo se reconoce")}, ["valor"]),
+                                            "los tipos posibles", 1),
+                        "instrucciones": plantilla("qué mirar", largo=True), "max_caracteres": entero("cuánto texto ve la IA", 500, 200000, 15000),
+                        "salida": variable("deja {tipo, confianza, evidencia, pagina, archivo} (por defecto: id del nodo)")}, ["categorias"]),
+        "salidas": ["<cada categoría>", "sin_categoria (opcional)"], "salidas_desde": "categorias[].valor", "produce": "salida {tipo, confianza, evidencia, pagina, archivo}",
+        "ejemplo": {"id": "tipo_doc", "tipo": "documento_clasificar", "nombre": "¿Qué documento es?", "config": {
+            "archivo": "adjuntos", "salida": "tipo_doc",
+            "categorias": [{"valor": "incapacidad", "descripcion": "certificado de incapacidad médica"}, {"valor": "factura", "descripcion": "factura o cuenta de cobro"},
+                           {"valor": "otro", "descripcion": "cualquier otro documento"}]}},
+    },
+    "documento_comparar": {
+        "nombre": "Comparar documentos", "categoria": "documentos",
+        "descripcion": "Compara dos documentos (o textos) línea por línea: qué se agregó, quitó o cambió, la similitud y, con resumir, un resumen de la IA de las "
+                       "diferencias que importan. Sale por «iguales» o «distintos».",
+        "config": conf({"a": plantilla("la versión A: un archivo (id o «{{doc.id}}») o un texto"), "b": plantilla("la versión B"),
+                        "resumir": booleano("pedir a la IA un resumen de las diferencias", True),
+                        "ignorar_espacios": booleano("no contar cambios solo de espacios", True), "instrucciones": plantilla("qué mirar en el resumen", largo=True),
+                        "salida": SALIDA()}, ["a", "b"]),
+        "salidas": ["iguales", "distintos"], "produce": "salida {iguales, similitud, agregadas, quitadas, cambios, diff, resumen}",
+        "ejemplo": {"id": "cambios", "tipo": "documento_comparar", "nombre": "¿Qué cambió en el contrato?", "config": {"a": "{{original.id}}", "b": "{{nuevo.id}}", "salida": "comparacion"}},
+    },
+    # -------------------------------------------------------- datos personales
+    "anonimizar": {
+        "nombre": "Anonimizar datos personales", "categoria": "validacion",
+        "descripcion": "Encuentra y oculta datos personales de textos colombianos sin salir de la plataforma: cédulas (C.C., C.E., T.I., con puntos), NIT, nombres, "
+                       "teléfonos (3xx, 60x, +57), correos, direcciones (Calle 45 # 12-30) y cuentas. Modos: enmascarar («*.***.***.789», «A. M. P.»), etiqueta "
+                       "(«[CÉDULA]») o seudonimo («[NOMBRE_1]», el mismo para el mismo valor en toda la corrida). Úsalo antes de mandar un texto a una IA externa "
+                       "o a un informe; con guardar_mapa y un segundo anonimizar con operacion revertir, la respuesta vuelve a tener los datos reales.",
+        "config": conf({"de": plantilla("el texto o la variable (también objetos y listas)"), "operacion": opcion(["anonimizar", "revertir"], "", "anonimizar"),
+                        "tipos": lista(opcion(["cedula", "nit", "nombre", "telefono", "correo", "direccion", "cuenta"]), "qué buscar (por defecto todo)"),
+                        "modo": opcion(["enmascarar", "etiqueta", "seudonimo"], "", "seudonimo"),
+                        "campos": lista(texto(), "en objetos: solo estos campos (por defecto todos los textos)"),
+                        "nombres_extra": lista(plantilla(), "nombres que se sabe que aparecen (p. ej. «{{entrada.nombre}}»)"),
+                        "guardar_mapa": booleano("guardar, solo en la corrida, cómo revertir los seudónimos", False),
+                        "mapa_de": variable("revertir: la salida del anonimizar con guardar_mapa"),
+                        "salida": variable("{texto, valor, conteo, total} (revertir: {texto, devueltos}) (por defecto: id del nodo)")}, ["de"]),
+        "salidas": ["ok"], "produce": "salida {texto, valor, conteo, total}",
+        "ejemplo": {"id": "sin_datos", "tipo": "anonimizar", "nombre": "Quitar datos personales", "config": {
+            "de": "{{correo.cuerpo}}", "modo": "seudonimo", "guardar_mapa": True, "salida": "anonimo"}},
+    },
+    # --------------------------------------------------------- hojas de cálculo
+    "hoja_escribir": {
+        "nombre": "Escribir hoja de cálculo", "categoria": "conector",
+        "descripcion": "Escribe filas en una hoja: un Excel o CSV del flujo (lo crea o lo actualiza en su lugar, sin escribir afuera) o una hoja de Google Sheets "
+                       "(destino sheets: ESCRIBE AFUERA, solo si una persona habilitó la escritura de la credencial). Modos: anexar al final, actualizar por "
+                       "una columna clave (y agregar las que falten) o reemplazar todo.",
+        "config": conf({"destino": opcion(["archivo", "sheets"], "archivo: un .xlsx/.csv del flujo; sheets: Google Sheets", "archivo"),
+                        "archivo": texto("archivo: el id de una hoja del flujo (si no, se crea una con nombre)", None, "Hoja del flujo", "archivo-flujo"),
+                        "nombre": plantilla("archivo nuevo: su nombre", "hoja"), "formato": opcion(["xlsx", "csv"], "archivo nuevo: xlsx o csv", "xlsx"),
+                        "credencial": credencial(["google_servicio"], "sheets: la cuenta de servicio (la hoja tiene que estar compartida con ella)"),
+                        "hoja_id": plantilla("sheets: el id de la hoja de Google o su enlace"), "hoja": plantilla("la pestaña (por defecto la primera)"),
+                        "modo": opcion(["anexar", "actualizar", "reemplazar"], "", "anexar"), "clave": texto("actualizar: la columna que identifica cada fila"),
+                        "insertar_si_falta": booleano("actualizar: agregar las filas cuya clave no está", True),
+                        "filas": plantilla("una variable con la lista de filas (objetos)"), "fila": mapa(plantilla(), "o una sola fila {columna: plantilla}"),
+                        "timeout_s": TIMEOUT, "salida": SALIDA()}),
+        "salidas": ["ok"], "produce": "salida {id, nombre, agregadas, actualizadas, filas} (sheets: {hoja_id, bloqueado})", "x-credencial": True,
+        "ejemplo": {"id": "registro", "tipo": "hoja_escribir", "nombre": "Anotar en el registro", "config": {
+            "destino": "archivo", "nombre": "registro", "fila": {"fecha": "{{hoy}}", "documento": "{{entrada.documento}}", "estado": "recibido"}, "salida": "registro"}},
+    },
+    # ---------------------------------------------------------------- mensajería
+    "mensaje_teams": {
+        "nombre": "Mensaje a Teams", "categoria": "integracion",
+        "descripcion": "Publica un mensaje (tarjeta con título, texto y datos) en un canal de Microsoft Teams por su webhook (credencial webhook_teams). ESCRIBE "
+                       "AFUERA: solo sale si una persona habilitó la escritura de la credencial; si no, se arma y queda como escritura bloqueada.",
+        "config": conf({"credencial": credencial(["webhook_teams"]), "titulo": plantilla("título"), "texto": plantilla("el mensaje", largo=True),
+                        "hechos": mapa(plantilla(), "{etiqueta: plantilla}: datos en pares"), "enlace": plantilla("un enlace para abrir"),
+                        "reintentos": _REINTENTOS, "timeout_s": TIMEOUT, "salida": SALIDA()}, ["credencial", "texto"]),
+        "salidas": ["ok"], "produce": "salida {enviado, bloqueado, status, destino}", "x-credencial": True,
+        "ejemplo": {"id": "avisar_teams", "tipo": "mensaje_teams", "nombre": "Avisar en Teams", "config": {
+            "credencial": "teams-operaciones", "titulo": "Nuevo caso", "texto": "{{resumen}}", "hechos": {"Radicado": "{{radicado}}"}}},
+    },
+    "mensaje_slack": {
+        "nombre": "Mensaje a Slack", "categoria": "integracion",
+        "descripcion": "Publica un mensaje en un canal de Slack por su webhook entrante (credencial webhook_slack). ESCRIBE AFUERA: solo sale si una persona "
+                       "habilitó la escritura de la credencial.",
+        "config": conf({"credencial": credencial(["webhook_slack"]), "titulo": plantilla("título (en negrita)"), "texto": plantilla("el mensaje", largo=True),
+                        "hechos": mapa(plantilla(), "{etiqueta: plantilla}"), "enlace": plantilla("un enlace"),
+                        "reintentos": _REINTENTOS, "timeout_s": TIMEOUT, "salida": SALIDA()}, ["credencial", "texto"]),
+        "salidas": ["ok"], "produce": "salida {enviado, bloqueado, status, destino}", "x-credencial": True,
+        "ejemplo": {"id": "avisar_slack", "tipo": "mensaje_slack", "nombre": "Avisar en Slack", "config": {"credencial": "slack-alertas", "texto": "Llegó {{correo.asunto}}"}},
+    },
+    "webhook_saliente": {
+        "nombre": "Webhook saliente", "categoria": "integracion",
+        "descripcion": "Manda un POST con JSON a la URL de una credencial webhook_saliente (con su token, si tiene). ESCRIBE AFUERA: solo sale si una persona "
+                       "habilitó la escritura de la credencial. Solo https a hosts públicos; nunca Positiva, SGDEA, IP privadas ni metadatos.",
+        "config": conf({"credencial": credencial(["webhook_saliente"]), "cuerpo": libre("objeto JSON con plantillas (o un texto)"),
+                        "encabezados": mapa(plantilla(), "encabezados extra (sin Authorization ni claves: el token va en la credencial)"),
+                        "reintentos": _REINTENTOS, "timeout_s": TIMEOUT, "salida": SALIDA()}, ["credencial", "cuerpo"]),
+        "salidas": ["ok"], "produce": "salida {enviado, bloqueado, status, respuesta}", "x-credencial": True,
+        "ejemplo": {"id": "notificar_sistema", "tipo": "webhook_saliente", "nombre": "Avisar al sistema", "config": {
+            "credencial": "gancho-crm", "cuerpo": {"evento": "caso_nuevo", "radicado": "{{radicado}}", "resumen": "{{resumen}}"}}},
+    },
+    # ----------------------------------------------------------------------- IA
+    "traducir": {
+        "nombre": "IA · traducir", "categoria": "ia",
+        "descripcion": "Traduce un texto a otro idioma conservando formato, números, nombres y marcadores como [NOMBRE_1]; textos largos van por partes.",
+        "config": conf({"de": plantilla("el texto (o variable)", largo=True), "a": texto("idioma de destino", "inglés"), "desde": texto("idioma de origen (si no, lo detecta)"),
+                        "tono": opcion(["formal", "neutro", "informal"], "", "neutro"), "glosario": mapa(plantilla(), "{término: traducción obligatoria}"),
+                        "salida": SALIDA("traduccion")}, ["de"]),
+        "salidas": ["ok"], "produce": "salida (texto)",
+        "ejemplo": {"id": "al_ingles", "tipo": "traducir", "nombre": "Traducir al inglés", "config": {"de": "{{respuesta}}", "a": "inglés", "tono": "formal"}},
+    },
+    "resumir_largo": {
+        "nombre": "IA · resumir documento largo", "categoria": "ia",
+        "descripcion": "Resume textos que no caben de una vez: los parte (tam_parte caracteres), resume cada parte y une los resúmenes (mapa y reducción).",
+        "config": conf({"de": plantilla("el texto largo (o variable), p. ej. «{{adjuntos.texto}}»"), "tam_parte": entero("caracteres por parte", 1000, 30000, 8000),
+                        "max_partes": entero("tope de partes", 1, 50, 20), "longitud": texto("del resumen final", "un párrafo breve"),
+                        "enfoque": texto("qué priorizar"), "instrucciones": plantilla(largo=True), "salida": SALIDA("resumen")}, ["de"]),
+        "salidas": ["ok"], "produce": "salida (texto)",
+        "ejemplo": {"id": "resumen_expediente", "tipo": "resumir_largo", "nombre": "Resumir el expediente", "config": {
+            "de": "{{adjuntos.texto}}", "longitud": "5 viñetas", "enfoque": "plazos, montos y decisiones", "salida": "resumen"}},
+    },
+    "preguntar_documentos": {
+        "nombre": "IA · preguntar a documentos", "categoria": "ia",
+        "descripcion": "Responde una pregunta con lo que dicen los documentos, citando archivo y página (o parte) de cada dato. Busca los fragmentos que más se "
+                       "relacionan con la pregunta y la IA responde solo con ellos. Sale por «respondida» o «sin_respuesta» si no está.",
+        "config": conf({"pregunta": plantilla("la pregunta"), "archivos": libre("los documentos: ids, plantillas, una variable con fichas o «adjuntos»"),
+                        "archivo": plantilla("o un solo documento"), "texto": plantilla("o un texto", largo=True),
+                        "max_fragmentos": entero("cuántos fragmentos ve la IA", 1, 20, 6), "tam_fragmento": entero("caracteres por fragmento", 300, 6000, 1800),
+                        "instrucciones": plantilla(largo=True), "salida": SALIDA("respuesta")}, ["pregunta"]),
+        "salidas": ["respondida", "sin_respuesta"], "produce": "salida {respuesta, encontrada, citas: [{archivo, pagina, cita}]}",
+        "ejemplo": {"id": "plazo", "tipo": "preguntar_documentos", "nombre": "¿Cuál es el plazo?", "config": {
+            "pregunta": "¿Cuál es el plazo para responder y desde cuándo corre?", "archivos": "adjuntos", "salida": "plazo"}},
+    },
+    "extraer_tablas": {
+        "nombre": "IA · extraer tablas", "categoria": "ia",
+        "descripcion": "Saca las tablas de PDF (por página), imágenes (con visión, si el modelo la acepta; si no, con OCR) o un texto, como filas listas para "
+                       "agrupar, validar o escribir en una hoja. Sale por «ok» o «vacio».",
+        "config": conf({"archivos": libre("los documentos: ids, plantillas, una variable con fichas o «adjuntos»"), "archivo": plantilla("o un solo documento"),
+                        "texto": plantilla("o un texto", largo=True), "columnas": lista(texto(), "las columnas que se esperan (si no, las del documento)"),
+                        "instrucciones": plantilla(largo=True), "max_paginas": entero("páginas por PDF", 1, 50, 10), "salida": SALIDA("tablas")}),
+        "salidas": ["ok", "vacio"], "produce": "salida {tablas: [{archivo, pagina, titulo, columnas, filas}], filas, cantidad}",
+        "ejemplo": {"id": "items_factura", "tipo": "extraer_tablas", "nombre": "Ítems de la factura", "config": {
+            "archivo": "adjuntos", "columnas": ["descripcion", "cantidad", "valor"], "salida": "items"}},
+    },
+    # -------------------------------------------------------------------- datos
+    "deduplicar": {
+        "nombre": "Deduplicar", "categoria": "datos",
+        "descripcion": "Quita repetidos por campos o por huella (sin distinguir mayúsculas, tildes ni espacios). Con lista: deja {unicos, duplicados} y sale "
+                       "por «ok» o «vacio»; con entre_corridas también descarta lo visto en corridas anteriores. Con elemento: dice si ya se había visto "
+                       "(tabla integrada del flujo) y sale por «nuevo» o «duplicado».",
+        "config": conf({"lista": plantilla("una variable con la lista"), "elemento": plantilla("o un solo elemento (objeto o texto)"),
+                        "campos": lista(texto(), "los campos que definen un repetido (por defecto, el elemento entero)"),
+                        "entre_corridas": booleano("recordar entre corridas (con elemento, por defecto sí)"),
+                        "registrar": booleano("anotar lo nuevo para las próximas corridas", True), "tabla": texto("dónde se recuerdan las huellas", "huellas"),
+                        "olvidar_dias": entero("después de cuántos días algo visto vuelve a contar como nuevo", 1, 3650), "salida": SALIDA()}),
+        "salidas": ["ok", "vacio"], "produce": "salida {unicos, duplicados, total} o {huella, duplicado, visto}",
+        "ejemplo": {"id": "sin_repetidos", "tipo": "deduplicar", "nombre": "¿Ya llegó este correo?", "config": {
+            "elemento": "{{correo}}", "campos": ["asunto", "remitente_correo"], "olvidar_dias": 30, "salida": "visto"}},
+    },
+    "agrupar": {
+        "nombre": "Agrupar y sumar", "categoria": "datos",
+        "descripcion": "Agrupa una lista por uno o varios campos y calcula por grupo: contar, sumar, promedio, minimo, maximo, lista o unicos (entiende "
+                       "«$ 1.234,56»). Deja una fila por grupo.",
+        "config": conf({"lista": plantilla("una variable con la lista"), "por": lista(texto(), "los campos del grupo (vacío: un solo grupo con todo)"),
+                        "calculos": lista(objeto({"op": opcion(["contar", "sumar", "promedio", "minimo", "maximo", "lista", "unicos"]),
+                                                  "campo": texto("el campo (contar no lo necesita)"), "nombre": texto("cómo se llama el resultado")}, ["op"]),
+                                          "por defecto contar"),
+                        "orden": texto("ordenar por un cálculo o campo; «-total» de mayor a menor"), "salida": SALIDA()}, ["lista"]),
+        "salidas": ["ok"], "produce": "salida (lista de grupos)",
+        "ejemplo": {"id": "por_area", "tipo": "agrupar", "nombre": "Totales por área", "config": {
+            "lista": "filas", "por": ["area"], "calculos": [{"op": "contar", "nombre": "casos"}, {"op": "sumar", "campo": "monto", "nombre": "total"}],
+            "orden": "-total", "salida": "totales"}},
+    },
+    "ordenar_filtrar": {
+        "nombre": "Ordenar y filtrar", "categoria": "datos",
+        "descripcion": "Filtra una lista con las mismas condiciones y operadores de filtro (sobre los campos de cada elemento, sin distinguir mayúsculas, tildes ni "
+                       "espacios), la ordena por uno o varios campos (texto, número o fecha) y la recorta. Sale por «ok» o «vacio».",
+        "config": conf({"lista": plantilla("una variable con la lista"),
+                        "condiciones": lista(_condicion("campo del elemento (p. ej. «estado» o «item.datos.monto»)"), "qué elementos quedan", 1), "modo": _MODO,
+                        "orden": lista(objeto({"campo": texto("campo"), "direccion": opcion(["asc", "desc"], "", "asc"),
+                                               "tipo": opcion(["auto", "texto", "numero", "fecha"], "", "auto")}, ["campo"]), "orden (el primero manda)"),
+                        "limite": entero("cuántos dejar", 1, 5000), "desde": entero("saltar los primeros", 0, 100000),
+                        "variable": variable("cómo se llama cada elemento en las plantillas de los valores", "item"), "salida": SALIDA()}, ["lista"]),
+        "salidas": ["ok", "vacio"], "produce": "salida (la lista)",
+        "ejemplo": {"id": "urgentes", "tipo": "ordenar_filtrar", "nombre": "Los 10 más altos pendientes", "config": {
+            "lista": "filas", "condiciones": [{"campo": "estado", "operador": "igual", "valor": "pendiente"}],
+            "orden": [{"campo": "monto", "direccion": "desc", "tipo": "numero"}], "limite": 10, "salida": "urgentes"}},
+    },
+    "mapear": {
+        "nombre": "Mapear campos", "categoria": "datos",
+        "descripcion": "Pasa cada elemento (o un objeto) de una forma a otra: cada campo destino sale de una ruta del elemento (origen), de una plantilla con "
+                       "{{item.x}} o de un valor fijo, con defecto, tipo (texto, numero, entero, booleano, fecha, lista, objeto) y obligatorio. Los errores quedan "
+                       "en <salida>_errores; con arista «con_errores» sigue por ahí, si no, falla.",
+        "config": conf({"de": plantilla("la lista o el objeto"), "campos": lista(objeto({
+            "destino": texto("nombre del campo nuevo (con puntos para anidar: «persona.nombre»)"), "origen": texto("ruta en el elemento, p. ej. «datos.cedula»"),
+            "plantilla": plantilla("o una plantilla con {{item.x}}"), "valor": libre("o un valor fijo"), "defecto": libre("si queda vacío"),
+            "tipo": opcion(["texto", "numero", "entero", "booleano", "fecha", "lista", "objeto"], "", "texto"),
+            "formato": texto("fecha: strftime, p. ej. «%d/%m/%Y»"), "obligatorio": booleano("", False)}, ["destino"]), "los campos de la forma nueva", 1),
+            "variable": variable("cómo se llama cada elemento en las plantillas", "item"), "conservar_otros": booleano("dejar también los campos que no se mapean", False),
+            "salida": SALIDA()}, ["de", "campos"]),
+        "salidas": ["ok", "con_errores (opcional)"], "produce": "salida, salida_errores",
+        "ejemplo": {"id": "a_formato_crm", "tipo": "mapear", "nombre": "Al formato del CRM", "config": {"de": "filas", "salida": "contactos", "campos": [
+            {"destino": "nombre_completo", "plantilla": "{{item.nombres}} {{item.apellidos}}"}, {"destino": "documento", "origen": "cedula", "tipo": "texto", "obligatorio": True},
+            {"destino": "valor", "origen": "monto", "tipo": "numero", "defecto": 0}, {"destino": "fecha", "origen": "creado", "tipo": "fecha", "formato": "%Y-%m-%d"}]}},
+    },
+    "validar_contra": {
+        "nombre": "Validar contra lista, tabla o SQL", "categoria": "validacion",
+        "descripcion": "Revisa que un valor (o cada uno de una lista) exista en una lista fija, en la tabla integrada o en el resultado de una consulta SQL de solo "
+                       "lectura (su primera columna). Compara sin mayúsculas, tildes ni espacios (o exacta o parecida) y sugiere el más parecido. Sale por "
+                       "«valido» o «invalido».",
+        "config": conf({"valor": plantilla("el valor o una variable con la lista de valores"), "contra": opcion(["lista", "tabla", "sql"], "contra qué"),
+                        "valores": lista(texto(), "lista: los válidos"), "tabla": texto("tabla: su nombre"), "campo": texto("tabla: el campo (por defecto clave)"),
+                        "ambito": opcion(["flujo", "compartida"], "", "flujo"), "credencial": credencial(["postgres", "mysql", "sqlite"], "sql: la base"),
+                        "consulta": largo("sql: SELECT cuya primera columna son los valores válidos"), "parametros": mapa(plantilla(), "{nombre: plantilla}"),
+                        **_opciones_busqueda(), "timeout_s": TIMEOUT, "salida": SALIDA()}, ["valor", "contra"]),
+        "salidas": ["valido", "invalido"], "produce": "salida {validos, invalidos, todos_validos, sugerencias}",
+        "ejemplo": {"id": "area_valida", "tipo": "validar_contra", "nombre": "¿Es un área que existe?", "config": {
+            "valor": "{{area}}", "contra": "lista", "valores": ["Prestaciones económicas", "Afiliaciones", "Jurídica"]}},
+    },
+    # ------------------------------------------------------------------ control
+    "subflujo": {
+        "nombre": "Subflujo", "categoria": "logica",
+        "descripcion": "Corre otro flujo (que empiece con entrada_manual) y usa su salida: {{<salida>.resultado}} (su solicitud), accion, motivo, respuesta y sus "
+                       "variables; traer copia variables suyas a este flujo. Sale por el desenlace del otro (radicado, manual, descartado…) si tiene esa "
+                       "arista, o por «ok». Como llamar_flujo, hasta 3 niveles y nunca a sí mismo.",
+        "config": conf({"flujo": texto("id del flujo a llamar"), "entrada": mapa(plantilla(), "{campo: plantilla} que recibe el otro flujo"),
+                        "traer": mapa(texto(), "{variable_local: ruta en las variables del otro flujo}"),
+                        "salida": variable("{accion, motivo, resultado, respuesta, variables} (por defecto: id del nodo)")}, ["flujo"]),
+        "salidas": ["ok", "<desenlace del otro flujo> (opcional)"], "produce": "salida, <cada variable de traer>",
+        "ejemplo": {"id": "validar_afiliado", "tipo": "subflujo", "nombre": "Validar afiliado", "config": {
+            "flujo": "consulta-afiliado", "entrada": {"documento": "{{documento}}"}, "traer": {"empresa": "afiliado.empresa"}, "salida": "consulta"}},
+    },
+    "reintentar_mas_tarde": {
+        "nombre": "Reintentar más tarde", "categoria": "logica",
+        "descripcion": "Termina la corrida como «aplazada» y la vuelve a correr desde el principio, con la misma entrada, en unos minutos o a una hora "
+                       "(America/Bogota). {{aplazamiento.intento}} dice en qué intento va; al llegar a max_intentos sale por «agotado» en vez de aplazar.",
+        "config": conf({"en_minutos": entero("en cuántos minutos", 1, 10080), "a_las": plantilla("o a qué hora «HH:MM» (la próxima vez que llegue) o fecha ISO"),
+                        "motivo": plantilla("por qué se aplaza"), "max_intentos": entero("cuántas veces como máximo", 1, 20, 3)}),
+        "salidas": ["agotado"], "produce": "",
+        "ejemplo": {"id": "mas_tarde", "tipo": "reintentar_mas_tarde", "nombre": "Reintentar en 30 min", "config": {
+            "en_minutos": 30, "motivo": "el servicio no respondió: {{fallo.motivo}}", "max_intentos": 3}},
+    },
+    "limite_tasa": {
+        "nombre": "Límite de tasa", "categoria": "logica",
+        "descripcion": "Deja pasar como máximo N corridas por segundo, minuto, hora o día (por flujo y por clave, también entre trabajadores). Al pasarse: esperar "
+                       "(hasta 60 s; si no, aplaza), aplazar la corrida hasta que haya cupo, saltar por «excedido» o fallar.",
+        "config": conf({"maximo": entero("cuántas veces en la ventana", 1, 100000), "por": opcion(["segundo", "minuto", "hora", "dia"], "", "minuto"),
+                        "clave": plantilla("separa los contadores (p. ej. «{{entrada.cliente}}»)", "general"),
+                        "al_exceder": opcion(["esperar", "aplazar", "saltar", "error"], "", "esperar"), "salida": variable("deja {clave, excedido}")}, ["maximo"]),
+        "salidas": ["ok", "excedido (con al_exceder saltar)"], "produce": "salida (si se da)",
+        "ejemplo": {"id": "cupo_api", "tipo": "limite_tasa", "nombre": "Máximo 30 por minuto", "config": {"maximo": 30, "por": "minuto", "al_exceder": "esperar"}},
+    },
+    "ventana_horario": {
+        "nombre": "Ventana de horario", "categoria": "logica",
+        "descripcion": "Sigue solo en días y horas hábiles (America/Bogota por defecto), sin festivos de Colombia (Ley Emiliani, calculados sin red). Fuera de "
+                       "la ventana: aplazar la corrida hasta que abra (por defecto), esperar si abre en menos de 60 s o saltar por «fuera».",
+        "config": conf({"dias": lista(opcion(["lun", "mar", "mie", "jue", "vie", "sab", "dom"]), "días permitidos (por defecto lun a vie)"),
+                        "desde": texto("hora de apertura HH:MM", "08:00"), "hasta": texto("hora de cierre HH:MM", "17:00"),
+                        "festivos": booleano("no contar los festivos de Colombia como hábiles", True), "zona": texto("zona horaria", "America/Bogota"),
+                        "fuera": opcion(["aplazar", "esperar", "saltar"], "qué hacer fuera de la ventana", "aplazar"), "salida": variable("deja {dentro, ahora, festivo, abre}")}),
+        "salidas": ["dentro", "fuera (con fuera saltar)"], "produce": "salida (si se da)",
+        "ejemplo": {"id": "horario_habil", "tipo": "ventana_horario", "nombre": "Solo en horario hábil", "config": {"desde": "08:00", "hasta": "17:00", "fuera": "aplazar"}},
+    },
+    "detener_con_alerta": {
+        "nombre": "Detener con alerta", "categoria": "salida",
+        "descripcion": "Termina el flujo como «detenido» y deja una alerta en la plataforma (evento «alerta» para las notificaciones) con su nivel; con "
+                       "credencial también la publica en Teams o Slack (si una persona habilitó la escritura). No tiene aristas que salgan.",
+        "config": conf({"mensaje": plantilla("qué pasó y qué hacer", largo=True), "titulo": plantilla("título de la alerta"),
+                        "nivel": opcion(["info", "aviso", "error"], "", "aviso"),
+                        "credencial": credencial(["webhook_teams", "webhook_slack"], "además, publicarla en Teams o Slack")}, ["mensaje"]),
+        "salidas": [], "produce": "",
+        "ejemplo": {"id": "alertar", "tipo": "detener_con_alerta", "nombre": "Detener y avisar", "config": {
+            "titulo": "No se pudo radicar", "mensaje": "{{fallo.motivo}}", "nivel": "error"}},
+    },
     "salida": {
         "nombre": "Salida", "categoria": "salida",
         "descripcion": "Termina el flujo con un desenlace. Entrega la solicitud con los campos indicados y, si se da, la respuesta armada con la plantilla.",
@@ -830,12 +1169,20 @@ TIPOS: Dict[str, Dict[str, Any]] = {
 }
 
 # Los que escriben afuera: solo escriben si su credencial tiene permitir_escritura (o nunca, si no tienen credencial).
-ESCRITURA = {"correo_enviar", "drive_subir", "sql_ejecutar", "http", "enviar", "notificar"}
-TIPOS_IA = {"ia_clasificar", "ia_decidir", "ia_extraer", "ia_generar", "resumir", "ia_redactar"}
+ESCRITURA = {"correo_enviar", "drive_subir", "sql_ejecutar", "http", "enviar", "notificar", "hoja_escribir", "mensaje_teams", "mensaje_slack", "webhook_saliente"}
+# Los nodos de IA (proveedor, modelo y credencial de IA propios, con temperatura).
+TIPOS_IA = {"ia_clasificar", "ia_decidir", "ia_extraer", "ia_generar", "resumir", "ia_redactar",
+            "traducir", "resumir_largo", "preguntar_documentos", "extraer_tablas", "documento_clasificar", "documento_comparar"}
 CON_REINTENTOS = TIPOS_IA | {"notificar", "enviar", "http", "correo_leer", "correo_enviar", "drive_listar", "drive_leer", "drive_subir",
-                             "sql_consulta", "sql_ejecutar", "hoja_leer", "llamar_flujo"}
-NO_DESHABILITABLES = set(DISPARADORES) | {"salida", "fin_ciclo", "para_cada", "paralelo", "unir"}
-TERMINALES = {"salida", "fin_ciclo"}
+                             "sql_consulta", "sql_ejecutar", "hoja_leer", "llamar_flujo", "hoja_escribir", "mensaje_teams", "mensaje_slack",
+                             "webhook_saliente", "subflujo", "validar_contra"}
+NO_DESHABILITABLES = set(DISPARADORES) | {"salida", "fin_ciclo", "para_cada", "paralelo", "unir", "detener_con_alerta"}
+TERMINALES = {"salida", "fin_ciclo", "detener_con_alerta"}
+# Las salidas opcionales de cada tipo (además de «error»), para GET /api/nodos/tipos.
+OPCIONALES = {"ia_clasificar": ["sin_categoria"], "documento_clasificar": ["sin_categoria"], "ia_decidir": ["sin_decision"], "paralelo": ["listo"],
+              "tabla_guardar": ["existente"], "expresion": ["si", "no"], "aprobacion_humana": ["vencido"], "mapear": ["con_errores"],
+              "subflujo": ["radicado", "manual", "reenviado", "descartado", "respondido", "duplicado", "detenido"],
+              "limite_tasa": ["excedido"], "ventana_horario": ["fuera"], "deduplicar": ["nuevo", "duplicado"]}
 
 # La ayuda de cada tipo: configs para copiar (ejemplos) y consejos cortos.
 AYUDA: Dict[str, Dict[str, Any]] = {
@@ -1008,8 +1355,11 @@ AYUDA: Dict[str, Dict[str, Any]] = {
         "consejos": ["Solo escribe en /datos/archivos.", "modo anexar en CSV no repite los encabezados."],
     },
     "hoja_leer": {
-        "ejemplos": [{"origen": "adjunto", "adjunto": "\\.xlsx$", "salida": "filas"}, {"origen": "drive", "credencial": "drive-operaciones", "archivo": "{{archivo.id}}", "hoja": "Datos"}],
-        "consejos": ["Con encabezados: false las columnas se llaman columna_1, columna_2…", "Hojas de Google se exportan como CSV."],
+        "ejemplos": [{"origen": "adjunto", "adjunto": "\\.xlsx$", "salida": "filas"},
+                     {"origen": "sheets", "credencial": "google-ops", "hoja_id": "1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789", "rango": "Casos", "salida": "filas"}],
+        "consejos": ["Con encabezados: false las columnas se llaman columna_1, columna_2…",
+                     "origen sheets lee una hoja de Google Sheets compartida con la cuenta de servicio; origen drive exporta una hoja de Drive como CSV.",
+                     "Para escribir en una hoja usa hoja_escribir."],
     },
     "correo_leer": {
         "ejemplos": [{"credencial": "buzon-facturas", "filtro": {"asunto": "factura"}, "max": 10, "salida": "correos"},
@@ -1077,6 +1427,145 @@ AYUDA: Dict[str, Dict[str, Any]] = {
     "respuesta_webhook": {
         "ejemplos": [{"estado": 200, "cuerpo": {"ok": True, "total": "{{total}}"}}, {"estado": 422, "cuerpo": "faltan datos: {{fallo.motivo}}", "tipo_contenido": "text/plain"}],
         "consejos": ["Solo tiene efecto si el disparador es webhook con responder: true."],
+    },
+    "aprobacion_humana": {
+        "ejemplos": [{"titulo": "¿Se envía la respuesta a {{correo.remitente_nombre}}?", "detalle": "{{respuesta}}", "datos": {"respuesta": "{{respuesta}}"},
+                      "campos_editables": ["respuesta"], "tiempo_limite_h": 8, "al_vencer": "rechazar"},
+                     {"titulo": "Pago de {{entrada.monto}}", "datos": {"monto": "{{entrada.monto}}"}, "asignado_a": "tesorería"}],
+        "consejos": ["Dale aristas «aprobado» y «rechazado»; con tiempo_limite_h, una «vencido» (o al_vencer decide).",
+                     "Después usa {{aprobacion.datos.campo}}: trae los cambios que hizo la persona; {{aprobacion.comentario}} trae su comentario.",
+                     "No va dentro de un para_cada ni de un flujo llamado. Vera puede listar las pendientes, pero solo una persona decide en la plataforma."],
+    },
+    "documento_generar": {
+        "ejemplos": [{"formato": "docx", "nombre": "respuesta-{{radicado}}", "plantilla": "# Respuesta a su solicitud\n\n{{respuesta}}\n\n| Campo | Valor |\n| Radicado | {{radicado}} |"},
+                     {"formato": "pdf", "plantilla_archivo": "a-plantilla01", "nombre": "carta-{{entrada.documento}}", "salida": "carta"}],
+        "consejos": ["En la plantilla de texto: «# » título, «## » subtítulo, «- » viñeta, líneas con «|» tabla y una línea en blanco separa párrafos.",
+                     "Con plantilla_archivo, cada párrafo del .docx que tenga {{…}} se llena (queda con el formato de su primer tramo).",
+                     "El archivo queda en el flujo: pásalo a otro nodo con {{salida.id}} (pdf_unir, mensaje, hoja…)."],
+    },
+    "pdf_unir": {
+        "ejemplos": [{"archivos": ["{{carta.id}}", "{{anexo.id}}"], "nombre": "expediente-{{radicado}}"}, {"archivos": "adjuntos", "nombre": "adjuntos-unidos"}],
+        "consejos": ["Solo PDF: convierte antes los Word o las imágenes con documento_convertir.", "«adjuntos» toma los del correo (sin los incrustados)."],
+    },
+    "pdf_dividir": {
+        "ejemplos": [{"archivo": "{{expediente.id}}"}, {"archivo": "adjuntos", "modo": "rangos", "rangos": "1, 2-fin", "nombre_base": "parte"}],
+        "consejos": ["cada_pagina da un PDF por página; rangos «1-3, 4, 5-fin» da uno por rango.", "Combínalo con para_cada para tratar cada parte."],
+    },
+    "documento_convertir": {
+        "ejemplos": [{"archivo": "{{entrada.archivo.id}}", "a": "pdf"}, {"archivo": "{{informe.id}}", "a": "png", "salida": "paginas"}],
+        "consejos": ["Sin LibreOffice: de Word a PDF se conserva el texto, los títulos, las viñetas y las tablas, no el diseño exacto.",
+                     "Combinaciones: docx→pdf/txt/md, pdf→txt/md/docx/png, txt/md→pdf/docx, xlsx↔csv, xlsx/csv→pdf, imagen→pdf."],
+    },
+    "documento_clasificar": {
+        "ejemplos": [{"archivo": "adjuntos", "categorias": [{"valor": "tutela", "descripcion": "acción de tutela o auto de un juzgado"},
+                                                           {"valor": "otro", "descripcion": "cualquier otro documento"}]},
+                     {"texto": "{{archivos.texto}}", "categorias": [{"valor": "cedula", "descripcion": "documento de identidad"}, {"valor": "rut", "descripcion": "RUT de la DIAN"}],
+                      "salida": "tipo_doc"}],
+        "consejos": ["Sale por la categoría elegida: una arista por cada una o una por defecto.", "{{salida.evidencia}} trae la frase y {{salida.pagina}} la página."],
+    },
+    "documento_comparar": {
+        "ejemplos": [{"a": "{{original.id}}", "b": "{{nuevo.id}}"}, {"a": "{{version_anterior}}", "b": "{{respuesta}}", "resumir": False}],
+        "consejos": ["a y b pueden ser archivos del flujo o textos.", "{{salida.resumen}} es el resumen de la IA; {{salida.cambios}} la lista de cambios."],
+    },
+    "anonimizar": {
+        "ejemplos": [{"de": "{{adjuntos.texto}}", "modo": "seudonimo", "guardar_mapa": True, "salida": "anonimo"},
+                     {"de": "filas", "modo": "enmascarar", "campos": ["cedula", "telefono"], "tipos": ["cedula", "telefono"], "salida": "filas_seguras"}],
+        "consejos": ["Antes de una IA externa: anonimiza, pásale {{anonimo.texto}} y luego revierte su respuesta con otro anonimizar (operacion revertir, mapa_de: anonimo).",
+                     "El mapa para revertir solo vive en la corrida: nunca sale en eventos, resultados ni muestras.",
+                     "Para nombres que no siguen a «señor», «paciente» o «nombre:», dalos en nombres_extra."],
+    },
+    "hoja_escribir": {
+        "ejemplos": [{"destino": "archivo", "archivo": "a-registro01", "modo": "actualizar", "clave": "documento", "filas": "resultados"},
+                     {"destino": "sheets", "credencial": "google-ops", "hoja_id": "1AbCdEfGhIjKlMnOpQrStUvWxYz0123456789", "hoja": "Casos", "fila": {"radicado": "{{radicado}}", "estado": "{{estado}}"}}],
+        "consejos": ["En un archivo del flujo no escribe afuera: sin archivo crea uno nuevo (nombre y formato) y con archivo lo actualiza en su lugar.",
+                     "Google Sheets escribe afuera: queda bloqueado mientras una persona no habilite la escritura de la credencial.",
+                     "Las columnas nuevas se agregan al encabezado; actualizar busca por clave y agrega las que faltan (insertar_si_falta)."],
+    },
+    "mensaje_teams": {
+        "ejemplos": [{"credencial": "teams-operaciones", "titulo": "Caso {{radicado}}", "texto": "{{resumen}}", "enlace": "{{enlace}}"}],
+        "consejos": ["La URL del webhook la guarda una persona en Conexiones (tipo webhook_teams) y es secreta.",
+                     "Escribe afuera: queda bloqueado mientras una persona no habilite la escritura de la credencial."],
+    },
+    "mensaje_slack": {
+        "ejemplos": [{"credencial": "slack-alertas", "titulo": "Falló {{fallo.nodo}}", "texto": "{{fallo.motivo}}"}],
+        "consejos": ["La URL del webhook entrante (hooks.slack.com) la guarda una persona en Conexiones (tipo webhook_slack).",
+                     "Escribe afuera: queda bloqueado mientras una persona no habilite la escritura de la credencial."],
+    },
+    "webhook_saliente": {
+        "ejemplos": [{"credencial": "gancho-crm", "cuerpo": {"radicado": "{{radicado}}", "estado": "{{estado}}"}},
+                     {"credencial": "gancho-erp", "cuerpo": {"factura": "{{factura}}"}, "encabezados": {"X-Origen": "positiva-ia"}, "reintentos": {"intentos": 3}}],
+        "consejos": ["La URL y el token viven en la credencial webhook_saliente: nunca en el flujo.",
+                     "Solo https a hosts públicos; Positiva, SGDEA, IP privadas y metadatos se bloquean siempre."],
+    },
+    "traducir": {
+        "ejemplos": [{"de": "{{respuesta}}", "a": "inglés", "tono": "formal"}, {"de": "{{correo.cuerpo}}", "a": "español", "glosario": {"claim": "reclamación"}}],
+        "consejos": ["Los seudónimos de anonimizar ([NOMBRE_1]) se conservan: puedes traducir sin mandar datos personales."],
+    },
+    "resumir_largo": {
+        "ejemplos": [{"de": "{{adjuntos.texto}}", "longitud": "5 viñetas"}, {"de": "documento.texto", "tam_parte": 12000, "enfoque": "obligaciones y fechas"}],
+        "consejos": ["Para textos cortos basta resumir; este parte el texto y une los resúmenes.", "Sube tam_parte si el modelo admite mucho contexto (menos llamadas)."],
+    },
+    "preguntar_documentos": {
+        "ejemplos": [{"pregunta": "¿Qué pide el accionante?", "archivos": "adjuntos"},
+                     {"pregunta": "{{entrada.pregunta}}", "archivos": ["{{contrato.id}}", "{{otrosi.id}}"], "max_fragmentos": 8}],
+        "consejos": ["Sale por «sin_respuesta» si los documentos no lo dicen: la IA no inventa.", "{{salida.citas}} trae archivo, página y frase de cada dato."],
+    },
+    "extraer_tablas": {
+        "ejemplos": [{"archivo": "adjuntos", "columnas": ["fecha", "concepto", "valor"]}, {"texto": "{{documento.texto}}", "salida": "tablas"}],
+        "consejos": ["{{salida.filas}} junta las filas de todas las tablas: pásalas a agrupar, validar_contra u hoja_escribir.",
+                     "En imágenes usa visión si el modelo la acepta; si no, el texto del OCR."],
+    },
+    "deduplicar": {
+        "ejemplos": [{"lista": "filas", "campos": ["documento"]}, {"elemento": "{{correo}}", "campos": ["asunto", "remitente_correo"], "olvidar_dias": 30}],
+        "consejos": ["Con elemento sale por «nuevo» o «duplicado» y recuerda entre corridas (tabla integrada del flujo).",
+                     "Sin campos compara el elemento entero (huella); con campos, solo esos, sin mayúsculas, tildes ni espacios."],
+    },
+    "agrupar": {
+        "ejemplos": [{"lista": "filas", "por": ["area"], "calculos": [{"op": "contar", "nombre": "casos"}]},
+                     {"lista": "items.filas", "por": [], "calculos": [{"op": "sumar", "campo": "valor", "nombre": "total"}, {"op": "promedio", "campo": "valor", "nombre": "promedio"}]}],
+        "consejos": ["sumar y promedio entienden «$ 1.234,56» y «1,234.56».", "orden «-total» deja primero el grupo con más."],
+    },
+    "ordenar_filtrar": {
+        "ejemplos": [{"lista": "filas", "orden": [{"campo": "fecha", "direccion": "desc", "tipo": "fecha"}], "limite": 5},
+                     {"lista": "casos", "condiciones": [{"campo": "monto", "operador": "mayor", "valor": 1000000}, {"campo": "ciudad", "operador": "en_lista", "valores": ["Bogotá", "Medellín"]}]}],
+        "consejos": ["Las condiciones miran los campos de cada elemento, con los operadores de filtro.", "Lo que no tiene el campo de orden queda al final."],
+    },
+    "mapear": {
+        "ejemplos": [{"de": "filas", "campos": [{"destino": "nombre", "origen": "[\"NOMBRE COMPLETO\"]"}, {"destino": "edad", "origen": "edad", "tipo": "entero", "defecto": 0}]},
+                     {"de": "datos", "campos": [{"destino": "persona.documento", "plantilla": "{{item.tipo_doc}} {{item.numero}}"}, {"destino": "origen", "valor": "positiva-ia"}]}],
+        "consejos": ["origen es una ruta dentro del elemento; plantilla usa {{item.x}} y cualquier variable del flujo.",
+                     "Dale una arista «con_errores» para seguir aunque algún campo obligatorio falte."],
+    },
+    "validar_contra": {
+        "ejemplos": [{"valor": "{{ciudad}}", "contra": "lista", "valores": ["Bogotá", "Medellín", "Cali"]},
+                     {"valor": "documentos", "contra": "sql", "credencial": "base-local", "consulta": "SELECT documento FROM afiliados WHERE estado = :estado", "parametros": {"estado": "activo"}}],
+        "consejos": ["Con una lista de valores sale por «valido» solo si todos existen; {{salida.invalidos}} dice cuáles no.",
+                     "contra tabla busca en la tabla integrada (por clave o por un campo); contra sql corre un SELECT de solo lectura."],
+    },
+    "subflujo": {
+        "ejemplos": [{"flujo": "consulta-afiliado", "entrada": {"documento": "{{documento}}"}, "salida": "consulta"},
+                     {"flujo": "calcular-liquidacion", "entrada": {"dias": "{{dias}}"}, "traer": {"valor": "total"}}],
+        "consejos": ["{{salida.resultado}} es la solicitud que entregó el otro flujo; traer copia sus variables aquí.",
+                     "Para seguir según cómo terminó el otro flujo, ponle aristas con su desenlace (radicado, manual…)."],
+    },
+    "reintentar_mas_tarde": {
+        "ejemplos": [{"en_minutos": 30, "motivo": "{{fallo.motivo}}"}, {"a_las": "07:00", "motivo": "fuera del horario del proveedor", "max_intentos": 5}],
+        "consejos": ["Detrás de una arista «error» sirve para reintentar un servicio caído sin perder la corrida.",
+                     "La corrida vuelve desde el principio con la misma entrada; dale una arista «agotado» para cuando no haya más intentos."],
+    },
+    "limite_tasa": {
+        "ejemplos": [{"maximo": 30, "por": "minuto"}, {"maximo": 100, "por": "dia", "clave": "{{entrada.cliente}}", "al_exceder": "saltar"}],
+        "consejos": ["El cupo es por flujo y por clave, y lo respetan todos sus trabajadores a la vez.", "Con al_exceder saltar, dale una arista «excedido»."],
+    },
+    "ventana_horario": {
+        "ejemplos": [{"desde": "08:00", "hasta": "17:00"}, {"dias": ["lun", "mar", "mie", "jue", "vie", "sab"], "desde": "07:00", "hasta": "13:00", "fuera": "saltar"}],
+        "consejos": ["Los festivos de Colombia se calculan solos (Ley Emiliani y Semana Santa), sin red.",
+                     "Con fuera aplazar la corrida vuelve sola cuando abre la ventana, sin ocupar un trabajador."],
+    },
+    "detener_con_alerta": {
+        "ejemplos": [{"mensaje": "{{fallo.motivo}}", "nivel": "error"}, {"titulo": "Revisar a mano", "mensaje": "El caso {{radicado}} no trae anexos", "credencial": "teams-operaciones"}],
+        "consejos": ["La alerta queda en las notificaciones de la plataforma; con credencial también sale a Teams o Slack (si una persona habilitó la escritura).",
+                     "Es un final: no tiene aristas que salgan."],
     },
     "salida": {
         "ejemplos": [{"desenlace": "radicar", "campos": ["nombre", "documento"]}, {"desenlace": "manual", "motivo": "{{fallo.motivo}}"}],
@@ -1151,7 +1640,7 @@ EJEMPLO_AUTOMATIZACION: Dict[str, Any] = {
 REGLAS = """Un flujo declarativo es {id, nombre, descripcion, ia, nodos: [{id, tipo, nombre, descripcion, config}], aristas: [{desde, hacia, cuando}]}.
 - id del flujo: minúsculas con guiones (ej. "derechos-de-peticion"); id de nodo: minúsculas con guion bajo.
 - Exactamente un DISPARADOR (entrada_correo, entrada_manual, entrada_archivos, programado, webhook o correo_nuevo) y al menos una salida. Todo nodo alcanzable desde el disparador;
-  sin ciclos (los bucles se hacen con para_cada); las salidas no tienen aristas que salgan.
+  sin ciclos (los bucles se hacen con para_cada); las salidas (y detener_con_alerta, que termina con un aviso) no tienen aristas que salgan.
 - Una arista se toma si "cuando" es igual a la salida del nodo (sin distinguir mayúsculas ni tildes); una arista sin "cuando" (o "*") es la de por defecto.
   Cada salida posible del nodo necesita su arista o una por defecto (p. ej. ia_clasificar: una por categoría o una por defecto).
 - Bucles: para_cada sale por "cada" hacia el cuerpo y por "listo" al terminar. Dentro del cuerpo un nodo puede no tener aristas que salgan (ahí termina la
@@ -1169,7 +1658,17 @@ REGLAS = """Un flujo declarativo es {id, nombre, descripcion, ia, nodos: [{id, t
 - config.reintentos {intentos 1..5, espera_ms, backoff, maximo_ms} (IA, conectores, enviar, notificar, http) repite solo fallos pasajeros (429, 5xx, tiempo, conexión).
 - config.deshabilitado: true salta el nodo (sigue por la arista por defecto o la primera); no vale en disparadores, salida, fin_ciclo, para_cada, paralelo ni unir.
 - Credenciales: los conectores usan "credencial": el NOMBRE de una credencial guardada en la plataforma (nunca valores ni claves en el flujo).
-- LÍMITES (no se negocian): los nodos que escriben afuera (correo_enviar, drive_subir, sql_ejecutar, http distinto de GET) solo escriben si una PERSONA habilitó
+- Aprobación humana: aprobacion_humana detiene la corrida («en espera», guardada en disco) hasta que una PERSONA decide en la plataforma; una corrida nueva
+  sigue por «aprobado», «rechazado» (o «vencido») con {{aprobacion.decision}}, {{aprobacion.comentario}}, {{aprobacion.cambios}} y {{aprobacion.datos}}.
+  No va dentro de para_cada, de ramas ni de flujos llamados. Vera puede listar las aprobaciones, nunca decidirlas.
+- Corridas que vuelven: reintentar_mas_tarde, limite_tasa (al_exceder aplazar) y ventana_horario (fuera aplazar) terminan la corrida como «aplazada» y la
+  vuelven a correr desde el principio a la hora que toca, con la misma entrada; {{aplazamiento.intento}} dice en qué intento va (0 la primera vez).
+- Archivos del flujo: documento_generar, pdf_unir, pdf_dividir, documento_convertir y hoja_escribir dejan fichas {id, nombre, tipo, tamano}; los nodos que
+  leen documentos reciben ids («a-…»), plantillas como «{{carta.id}}», una variable con fichas o «adjuntos» (los del correo).
+- Datos personales: antes de mandar textos con datos de personas a una IA externa (proveedor distinto de vertex), pásalos por anonimizar (modo seudonimo,
+  guardar_mapa) y, si hace falta, revierte la respuesta con otro anonimizar (operacion revertir).
+- LÍMITES (no se negocian): los nodos que escriben afuera (correo_enviar, drive_subir, sql_ejecutar, http distinto de GET, mensaje_teams, mensaje_slack,
+  webhook_saliente, hoja_escribir con destino sheets y la alerta de detener_con_alerta con credencial) solo escriben si una PERSONA habilitó
   la escritura de su credencial; si no, arman la acción y la anotan como escritura bloqueada. notificar y enviar nunca envían. Nunca se tocan hosts de Positiva
   (positiva.gov.co), SGDEA, metadatos ni IP privadas, ni los buzones de PQRD y tutelas. Archivos solo dentro de /datos/archivos. SQL: una sola sentencia,
   solo lectura en sql_consulta, tiempos de espera (20 s) y tope de filas (500).
@@ -1262,21 +1761,10 @@ def tipos_contrato() -> List[Dict[str, Any]]:
     r = []
     for tipo, t in TIPOS.items():
         dinamicas = "salidas_desde" in t
-        if tipo in ("ia_clasificar",):
-            opcionales = ["sin_categoria"]
-        elif tipo == "ia_decidir":
-            opcionales = ["sin_decision"]
-        elif tipo == "paralelo":
-            opcionales = ["listo"]
-        elif tipo == "tabla_guardar":
-            opcionales = ["existente"]
-        else:
-            opcionales = []
+        opcionales = list(OPCIONALES.get(tipo, []))
         salidas_fijas = [] if dinamicas else [s for s in t["salidas"] if " " not in s]
         if tipo == "bifurcar_por_valor":
             salidas_fijas = ["otro"]
-        if tipo == "expresion":
-            opcionales = ["si", "no"]
         r.append({
             "tipo": tipo, "nombre": t["nombre"], "categoria": t["categoria"], "descripcion": t["descripcion"],
             "disparador": t["disparador"], "escritura": t["escritura"],

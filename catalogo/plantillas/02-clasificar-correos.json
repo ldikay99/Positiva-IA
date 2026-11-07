@@ -1,0 +1,44 @@
+{
+  "id": "clasificar-correos",
+  "orden": 2,
+  "nombre": "Clasificar correos",
+  "categoria": "Correo",
+  "resumen": "La IA lee cada correo, decide qué es (petición, queja, reclamo…) y lo resume para el área que lo atiende.",
+  "descripcion": "Cada correo pasa por la IA, que elige una categoría con su evidencia. Lo que encaja se resume en tres líneas y queda marcado para reenviar al área de esa categoría; lo que no encaja va a revisión de una persona. Nada se mueve ni se reenvía en el buzón real: queda registrado.",
+  "como_probar": "Instálala, abre el flujo y sube uno o varios correos .eml o .msg a su bandeja de prueba. Después elígelos y pulsa «Correr».",
+  "necesita": [
+    { "tipo": "correos", "texto": "Correos de prueba (.eml o .msg) o un buzón conectado en el primer paso." },
+    { "tipo": "conexion", "texto": "Opcional: una conexión IMAP o Microsoft 365 para leer un buzón real (solo lectura)." }
+  ],
+  "definicion": {
+    "nombre": "Clasificar correos",
+    "descripcion": "Clasifica cada correo y lo resume para el área que lo atiende.",
+    "ia": { "usar": "global" },
+    "nodos": [
+      { "id": "correo", "tipo": "entrada_correo", "nombre": "Correo recibido", "config": { "leer_adjuntos": true, "ocr": true } },
+      { "id": "tipo", "tipo": "ia_clasificar", "nombre": "¿Qué es este correo?", "config": {
+        "variable": "tipo",
+        "instrucciones": "Clasifica el correo según lo que pide quien escribe. Mira el asunto, el cuerpo y los adjuntos.",
+        "categorias": [
+          { "valor": "peticion", "descripcion": "pide información, un documento, un certificado o un trámite" },
+          { "valor": "queja", "descripcion": "expresa inconformidad por la atención o el trato recibido" },
+          { "valor": "reclamo", "descripcion": "exige corregir un servicio, un pago o una decisión que considera mal hecha" },
+          { "valor": "felicitacion", "descripcion": "agradece o reconoce un buen servicio" },
+          { "valor": "otro", "descripcion": "publicidad, respuestas automáticas o cualquier cosa que no encaja arriba" }
+        ]
+      } },
+      { "id": "resumen", "tipo": "resumir", "nombre": "Resumen para el área", "config": { "entradas": ["correo", "adjuntos.texto"], "longitud": "3 líneas", "enfoque": "qué pide, quién lo pide y desde cuándo", "salida": "resumen" } },
+      { "id": "al_area", "tipo": "salida", "nombre": "Para el área", "config": { "desenlace": "reenviar", "destino": "{{tipo}}", "motivo": "Clasificado como {{tipo}}", "campos": ["tipo", "resumen"] } },
+      { "id": "a_revision", "tipo": "salida", "nombre": "Revisión de una persona", "config": { "desenlace": "manual", "motivo": "No encaja en ninguna categoría", "campos": ["tipo"] } }
+    ],
+    "aristas": [
+      { "desde": "correo", "hacia": "tipo" },
+      { "desde": "tipo", "hacia": "resumen", "cuando": "peticion" },
+      { "desde": "tipo", "hacia": "resumen", "cuando": "queja" },
+      { "desde": "tipo", "hacia": "resumen", "cuando": "reclamo" },
+      { "desde": "tipo", "hacia": "resumen", "cuando": "felicitacion" },
+      { "desde": "tipo", "hacia": "a_revision", "cuando": "otro" },
+      { "desde": "resumen", "hacia": "al_area" }
+    ]
+  }
+}
