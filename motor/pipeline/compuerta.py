@@ -856,6 +856,7 @@ _SUSTENTO_POR_CAMPO = {
 
 _SEPARADOR_DE_CIFRAS = re.compile(r"(?<=\d)[.\s,\-'’`´_]+(?=\d)")
 _MINUSCULA_MAYUSCULA = re.compile(r"(?<=[a-zà-ÿ])(?=[A-ZÀ-Þ])")
+_CC_PEGADO = re.compile(r"(?i)(?<=[a-zà-ÿ])(?=c\.\s?c\.\s?(?:no\.?\s?)?\d)")
 _MARCA_DE_DOCUMENTO = re.compile(
     r"\b(?:c\s?\.?\s?c|cedula|nit|documento|identificacion|radicado|rad"
     r"|expediente|siniestro)\b[^a-z0-9]{0,6}(?:(?:no|nro|numero|de)\b"
@@ -1021,7 +1022,11 @@ _CONECTORES_TRAS_EL_NUMERO = frozenset("de del a nombre y".split())
 
 def _texto_para_roles(texto: str) -> str:
     """Plegado sin tildes ni mayusculas, pero SIN fundir las cifras vecinas."""
-    return _normaliza(_MINUSCULA_MAYUSCULA.sub(" ", str(texto or "")))
+    separado = _MINUSCULA_MAYUSCULA.sub(" ", str(texto or ""))
+    # Una firma pegada ("CASTAÑOC.C. 60.335.252") lleva el rotulo de la cedula
+    # aunque el texto extraido no deje espacio delante.
+    separado = _CC_PEGADO.sub(" ", separado)
+    return _normaliza(separado)
 
 
 def _patron_del_numero(numero: str) -> Optional["re.Pattern[str]"]:
@@ -1547,7 +1552,10 @@ def motivo_de_varios_afectados(principal: str, nombres_adjuntos, nombre_afectado
         personas: List[List[tuple]] = []
         for nombre, numero in pares:
             for grupo in personas:
-                if es_la_misma_persona(_normaliza(nombre), _normaliza(grupo[0][0])):
+                # El mismo documento es la misma persona aunque el texto la
+                # nombre de otra forma ("CLAVE PDF: <cedula>").
+                if es_la_misma_persona(_normaliza(nombre), _normaliza(grupo[0][0])) \
+                        or any(_mismo_documento(numero, n) for _, n in grupo):
                     grupo.append((nombre, numero))
                     break
             else:

@@ -87,6 +87,14 @@ def test_el_codigo_de_barras_del_ocr_no_es_un_documento():
     assert "DOCUMENTO_EN_UNA_TIRA_DE_CIFRAS" in _codigos(d)
 
 
+def test_la_cedula_pegada_al_nombre_en_la_firma_es_la_suya():
+    fuentes = ("Agradezco su atencion.Cordialmente,PEDRO RUIZ MEJIAC.C. 41.234.567"
+               "Direccion: Calle 17A No. 9-22, barrio Centro")
+    d = compuerta.validar(_base(), fuentes=fuentes)
+    assert "DOCUMENTO_EN_UNA_TIRA_DE_CIFRAS" not in _codigos(d)
+    assert d.veredicto is not Veredicto.RECHAZADO
+
+
 def test_la_cedula_junto_al_nombre_del_afectado_vale_aunque_haya_un_siniestro():
     fuentes = ("Siniestro no. 41234567 del trabajador PEDRO RUIZ MEJIA, "
                "identificado con C.C. 41.234.567")

@@ -211,6 +211,13 @@ def test_la_misma_persona_con_dos_cedulas_va_a_manual():
     assert d.motivo_manual == "DOCUMENTO_AMBIGUO", informe(d)
 
 
+def test_la_clave_del_pdf_con_la_cedula_no_es_otra_persona():
+    principal = ("Solicito el pago de la incapacidad de la trabajadora Pedro Ruiz Mejia "
+                 "CC 41.234.567.\nCLAVE PDF: 41234567")
+    d = validar(_base(), principal=principal)
+    assert "VARIOS_AFECTADOS" not in _codigos(d), informe(d)
+
+
 def test_adjuntos_de_varias_personas_van_a_manual():
     d = validar(_base(), nombres_adjuntos=["CC_41234567_hc.pdf", "CC_22000001_inc.pdf"])
     assert "VARIOS_AFECTADOS" in _codigos(d)
