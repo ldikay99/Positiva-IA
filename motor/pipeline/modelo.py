@@ -49,6 +49,28 @@ class Turno:
 TIMEOUT_DEL_MODELO_MS = 90_000
 
 
+def tope_de_razonamiento():
+    """
+    Tokens de razonamiento por llamada (`RAZONAMIENTO_TOKENS`), o None para
+    dejar el del modelo, que es dinamico.
+
+    El razonamiento se factura como salida y es la mayor parte de lo que tarda
+    una vuelta: en la linea base del universo, 600 tokens por vuelta del agente
+    contra 70 de respuesta. Por defecto NO se acota: con 512, en el corpus
+    etiquetado, el costo bajo un tercio pero el agente erro mas en el tipo de
+    solicitud y tomo el documento de otra persona en un caso.
+    """
+    import os
+
+    crudo = (os.environ.get("RAZONAMIENTO_TOKENS") or "").strip()
+    if not crudo:
+        return None
+    try:
+        return max(0, int(crudo))
+    except ValueError:
+        return None
+
+
 class Modelo(Protocol):
     """Contrato minimo que el agente necesita."""
 
@@ -171,6 +193,9 @@ class ModeloVertex:
         # que es dato ajeno y puede contener ordenes.
         config = types.GenerateContentConfig(
             temperature=0.1, system_instruction=sistema)
+        tope = tope_de_razonamiento()
+        if tope is not None:
+            config.thinking_config = types.ThinkingConfig(thinking_budget=tope)
         if herramientas:
             config.tools = [types.Tool(function_declarations=list(herramientas))]
 
@@ -215,8 +240,8 @@ class ModeloVertex:
 
 
 # Una hoja densa transcrita son unos 1.500 tokens. Sin tope, en la linea base del
-# universo 4 de 116 transcripciones no volvieron: el modelo se quedaba
-# repitiendo un renglon hasta que la llamada se cortaba a los 90 s (el 39 % del
+# universo 16 de 332 transcripciones no volvieron: el modelo se quedaba
+# repitiendo un renglon hasta que la llamada se cortaba a los 90 s (la mitad del
 # tiempo de vision), y la hoja se perdia igual.
 MAX_TOKENS_DE_TRANSCRIPCION = 3_000
 TIMEOUT_DE_TRANSCRIPCION_MS = 40_000
