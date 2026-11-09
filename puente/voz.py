@@ -60,6 +60,7 @@ ESTÁS EN UNA LLAMADA DE VOZ. Así hablas:
 Cómo trabajas en la llamada (dos manos):
 - «Ver», «muéstrame», «ábreme», «dónde está» = ábrelo EN PANTALLA con la herramienta de navegación que corresponda (por ejemplo, correos → abrir_correspondencia; una corrida → abrir_corrida; un documento → abrir_adjuntos) y di un dato concreto de lo que quedó a la vista («Ahí están: 389 correos, el más reciente es de Seguros Bolívar»).
 - Lo rápido lo haces tú directamente: moverte por la plataforma (navegar, abrir_*, ajustar_lienzo, centrar_nodo, filtrar_correos, seleccionar_correos), consultas cortas (resumen_tablero, listar_flujos, ultimas_corridas, estado_motor, listar_correos, ver_buzon) y acciones (correr_correos, correr_buzon, cancelar_cola).
+- Tienes las mismas herramientas que el chat escrito y las mismas reglas (no inventas, en modo prueba «se radicaría», borrar es proponer con botón). Lo largo de leer (tablas, listas, definiciones) lo dejas en el chat con escribir_en_chat y dices lo esencial en una frase.
 - Lo que necesita pensar o escribir bien —crear o cambiar un flujo, cualquier «¿por qué…?», analizar fallas, explicar resultados, comparar, cualquier lista o tabla de más de tres cosas— se lo pasas SIEMPRE a responder_por_escrito con un pedido claro y completo (y NO hagas tú esa misma parte: lo que delegas no lo repites con otras herramientas), SIN consultar ni concluir nada antes (no llames otras herramientas primero ni adelantes una respuesta): delega de una vez y espera su resultado. Lo que digas después sale SOLO de lo que devolvió responder_por_escrito. Esa herramienta lo resuelve y lo deja escrito en el chat; tú dices en una frase lo esencial («Te lo dejé en el chat: fueron tres a manual por falta de cédula»).
 - Trabajas en paralelo: las tareas largas (responder_por_escrito, probar o correr flujos, el buzón real, listar correos) corren en segundo plano y te responden «en_curso». Di en pocas palabras que ya estás en eso («Lo estoy revisando») y SIGUE atendiendo: puedes responder otras preguntas y lanzar otras herramientas mientras tanto. Cuando llegue «[Resultado de la tarea N]», cuéntalo en una o dos frases y continúa.
 - Cambios puntuales a un flujo (apagar una etapa, quitar o agregar un paso, cambiar cómo se lee un tipo de archivo, también en PQRD, tutelas y sus copias) los haces tú con editar_nodo, agregar_nodo, eliminar_nodo o editar_aristas (antes ver_estructura si es de código); lo que necesita armar varios pasos o pensar, por responder_por_escrito.
@@ -70,9 +71,19 @@ Cómo trabajas en la llamada (dos manos):
 - Si la persona te deja la decisión («eso lo sabes tú», «lo que tú digas»), propón algo concreto con valores razonables y hazlo; dilo en una frase. No hagas preguntas en cadena: como mucho una pregunta, y solo si sin ella no puedes avanzar.
 """
 
-# En la llamada, lo pesado (crear, editar, validar, probar, leer definiciones) va por responder_por_escrito.
-SOLO_POR_ESCRITO = {"reglas_de_flujos", "validar_flujo", "guardar_flujo", "probar_flujo", "leer_flujo",
-                    "ver_nodo", "ver_configuracion", "historial_configuracion", "ajustar_parametro_pqrd", "aplicar_perfil", "guardar_perfil", "ver_logs", "ver_correo"}
+# La voz tiene las MISMAS herramientas que el chat escrito: todas las de asistente.HERRAMIENTAS salvo
+# estas, cada una con el motivo de por qué no aplica en una llamada (pruebas_voz.py lo exige).
+EXCLUIDAS_DE_VOZ: Dict[str, str] = {
+    # La llamada declara todas sus herramientas al abrir la sesión de Gemini Live y no se pueden
+    # agregar a mitad de la sesión: no hay grupos que cargar.
+    "cargar_herramientas": "la sesión de voz ya trae todas las herramientas desde que se abre",
+}
+
+
+def herramientas_de_voz() -> List[Dict[str, Any]]:
+    """Las del chat escrito (salvo las excluidas con motivo) y las propias de la voz."""
+    return [h for h in asistente.HERRAMIENTAS if h["name"] not in EXCLUIDAS_DE_VOZ] + HERRAMIENTAS_VOZ
+
 
 HERRAMIENTAS_VOZ = [
     {"name": "responder_por_escrito", "description": "Pasa un pedido al proceso escrito (más capaz): crea o cambia flujos, analiza, explica, compara o arma listas y tablas. Lo resuelve con todas las herramientas, lo deja escrito en el chat y te devuelve lo que escribió para que digas lo esencial en una frase.", "parameters": {"type": "object", "properties": {"pedido": {"type": "string", "description": "Qué hay que hacer, completo y concreto, con los ids o nombres que se mencionaron."}}, "required": ["pedido"]}},
@@ -139,6 +150,18 @@ def contexto_previo(conv: Dict[str, Any]) -> str:
 PANTALLA_INICIAL: Dict[str, Any] = {}
 
 
+def anotar_en_turno(turno: "Turno", nombre: str, args: Dict[str, Any], res: Any) -> None:
+    """Lo que una herramienta deja en el turno: flujos cambiados y propuestas (el botón de confirmar, igual que por escrito)."""
+    if not isinstance(res, dict):
+        return
+    if nombre == "guardar_flujo" and res.get("flujo"):
+        turno.cambiados.add(res["flujo"]["id"])
+    if nombre in ("editar_nodo", "agregar_nodo", "eliminar_nodo", "editar_aristas", "restablecer_estructura", "configurar_ia_flujo") and (res.get("guardado") or res.get("ok")):
+        turno.cambiados.add(args.get("flujo"))
+    if nombre in ("proponer_borrado", "borrar_flujo") and res.get("propuesto"):
+        turno.propuestas.append({"accion": "borrar_flujo", "id": args.get("id")})
+
+
 class Turno:
     """Lo que pasa entre que la persona habla y Vera termina de responder."""
 
@@ -177,14 +200,8 @@ async def principal() -> None:
     PANTALLA_INICIAL.update(inicio.get("pantalla") or {})
     sistema = (asistente.SISTEMA + NOTA_VOZ + "\n\n" + asistente.describir_pantalla(inicio.get("pantalla") or {}, flujo)
                + contexto_previo(conv))
-    # En la llamada no se cargan grupos a mitad de la sesión: va lo rápido; construir y configurar se delega al proceso escrito.
-    de_voz = asistente.herramientas_de(["nucleo", "correr", "correo", "producto"]) + [h for h in asistente.HERRAMIENTAS if h["name"] in (
-        "clonar_flujo", "renombrar_flujo", "instalar_plantilla", "plantillas", "pedir_credencial", "abrir_entorno",
-        # editar flujos (también los de código y sus copias) y borrarlos con el botón de confirmar, igual que por escrito
-        "editar_nodo", "agregar_nodo", "eliminar_nodo", "editar_aristas", "ver_estructura", "restablecer_estructura",
-        "proponer_borrado", "borrar_flujo", "versiones_flujo", "restaurar_version")]
-    declaraciones = [types.FunctionDeclaration(**h) for h in {h["name"]: h for h in de_voz}.values() if h["name"] not in SOLO_POR_ESCRITO and h["name"] != "cargar_herramientas"]
-    declaraciones += [types.FunctionDeclaration(**h) for h in HERRAMIENTAS_VOZ]
+    # Las mismas herramientas que el chat escrito (salvo EXCLUIDAS_DE_VOZ, con su motivo) y las propias de la voz.
+    declaraciones = [types.FunctionDeclaration(**h) for h in herramientas_de_voz()]
     cred, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
 
     def config(handle: Any = None) -> Any:
@@ -399,12 +416,7 @@ async def llamada(primera: Any, abrir: Any, types: Any, cid: str, flujo: str, pr
                 res = {"error": f"{type(e).__name__}: {e}"}
         texto_res = json.dumps(res, ensure_ascii=False, default=str)
         turno.pasos.append({"nombre": nombre, "argumentos": resumen, "resultado": texto_res[:600]})
-        if nombre == "guardar_flujo" and isinstance(res, dict) and res.get("flujo"):
-            turno.cambiados.add(res["flujo"]["id"])
-        if nombre in ("editar_nodo", "agregar_nodo", "eliminar_nodo", "editar_aristas") and isinstance(res, dict) and res.get("guardado"):
-            turno.cambiados.add(args.get("flujo"))
-        if nombre in ("proponer_borrado", "borrar_flujo") and isinstance(res, dict) and res.get("propuesto"):
-            turno.propuestas.append({"accion": "borrar_flujo", "id": args.get("id")})
+        anotar_en_turno(turno, nombre, args, res)
         enviar("resultado_paso", nombre=nombre, resultado=texto_res[:1500])
         if len(texto_res) > 20000:
             res = {"resultado_recortado": texto_res[:20000]}
