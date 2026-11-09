@@ -37,7 +37,9 @@ def test_la_tarea_trae_el_inventario_y_las_pistas(tmp_path):
         tarea = modelo.recibidos[0]["mensajes"][0]["contenido"]
         assert "DOCUMENTOS" in tarea and "historia.txt" in tarea
         assert "PISTAS" in tarea
-        assert "VEREDA LA ESPERANZA" in tarea
+        assert "[nombre_afectado]" in tarea and "41234567" in tarea
+        # La direccion no lleva pista: el tramo que mejor responde suele ser de otro.
+        assert "[direccion_afectado]" not in tarea
         # El texto del adjunto va delimitado, como en una lectura.
         assert "INICIO_DEL_DOCUMENTO" in tarea
     finally:

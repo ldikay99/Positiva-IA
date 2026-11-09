@@ -801,13 +801,15 @@ def _contexto_inicial_activo() -> bool:
 
 # Palabras con que se pregunta al indice por cada campo pendiente. Los tipos de
 # solicitud y de remitente no llevan: salen del asunto y el encabezado, que ya
-# van en la tarea.
+# van en la tarea. La direccion y el telefono tampoco: el tramo que mejor
+# "responde" suele ser el membrete de la IPS o el bloque del empleador, y con el
+# delante el agente lo reportaba (en el corpus etiquetado, cuatro direcciones
+# donde el correo no trae la del afectado). Esos los busca el agente con el
+# criterio de su bloque.
 PREGUNTA_DE_PISTA: Dict[str, str] = {
     "nombre_afectado": "nombre paciente trabajador afiliado accidentado identificado",
     "numero_documento_afectado": "cedula identificacion paciente trabajador afiliado",
     "tipo_documento_afectado": "cedula identificacion tipo documento",
-    "telefono_afectado": "telefono celular contacto",
-    "direccion_afectado": "direccion residencia domicilio barrio",
     "sexo_afectado": "sexo genero femenino masculino",
     "nombre_remitente": "atentamente cordialmente firma cargo",
     "numero_documento_remitente": "nit cedula firma representante",
