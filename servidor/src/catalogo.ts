@@ -60,7 +60,12 @@ const POR_DEFECTO = new Set([
 
 type ParametroCrudo = Omit<Parametro, "ajuste" | "motivo_fijo">;
 
+// Lo pone el orquestador con el modelo de la corrida: como texto lo dejaba sin visión (Vera lo cambió así una vez).
+const DEL_ORQUESTADOR = new Set(["pipeline.conversion.TRANSCRIPTOR_IA"]);
+
 function clasificar(p: ParametroCrudo): Pick<Parametro, "ajuste" | "motivo_fijo"> {
+  if (DEL_ORQUESTADOR.has(p.clave))
+    return { ajuste: null, motivo_fijo: "Es la función de visión que pone el orquestador con el modelo de la corrida. Para apagar la visión o cambiar su cupo en un flujo, edita la etapa «Transcripción con visión» en su estructura." };
   if (SEGURIDAD.test(p.clave) || p.clave.startsWith("config.settings."))
     return { ajuste: null, motivo_fijo: "Fijo en el visor: es configuración del servicio (modo de prueba, credenciales, destinos). El visor nunca escribe en un sistema real." };
   if (PROHIBIDOS.test(p.clave)) return { ajuste: null, motivo_fijo: "Lo maneja el visor: la concurrencia y el tope por correo están en Ajustes." };

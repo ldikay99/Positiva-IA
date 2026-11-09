@@ -62,6 +62,8 @@ Cómo trabajas en la llamada (dos manos):
 - Lo rápido lo haces tú directamente: moverte por la plataforma (navegar, abrir_*, ajustar_lienzo, centrar_nodo, filtrar_correos, seleccionar_correos), consultas cortas (resumen_tablero, listar_flujos, ultimas_corridas, estado_motor, listar_correos, ver_buzon) y acciones (correr_correos, correr_buzon, cancelar_cola).
 - Lo que necesita pensar o escribir bien —crear o cambiar un flujo, cualquier «¿por qué…?», analizar fallas, explicar resultados, comparar, cualquier lista o tabla de más de tres cosas— se lo pasas SIEMPRE a responder_por_escrito con un pedido claro y completo (y NO hagas tú esa misma parte: lo que delegas no lo repites con otras herramientas), SIN consultar ni concluir nada antes (no llames otras herramientas primero ni adelantes una respuesta): delega de una vez y espera su resultado. Lo que digas después sale SOLO de lo que devolvió responder_por_escrito. Esa herramienta lo resuelve y lo deja escrito en el chat; tú dices en una frase lo esencial («Te lo dejé en el chat: fueron tres a manual por falta de cédula»).
 - Trabajas en paralelo: las tareas largas (responder_por_escrito, probar o correr flujos, el buzón real, listar correos) corren en segundo plano y te responden «en_curso». Di en pocas palabras que ya estás en eso («Lo estoy revisando») y SIGUE atendiendo: puedes responder otras preguntas y lanzar otras herramientas mientras tanto. Cuando llegue «[Resultado de la tarea N]», cuéntalo en una o dos frases y continúa.
+- Cambios puntuales a un flujo (apagar una etapa, quitar o agregar un paso, cambiar cómo se lee un tipo de archivo, también en PQRD, tutelas y sus copias) los haces tú con editar_nodo, agregar_nodo, eliminar_nodo o editar_aristas (antes ver_estructura si es de código); lo que necesita armar varios pasos o pensar, por responder_por_escrito.
+- Borrar: llama a proponer_borrado y di «Te dejé el botón para confirmar el borrado». Nunca digas que no puedes borrar.
 - Después de una herramienta nunca te quedes callada.
 - Si solo oyes ruido o algo sin sentido, no respondas.
 - Despedida: cuando la persona se despida o pida colgar, despídete en UNA frase cálida, corta y variada, en español y que tenga que ver con lo que hicieron (por ejemplo «Listo, quedó corriendo; cualquier cosa me llamas.» o «Perfecto, te dejo el resumen en el chat. ¡Que te rinda!»). No repitas siempre la misma despedida, no digas «con gusto, hablamos» de memoria, y llama a terminar_llamada SOLO después de terminar la frase.
@@ -69,7 +71,7 @@ Cómo trabajas en la llamada (dos manos):
 """
 
 # En la llamada, lo pesado (crear, editar, validar, probar, leer definiciones) va por responder_por_escrito.
-SOLO_POR_ESCRITO = {"reglas_de_flujos", "validar_flujo", "guardar_flujo", "editar_nodo", "agregar_nodo", "eliminar_nodo", "editar_aristas", "probar_flujo", "leer_flujo",
+SOLO_POR_ESCRITO = {"reglas_de_flujos", "validar_flujo", "guardar_flujo", "probar_flujo", "leer_flujo",
                     "ver_nodo", "ver_configuracion", "historial_configuracion", "ajustar_parametro_pqrd", "aplicar_perfil", "guardar_perfil", "ver_logs", "ver_correo"}
 
 HERRAMIENTAS_VOZ = [
@@ -176,7 +178,11 @@ async def principal() -> None:
     sistema = (asistente.SISTEMA + NOTA_VOZ + "\n\n" + asistente.describir_pantalla(inicio.get("pantalla") or {}, flujo)
                + contexto_previo(conv))
     # En la llamada no se cargan grupos a mitad de la sesión: va lo rápido; construir y configurar se delega al proceso escrito.
-    de_voz = asistente.herramientas_de(["nucleo", "correr", "correo", "producto"]) + [h for h in asistente.HERRAMIENTAS if h["name"] in ("clonar_flujo", "renombrar_flujo", "instalar_plantilla", "plantillas", "pedir_credencial", "abrir_entorno")]
+    de_voz = asistente.herramientas_de(["nucleo", "correr", "correo", "producto"]) + [h for h in asistente.HERRAMIENTAS if h["name"] in (
+        "clonar_flujo", "renombrar_flujo", "instalar_plantilla", "plantillas", "pedir_credencial", "abrir_entorno",
+        # editar flujos (también los de código y sus copias) y borrarlos con el botón de confirmar, igual que por escrito
+        "editar_nodo", "agregar_nodo", "eliminar_nodo", "editar_aristas", "ver_estructura", "restablecer_estructura",
+        "proponer_borrado", "borrar_flujo", "versiones_flujo", "restaurar_version")]
     declaraciones = [types.FunctionDeclaration(**h) for h in {h["name"]: h for h in de_voz}.values() if h["name"] not in SOLO_POR_ESCRITO and h["name"] != "cargar_herramientas"]
     declaraciones += [types.FunctionDeclaration(**h) for h in HERRAMIENTAS_VOZ]
     cred, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
@@ -397,7 +403,7 @@ async def llamada(primera: Any, abrir: Any, types: Any, cid: str, flujo: str, pr
             turno.cambiados.add(res["flujo"]["id"])
         if nombre in ("editar_nodo", "agregar_nodo", "eliminar_nodo", "editar_aristas") and isinstance(res, dict) and res.get("guardado"):
             turno.cambiados.add(args.get("flujo"))
-        if nombre == "proponer_borrado" and isinstance(res, dict) and res.get("propuesto"):
+        if nombre in ("proponer_borrado", "borrar_flujo") and isinstance(res, dict) and res.get("propuesto"):
             turno.propuestas.append({"accion": "borrar_flujo", "id": args.get("id")})
         enviar("resultado_paso", nombre=nombre, resultado=texto_res[:1500])
         if len(texto_res) > 20000:
