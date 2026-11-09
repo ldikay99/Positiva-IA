@@ -1214,30 +1214,57 @@ identificado identificada con la el
 """.split())
 
 
-_CIFRA_CON_SEPARADORES = re.compile(r"(?<![\d.])\d(?:[\d.]|(?<=\d) (?=\d)){4,16}\d(?![\d])")
+# Una cifra con sus puntos de miles; sin espacios: con ellos se pegaban dos
+# numeros seguidos ("1058973051 28").
+_CIFRA_CON_SEPARADORES = re.compile(r"(?<![\d.])\d[\d.]{4,16}\d(?![\d])")
+
+
+# Un bloque leido por OCR o transcrito de una imagen: desde su encabezado
+# ("## Pagina 3 (OCR...", "### Imagen incrustada (OCR") hasta el siguiente.
+# El texto de roles llega en una sola linea: el bloque termina donde empieza el
+# siguiente encabezado (" # ", " ## ").
+_BLOQUE_DE_OCR = re.compile(r"(?si)#{2,3} [^#\n]{0,80}\(ocr.*?(?=\s#{1,3} |\Z)")
+
+
+def _sin_lo_leido_por_ocr(texto: str) -> str:
+    return _BLOQUE_DE_OCR.sub("", texto or "")
+
+
+def _aparece_suelto(digitos: str, texto: str) -> bool:
+    """Si la cifra esta escrita por si sola, no como cola o cabeza de otra."""
+    patron = (r"(?<!\d)(?<!\d[.,\s])" + r"[.,\s]?".join(digitos) + r"(?![.,\s]?\d)")
+    return re.search(patron, texto or "") is not None
 
 
 def documento_del_que_es_un_recorte(numero: Any, nombre: Any, texto: str) -> str:
     """
     El documento del que `numero` es un recorte (uno o dos digitos menos al
-    principio o al final), si el texto lo escribe rotulado o pegado al nombre.
+    principio o al final), cuando lo escrito (lo que no salio del OCR de una
+    imagen) trae el entero junto al nombre y no trae el recorte por si solo.
 
     En el universo el agente tomo "6.769.353" del OCR de la foto de la cedula
     cuando el cuerpo decia dos veces "Cc.16769353" junto al mismo nombre: la
-    lectura de la imagen perdio el primer digito.
+    lectura de la imagen perdio el primer digito. Al reves no vale: si el cuerpo
+    escribe el numero corto, el largo de una historia clinica leida por OCR es
+    el ruido.
     """
     corto = re.sub(r"\D", "", str(numero or ""))
     if len(corto) < 5 or not texto or not nombre:
         return ""
+    escrito = _sin_lo_leido_por_ocr(texto)
+    if _aparece_suelto(corto, escrito):
+        return ""
     vistos = set()
-    for m in _CIFRA_CON_SEPARADORES.finditer(texto):
-        largo = re.sub(r"\D", "", m.group(0))
+    for m in _CIFRA_CON_SEPARADORES.finditer(escrito):
+        # Los ceros a la izquierda no hacen otro numero ("0016769353" de la
+        # banda de la cedula es el mismo 16769353).
+        largo = re.sub(r"\D", "", m.group(0)).lstrip("0")
         if (largo in vistos or not 1 <= len(largo) - len(corto) <= 2
                 or not (largo.startswith(corto) or largo.endswith(corto))):
             continue
         vistos.add(largo)
-        if (documento_junto_al_nombre(largo, nombre, texto)
-                or numero_pegado_al_nombre(largo, nombre, texto)):
+        if (documento_junto_al_nombre(largo, nombre, escrito)
+                or numero_pegado_al_nombre(largo, nombre, escrito)):
             return largo
     return ""
 
@@ -1552,7 +1579,10 @@ _NOMBRE_AL_FINAL = re.compile(
     r"|LA|LOS)\s+)?){1,6}[A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑáéíóúñü'’-]+)$")
 # El documento en el nombre de un adjunto: "CC_45459599_...pdf".
 _DOCUMENTO_EN_ADJUNTO = re.compile(
-    r"(?i)(?<![a-z])(?:cc|c\.c\.?|ti|ce|cedula)[\s_.\-]*(\d{6,10})(?!\d)")
+    r"(?i)(?<![a-z])(?:cc|c\.c\.?|ti|ce|cedula)[\s_.\-]*(\d{6,10})(?!\d)"
+    # Tambien el numero al principio seguido del nombre de la persona
+    # ("7716705-JAVIER ANIBAL SILVA ARENAS.pdf"), como nombran los FURAT.
+    r"|^(?!(?:19|20)\d{6}\b)(\d{6,10})[\s_\-]+[a-zñáéíóú]{2,}[\s_\-]+[a-zñáéíóú]{2,}")
 
 
 def personas_con_documento(texto: str) -> List[tuple]:
@@ -1644,8 +1674,9 @@ def motivo_de_varios_afectados(principal: str, nombres_adjuntos, nombre_afectado
     en_adjuntos = []
     for nombre_adjunto in nombres_adjuntos or ():
         for m in _DOCUMENTO_EN_ADJUNTO.finditer(str(nombre_adjunto)):
-            if not any(_mismo_documento(m.group(1), v) for v in en_adjuntos):
-                en_adjuntos.append(m.group(1))
+            numero = m.group(1) or m.group(2)
+            if not any(_mismo_documento(numero, v) for v in en_adjuntos):
+                en_adjuntos.append(numero)
     if len(en_adjuntos) >= 2 and doc and any(_mismo_documento(doc, v)
                                              for v in en_adjuntos):
         return (f"los adjuntos van rotulados con {len(en_adjuntos)} documentos "

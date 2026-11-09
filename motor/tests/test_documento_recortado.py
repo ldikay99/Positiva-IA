@@ -77,3 +77,20 @@ def test_solo_se_le_aplica_al_documento_del_agente():
         {"numero_documento_afectado": h("numero_documento_afectado", "63555077", "regla"),
          "nombre_afectado": nombre}, fuentes=FURAT)
     assert not any(r.codigo == "DOCUMENTO_LEJOS_DEL_AFECTADO" for r in del_algoritmo.reparos)
+
+
+def test_si_lo_escrito_trae_el_corto_el_largo_del_ocr_es_ruido():
+    texto = ("Cordialmente, ALEXANDER ESTUPINAN ALVARADO C.C. 74.373.954\n"
+             "# historia.pdf\n## Pagina 1 (OCR, confianza 0.70)\n"
+             "Nombre : ALEXANDER ESTUPINAN ALVARADO Documento 174373954\n")
+    plegado = compuerta._texto_para_roles(texto)
+    assert compuerta.documento_del_que_es_un_recorte(
+        "74373954", "ALEXANDER ESTUPINAN ALVARADO", plegado) == ""
+
+
+def test_los_ceros_de_la_banda_de_la_cedula_no_hacen_otro_numero():
+    texto = ("Yo NEY FRANKLIN REDONDO MELO identificado con la Cc.16769353\n"
+             "INDICE DERECHO A-3100100-66133459-M-0016769353-20050614 NEY FRANKLIN REDONDO MELO")
+    plegado = compuerta._texto_para_roles(texto)
+    assert compuerta.documento_del_que_es_un_recorte(
+        "16769353", "NEY FRANKLIN REDONDO MELO", plegado) == ""
