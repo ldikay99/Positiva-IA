@@ -334,6 +334,28 @@ Jonathan: «un programa que te permite crear flujos y automatizaciones que no pu
 - [x] Los archivos que se generan durante una llamada de voz quedan guardados en el turno de la conversación (`archivos` en `POST /api/chats/:id/turno`) y se ven como cápsulas al abrirla.
 - [x] Las herramientas aceptan «flujo» o «id» indistintamente y avisan qué argumento falta (era la causa de un fallo de la evaluación).
 
+## 5e. Motor de PQRD más liviano (pedido 2026-11-09)
+
+Medir primero, mejorar lo que más pesa y demostrarlo contra la línea base. Cifras en `docs/RENDIMIENTO_MOTOR.md`; lo que diverge de producción, en `motor/DIVERGENCIAS.md`.
+
+- [x] Medición en el harness: cada llamada al modelo (quién, tokens de entrada, salida, razonamiento y caché, tiempo), vueltas y herramientas del agente, CPU y memoria pico, resumen y comparación de corridas con la comprobación de sustento (`harness/medicion.py`).
+- [x] Línea base del universo completo (389 correos) con el motor de `7540e18`, y ruido medido repitiendo 60 correos con el mismo código.
+- [x] El agente arranca con el inventario de documentos y las pistas de cada campo; pide varias herramientas por vuelta; la búsqueda acepta un documento.
+- [x] El razonamiento se cuenta como salida (el costo reportado era la mitad del real).
+- [x] Tope de salida y de tiempo a la transcripción por visión.
+- [x] OCR de las hojas de un PDF a la vez, con cupo por núcleos; tope de píxeles por hoja; hojas en blanco sin OCR; sin PNG intermedio; memoria acotada (`_sin_cuadricula` por franjas, `malloc_trim`).
+- [x] Caché de la lectura de cada adjunto por su huella (memoria y disco); la plataforma le da su carpeta.
+- [x] Dirección: rótulos «Dir:» y «Dirección para notificaciones:», la de Positiva excluida; la compuerta descarta la dirección ilegible.
+- [x] Tope de razonamiento medido con el corpus etiquetado de punta a punta: con 512 baja el costo un tercio pero empeora la calidad; queda apagado (`RAZONAMIENTO_TOKENS`).
+- [x] Pantalla: rendimiento por etapa, llamadas, tokens de razonamiento y de caché y adjuntos desde la caché en el detalle de cada ejecución; el tablero suma el p95 y las consultas a la IA por correo. Verificado con Playwright en escritorio y celular.
+- [x] Volumen: PDF de 80 hojas (244 s → 73 s), correo de 30 adjuntos (137 s → 73 s) y ráfaga del universo (memoria pico 8,2 → 3,0 GB).
+- [x] Universo completo y regresión del corpus con el motor nuevo; calidad correo por correo y retrocesos justificados o corregidos (reglas de documento recortado, documento lejos del afectado y varios afectados por el nombre de los adjuntos).
+- [x] Las hojas se renderizan en el hilo del documento: con PyMuPDF en varios hilos el trabajador cayó con SIGSEGV en la plataforma.
+- [x] Pruebas, comentarios y prompt sin datos del universo (nombres y documentos inventados).
+- [ ] Convertir a la vez los adjuntos de un mismo correo.
+- [ ] Descargar los adjuntos grandes por partes.
+- [ ] Caché entre corridas del job en el bucket (hoy el job solo tiene la de memoria).
+
 ## 6. Paso a producción (cuando aprueben)
 
 - [x] Documento de despliegue (`docs/PRODUCCION.md`): principios, entorno y secretos de PQRD y tutelas con sus nombres reales, conexiones, cómo jala la información cada flujo, qué escribe y los pasos para salir a producción.
