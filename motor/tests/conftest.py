@@ -36,3 +36,8 @@ _SECRETOS_FICTICIOS = {
 
 for _clave, _valor in _SECRETOS_FICTICIOS.items():
     os.environ.setdefault(_clave, _valor)
+
+# La cache de conversion recuerda por contenido: entre pruebas que cambian el
+# OCR con dobles, un PDF leido en una le daria a otra lo que leyo el doble. Las
+# pruebas de la cache la encienden a proposito.
+os.environ.setdefault("CACHE_CONVERSION", "no")

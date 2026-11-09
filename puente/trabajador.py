@@ -342,6 +342,27 @@ def instalar_cache_conversion() -> None:
     import cache_conversion
     from pipeline import conversion
 
+    try:
+        from pipeline import cache_conversion as cache_del_motor
+    except ImportError:
+        cache_del_motor = None
+    if cache_del_motor is not None:
+        # El motor ya trae su caché por contenido (memoria y disco): se le da la
+        # carpeta de la plataforma y solo se anuncian los aciertos. Envolverla
+        # aquí también guardaría cada lectura dos veces.
+        if not cache_conversion.activa():
+            os.environ["CACHE_CONVERSION"] = "no"
+        os.environ.setdefault("RUTA_CACHE_CONVERSION", str(cache_conversion.carpeta() / "pqrd"))
+
+        def observar(nombre: str, como: str) -> None:
+            evento("cache_conversion", archivo=nombre, acierto=como == "acierto")
+            if como == "acierto":
+                evento("consola", linea=f"[caché] {nombre}: ya se había leído (misma huella y opciones): "
+                                        "no se repite la conversión ni el OCR")
+
+        cache_del_motor.OBSERVADOR = observar
+        return
+
     original = conversion.convertir
 
     def convertir(datos, nombre, claves_candidatas=None, _profundidad_sobre=0, presupuesto=None):

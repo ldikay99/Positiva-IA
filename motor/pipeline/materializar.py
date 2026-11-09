@@ -10,10 +10,10 @@ from __future__ import annotations
 import re
 from typing import Iterable, List, Optional, Sequence, Tuple
 
+from pipeline import cache_conversion
 from pipeline.conversion import (
     Conversion,
     PresupuestoDeOcr,
-    convertir,
     detectar_tipo,
     devolver_memoria,
     expandir_zip,
@@ -232,8 +232,9 @@ def materializar_adjuntos(
         # El presupuesto NO se comprueba aqui: un PDF con texto nativo no gasta
         # OCR y hay que convertirlo igual. Lo aplica el conversor, que sabe si
         # una pagina necesita reconocerse o si el texto ya estaba.
-        conv: Conversion = convertir(datos, nombre, claves_candidatas,
-                                     presupuesto=presupuesto)
+        # Por la cache de contenido: el mismo archivo no se lee dos veces.
+        conv: Conversion = cache_conversion.convertir(
+            datos, nombre, claves_candidatas, presupuesto=presupuesto)
         devolver_memoria()
         if presupuesto.motivo() in (conv.aviso or ""):
             quedaron_sin_convertir.append(nombre)
