@@ -21,6 +21,8 @@ import estructura_codigo as ec
 
 _parches: List[Tuple[Any, str, Any]] = []
 _constantes: Dict[str, Any] = {}
+# Las copias de los adjuntos que leen los pasos: se borran al terminar la orden (son datos del correo).
+_carpetas: List[Path] = []
 
 
 def _parchear(objeto: Any, nombre: str, nuevo: Any) -> None:
@@ -36,6 +38,9 @@ def quitar() -> None:
     _parches.clear()
     if "max_imagenes" in _constantes:
         conversion.MAX_IMAGENES_IA_POR_CORREO = _constantes.pop("max_imagenes")
+    for carpeta in _carpetas:
+        shutil.rmtree(carpeta, ignore_errors=True)
+    _carpetas.clear()
 
 
 def _correo_de(email: Any) -> Dict[str, str]:
@@ -224,6 +229,7 @@ def instalar(tr: Any, orden: Dict[str, Any]) -> Optional[str]:
             carpeta = Path(tr.TRABAJO) / "pasos" / str(tr._actual["corrida"])
             shutil.rmtree(carpeta, ignore_errors=True)
             carpeta.mkdir(parents=True, exist_ok=True)
+            _carpetas.append(carpeta)
             archivos = []
             for i, (nombre, datos) in enumerate(k.get("adjuntos") or []):
                 limpio = re.sub(r"[^\w.\- ]", "_", nombre)[:120] or f"adjunto{i}"

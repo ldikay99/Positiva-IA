@@ -289,7 +289,8 @@ type VistaEstructura = { editada: boolean; definicion: DefEstructura; reglas: { 
 function EstructuraDelNodo({ n }: { n: Nodo }) {
   const flujo = usar((s) => s.flujo);
   const avisar = usar((s) => s.avisar);
-  const nombreDe = usar((s) => (id: string) => s.catalogo?.nodos.find((x) => x.id === id)?.nombre ?? id);
+  const catalogo = usar((s) => s.catalogo);
+  const nombreDe = (id: string) => catalogo?.nodos.find((x) => x.id === id)?.nombre ?? id;
   const [v, setV] = useState<VistaEstructura | null>(null);
   const [guardando, setGuardando] = useState(false);
   useEffect(() => {

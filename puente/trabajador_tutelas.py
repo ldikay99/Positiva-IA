@@ -714,6 +714,9 @@ def _instalar_estructura(o: Any, orden: dict, caso: str) -> str:
             r = ec.correr_segmento(tramo, est, "tutelas", contexto, orden.get("pasos") or {}, str(_corrida.get()), _salida, _cerrojo)
         except Exception as e:
             r = {"desenlace": "error", "motivo": f"{type(e).__name__}: {e}"[:300], "avisos": []}
+        finally:
+            import shutil
+            shutil.rmtree(carpeta, ignore_errors=True)  # las copias de los anexos son datos del hilo
         evento("pasos_insertados", punto="antes_de_radicar", desenlace=r["desenlace"], motivo=r["motivo"], avisos=(r.get("avisos") or [])[:5])
         if r["desenlace"] == "manual":
             detenido["motivo"] = r["motivo"] or "PASO-DEL-FLUJO"
