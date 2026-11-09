@@ -1214,6 +1214,34 @@ identificado identificada con la el
 """.split())
 
 
+_CIFRA_CON_SEPARADORES = re.compile(r"(?<![\d.])\d(?:[\d.]|(?<=\d) (?=\d)){4,16}\d(?![\d])")
+
+
+def documento_del_que_es_un_recorte(numero: Any, nombre: Any, texto: str) -> str:
+    """
+    El documento del que `numero` es un recorte (uno o dos digitos menos al
+    principio o al final), si el texto lo escribe rotulado o pegado al nombre.
+
+    En el universo el agente tomo "6.769.353" del OCR de la foto de la cedula
+    cuando el cuerpo decia dos veces "Cc.16769353" junto al mismo nombre: la
+    lectura de la imagen perdio el primer digito.
+    """
+    corto = re.sub(r"\D", "", str(numero or ""))
+    if len(corto) < 5 or not texto or not nombre:
+        return ""
+    vistos = set()
+    for m in _CIFRA_CON_SEPARADORES.finditer(texto):
+        largo = re.sub(r"\D", "", m.group(0))
+        if (largo in vistos or not 1 <= len(largo) - len(corto) <= 2
+                or not (largo.startswith(corto) or largo.endswith(corto))):
+            continue
+        vistos.add(largo)
+        if (documento_junto_al_nombre(largo, nombre, texto)
+                or numero_pegado_al_nombre(largo, nombre, texto)):
+            return largo
+    return ""
+
+
 def numero_pegado_al_nombre(numero: Any, nombre: Any, texto: str) -> bool:
     """
     Si el texto escribe el numero pegado al nombre, con o sin rotulo:
@@ -2209,6 +2237,14 @@ def validar(
                         campo, "DOCUMENTO_DE_OTRO_NOMBRE",
                         f"el texto escribe '{doc}' como documento de '{otro}', "
                         f"no de '{nombre_del_doc}'"))
+            completo = (documento_del_que_es_un_recorte(doc, nombre_del_doc, texto_roles)
+                        if not codigo and not otro else "")
+            if completo:
+                reparos.append(Reparo(
+                    "numero_documento_afectado", "DOCUMENTO_RECORTADO",
+                    f"'{doc}' es parte de '{completo}', que el texto escribe como "
+                    f"documento junto a '{nombre_del_doc}': el OCR de una imagen "
+                    f"suele perder o cambiar digitos, y vale lo escrito"))
         h_rem = hallazgos.get("numero_documento_remitente")
         if (doc_rem and doc_rem != doc and h_rem is not None
                 and h_rem.metodo != "remitente_es_el_afectado"

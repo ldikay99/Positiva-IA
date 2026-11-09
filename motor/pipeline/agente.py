@@ -340,6 +340,11 @@ numero_documento_afectado — el documento del titular del caso. Cuidado: los
   la del supervisor, el contratante o el representante legal que firma es de
   ellos: busca la del paciente o trabajador en su propio bloque.
 
+  Si el mismo numero aparece escrito en el correo o en un escrito con texto
+  propio y tambien en una imagen leida por OCR (la foto de la cedula), vale lo
+  escrito: el OCR pierde o cambia digitos ("6.769.353" donde el correo dice
+  "16769353").
+
   Reporta SOLO los digitos. Los puntos y espacios con que se escribe legible
   —"41.234.567", "41 234 567"— son forma, no dato: quitalos. Reporta
   "41234567".
