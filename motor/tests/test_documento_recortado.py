@@ -39,3 +39,41 @@ def test_la_compuerta_lo_devuelve():
          "nombre_afectado": h("nombre_afectado", "Ney Franklin Redondo Melo")},
         fuentes=TEXTO)
     assert any(r.codigo == "DOCUMENTO_RECORTADO" and r.bloqueante for r in dictamen.reparos)
+
+
+# ── El documento que no aparece junto a la persona, cuando otro si ──
+
+FURAT = ("# 1084868506-angel-esteban-perdomo-calderon.pdf\n## Pagina 1\n"
+         "Nombre del trabajador ANGEL ESTEBAN PERDOMO CALDERON identificado con CC 1084868506\n"
+         "## Pagina 3\nResponsable | ESTEFANIA VARGAS ORDOÑEZ | Firma | Tipo Doc | CC | "
+         "No Documento | 63555077")
+
+
+def test_el_documento_del_responsable_no_es_del_trabajador():
+    plegado = compuerta._texto_para_roles(FURAT)
+    assert compuerta.documento_rotulado_de_la_persona(
+        "63555077", "ANGEL ESTEBAN PERDOMO CALDERON", plegado) == "1084868506"
+    assert compuerta.documento_rotulado_de_la_persona(
+        "1084868506", "ANGEL ESTEBAN PERDOMO CALDERON", plegado) == ""
+
+
+def test_un_celular_o_una_fecha_junto_al_nombre_no_son_rivales():
+    texto = ("Pedro Pablo Ruiz celular 3105551234, periodo 202301. "
+             + "Relleno del caso. " * 30 + "Documento del caso 41234567.")
+    plegado = compuerta._texto_para_roles(texto)
+    assert compuerta.documento_rotulado_de_la_persona("41234567", "Pedro Pablo Ruiz", plegado) == ""
+
+
+def test_solo_se_le_aplica_al_documento_del_agente():
+    def h(campo, valor, metodo):
+        return Hallazgo(campo=campo, valor=valor, evidencia="x", confianza=0.95, metodo=metodo)
+
+    nombre = h("nombre_afectado", "ANGEL ESTEBAN PERDOMO CALDERON", "agente_ia")
+    del_agente = compuerta.validar(
+        {"numero_documento_afectado": h("numero_documento_afectado", "63555077", "agente_ia"),
+         "nombre_afectado": nombre}, fuentes=FURAT)
+    assert any(r.codigo == "DOCUMENTO_LEJOS_DEL_AFECTADO" for r in del_agente.reparos)
+    del_algoritmo = compuerta.validar(
+        {"numero_documento_afectado": h("numero_documento_afectado", "63555077", "regla"),
+         "nombre_afectado": nombre}, fuentes=FURAT)
+    assert not any(r.codigo == "DOCUMENTO_LEJOS_DEL_AFECTADO" for r in del_algoritmo.reparos)

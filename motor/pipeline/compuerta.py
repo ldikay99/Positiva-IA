@@ -1242,6 +1242,40 @@ def documento_del_que_es_un_recorte(numero: Any, nombre: Any, texto: str) -> str
     return ""
 
 
+# Lo que junto a un nombre no es su documento: un celular o un fijo de diez
+# digitos y una fecha o un periodo ("202301", "20260115").
+_NO_ES_UN_DOCUMENTO = re.compile(r"^(?:3\d{9}|60\d{8}|(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:\d{2})?)$")
+
+
+def documento_rotulado_de_la_persona(numero: Any, nombre: Any, texto: str) -> str:
+    """
+    Otro documento que el texto si escribe junto a esa persona, cuando `numero`
+    no aparece junto a ella en ninguna parte. Cadena vacia si no lo hay.
+
+    En el universo el agente tomo de un FURAT el documento del "Responsable" que
+    firma, y de una planilla el de otra fila, mientras el nombre del archivo y
+    el cuerpo traian el de la persona con su nombre.
+    """
+    propio = re.sub(r"\D", "", str(numero or ""))
+    if len(propio) < 5 or not texto or not nombre:
+        return ""
+    if (documento_junto_al_nombre(propio, nombre, texto)
+            or numero_pegado_al_nombre(propio, nombre, texto)):
+        return ""
+    vistos = {propio}
+    for m in _CIFRA_CON_SEPARADORES.finditer(texto):
+        otro = re.sub(r"\D", "", m.group(0))
+        # Un trozo del propio numero (el OCR lo partio) no es otro documento.
+        if (otro in vistos or not 5 <= len(otro) <= 11 or _NO_ES_UN_DOCUMENTO.match(otro)
+                or otro in propio or propio in otro):
+            continue
+        vistos.add(otro)
+        if (documento_junto_al_nombre(otro, nombre, texto)
+                or numero_pegado_al_nombre(otro, nombre, texto)):
+            return otro
+    return ""
+
+
 def numero_pegado_al_nombre(numero: Any, nombre: Any, texto: str) -> bool:
     """
     Si el texto escribe el numero pegado al nombre, con o sin rotulo:
@@ -2245,6 +2279,17 @@ def validar(
                     f"'{doc}' es parte de '{completo}', que el texto escribe como "
                     f"documento junto a '{nombre_del_doc}': el OCR de una imagen "
                     f"suele perder o cambiar digitos, y vale lo escrito"))
+            h_doc = hallazgos.get("numero_documento_afectado")
+            rival = (documento_rotulado_de_la_persona(doc, nombre_del_doc, texto_roles)
+                     if (not codigo and not otro and not completo and h_doc is not None
+                         and h_doc.metodo == "agente_ia"
+                         and _es_nombre_de_persona(nombre_del_doc)) else "")
+            if rival:
+                reparos.append(Reparo(
+                    "numero_documento_afectado", "DOCUMENTO_LEJOS_DEL_AFECTADO",
+                    f"'{doc}' no aparece en ninguna parte junto a '{nombre_del_doc}', "
+                    f"y '{rival}' si: el documento que se propone es de otro bloque "
+                    f"(otra persona del formulario, un responsable, una planilla)"))
         h_rem = hallazgos.get("numero_documento_remitente")
         if (doc_rem and doc_rem != doc and h_rem is not None
                 and h_rem.metodo != "remitente_es_el_afectado"
