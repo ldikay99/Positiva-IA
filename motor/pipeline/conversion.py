@@ -93,6 +93,10 @@ _CUPO_TESSERACT = threading.BoundedSemaphore(TESSERACT_A_LA_VEZ)
 # leia de a una aunque la maquina tuviera los nucleos libres.
 PAGINAS_OCR_EN_PARALELO = _entero_del_entorno(
     "OCR_PAGINAS_EN_PARALELO", min(4, nucleos()))
+# Hojas renderizadas a la vez en todo el proceso. Cada una es una imagen de
+# hasta 40 MB que espera su turno de lectura: con una rafaga de correos, sin
+# este tope habria cinco correos por cuatro hojas en memoria.
+_CUPO_DE_HOJAS = threading.BoundedSemaphore(2 * TESSERACT_A_LA_VEZ)
 
 # Limite por documento. Los adjuntos de 200 paginas existen y no aportan mas
 # informacion que las primeras: se convierten hasta el limite y queda anotado.
@@ -481,9 +485,10 @@ def _pdf_a_markdown(
             def leer(pagina):
                 # Se mira el presupuesto al empezar cada hoja, no al ponerla en
                 # fila: si no, todas entrarian antes de gastar un segundo.
-                if time.monotonic() - inicio_ocr >= tope:
-                    return _LecturaDePagina("", motivo_sin_presupuesto)
-                return _ocr_de_pagina(pagina, del_correo)
+                with _CUPO_DE_HOJAS:
+                    if time.monotonic() - inicio_ocr >= tope:
+                        return _LecturaDePagina("", motivo_sin_presupuesto)
+                    return _ocr_de_pagina(pagina, del_correo)
 
             def asentar(i: int, hueco: int, lectura) -> None:
                 nonlocal paginas_ilegibles
