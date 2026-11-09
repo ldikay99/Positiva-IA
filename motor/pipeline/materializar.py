@@ -15,6 +15,7 @@ from pipeline.conversion import (
     PresupuestoDeOcr,
     convertir,
     detectar_tipo,
+    devolver_memoria,
     expandir_zip,
     normalizar,
 )
@@ -233,6 +234,7 @@ def materializar_adjuntos(
         # una pagina necesita reconocerse o si el texto ya estaba.
         conv: Conversion = convertir(datos, nombre, claves_candidatas,
                                      presupuesto=presupuesto)
+        devolver_memoria()
         if presupuesto.motivo() in (conv.aviso or ""):
             quedaron_sin_convertir.append(nombre)
         entrada = EntradaManifiesto(

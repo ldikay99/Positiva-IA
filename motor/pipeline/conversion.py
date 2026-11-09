@@ -9,12 +9,15 @@ Markdown conserva encabezados, tablas y listas, que el modelo aprovecha.
 """
 from __future__ import annotations
 
+import contextvars
 import io
 import os
 import re
+import threading
 import time
 import unicodedata
 import zipfile
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional, Tuple
 
@@ -31,6 +34,65 @@ from typing import Callable, List, Optional, Tuple
 # binario como subproceso y el subproceso hereda el entorno. `setdefault` para
 # que un valor puesto en el Job siga mandando.
 os.environ.setdefault("OMP_THREAD_LIMIT", "1")
+
+
+def nucleos() -> int:
+    """Los nucleos que de verdad tiene el proceso: afinidad y cuota del cgroup."""
+    try:
+        n = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        n = os.cpu_count() or 1
+    try:
+        cuota, periodo = open("/sys/fs/cgroup/cpu.max").read().split()[:2]
+        if cuota != "max":
+            n = min(n, max(1, int(int(cuota) // int(periodo))))
+    except (OSError, ValueError):
+        pass
+    return max(1, n)
+
+
+_LIBC: list = []
+
+
+def devolver_memoria() -> None:
+    """
+    Le devuelve al sistema la memoria que el proceso ya libero.
+
+    Las imagenes de una hoja a 300 dpi son decenas de megas; glibc las saca del
+    monton y, al soltarlas, se queda con el espacio. Sin esto el proceso nunca
+    baja de su pico, y el pico crece con cada correo con escaneos.
+    """
+    if not _LIBC:
+        import ctypes
+
+        try:
+            _LIBC.append(ctypes.CDLL("libc.so.6"))
+        except OSError:  # no es glibc (Windows, macOS): no hace falta
+            _LIBC.append(None)
+    try:
+        if _LIBC[0] is not None:
+            _LIBC[0].malloc_trim(0)
+    except Exception:
+        pass
+
+
+def _entero_del_entorno(nombre: str, por_defecto: int) -> int:
+    try:
+        return max(1, int(os.environ.get(nombre) or por_defecto))
+    except ValueError:
+        return por_defecto
+
+
+# Lecturas de imagen (preparacion y tesseract) a la vez en todo el proceso,
+# sumando todos los correos. Con cinco correos y varias hojas por correo en
+# paralelo, sin tope habria mas procesos que nucleos, cada hoja tardaria varias
+# veces mas (lo que hace saltar el tope por pagina) y la memoria se multiplica.
+TESSERACT_A_LA_VEZ = _entero_del_entorno("OCR_TESSERACT_A_LA_VEZ", nucleos())
+_CUPO_TESSERACT = threading.BoundedSemaphore(TESSERACT_A_LA_VEZ)
+# Hojas de un mismo PDF que se leen a la vez. Un escaneo de ochenta hojas se
+# leia de a una aunque la maquina tuviera los nucleos libres.
+PAGINAS_OCR_EN_PARALELO = _entero_del_entorno(
+    "OCR_PAGINAS_EN_PARALELO", min(4, nucleos()))
 
 # Limite por documento. Los adjuntos de 200 paginas existen y no aportan mas
 # informacion que las primeras: se convierten hasta el limite y queda anotado.
@@ -374,6 +436,7 @@ def _pdf_a_markdown(
     del_correo = presupuesto or PresupuestoDeOcr()
     tope = min(PRESUPUESTO_OCR_SEGUNDOS, del_correo.queda())
     manda_el_correo = tope < PRESUPUESTO_OCR_SEGUNDOS
+    hilos: Optional[ThreadPoolExecutor] = None
     try:
         with pymupdf.open(stream=datos, filetype="pdf") as doc:
             # Muchos PDF marcados como cifrados solo llevan contraseña de
@@ -407,11 +470,43 @@ def _pdf_a_markdown(
                 else:
                     aviso_clave = ""
             total_paginas = doc.page_count
+            motivo_sin_presupuesto = (
+                del_correo.motivo() if manda_el_correo
+                else f"se agoto el presupuesto de OCR "
+                     f"({PRESUPUESTO_OCR_SEGUNDOS:.0f}s) para este documento")
+            candado_doc = threading.Lock()
+            hilos = ThreadPoolExecutor(max_workers=PAGINAS_OCR_EN_PARALELO)
+            en_vuelo: List[Tuple[int, int, Future]] = []
+
+            def leer(pagina):
+                # Se mira el presupuesto al empezar cada hoja, no al ponerla en
+                # fila: si no, todas entrarian antes de gastar un segundo.
+                if time.monotonic() - inicio_ocr >= tope:
+                    return _LecturaDePagina("", motivo_sin_presupuesto)
+                return _ocr_de_pagina(pagina, del_correo)
+
+            def asentar(i: int, hueco: int, lectura) -> None:
+                nonlocal paginas_ilegibles
+                ocr, fallo_ocr = lectura
+                confianza = getattr(lectura, "confianza", None)
+                if ocr:
+                    partes[hueco] = (
+                        f"## Pagina {i + 1} {_marca_ocr(confianza)}\n\n"
+                        + _linea_dudosa(confianza, "pagina") + ocr)
+                    return
+                paginas_ilegibles += 1
+                if fallo_ocr and fallo_ocr not in motivos_ocr:
+                    motivos_ocr.append(fallo_ocr)
+                partes[hueco] = (
+                    f"## Pagina {i + 1}\n\n_(pagina sin texto extraible"
+                    + (f": {fallo_ocr}" if fallo_ocr else "") + ")_")
+
             for i in range(min(total_paginas, LIMITE_PAGINAS_PDF)):
                 # Una pagina corrupta no debe costar el documento entero.
                 try:
-                    pagina = doc.load_page(i)
-                    texto = pagina.get_text("text") or ""
+                    with candado_doc:
+                        pagina = doc.load_page(i)
+                        texto = pagina.get_text("text") or ""
                 except Exception as e:
                     paginas_con_error += 1
                     partes.append(
@@ -421,32 +516,25 @@ def _pdf_a_markdown(
                     continue
                 if not texto.strip():
                     paginas_sin_texto += 1
-                    confianza = None
                     if time.monotonic() - inicio_ocr >= tope:
-                        ocr, fallo_ocr = "", (
-                            del_correo.motivo() if manda_el_correo
-                            else f"se agoto el presupuesto de OCR "
-                                 f"({PRESUPUESTO_OCR_SEGUNDOS:.0f}s) para "
-                                 f"este documento"
-                        )
-                    else:
-                        lectura = _ocr_de_pagina(pagina, del_correo)
-                        ocr, fallo_ocr = lectura
-                        confianza = getattr(lectura, "confianza", None)
-                    if ocr:
-                        partes.append(
-                            f"## Pagina {i + 1} {_marca_ocr(confianza)}\n\n"
-                            + _linea_dudosa(confianza, "pagina") + ocr)
+                        partes.append("")
+                        asentar(i, len(partes) - 1,
+                                _LecturaDePagina("", motivo_sin_presupuesto))
                         continue
-                    paginas_ilegibles += 1
-                    if fallo_ocr and fallo_ocr not in motivos_ocr:
-                        motivos_ocr.append(fallo_ocr)
-                    partes.append(
-                        f"## Pagina {i + 1}\n\n_(pagina sin texto extraible"
-                        + (f": {fallo_ocr}" if fallo_ocr else "") + ")_"
-                    )
+                    # Tope de hojas en vuelo: cada una es una imagen de 300 dpi
+                    # en memoria hasta que termina.
+                    while sum(not f.done() for _, _, f in en_vuelo) >= PAGINAS_OCR_EN_PARALELO:
+                        wait([f for _, _, f in en_vuelo if not f.done()],
+                             return_when=FIRST_COMPLETED)
+                    partes.append("")
+                    # Con el contexto del correo: lo que se anota por correo
+                    # (fallos de vision, eventos) tiene que verse desde el hilo.
+                    en_vuelo.append((i, len(partes) - 1, hilos.submit(
+                        contextvars.copy_context().run, leer,
+                        _PaginaCompartida(pagina, candado_doc))))
                     continue
-                tablas = _tablas_de_pagina(pagina)
+                with candado_doc:
+                    tablas = _tablas_de_pagina(pagina)
                 bloque = f"## Pagina {i + 1}\n\n{normalizar(texto)}"
                 if tablas:
                     bloque += "\n\n" + "\n\n".join(tablas)
@@ -457,7 +545,9 @@ def _pdf_a_markdown(
                 # revision manual por falta de un documento que si estaba.
                 queda = tope - (time.monotonic() - inicio_ocr)
                 leido, sin_leer, motivo = _ocr_de_imagenes(
-                    doc, pagina, vistas, queda, del_correo)
+                    _PaginaCompartida(doc, candado_doc),
+                    _PaginaCompartida(pagina, candado_doc),
+                    vistas, queda, del_correo)
                 if leido:
                     bloque += "\n\n" + leido
                     imagenes_leidas += len(leido.split("### Imagen")) - 1
@@ -466,7 +556,20 @@ def _pdf_a_markdown(
                     if motivo and motivo not in motivos_ocr:
                         motivos_ocr.append(motivo)
                 partes.append(bloque)
+            try:
+                for i, hueco, futuro in en_vuelo:
+                    try:
+                        lectura = futuro.result()
+                    except Exception as e:
+                        lectura = _LecturaDePagina(
+                            "", f"el OCR fallo ({type(e).__name__}: {e})")
+                    asentar(i, hueco, lectura)
+            finally:
+                hilos.shutdown(wait=True)
     except Exception as e:
+        if hilos is not None:
+            # Ninguna hoja sigue leyendose sobre un documento ya cerrado.
+            hilos.shutdown(wait=True, cancel_futures=True)
         # El detalle importa: "document closed or encrypted" a secas no permite
         # distinguir un PDF con contraseña de uno truncado.
         detalle = (
@@ -680,7 +783,7 @@ def _orientacion(gris, segundos: float) -> Tuple[int, float]:
 
     try:
         datos = pytesseract.image_to_osd(
-            gris, config="--psm 0", output_type=pytesseract.Output.DICT,
+            _sin_comprimir(gris), config="--psm 0", output_type=pytesseract.Output.DICT,
             timeout=max(1.0, segundos))
         return (int(datos.get("rotate", 0)) % 360,
                 float(datos.get("orientation_conf", 0.0)))
@@ -742,11 +845,25 @@ def _texto_y_confianza(datos: dict) -> Tuple[str, float]:
     return normalizar("".join(partes)), (suma / peso / 100.0) if peso else 0.0
 
 
+def _sin_comprimir(imagen):
+    """
+    La imagen marcada para que pytesseract la pase a tesseract sin comprimir.
+
+    pytesseract la escribe a un archivo temporal en el formato que diga la
+    imagen, y sin formato usa PNG: comprimir una hoja a 300 dpi costaba un tercio
+    de segundo por lectura, mas que el resto del trabajo propio. PGM y PPM son
+    los mismos pixeles sin comprimir (PIL guarda los tres como "PPM").
+    """
+    if imagen.mode in ("1", "L", "RGB"):
+        imagen.format = "PPM"
+    return imagen
+
+
 def _tesseract(gris, segundos: float) -> Tuple[str, float]:
     import pytesseract
 
     datos = pytesseract.image_to_data(
-        gris, lang=IDIOMAS_OCR, config="--oem 1 --psm 3",
+        _sin_comprimir(gris), lang=IDIOMAS_OCR, config="--oem 1 --psm 3",
         output_type=pytesseract.Output.DICT, timeout=max(1.0, segundos))
     return _texto_y_confianza(datos)
 
@@ -775,10 +892,13 @@ def _con_respaldo_ia(imagen, texto: str, confianza: Optional[float],
     """La lectura de tesseract, o la del modelo si tesseract la dejo floja."""
     transcribir = TRANSCRIPTOR_IA
     if (transcribir is None or presupuesto is None
-            or presupuesto.imagenes_ia <= 0
             or not _floja_para_vision(texto, confianza)):
         return texto, confianza, motivo
-    presupuesto.imagenes_ia -= 1
+    # Las hojas de un PDF se leen a la vez: el cupo se toma bajo candado.
+    with _CERROJO_DEL_CUPO_IA:
+        if presupuesto.imagenes_ia <= 0:
+            return texto, confianza, motivo
+        presupuesto.imagenes_ia -= 1
     try:
         salida = io.BytesIO()
         imagen.convert("RGB").save(salida, format="JPEG", quality=90)
@@ -801,10 +921,19 @@ MARCA_TRANSCRITO_POR_IA = (
 # pone el orquestador cuando trabaja con Vertex; en pruebas y sin modelo queda
 # en None y el OCR es solo tesseract.
 TRANSCRIPTOR_IA: Optional[Callable[[bytes], str]] = None
+_CERROJO_DEL_CUPO_IA = threading.Lock()
 
 
 def _texto_de_imagen_tesseract(imagen, segundos: float,
                                preparar: bool = True) -> Tuple[str, float, str]:
+    # La preparacion y tesseract son CPU y memoria: a la vez, solo tantas
+    # lecturas como nucleos. Lo que espera aqui no gasta el tope de la hoja.
+    with _CUPO_TESSERACT:
+        return _texto_de_imagen_tesseract_sin_cupo(imagen, segundos, preparar)
+
+
+def _texto_de_imagen_tesseract_sin_cupo(imagen, segundos: float,
+                                        preparar: bool = True) -> Tuple[str, float, str]:
     """
     OCR de una imagen ya cargada, con tope de tiempo. Devuelve
     (texto, confianza 0-1, motivo_del_fallo).
@@ -926,14 +1055,99 @@ class _LecturaDePagina(tuple):
         return lectura
 
 
-def _dpi_de_pagina(pagina) -> int:
+# Lado mayor, en pixeles, de una hoja renderizada para OCR: un oficio a 300 dpi.
+# Hay PDF cuya pagina mide lo que mide la foto que llevan (2550 x 3507 puntos):
+# a 300 dpi eran 155 megapixeles, casi medio giga por hoja, tesseract se cortaba
+# por tiempo y la memoria del proceso pasaba de 7 GB. Mas alla de la resolucion
+# de la foto no hay nada que leer.
+LADO_MAXIMO_OCR_PX = 4200
+
+
+def _dpi_de_pagina(pagina, dpi_deseado: Optional[int] = None) -> int:
     """La resolucion que lleva la pagina al ancho minimo de OCR, entre topes."""
     try:
         ancho_pt = float(pagina.rect.width) or 612.0
+        alto_pt = float(pagina.rect.height) or 792.0
     except Exception:
         return DPI_MINIMO_OCR
     necesario = int(-(-ANCHO_MINIMO_OCR_PX * 72 // ancho_pt))
-    return max(DPI_MINIMO_OCR, min(DPI_MAXIMO_OCR, necesario))
+    dpi = dpi_deseado or max(DPI_MINIMO_OCR, min(DPI_MAXIMO_OCR, necesario))
+    tope = int(LADO_MAXIMO_OCR_PX * 72 // max(ancho_pt, alto_pt, 1.0))
+    return max(36, min(dpi, tope))
+
+
+def _imagen_de_pagina(pagina, dpi: int):
+    """
+    La hoja renderizada como imagen de PIL.
+
+    Se arma con los pixeles del render y no pasando por PNG: a 300 dpi
+    comprimir y descomprimir la hoja costaba casi medio segundo y no cambia
+    un solo pixel.
+    """
+    from PIL import Image
+
+    pix = pagina.get_pixmap(dpi=dpi)
+    muestras = getattr(pix, "samples", None)
+    n = getattr(pix, "n", 0)
+    if isinstance(muestras, (bytes, bytearray, memoryview)) and n in (1, 3, 4):
+        modo = {1: "L", 3: "RGB", 4: "RGBA"}[n]
+        imagen = Image.frombytes(modo, (pix.width, pix.height), bytes(muestras))
+        return imagen.convert("RGB") if modo == "RGBA" else imagen
+    return Image.open(io.BytesIO(pix.tobytes("png")))
+
+
+# Una hoja escaneada en blanco (el reverso de una hoja, una separadora) no tiene
+# nada que leer, y costaba lo que la peor: tesseract la leia entera, como salia
+# floja buscaba el giro con tres sondeos y al final se la mandaba al modelo con
+# vision, que respondia SIN_TEXTO. La tinta se mide sobre la mitad de la
+# resolucion: un pixel cuenta si es bastante mas oscuro que el fondo de la hoja.
+FRACCION_DE_TINTA_DE_UNA_HOJA_EN_BLANCO = 0.0005
+CONTRASTE_DE_TINTA = 80
+MOTIVO_EN_BLANCO = "la pagina esta en blanco"
+
+
+def fraccion_de_tinta(imagen) -> float:
+    """La parte de la hoja que es tinta, de 0 a 1."""
+    gris = imagen.convert("L")
+    if min(gris.size) >= 400:
+        gris = gris.reduce(2)
+    hist = gris.histogram()[:256]
+    total = sum(hist) or 1
+    # El fondo es el tono mas comun de la mitad clara.
+    fondo = max(range(128, 256), key=lambda v: hist[v])
+    return sum(hist[:max(0, fondo - CONTRASTE_DE_TINTA)]) / total
+
+
+def _en_blanco(imagen) -> bool:
+    try:
+        return fraccion_de_tinta(imagen) < FRACCION_DE_TINTA_DE_UNA_HOJA_EN_BLANCO
+    except Exception:
+        return False
+
+
+class _PaginaCompartida:
+    """
+    Una pagina de PyMuPDF que se puede leer desde otro hilo.
+
+    PyMuPDF no admite dos hilos sobre el mismo documento: cada acceso a la
+    pagina va bajo el candado del documento. Solo se serializa el render, que
+    son decimas; el OCR, que son segundos, corre a la vez.
+    """
+
+    def __init__(self, pagina, candado) -> None:
+        self._pagina = pagina
+        self._candado = candado
+
+    def __getattr__(self, nombre):
+        with self._candado:
+            valor = getattr(self._pagina, nombre)
+        if not callable(valor):
+            return valor
+
+        def llamar(*a, **k):
+            with self._candado:
+                return valor(*a, **k)
+        return llamar
 
 
 def _ocr_de_pagina(pagina, presupuesto: Optional["PresupuestoDeOcr"] = None
@@ -955,10 +1169,11 @@ def _ocr_de_pagina(pagina, presupuesto: Optional["PresupuestoDeOcr"] = None
     # El render cuenta dentro del tope de la pagina.
     inicio = time.monotonic()
     try:
-        pix = pagina.get_pixmap(dpi=_dpi_de_pagina(pagina))
-        imagen = Image.open(io.BytesIO(pix.tobytes("png")))
+        imagen = _imagen_de_pagina(pagina, _dpi_de_pagina(pagina))
     except Exception as e:
         return _LecturaDePagina("", f"el OCR fallo ({type(e).__name__}: {e})")
+    if _en_blanco(imagen):
+        return _LecturaDePagina("", MOTIVO_EN_BLANCO)
     # A 300 dpi una hoja densa con el job cargado puede pasar del tope y
     # perderse entera. Se le deja a la lectura principal solo parte del tope,
     # para que si se corta quede tiempo de leerla a 200 dpi: una lectura algo
@@ -970,8 +1185,9 @@ def _ocr_de_pagina(pagina, presupuesto: Optional["PresupuestoDeOcr"] = None
         queda = TIMEOUT_OCR_PAGINA_S - (time.monotonic() - inicio)
         if queda > 3:
             try:
-                pix = pagina.get_pixmap(dpi=DPI_DE_RESPALDO_OCR)
-                menor = Image.open(io.BytesIO(pix.tobytes("png")))
+                menor = _imagen_de_pagina(
+                    pagina, min(_dpi_de_pagina(pagina, DPI_DE_RESPALDO_OCR),
+                                _dpi_de_pagina(pagina) * 2 // 3))
                 texto, confianza, motivo2 = _texto_de_imagen(
                     menor, queda, preparar=False)
                 motivo = motivo2 if not texto else ""
@@ -990,14 +1206,24 @@ def _tramos_de_tinta(tinta, largo: int):
     import numpy as np
 
     ancho = tinta.shape[1]
-    suma = np.cumsum(np.pad(tinta.astype(np.int32), ((0, 0), (1, 0))), axis=1)
-    # Donde EMPIEZA un tramo completo de `largo`.
-    empieza = (suma[:, largo:] - suma[:, :-largo]) == largo
-    empieza = np.pad(empieza.astype(np.int32),
-                     ((0, 0), (0, ancho - empieza.shape[1])))
-    # Un pixel es del tramo si alguno de los `largo` anteriores lo empezo.
-    acumulado = np.pad(np.cumsum(empieza, axis=1), ((0, 0), (largo, 0)))
-    return (acumulado[:, largo:] - acumulado[:, :ancho]) > 0
+    salida = np.zeros(tinta.shape, dtype=bool)
+    # Por franjas de filas, que son independientes: de una vez, una hoja a 300
+    # dpi pedia cerca de 300 MB de arreglos intermedios, y con varias hojas a la
+    # vez el proceso llegaba a 13 GB.
+    for ini in range(0, tinta.shape[0], FILAS_POR_FRANJA):
+        franja = tinta[ini: ini + FILAS_POR_FRANJA]
+        suma = np.cumsum(np.pad(franja.astype(np.int32), ((0, 0), (1, 0))), axis=1)
+        # Donde EMPIEZA un tramo completo de `largo`.
+        empieza = (suma[:, largo:] - suma[:, :-largo]) == largo
+        empieza = np.pad(empieza.astype(np.int32),
+                         ((0, 0), (0, ancho - empieza.shape[1])))
+        # Un pixel es del tramo si alguno de los `largo` anteriores lo empezo.
+        acumulado = np.pad(np.cumsum(empieza, axis=1), ((0, 0), (largo, 0)))
+        salida[ini: ini + FILAS_POR_FRANJA] = (acumulado[:, largo:] - acumulado[:, :ancho]) > 0
+    return salida
+
+
+FILAS_POR_FRANJA = 256
 
 
 def _sin_cuadricula(gris):

@@ -95,6 +95,8 @@ def test_una_hoja_que_se_corta_a_300_dpi_se_relee_a_200(monkeypatch):
     pymupdf = pytest.importorskip("pymupdf")
     doc = pymupdf.open()
     pagina = doc.new_page(width=612, height=792)
+    # Con algo de tinta: una hoja en blanco no se lee (ver _en_blanco).
+    pagina.draw_rect(pymupdf.Rect(72, 72, 300, 200), color=(0, 0, 0), fill=(0, 0, 0))
     lectura_final = conversion._ocr_de_pagina(pagina)
     texto, motivo = lectura_final
     assert texto.startswith("CC 1062965207") and motivo == ""
