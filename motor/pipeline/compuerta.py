@@ -329,6 +329,11 @@ _DIRECCION_VACIA = re.compile(
     re.IGNORECASE,
 )
 _CORREO_EN_TEXTO = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]{2,}")
+# Lo que el OCR deja de una direccion que no pudo leer: signos que ninguna
+# direccion lleva ("cale 6 A N.&! -3.."). Uno suelto puede ser un "#" mal leido;
+# dos ya no es una direccion que lleve a alguna parte.
+_SIGNO_AJENO_A_UNA_DIRECCION = re.compile(r"[^\w\s#\-.,°º/()'\"]", re.UNICODE)
+MAX_SIGNOS_AJENOS_EN_DIRECCION = 1
 _SOLO_UN_NUMERO = re.compile(r"^\s*\+?\d[\d\s().+-]{5,}\s*$")
 
 
@@ -367,6 +372,8 @@ def _revisar_direccion(direccion, reparos, correcciones):
         motivo = "contiene un correo electronico"
     elif _SOLO_UN_NUMERO.match(texto):
         motivo = "es un numero telefonico, no una direccion"
+    elif len(_SIGNO_AJENO_A_UNA_DIRECCION.findall(texto)) > MAX_SIGNOS_AJENOS_EN_DIRECCION:
+        motivo = "es lectura ilegible del OCR, no una direccion"
     if not motivo:
         return
 
