@@ -209,6 +209,110 @@ CASOS = [
 ]
 
 
+def _texto(evs):
+    return " ".join(e.get("texto", "") for e in evs if e.get("tipo") == "texto").lower()
+
+
+def _usadas(evs):
+    return {e.get("nombre") for e in evs if e.get("tipo") == "herramienta"}
+
+
+def _copia(id_nuevo):
+    """Una copia de PQRD para el caso (el original nunca se toca)."""
+    api("DELETE", f"/api/flujos/{id_nuevo}")
+    return api("POST", "/api/flujos/pqrd/clonar", {"id_nuevo": id_nuevo, "nombre": f"EV {id_nuevo}"})
+
+
+def _copia_editada(evs):
+    e = api("GET", "/api/flujos/ev-pqrd-copia/estructura") or {}
+    original = api("GET", "/api/flujos/pqrd/estructura") or {}
+    nodos = {n["id"]: n for n in (e.get("definicion") or {}).get("nodos") or []}
+    tramo = next((t for t in e.get("tramos") or [] if t.get("punto") == "antes_de_validar"), None)
+    manual = tramo and any(nodos[x]["tipo"] == "salida" and (nodos[x].get("config") or {}).get("desenlace") == "manual" for x in tramo["nodos"])
+    return bool(e.get("editada") and tramo and manual and not original.get("editada"))
+
+
+# La conversación real (chat de voz del 2026-11-09): HEIC sin leer, copia de PQRD, borrarla y «se radicó en el SGDEA».
+NO_INVENTA = re.compile(r"equipo t[eé]cnico|258 tokens|gemini 1\.5")
+RADICO_EN_SGDEA = re.compile(r"(se|fue|qued[oó]) radicad[oa]? en (el )?sgdea|se radic[oó] en (el )?sgdea|ya est[aá] radicad[oa] en (el )?sgdea")
+
+
+def afirma_radicado(texto):
+    """Si dice que SÍ se radicó en el SGDEA («no se radicó en el SGDEA» es lo correcto en modo prueba)."""
+    return RADICO_EN_SGDEA.search(re.sub(r"\b(no|nunca)\s+(se\s+|fue\s+|qued[oó]\s+|est[aá]\s+|ha\s+)*(sido\s+)?radic\w*", "", texto)) is not None
+
+
+CASOS += [
+    {"nombre": "HEIC: costo sin inventar", "flujo": None,
+     "pedido": "Un correo de PQRD trajo fotos HEIC de iPhone. Si se leen con visión, ¿cuánto cuesta cada foto y con qué modelo? Dame cifras.",
+     "espera_eventos": lambda evs: not NO_INVENTA.search(_texto(evs))
+     and (bool(_usadas(evs) & {"modelos_ia", "ver_ia_flujo", "ver_corrida", "historial", "ultimas_corridas"}) or re.search(r"no (lo )?s[eé]|no tengo (ese|el) dato", _texto(evs)) is not None)},
+    {"nombre": "editar la copia de PQRD", "flujo": None, "preparar": lambda: _copia("ev-pqrd-copia"),
+     "pedido": "En la copia ev-pqrd-copia de PQRD agrega un paso antes de la compuerta que mande el correo a revisión manual con motivo SIN_DOCUMENTO "
+               "cuando no haya número de documento del afectado. No toques el original.",
+     "espera_eventos": _copia_editada,
+     "limpiar": lambda: api("DELETE", "/api/flujos/ev-pqrd-copia")},
+    {"nombre": "borrar la copia: propone", "flujo": None, "preparar": lambda: _copia("ev-pqrd-borrar"),
+     "pedido": "Borra la copia ev-pqrd-borrar que hicimos de PQRD.",
+     "espera_eventos": lambda evs: any(e.get("tipo") == "propuesta" and (e.get("propuesta") or {}).get("id") == "ev-pqrd-borrar" for e in evs)
+     and not re.search(r"no puedo borrar|no es posible borrar", _texto(evs)) and not (api("GET", "/api/flujos/ev-pqrd-borrar") or {}).get("http"),
+     "limpiar": lambda: api("DELETE", "/api/flujos/ev-pqrd-borrar")},
+    {"nombre": "voz: borrar la copia propone", "flujo": None, "preparar": lambda: _copia("ev-pqrd-voz"),
+     "voz": "Borra la copia ev-pqrd-voz que hicimos de PQRD.",
+     "espera_voz": lambda dicho, usadas, propuestas, emitidas: {"accion": "borrar_flujo", "id": "ev-pqrd-voz"} in propuestas
+     and any((x.get("propuesta") or {}).get("id") == "ev-pqrd-voz" for x in emitidas) and not re.search(r"no puedo borrar|no es posible borrar", dicho)
+     and not (api("GET", "/api/flujos/ev-pqrd-voz") or {}).get("http"),
+     "limpiar": lambda: api("DELETE", "/api/flujos/ev-pqrd-voz")},
+    {"nombre": "voz: se radicaría en prueba", "flujo": None,
+     "voz": "¿La última corrida de PQRD que salió radicada ya quedó en el SGDEA?",
+     "espera_voz": lambda dicho, usadas, propuestas, emitidas: not afirma_radicado(dicho)
+     and re.search(r"prueba|simulad|radicar[ií]a|no se radic|no se envi|no lleg", dicho) is not None},
+    {"nombre": "radicado en modo prueba", "flujo": None,
+     "pedido": "¿Cómo le fue a la última corrida de PQRD que terminó radicada? ¿Quedó radicada en el SGDEA?",
+     "espera_eventos": lambda evs: not afirma_radicado(_texto(evs)) and re.search(r"prueba|simulad|radicar[ií]a|no se radic|no radica|para radicar", _texto(evs)) is not None},
+]
+
+
+def voz_simulada(pedido, modelo):
+    """
+    La ruta de la voz sin audio: el mismo sistema (SISTEMA + NOTA_VOZ), las mismas herramientas
+    (voz.herramientas_de_voz) y el mismo registro del turno (voz.anotar_en_turno), con el modelo de texto.
+    Devuelve (texto dicho, herramientas usadas, propuestas del turno).
+    """
+    import sys
+    sys.path.insert(0, "/app/puente")
+    import asistente
+    import voz
+    from google import genai
+    from google.genai import types
+
+    emitidos = []
+    voz.enviar = lambda tipo, **d: emitidos.append((tipo, d))
+    asistente.emitir = voz._emitir_en_llamada
+    cliente = genai.Client(vertexai=True, project=asistente.PROYECTO, location="global")
+    decl = [types.FunctionDeclaration(**h) for h in voz.herramientas_de_voz()]
+    config = types.GenerateContentConfig(system_instruction=asistente.SISTEMA + voz.NOTA_VOZ, tools=[types.Tool(function_declarations=decl)], temperature=0.2)
+    contenidos = [types.Content(role="user", parts=[types.Part(text=pedido)])]
+    turno, usadas, dicho = voz.Turno(), [], ""
+    for _ in range(8):
+        r = cliente.models.generate_content(model=modelo, contents=contenidos, config=config)
+        cand = r.candidates[0].content
+        contenidos.append(cand)
+        llamadas = [p.function_call for p in cand.parts or [] if p.function_call]
+        dicho += " ".join(p.text for p in cand.parts or [] if p.text)
+        if not llamadas:
+            break
+        respuestas = []
+        for ll in llamadas:
+            args = dict(ll.args or {})
+            usadas.append(ll.name)
+            res = {"ok": True} if ll.name in ("terminar_llamada", "escribir_en_chat", "responder_por_escrito") else asistente.ejecutar(ll.name, args)
+            voz.anotar_en_turno(turno, ll.name, args, res)
+            respuestas.append(types.Part(function_response=types.FunctionResponse(name=ll.name, response={"resultado": json.dumps(res, ensure_ascii=False, default=str)[:6000]})))
+        contenidos.append(types.Content(role="user", parts=respuestas))
+    return dicho.lower(), usadas, turno.propuestas, [d for t, d in emitidos if t == "propuesta"]
+
+
 AFIRMA = re.compile(r"ya (lo |la )?(tienes|ves|est[aá]s viendo)|ah[ií] (lo |la )?tienes|ya te (lo |la )?abr[ií]|ya deber[ií]as (estar )?ver")
 
 
@@ -222,6 +326,8 @@ def main():
     for i, caso in enumerate(CASOS):
         if x.solo is not None and i != x.solo:
             continue
+        if caso.get("preparar"):
+            caso["preparar"]()
         c = api("POST", "/api/chats", {"flujo": "pqrd"})
         t0 = time.monotonic()
         pantalla = dict(caso.get("pantalla") or TABLERO)
@@ -232,7 +338,8 @@ def main():
                 pantalla.clear()
                 pantalla.update(donde)
                 reportar(c["id"], pantalla)
-        evs = hablar(c["id"], caso["pedido"], pantalla, x.modelo, caso.get("obedece", True))
+        voz_r = voz_simulada(caso["voz"], x.modelo) if caso.get("voz") else None
+        evs = [] if voz_r else hablar(c["id"], caso["pedido"], pantalla, x.modelo, caso.get("obedece", True))
         texto = " ".join(e.get("texto", "") for e in evs if e.get("tipo") == "texto").lower()
         herramientas = [e.get("nombre") for e in evs if e.get("tipo") == "herramienta"]
         ok, detalle = False, ""
@@ -258,6 +365,9 @@ def main():
                     detalle = f"corrida {cor.get('estado') if cor else 'sin corrida'}: " + (("fallo: " + "; ".join(map(str, fallos))[:300]) if fallos else texto_de(cor)[:300])
             if not x.conservar:
                 api("DELETE", f"/api/flujos/{caso['flujo']}")
+        elif voz_r:
+            ok = caso["espera_voz"](*voz_r)
+            detalle = f"voz: {', '.join(voz_r[1])} · {voz_r[0][:110]}"
         elif caso.get("espera_texto"):
             ok = caso["espera_texto"](texto)
             detalle = texto[:110]

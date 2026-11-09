@@ -356,6 +356,26 @@ Medir primero, mejorar lo que más pesa y demostrarlo contra la línea base. Cif
 - [ ] Descargar los adjuntos grandes por partes.
 - [ ] Caché entre corridas del job en el bucket (hoy el job solo tiene la de memoria).
 
+## 5f. HEIC, flujos de código editables y Vera sin inventar (pedido 2026-11-09)
+
+Viene de una llamada real con Vera: un correo de PQRD con 8 fotos HEIC salió con los 8 adjuntos sin leer, Vera dijo que PQRD tenía «estructura fija», no propuso el borrado de la copia y afirmó cosas falsas (que se radicó en el SGDEA, un «equipo técnico», un costo inventado).
+
+- [x] HEIC/HEIF se reconocen por su cabecera y se leen con la visión de Gemini (`image/heic`/`image/heif`), con la marca de transcrito por IA, dentro del cupo de visión del correo y con caché por huella. No hay decodificador con licencia permitida (libheif y libde265 son LGPL, x265 GPL). Medido con el correo real: 8 de 8 fotos leídas (7 llamadas, la repetida desde la caché).
+- [x] WEBP y AVIF pasan por el OCR (antes «desconocido»), el TIFF de varias hojas se lee hoja por hoja y el `smime.p7m` firmado en claro se lee como correo (dos del universo). Anotado en `motor/DIVERGENCIAS.md`; pruebas en `motor/tests/test_formatos_de_imagen.py`.
+- [ ] RAR y 7z siguen sin leerse: no hay biblioteca de Python con licencia permitida (libarchive es BSD pero su enlace de Python es CC0 y `bsdtar` no está en la imagen).
+- [x] Los flujos de código se editan de verdad (`puente/estructura_codigo.py`, `servidor/src/estructuras.ts`, `puente/estructura_trabajador.py`): cada etapa es un nodo «etapa» que se apaga donde el motor lo admite (deduplicación, enrutamiento, facturas, volumen, visión, registro, revisor…; en tutelas el enlace) o se reconfigura (lectores por tipo de archivo: automático, OCR, visión u omitir; cupo de visión), volumen y deduplicación por contenido se intercambian, y se insertan nodos declarativos en cuatro puntos de PQRD (al entrar, con los documentos leídos, antes de validar, tras radicar) y uno de tutelas (antes de radicar). El trabajador los corre con los datos de ese momento y quita todo al terminar la orden.
+- [x] Lo que no tiene sentido se rechaza con el motivo (quitar una etapa, apagar la compuerta, reconectar etapas fuera del orden del código, insertar donde no hay punto, una salida que no es «manual», la config de un paso mal armada).
+- [x] Una copia diverge del original sin tocarlo: la estructura es por flujo, la copia hereda la del original y el borrado se la lleva. PQRD original sin estructura es el código de producción.
+- [x] El lienzo muestra los pasos insertados junto a su etapa (contorno punteado), las etapas apagadas tenues y los lectores propios; el inspector apaga o enciende una etapa y quita un paso insertado.
+- [x] Vera edita PQRD, tutelas y sus copias con `editar_nodo`, `agregar_nodo` (con `entre`), `eliminar_nodo` y `editar_aristas`, más `ver_estructura` y `restablecer_estructura`; se quitó la regla de «estructura fija».
+- [x] `TRANSCRIPTOR_IA` ya no es un parámetro ajustable: Vera lo había puesto como texto en el PQRD original y lo dejaba sin visión; se revirtió.
+- [x] La voz tiene las mismas herramientas que el chat escrito: declara todas las de `asistente.HERRAMIENTAS` salvo `EXCLUIDAS_DE_VOZ`, cada una con su motivo (hoy solo `cargar_herramientas`: la sesión ya las trae todas); usa el mismo SISTEMA y lo largo va al chat con `escribir_en_chat`. `puente/pruebas_voz.py` falla si una herramienta del chat no está en la voz sin motivo, si faltan reglas en el SISTEMA o si el borrado por voz no queda como propuesta con botón.
+- [x] Borrar por voz y por escrito: `proponer_borrado` y `borrar_flujo` en la llamada (y las herramientas de edición); el chequeo que trataba una copia de PQRD como original estaba roto (la API no devolvía `borrable`); Vera dice que dejó el botón para confirmar.
+- [x] Veracidad en las instrucciones de Vera: en modo prueba «se radicaría», nunca «se radicó en el SGDEA»; no inventa equipos ni procesos; costos y modelos solo de `modelos_ia` y de la corrida; no contradice sin evidencia.
+- [x] Pruebas: `puente/pruebas_estructura.py` (14), `servidor/src/pruebas_estructura.ts` (2) y seis casos nuevos en `scripts/evaluar_vera.py` (costo del HEIC, editar la copia de PQRD, borrar la copia, «se radicó», y por la ruta de la voz —su sistema, sus herramientas y su turno, con el modelo de texto— borrar la copia y «se radicó»).
+- [x] `agregar_nodo` agrega varios nodos y quita aristas en un solo guardado: un tramo con ramas ya no falla a medio armar (Vera se quedaba sin vueltas).
+- [ ] Tutelas: la estructura se probó con sus pruebas, no con un hilo real (la carpeta del job estaba vacía).
+
 ## 6. Paso a producción (cuando aprueben)
 
 - [x] Documento de despliegue (`docs/PRODUCCION.md`): principios, entorno y secretos de PQRD y tutelas con sus nombres reales, conexiones, cómo jala la información cada flujo, qué escribe y los pasos para salir a producción.
