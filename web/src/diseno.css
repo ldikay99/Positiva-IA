@@ -659,3 +659,15 @@ input[type="checkbox"].check:checked::after { content: ""; width: 9px; height: 5
 .dock-cabeza .selector, .adj-barra .selector { min-width: 180px; }
 .dock-reposo .selector { min-width: 220px; }
 @media (max-width: 760px) { .adj-barra .selector { flex: 1 1 100%; } }
+
+/* ---- rendimiento de una corrida: etapas en barras y consumo del modelo */
+.rendimiento-etapas { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.rendimiento-etapas li { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(60px, 1fr) auto; align-items: center; gap: 10px; font-size: 12.5px; }
+.rendimiento-etapas .crece { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--texto-2); }
+.rendimiento-etapas .num { font-variant-numeric: tabular-nums; color: var(--tinta); min-width: 52px; text-align: right; }
+.rendimiento-barra { height: 8px; border-radius: 6px; background: var(--azul-suave); overflow: hidden; }
+.rendimiento-barra i { display: block; height: 100%; border-radius: 6px; background: var(--azul); }
+.rendimiento-datos { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin: 6px 0 0; }
+.rendimiento-datos > div { padding: 9px 11px; border-radius: 11px; background: var(--superficie-2); min-width: 0; }
+.rendimiento-datos dt { font-size: 11.5px; color: var(--texto-2); }
+.rendimiento-datos dd { margin: 2px 0 0; font-size: 13px; font-weight: 600; color: var(--tinta); overflow-wrap: anywhere; }

@@ -229,6 +229,8 @@ class ModeloObservado:
             raise
         evento("modelo_fin", vuelta=self.vuelta, quien=quien, ms=int((time.time() - t) * 1000), ok=True,
                tokens_entrada=turno.tokens_entrada, tokens_salida=turno.tokens_salida,
+               tokens_razonamiento=getattr(turno, "tokens_razonamiento", 0),
+               tokens_cache=getattr(turno, "tokens_cache", 0),
                texto=(turno.texto or "")[:3000],
                llamadas=[{"herramienta": l.herramienta, "argumentos": l.argumentos}
                          for l in turno.llamadas])

@@ -16,6 +16,15 @@ export interface Progreso {
   vueltasRevisor: number;
   tokensEntrada: number;
   tokensSalida: number;
+  /** De la salida, lo que el modelo razonó (se paga como salida). */
+  tokensRazonamiento: number;
+  /** De la entrada, lo que Vertex sirvió de su caché. */
+  tokensCache: number;
+  /** Llamadas al modelo por quién las hizo: agente, revisor, visión. */
+  llamadasPorQuien: Record<string, number>;
+  /** Adjuntos que se leyeron de la caché por contenido y los que se leyeron de verdad. */
+  cacheAciertos: number;
+  cacheLecturas: number;
   herramientas: Record<string, number>;
   consultas: number;
   escrituras: number;
@@ -44,7 +53,7 @@ export function nodoDeEtapa(catalogo: Catalogo, etapa: string, vez = 0): Nodo | 
 
 /** Qué nodos recorrió una corrida, en qué orden y con qué resultado, a partir de sus eventos. */
 export function progreso(catalogo: Catalogo | null, corrida: Corrida | undefined): Progreso {
-  const p: Progreso = { nodos: {}, desenlace: null, vueltas: 0, vueltasRevisor: 0, tokensEntrada: 0, tokensSalida: 0, herramientas: {}, consultas: 0, escrituras: 0, hojas: 0, imagenesVision: 0, consultasIndice: 0 };
+  const p: Progreso = { nodos: {}, desenlace: null, vueltas: 0, vueltasRevisor: 0, tokensEntrada: 0, tokensSalida: 0, tokensRazonamiento: 0, tokensCache: 0, llamadasPorQuien: {}, cacheAciertos: 0, cacheLecturas: 0, herramientas: {}, consultas: 0, escrituras: 0, hojas: 0, imagenesVision: 0, consultasIndice: 0 };
   if (!catalogo || !corrida) return p;
   let orden = 0;
   const vecesPorEtapa: Record<string, number> = {};
@@ -74,9 +83,17 @@ export function progreso(catalogo: Catalogo | null, corrida: Corrida | undefined
       else p.vueltas += 1;
       p.tokensEntrada += Number(e.tokens_entrada ?? 0);
       p.tokensSalida += Number(e.tokens_salida ?? 0);
+      p.tokensRazonamiento += Number(e.tokens_razonamiento ?? 0);
+      p.tokensCache += Number(e.tokens_cache ?? 0);
+      const quien = String(e.quien ?? "agente");
+      p.llamadasPorQuien[quien] = (p.llamadasPorQuien[quien] ?? 0) + 1;
+    } else if (e.tipo === "cache_conversion") {
+      p.cacheLecturas += 1;
+      if (e.acierto) p.cacheAciertos += 1;
     } else if ((e.tipo === "vision" || e.tipo === "hoja") && catalogo.nodos.some((n) => n.id === "transcripcion_vision")) {
       // La visión ocurre dentro de la conversión: se dibuja justo después de ella.
       if (e.tipo === "vision") {
+        p.llamadasPorQuien.vision = (p.llamadasPorQuien.vision ?? 0) + 1;
         const base = p.nodos.conversion_a_markdown?.orden ?? orden;
         marcar("transcripcion_vision", { estado: "hecho", veces: (p.nodos.transcripcion_vision?.veces ?? 0) + 1, ...(p.nodos.transcripcion_vision ? {} : { orden: base + 0.3 }) });
         p.imagenesVision += 1;

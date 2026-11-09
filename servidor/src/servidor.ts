@@ -179,6 +179,7 @@ app.get("/api/tablero", async () =>
     const lista = [...(m?.corridas.values() ?? [])].sort((a, b) => b.creada - a.creada);
     const desenlaces: Record<string, number> = {};
     const segundos: number[] = [];
+    const vueltas: number[] = [];
     let tokens = 0;
     const porDia = new Map<string, { n: number; radicados: number }>();
     for (const c of lista) {
@@ -186,6 +187,7 @@ app.get("/api/tablero", async () =>
       const accion = r ? String(r.accion) : c.estado === "en_cola" ? "en_cola" : "procesando";
       desenlaces[accion] = (desenlaces[accion] ?? 0) + 1;
       if (r && typeof r.segundos === "number") segundos.push(r.segundos);
+      if (r && typeof r.vueltas === "number") vueltas.push(r.vueltas);
       tokens += Number(r?.tokens_entrada ?? 0) + Number(r?.tokens_salida ?? 0);
       const dia = new Date(c.creada).toISOString().slice(0, 10);
       const d = porDia.get(dia) ?? { n: 0, radicados: 0 };
@@ -197,7 +199,9 @@ app.get("/api/tablero", async () =>
     return {
       id: f.id, nombre: f.nombre, tipo: f.tipo, ...(f.base ? { base: f.base } : {}), ...(f.copia_de ? { copia_de: f.copia_de } : {}), disparador: f.disparador ?? null, borrable: !flujos.esOriginal(f.id),
       corridas: lista.length, desenlaces,
-      segundosMediana: segundos.length ? segundos[Math.floor(segundos.length / 2)]! : 0, tokens, consumo: consumoDe(lista.map((c) => c.resultado)),
+      segundosMediana: segundos.length ? segundos[Math.floor(segundos.length / 2)]! : 0,
+      segundosP95: segundos.length ? segundos[Math.min(segundos.length - 1, Math.round(0.95 * (segundos.length - 1)))]! : 0,
+      vueltasMedia: vueltas.length ? vueltas.reduce((a, b) => a + b, 0) / vueltas.length : 0, tokens, consumo: consumoDe(lista.map((c) => c.resultado)),
       enCurso: lista.filter((c) => !c.resultado).length,
       ultimas: lista.slice(0, 6).map((c) => ({ id: c.id, caso: c.caso, accion: String(c.resultado?.accion ?? c.estado), motivo: String(c.resultado?.motivo ?? ""), t: c.creada })),
       porDia: [...porDia.entries()].sort().slice(-14).map(([dia, v]) => ({ dia, ...v })),

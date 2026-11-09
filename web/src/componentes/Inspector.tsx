@@ -5,7 +5,7 @@ import { narrar, solicitud } from "../eventos.ts";
 import { ACCIONES, ANCLA_DEL_PUNTO, CAMPOS, CAMPOS_DE_ENTRADA, CATEGORIAS, OPERADORES, PUNTOS, alternativas, categoria, fraseDeRegla, nombreCampo, type Categoria } from "../flujo.ts";
 import { Icono, type NombreIcono } from "../iconos.tsx";
 import { ETIQUETA_CLASE, ORDEN_CLASE, ajustado, clase, conValor, esRegex, resumen, vigente, type Clase } from "../parametros.ts";
-import { NOMBRES_DESENLACE, TONO_DESENLACE, motivoLegible, progreso, segundos } from "../progreso.ts";
+import { NOMBRES_DESENLACE, TONO_DESENLACE, motivoLegible, nodoDeEtapa, progreso, segundos } from "../progreso.ts";
 import type { Configuracion, Correo, Nodo, Parametro, Regla } from "../tipos.ts";
 import { Selector } from "./Selector.tsx";
 import { BloqueTramo, TablaSolicitud } from "./Dock.tsx";
@@ -659,6 +659,39 @@ function InspectorCorreo({ caso }: { caso: string }) {
 
 // ---------------------------------------------------------- inspector corrida
 
+/** Dónde se fue el tiempo de la corrida y cuánto le costó al modelo. */
+function Rendimiento({ etapas, p }: { etapas: Record<string, number>; p: ReturnType<typeof progreso> }) {
+  const catalogo = usar((s) => s.catalogo);
+  const filas = Object.entries(etapas).filter(([, ms]) => ms >= 50).sort((a, b) => b[1] - a[1]);
+  const mayor = filas[0]?.[1] ?? 1;
+  const nombre = (etapa: string) => (catalogo ? nodoDeEtapa(catalogo, etapa)?.nombre : undefined) ?? etapa.replace(/_/g, " ");
+  const llamadas = Object.entries(p.llamadasPorQuien);
+  const pctCache = p.tokensEntrada ? Math.round((100 * p.tokensCache) / p.tokensEntrada) : 0;
+  return (
+    <section className="seccion rendimiento">
+      <h3>Rendimiento</h3>
+      {filas.length ? (
+        <ul className="rendimiento-etapas">
+          {filas.map(([etapa, ms]) => (
+            <li key={etapa}>
+              <span className="crece">{nombre(etapa)}</span>
+              <span className="rendimiento-barra" aria-hidden><i style={{ width: `${Math.max(2, (100 * ms) / mayor)}%` }} /></span>
+              <span className="num">{ms >= 1000 ? `${(ms / 1000).toLocaleString("es-CO", { maximumFractionDigits: 1 })} s` : `${ms} ms`}</span>
+            </li>
+          ))}
+        </ul>
+      ) : <p className="texto-3 chico">Sin etapas medidas.</p>}
+      <dl className="rendimiento-datos">
+        <div><dt>Llamadas al modelo</dt><dd>{llamadas.length ? llamadas.map(([q, n]) => `${n} ${q === "vision" ? "de visión" : q === "revisor" ? "del revisor" : q === "seguimiento" ? "de seguimiento" : "del agente"}`).join(" · ") : "ninguna"}</dd></div>
+        <div><dt>Tokens de entrada</dt><dd>{p.tokensEntrada.toLocaleString("es-CO")}{p.tokensCache ? ` (${pctCache} % desde la caché de Vertex)` : ""}</dd></div>
+        <div><dt>Tokens de salida</dt><dd>{p.tokensSalida.toLocaleString("es-CO")}{p.tokensRazonamiento ? ` (${p.tokensRazonamiento.toLocaleString("es-CO")} de razonamiento)` : ""}</dd></div>
+        <div><dt>Hojas leídas con OCR</dt><dd>{p.hojas}</dd></div>
+        <div><dt>Adjuntos desde la caché</dt><dd>{p.cacheLecturas ? `${p.cacheAciertos} de ${p.cacheLecturas}` : "—"}</dd></div>
+      </dl>
+    </section>
+  );
+}
+
 function InspectorCorrida({ id }: { id: string }) {
   const catalogo = usar((s) => s.catalogo);
   const corrida = usar((s) => s.corridas[id]);
@@ -699,6 +732,7 @@ function InspectorCorrida({ id }: { id: string }) {
             <p className="texto-3 chico">Este correo no llegó a enviarse.</p>
           )}
         </section>
+        {r ? <Rendimiento etapas={(r.etapas_ms as Record<string, number> | undefined) ?? {}} p={p} /> : null}
         {(r?.avisos as string[] | undefined)?.length ? <section className="seccion"><h3>Avisos <span>{(r!.avisos as string[]).length}</span></h3>{(r!.avisos as string[]).map((a, i) => <p key={i} className="aviso-linea chico">{a}</p>)}</section> : null}
         {r?.traza ? <section className="seccion"><h3>Traza del error</h3><Codigo valor={String(r.traza)} soloLectura /></section> : null}
       </div>

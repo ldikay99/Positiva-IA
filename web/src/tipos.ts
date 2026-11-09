@@ -176,6 +176,10 @@ export interface TableroFlujo {
   corridas: number;
   desenlaces: Record<string, number>;
   segundosMediana: number;
+  /** El 5 % más lento tarda al menos esto. */
+  segundosP95?: number;
+  /** Consultas del agente a la IA por correo, en promedio. */
+  vueltasMedia?: number;
   tokens: number;
   /** Lo que gastó en IA (tokens y costo estimado con precios aproximados). */
   consumo?: { tokens_entrada: number; tokens_salida: number; costo_estimado_usd: number; llamadas: number; por_proveedor: Record<string, { tokens_entrada: number; tokens_salida: number; costo_estimado_usd: number; llamadas: number }> };

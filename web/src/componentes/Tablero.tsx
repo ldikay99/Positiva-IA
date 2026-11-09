@@ -115,6 +115,8 @@ function TarjetaFlujo({ f, i }: { f: TableroFlujo; i: number }) {
           <div><dt>A revisión manual</dt><dd>{manual}</dd></div>
           <div><dt>Con error</dt><dd className={errores ? "malo" : ""}>{errores}</dd></div>
           <div><dt>Tiempo típico</dt><dd>{f.segundosMediana ? `${Math.round(f.segundosMediana)} s` : "—"}</dd></div>
+          {f.tipo === "codigo" && <div title="El 5 % más lento de las ejecuciones tarda al menos esto"><dt>Las más lentas</dt><dd>{f.segundosP95 ? `${Math.round(f.segundosP95)} s` : "—"}</dd></div>}
+          {f.tipo === "codigo" && <div title="Consultas del agente a la IA por correo, en promedio"><dt>Consultas a la IA</dt><dd>{f.vueltasMedia ? f.vueltasMedia.toLocaleString("es-CO", { maximumFractionDigits: 1 }) : "—"}</dd></div>}
           <div title="Costo estimado con precios publicados aproximados"><dt>IA</dt><dd>{textoConsumo(f.consumo ?? { tokens_entrada: f.tokens, tokens_salida: 0 }) || "—"}</dd></div>
         </dl>
       </div>
