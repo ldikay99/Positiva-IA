@@ -84,16 +84,24 @@ COMO TRABAJAR
 0. El asunto y el encabezado del correo ya vienen en la tarea. tipo_solicitud y
    tipo_remitente casi siempre se deciden solo con eso: resuelvelos primero,
    sin usar herramientas.
-1. Si falta algo mas, `listar_documentos` para ver que hay, sin leer nada. Cada
-   adjunto trae su indice por hoja: "p3 cedula ocr0.58 id1:CC" es la pagina 3,
-   una cedula leida por OCR con confianza 0.58 y un numero con marca CC.
-2. Ubica el dato antes de leer. `buscar_en_documentos` si conoces el texto o
-   el numero (no importan tildes, mayusculas, saltos de linea ni los puntos de
-   una cifra); `consultar_documentos` si solo sabes que buscas ("cedula del
-   trabajador", "dias de incapacidad"): devuelve los tramos mas pertinentes.
+1. La tarea trae la lista de DOCUMENTOS con el indice por hoja de cada
+   adjunto: "p3 cedula ocr0.58 id1:CC" es la pagina 3, una cedula leida por OCR
+   con confianza 0.58 y un numero con marca CC. Trae tambien PISTAS: los tramos
+   del texto que mejor responden a cada campo pendiente, con su documento y
+   linea. Si una pista ya responde un campo, reportalo sin buscar mas.
+   `listar_documentos` solo hace falta si la tarea no trae la lista.
+2. Si falta algo, ubica el dato antes de leer. `buscar_en_documentos` si
+   conoces el texto o el numero (no importan tildes, mayusculas, saltos de
+   linea ni los puntos de una cifra; puedes limitarla a un `documento`);
+   `consultar_documentos` si solo sabes que buscas ("cedula del trabajador",
+   "dias de incapacidad"): devuelve los tramos mas pertinentes.
 3. `leer_documento` solo del fragmento que necesites: por lineas, o la hoja
    entera con `pagina`.
 4. `reportar_hallazgo` por cada campo, y termina.
+
+Pide en la MISMA vuelta todas las herramientas que no dependan una de otra:
+reporta lo que ya tengas a la vez que buscas lo que falta. Una vuelta cuesta lo
+mismo con una herramienta que con cinco.
 
 Los codigos validos de los campos numericos vienen en la tarea: no hace falta
 pedirlos. `consultar_catalogo` esta ahi por si necesitas uno que no venga.
@@ -495,6 +503,9 @@ ESQUEMAS_HERRAMIENTAS: List[Dict[str, Any]] = [
                 "patron": {"type": "string",
                            "description": "texto o expresion regular"},
                 "contexto_lineas": {"type": "integer"},
+                "documento": {"type": "string",
+                              "description": "id de un documento, para buscar "
+                                             "solo en el; sin el, en todos"},
             },
             "required": ["patron"],
         },
@@ -779,6 +790,114 @@ def _valor_normalizado(campo: str, valor: Any, ctx: Contexto):
     return codigo, ""
 
 
+# El agente gastaba su primera vuelta en `listar_documentos` y dos o tres mas en
+# ubicar cada dato. Con el inventario y los tramos que mejor responden a cada
+# campo dentro de la tarea, reporta desde la primera. Se apaga con
+# AGENTE_CONTEXTO_INICIAL=no para comparar.
+def _contexto_inicial_activo() -> bool:
+    return (os.environ.get("AGENTE_CONTEXTO_INICIAL") or "si").strip().lower() \
+        not in ("no", "0", "false")
+
+
+# Palabras con que se pregunta al indice por cada campo pendiente. Los tipos de
+# solicitud y de remitente no llevan: salen del asunto y el encabezado, que ya
+# van en la tarea.
+PREGUNTA_DE_PISTA: Dict[str, str] = {
+    "nombre_afectado": "nombre paciente trabajador afiliado accidentado identificado",
+    "numero_documento_afectado": "cedula identificacion paciente trabajador afiliado",
+    "tipo_documento_afectado": "cedula identificacion tipo documento",
+    "telefono_afectado": "telefono celular contacto",
+    "direccion_afectado": "direccion residencia domicilio barrio",
+    "sexo_afectado": "sexo genero femenino masculino",
+    "nombre_remitente": "atentamente cordialmente firma cargo",
+    "numero_documento_remitente": "nit cedula firma representante",
+    "tipo_documento_remitente": "nit cedula firma representante",
+}
+TRAMOS_POR_PISTA = 2
+MAX_CARACTERES_PISTA = 700
+# Viaja en cada vuelta, pero como parte del prefijo que la cache implicita de
+# Vertex reutiliza: se paga entero una vez y al diez por ciento las demas.
+MAX_CARACTERES_PISTAS = 2_800
+_ESTADOS_ILEGIBLES = ("error_conversion", "tipo_no_soportado", "excede_limite")
+
+
+def inventario(ws: Any) -> str:
+    """Lo que devolvia `listar_documentos`, en una linea por documento."""
+    try:
+        documentos = ws.listar()
+    except Exception:
+        return ""
+    lineas: List[str] = []
+    for d in documentos:
+        if d.get("tipo") in ("correo", "hilo"):
+            lineas.append(f"- {d['id']}: {d.get('lineas', '?')} lineas")
+            continue
+        if d.get("estado") in _ESTADOS_ILEGIBLES:
+            lineas.append(f"- '{d.get('nombre_original', '')}': no se pudo leer")
+            continue
+        if not d.get("id"):
+            continue  # decorativo o repetido: no hay nada que leer
+        partes = [f"- {d['id']}"]
+        if d.get("ocr"):
+            partes.append("OCR")
+        if d.get("paginas"):
+            partes.append("; ".join(d["paginas"]))
+        elif d.get("clase"):
+            partes.append(str(d["clase"]))
+        lineas.append(", ".join(partes))
+    if not lineas:
+        return ""
+    return "DOCUMENTOS (el id es el que piden las herramientas):\n" + "\n".join(lineas)
+
+
+def pistas(ws: Any, campos) -> str:
+    """Por cada campo pendiente, los tramos del indice que mejor lo responden."""
+    from pipeline.saneamiento import sanear_fragmento
+
+    bloques: List[str] = []
+    vistos: set = set()
+    total = 0
+    for campo in campos or ():
+        pregunta = PREGUNTA_DE_PISTA.get(campo)
+        if not pregunta:
+            continue
+        try:
+            tramos = ws.consultar(pregunta, maximo=TRAMOS_POR_PISTA,
+                                  caracteres=MAX_CARACTERES_PISTA)
+        except Exception:
+            continue
+        for t in tramos:
+            donde = str(t.get("documento", "?"))
+            if t.get("pagina") is not None:
+                donde += f" p{t['pagina']}"
+            donde += f" linea {t.get('linea', '?')}"
+            clave = (t.get("documento"), t.get("linea"))
+            if clave in vistos:
+                bloques.append(f"[{campo}] el mismo tramo de {donde}")
+                continue
+            vistos.add(clave)
+            # Es texto de un tercero: va delimitado igual que una lectura.
+            texto = sanear_fragmento(str(t.get("texto", "")),
+                                     str(t.get("documento", "?"))).markdown
+            bloque = f"[{campo}] {donde}:\n{texto}"
+            if total + len(bloque) > MAX_CARACTERES_PISTAS:
+                break
+            bloques.append(bloque)
+            total += len(bloque)
+    if not bloques:
+        return ""
+    return ("PISTAS (tramos del texto que mejor responden a cada campo "
+            "pendiente; compruebalos antes de reportar):\n" + "\n\n".join(bloques))
+
+
+def contexto_inicial(ctx: Contexto, campos) -> str:
+    """Inventario y pistas que van en la tarea, o cadena vacia."""
+    ws = getattr(ctx, "workspace", None)
+    if ws is None or not _contexto_inicial_activo():
+        return ""
+    return "\n\n".join(filter(None, (inventario(ws), pistas(ws, campos))))
+
+
 def resolver(
     modelo: Modelo,
     ctx: Contexto,
@@ -808,6 +927,9 @@ def resolver(
     catalogos = catalogos_de(pedidos, ctx.catalogos)
     if catalogos:
         contenido = f"{contenido}\n\n{catalogos}"
+    inicial = contexto_inicial(ctx, extraccion.campos_a_buscar)
+    if inicial:
+        contenido = f"{contenido}\n\n{inicial}"
     tarea = {"rol": "usuario", "contenido": contenido}
     # Solo los criterios de lo que se va a pedir: el prompt viaja entero en
     # cada vuelta y los de un campo resuelto no cambian ninguna decision.

@@ -336,7 +336,8 @@ class Workspace:
         desde = max(0, desde)
         return "\n".join(lineas[desde:hasta])
 
-    def buscar(self, patron: str, contexto: int = 1) -> List[Dict[str, Any]]:
+    def buscar(self, patron: str, contexto: int = 1,
+               documento: str = "") -> List[Dict[str, Any]]:
         """
         Busca en todos los documentos y devuelve ubicaciones con contexto.
 
@@ -356,7 +357,18 @@ class Workspace:
         except re.error as e:
             raise ValueError(f"patron invalido: {e}") from e
         resultados: List[Dict[str, Any]] = []
-        for id_doc in self._ids_de_documentos():
+        ids = self._ids_de_documentos()
+        if documento:
+            # El modelo nombra el documento por su id o por el nombre del
+            # archivo; las dos formas valen.
+            ruta = self._resolver(documento)
+            if ruta is None:
+                ruta = next((self.raiz / e.ruta_md for e in self.manifiesto.entradas
+                             if e.ruta_md and e.nombre_original == documento), None)
+            if ruta is None:
+                raise FileNotFoundError(f"documento no encontrado: {documento}")
+            ids = [i for i in ids if self._resolver(i) == ruta]
+        for id_doc in ids:
             lineas = self._lineas_de(id_doc)
             if lineas is None:
                 continue

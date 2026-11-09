@@ -313,7 +313,7 @@ def _cuantificador_anidado(patron: str) -> str:
 
 
 def buscar_en_documentos(
-    ctx: Contexto, patron: str, contexto_lineas: int = 1
+    ctx: Contexto, patron: str, contexto_lineas: int = 1, documento: str = "",
 ) -> Resultado:
     """
     Busca un patron en todos los documentos y devuelve donde aparece.
@@ -332,12 +332,15 @@ def buscar_en_documentos(
                   f"simple: para ubicar un dato no hace falta mas.",
         )
     try:
-        hallazgos = ctx.workspace.buscar(patron, contexto=max(0, contexto_lineas))
+        hallazgos = ctx.workspace.buscar(patron, contexto=max(0, contexto_lineas),
+                                         documento=str(documento or ""))
     except ValueError as e:
         return Resultado(
             ok=False,
             error=f"{e}. Usa una expresion regular valida, o texto literal.",
         )
+    except FileNotFoundError:
+        return _no_existe(ctx, str(documento))
     total = len(hallazgos)
     recortados = hallazgos[:MAX_RESULTADOS_BUSQUEDA]
     # Lo que devuelve la busqueda tambien es contenido del documento: entra al
