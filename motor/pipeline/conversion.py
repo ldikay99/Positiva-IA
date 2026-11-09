@@ -478,7 +478,6 @@ def _pdf_a_markdown(
                 del_correo.motivo() if manda_el_correo
                 else f"se agoto el presupuesto de OCR "
                      f"({PRESUPUESTO_OCR_SEGUNDOS:.0f}s) para este documento")
-            candado_doc = threading.Lock()
             hilos = ThreadPoolExecutor(max_workers=PAGINAS_OCR_EN_PARALELO)
             en_vuelo: List[Tuple[int, int, Future]] = []
 
@@ -509,9 +508,8 @@ def _pdf_a_markdown(
             for i in range(min(total_paginas, LIMITE_PAGINAS_PDF)):
                 # Una pagina corrupta no debe costar el documento entero.
                 try:
-                    with candado_doc:
-                        pagina = doc.load_page(i)
-                        texto = pagina.get_text("text") or ""
+                    pagina = doc.load_page(i)
+                    texto = pagina.get_text("text") or ""
                 except Exception as e:
                     paginas_con_error += 1
                     partes.append(
@@ -532,14 +530,21 @@ def _pdf_a_markdown(
                         wait([f for _, _, f in en_vuelo if not f.done()],
                              return_when=FIRST_COMPLETED)
                     partes.append("")
+                    # PyMuPDF no admite otro hilo sobre el documento (en la
+                    # plataforma termino en SIGSEGV): la hoja se renderiza aqui
+                    # y al hilo solo va la imagen.
+                    try:
+                        hoja = _HojaRenderizada(pagina)
+                    except Exception as e:
+                        asentar(i, len(partes) - 1, _LecturaDePagina(
+                            "", f"el OCR fallo ({type(e).__name__}: {e})"))
+                        continue
                     # Con el contexto del correo: lo que se anota por correo
                     # (fallos de vision, eventos) tiene que verse desde el hilo.
                     en_vuelo.append((i, len(partes) - 1, hilos.submit(
-                        contextvars.copy_context().run, leer,
-                        _PaginaCompartida(pagina, candado_doc))))
+                        contextvars.copy_context().run, leer, hoja)))
                     continue
-                with candado_doc:
-                    tablas = _tablas_de_pagina(pagina)
+                tablas = _tablas_de_pagina(pagina)
                 bloque = f"## Pagina {i + 1}\n\n{normalizar(texto)}"
                 if tablas:
                     bloque += "\n\n" + "\n\n".join(tablas)
@@ -550,9 +555,7 @@ def _pdf_a_markdown(
                 # revision manual por falta de un documento que si estaba.
                 queda = tope - (time.monotonic() - inicio_ocr)
                 leido, sin_leer, motivo = _ocr_de_imagenes(
-                    _PaginaCompartida(doc, candado_doc),
-                    _PaginaCompartida(pagina, candado_doc),
-                    vistas, queda, del_correo)
+                    doc, pagina, vistas, queda, del_correo)
                 if leido:
                     bloque += "\n\n" + leido
                     imagenes_leidas += len(leido.split("### Imagen")) - 1
@@ -1091,6 +1094,8 @@ def _imagen_de_pagina(pagina, dpi: int):
     """
     from PIL import Image
 
+    if isinstance(pagina, _HojaRenderizada):
+        return pagina.a_dpi(dpi)
     pix = pagina.get_pixmap(dpi=dpi)
     muestras = getattr(pix, "samples", None)
     n = getattr(pix, "n", 0)
@@ -1130,29 +1135,30 @@ def _en_blanco(imagen) -> bool:
         return False
 
 
-class _PaginaCompartida:
+class _HojaRenderizada:
     """
-    Una pagina de PyMuPDF que se puede leer desde otro hilo.
+    Una pagina ya renderizada, para leerla en otro hilo.
 
-    PyMuPDF no admite dos hilos sobre el mismo documento: cada acceso a la
-    pagina va bajo el candado del documento. Solo se serializa el render, que
-    son decimas; el OCR, que son segundos, corre a la vez.
+    Se renderiza en el hilo del documento: PyMuPDF no admite otro hilo sobre
+    el mismo documento. La relectura a menor resolucion, si hace falta, se
+    saca de esta misma imagen.
     """
 
-    def __init__(self, pagina, candado) -> None:
-        self._pagina = pagina
-        self._candado = candado
+    def __init__(self, pagina) -> None:
+        self.number = getattr(pagina, "number", None)
+        r = pagina.rect
+        self.rect = type("Rect", (), {"width": float(r.width), "height": float(r.height)})()
+        self.dpi = _dpi_de_pagina(pagina)
+        self.imagen = _imagen_de_pagina(pagina, self.dpi)
 
-    def __getattr__(self, nombre):
-        with self._candado:
-            valor = getattr(self._pagina, nombre)
-        if not callable(valor):
-            return valor
+    def a_dpi(self, dpi: int):
+        if dpi >= self.dpi:
+            return self.imagen
+        from PIL import Image
 
-        def llamar(*a, **k):
-            with self._candado:
-                return valor(*a, **k)
-        return llamar
+        factor = dpi / self.dpi
+        return self.imagen.resize((max(1, int(self.imagen.width * factor)),
+                                   max(1, int(self.imagen.height * factor))), Image.LANCZOS)
 
 
 def _ocr_de_pagina(pagina, presupuesto: Optional["PresupuestoDeOcr"] = None
