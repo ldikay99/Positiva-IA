@@ -2524,9 +2524,16 @@ def extraer_tipo_solicitud(
 
 # ── Direccion del afectado ──
 
+# Tambien la forma corta de las historias clinicas ("Dir:") y las de los
+# formularios ("Direccion para notificaciones:"): sin ellas la direccion que esta
+# en el bloque del paciente se le pedia al agente. "Domicilio:" no: en un escrito
+# suele ser la ciudad ("Domicilio: Chiriguana, Cesar").
 _ROTULO_DIRECCION = re.compile(
-    r"(?i)direcci[oó]n[ \t]*"
-    r"(?:de\s+residencia(?:\s+habitual)?|de\s+notificaci[oó]n)?[ \t]*:[ \t|]*")
+    r"(?i)(?:direcci[oó]n[ \t]*"
+    r"(?:de\s+residencia(?:\s+habitual)?|de\s+notificaci[oó]n(?:es)?"
+    r"|para\s+notificaci[oó]n(?:es)?|de\s+domicilio|del\s+domicilio"
+    r"|residencia|actual)?"
+    r"|\bdir\.?)[ \t]*:[ \t|]*")
 
 # Rotulos que abren el bloque de otro sujeto: la IPS, el empleador, Positiva,
 # la Junta o el registro societario. Una direccion bajo cualquiera de ellos no
@@ -2535,7 +2542,7 @@ _BLOQUE_DE_OTRO = re.compile(
     r"(?i)codigo\s+de\s+habilitacion|r\.?\s?m\.?\s*\d{4}"
     r"|datos\s+del\s+(?:empleador|jefe|aportante)"
     r"|\bnit\b\s*:?\s*\d|numero\s+de\s+identificacion\s+tributaria"
-    r"|positiva\s+compa[nñ]ia|junta\s+(?:regional|nacional)|razon\s+social"
+    r"|positiva\s+compa[nñ]ia|arl\s+positiva|junta\s+(?:regional|nacional)|razon\s+social"
     r"|empresa\s+matriz|controlante|\bciiu\b")
 
 # Un domicilio no lleva numero de consultorio.
