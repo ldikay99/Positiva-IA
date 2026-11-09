@@ -32,6 +32,10 @@ export interface Nodo {
   /** El tipo y la configuración de un nodo de flujo declarativo. */
   tipo_declarativo?: string;
   config?: Record<string, unknown>;
+  /** En un flujo de código con la estructura editada: la etapa está apagada en ese flujo. */
+  deshabilitado?: boolean;
+  /** Un paso declarativo insertado en un flujo de código: en qué punto (entre qué etapas) corre. */
+  insertado?: { punto: string; nombre_punto: string; desde: string; hacia: string };
 }
 
 export interface Busqueda {

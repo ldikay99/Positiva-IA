@@ -282,6 +282,78 @@ function Busquedas({ n, abrir }: { n: Nodo; abrir: (clave: string) => void }) {
   );
 }
 
+type DefEstructura = { nodos: { id: string; tipo: string; nombre?: string; config?: Record<string, unknown> }[]; aristas: { desde: string; hacia: string; cuando?: string }[] };
+type VistaEstructura = { editada: boolean; definicion: DefEstructura; reglas: { apagables: Record<string, string>; no_apagables: Record<string, string>; lectores: Record<string, string> } };
+
+/** Lo que este flujo de código hace distinto en esta etapa (apagarla) o en un paso insertado (quitarlo). */
+function EstructuraDelNodo({ n }: { n: Nodo }) {
+  const flujo = usar((s) => s.flujo);
+  const avisar = usar((s) => s.avisar);
+  const nombreDe = usar((s) => (id: string) => s.catalogo?.nodos.find((x) => x.id === id)?.nombre ?? id);
+  const [v, setV] = useState<VistaEstructura | null>(null);
+  const [guardando, setGuardando] = useState(false);
+  useEffect(() => {
+    let vivo = true;
+    void pedir<VistaEstructura>(`/api/flujos/${flujo}/estructura`).then((x) => vivo && setV(x)).catch(() => vivo && setV(null));
+    return () => { vivo = false; };
+  }, [flujo, n.id, n.deshabilitado, n.config]);
+  if (!v) return null;
+  const guardar = async (d: DefEstructura, nota: string) => {
+    setGuardando(true);
+    try {
+      await pedir(`/api/flujos/${flujo}/estructura`, { method: "PUT", body: JSON.stringify({ definicion: d, nota }) });
+      avisar(`${nota}: rige desde la próxima corrida de este flujo`);
+    } catch (e) {
+      avisar((e as Error).message, "error");
+    } finally {
+      setGuardando(false);
+    }
+  };
+  const d = structuredClone(v.definicion);
+  if (n.insertado) {
+    const quitar = () => {
+      const entran = d.aristas.filter((a) => a.hacia === n.id);
+      const salen = d.aristas.filter((a) => a.desde === n.id);
+      d.nodos = d.nodos.filter((x) => x.id !== n.id);
+      d.aristas = [...d.aristas.filter((a) => a.desde !== n.id && a.hacia !== n.id), ...entran.flatMap((e) => salen.filter((s) => !s.cuando).map((s) => ({ desde: e.desde, hacia: s.hacia })))];
+      void guardar(d, `Se quitó «${n.nombre}»`);
+    };
+    return (
+      <section className="seccion">
+        <h3>Paso de este flujo</h3>
+        <p className="texto-2 chico">Corre en «{n.insertado.nombre_punto}», entre «{nombreDe(n.insertado.desde)}» y «{nombreDe(n.insertado.hacia)}». El motor no cambia: este paso es propio de este flujo.</p>
+        <button className="boton chico" disabled={guardando} onClick={quitar}><Icono n="cerrar" tam={13} />Quitar este paso</button>
+      </section>
+    );
+  }
+  const motivo = v.reglas.apagables[n.id];
+  const lectores = (n.config?.lectores ?? {}) as Record<string, string>;
+  if (!motivo && !Object.keys(lectores).length) return null;
+  const alternar = (corre: boolean) => {
+    const x = d.nodos.find((m) => m.id === n.id);
+    if (!x) return;
+    const c = { ...(x.config ?? {}) };
+    if (corre) delete c.deshabilitado;
+    else c.deshabilitado = true;
+    x.config = c;
+    void guardar(d, `${n.nombre} ${corre ? "encendida" : "apagada"}`);
+  };
+  return (
+    <section className="seccion">
+      <h3>En este flujo</h3>
+      {motivo && (
+        <label className="fila chico">
+          <Interruptor valor={!n.deshabilitado} alCambiar={(x) => alternar(x)} />
+          {n.deshabilitado ? `Apagada: ${motivo}` : "Corre en este flujo (se puede apagar)"}
+        </label>
+      )}
+      {Object.keys(lectores).length > 0 && (
+        <div className="fichas">{Object.entries(lectores).map(([ext, m]) => <span key={ext} className="ficha">.{ext}: {v.reglas.lectores[m] ?? m}</span>)}</div>
+      )}
+    </section>
+  );
+}
+
 function InspectorNodo({ n }: { n: Nodo }) {
   const catalogo = usar((s) => s.catalogo)!;
   const configuracion = usar((s) => s.configuracion);
@@ -390,6 +462,7 @@ function InspectorNodo({ n }: { n: Nodo }) {
         {pestana === "resumen" && (
           <>
             <p className="texto-2">{n.descripcion}</p>
+            <EstructuraDelNodo n={n} />
             <div className="kpis">
               <div><b>{n.reglas?.length ?? 0}</b><span>reglas</span></div>
               <div><b>{editables}</b><span>parámetros editables</span></div>

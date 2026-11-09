@@ -162,11 +162,11 @@ const NodoEtapa = memo(function NodoEtapa({ data, selected }: NodeProps<Node<Dat
   const n = data.nodo;
   const c = CATEGORIAS[data.cat];
   return (
-    <div className={`nodo t-${c.tono} ${data.estado} ${selected ? "sel" : ""}`}>
+    <div className={`nodo t-${c.tono} ${data.estado} ${selected ? "sel" : ""} ${n.deshabilitado ? "apagado" : ""} ${n.insertado ? "insertado" : ""}`}>
       <Asas />
       <div className="nodo-cabeza">
         <span className="nodo-icono"><Icono n={c.icono} tam={15} /></span>
-        <span className="nodo-cat">{c.nombre}</span>
+        <span className="nodo-cat">{n.insertado ? `Paso del flujo · ${n.insertado.nombre_punto}` : c.nombre}</span>
         <Insignia estado={data.estado} />
       </div>
       <div className="nodo-titulo">{n.nombre}</div>
@@ -174,6 +174,9 @@ const NodoEtapa = memo(function NodoEtapa({ data, selected }: NodeProps<Node<Dat
       {data.lectura && (data.lectura.foco || data.lectura.hojas.length > 0) && <LecturaEnNodo v={data.lectura} />}
       <div className="nodo-pie">
         {(data.cat === "ia" || data.cat === "vision" || data.cat === "correccion") && data.modelo && <span className="dato ia"><Icono n="chispa" tam={10} />{data.modelo}</span>}
+        {n.deshabilitado && <span className="dato tenue">Apagada en este flujo</span>}
+        {!!n.config?.lectores && <span className="dato ajustado">Lectores propios</span>}
+        {typeof n.config?.max_imagenes === "number" && <span className="dato ajustado">Visión: {String(n.config.max_imagenes)} por correo</span>}
         {data.ms > 0 && <span className="dato"><Icono n="reloj" tam={10} />{segundos(data.ms)}</span>}
         {data.veces > 1 && <span className="dato">×{data.veces}</span>}
         {data.extra.map((x) => <span key={x} className="dato">{x}</span>)}
@@ -431,6 +434,13 @@ function disponer(catalogo: Catalogo, reglas: Regla[]): Disposicion {
     : FASES;
   const FINALES: Record<string, string> = catalogo.fases?.length ? {} : FASE_DEL_FINAL;
   const columnas = FASES_DEL_FLUJO.map((f) => f.nodos.filter((id) => existe.has(id)));
+  // Un paso insertado en la estructura va en la fase de la etapa tras la que corre, justo debajo de ella.
+  for (const n of catalogo.nodos) {
+    if (!n.insertado || columnas.some((c) => c.includes(n.id))) continue;
+    const c = columnas.find((x) => x.includes(n.insertado!.desde)) ?? columnas[columnas.length - 1]!;
+    const tras = [n.insertado.desde, ...catalogo.nodos.filter((m) => m.insertado?.desde === n.insertado!.desde && c.includes(m.id)).map((m) => m.id)];
+    c.splice(Math.max(...tras.map((x) => c.indexOf(x))) + 1, 0, n.id);
+  }
   // Lo que el catálogo traiga y no tenga fase va al final de la fase más cercana.
   for (const n of catalogo.nodos) {
     if (n.terminal || FINALES[n.id] || columnas.some((c) => c.includes(n.id))) continue;

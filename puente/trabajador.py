@@ -72,6 +72,7 @@ sys.path.insert(0, str(MOTOR))
 
 import visor_adjuntos as adjuntos  # noqa: E402  (junto a este archivo, no en el motor)
 import buzon_vivo  # noqa: E402
+import estructura_trabajador  # noqa: E402  (la estructura editada de un flujo de PQRD)
 
 VIVO = Path(os.environ.get("RUTA_VIVO", RAIZ / "datos" / "vivo"))
 _salida = sys.stdout
@@ -179,6 +180,9 @@ class RegistroObservado:
         return getattr(self.real, nombre)
 
 
+_uso_vision = threading.local()
+
+
 class ModeloObservado:
     """El modelo real; cada vuelta anuncia su pedido, su respuesta y sus tokens."""
 
@@ -204,8 +208,10 @@ class ModeloObservado:
         ms = int((time.time() - t) * 1000)
         sin_texto = (texto or "").strip().upper() == "SIN_TEXTO"
         donde = adjuntos.vision(ms, len(texto or ""), not sin_texto)
-        evento("vision", ms=ms, ok=True, sin_texto=sin_texto, caracteres=len(texto or ""), bytes=len(jpeg),
-               muestra=(texto or "")[:600], **donde)
+        entrada, salida = getattr(_uso_vision, "ultimo", None) or (0, 0)
+        _uso_vision.ultimo = None
+        evento("vision", ms=ms, ok=True, sin_texto=sin_texto, caracteres=len(texto or ""), bytes=len(jpeg), formato=mime,
+               modelo=self.nombre, tokens_entrada=entrada, tokens_salida=salida, muestra=(texto or "")[:600], **donde)
         return texto
 
     def generar(self, sistema, mensajes, herramientas):
@@ -1037,7 +1043,13 @@ def modelo_vertex(nombre: str, ubicacion: str):
             # temperatura 0: esa no se toca.
             if _ia["temperatura"] is not None and config is not None and getattr(config, "system_instruction", None):
                 config.temperature = _ia["temperatura"]
-            return generar_original(*a, **k)
+            r = generar_original(*a, **k)
+            if config is not None and not getattr(config, "system_instruction", None):
+                # los tokens de una transcripción: los anuncia ModeloObservado con su hoja (mismo hilo)
+                u = getattr(r, "usage_metadata", None)
+                _uso_vision.ultimo = (int(getattr(u, "prompt_token_count", 0) or 0),
+                                      int(getattr(u, "candidates_token_count", 0) or 0) + int(getattr(u, "thoughts_token_count", 0) or 0))
+            return r
 
         modelos_api.generate_content = _generar
         _modelos[clave] = m
@@ -1262,11 +1274,19 @@ async def principal() -> None:
             if fallidas:
                 evento("configuracion", fallidas=fallidas)
             try:
-                if orden["cmd"] == "procesar":
+                # la estructura editada del flujo (etapas apagadas, lectores, pasos insertados): solo durante esta orden
+                no_corre = estructura_trabajador.instalar(sys.modules[__name__], orden)
+                if no_corre:
+                    items = [{"corrida": orden["corrida"], "caso": orden["caso"]}] if orden["cmd"] == "procesar" else orden["corridas"]
+                    for item in items:
+                        _actual.nuevo(corrida=item["corrida"])
+                        evento("resultado", caso=item["caso"], accion="error", segundos=0, motivo=no_corre[:500])
+                elif orden["cmd"] == "procesar":
                     await procesar(orden)
                 else:
                     await procesar_lote(orden)
             finally:
+                estructura_trabajador.quitar()
                 restaurar_configuracion()
                 _reglas.clear()
                 _actual.nuevo(corrida=None)

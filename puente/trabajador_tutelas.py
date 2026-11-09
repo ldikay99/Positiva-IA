@@ -669,6 +669,66 @@ def instalar_cache_conversion() -> None:
     OrquestadorRadicacion._extraer_texto_pdf = _extraer_texto_pdf
 
 
+def _instalar_estructura(o: Any, orden: dict, caso: str) -> str:
+    """La estructura editada del flujo sobre este orquestador (es de este hilo): etapa apagada y pasos antes de radicar."""
+    est = (orden.get("estructura") or {}).get("definicion")
+    if not est:
+        return ""
+    if REAL:
+        return "este flujo tiene la estructura editada: con la radicación real solo corre la estructura del código"
+    import estructura_codigo as ec
+
+    v = ec.validar("tutelas", est)
+    if not v["ok"]:
+        return "la estructura del flujo no es válida: " + "; ".join(v["problemas"][:6])
+    evento("estructura", version=(orden.get("estructura") or {}).get("version"), apagadas=v["apagadas"],
+           tramos=[{"punto": t["punto"], "nodos": t["nodos"]} for t in v["tramos"]])
+    if "enlace" in v["apagadas"]:
+        def sin_enlace(correos_hilo):
+            _abrir_nodo("enlace")
+            evento("paso", nodo="enlace", titulo="Apagada en este flujo", tono="info", detalle=ec.BASES["tutelas"]["apagables"]["enlace"], apagada=True)
+            return None
+        o._buscar_enlace_sharepoint = sin_enlace
+    tramo = next((t for t in v["tramos"] if t["punto"] == "antes_de_radicar"), None)
+    if not tramo:
+        return ""
+    radicar = o.sgdea.radicar_tutela
+    mover = o._mover_hilo_fallido
+    detenido: Dict[str, str] = {}
+
+    def radicar_con_pasos(correo=None, juzgado=None, radicado_23=None, adjuntos=None, **k):
+        carpeta = Path(os.environ.get("RUTA_TRABAJO", RAIZ / "datos" / "trabajo")) / "pasos" / str(_corrida.get())
+        carpeta.mkdir(parents=True, exist_ok=True)
+        archivos = []
+        for i, (nombre, datos, *_r) in enumerate(adjuntos or []):
+            ruta = carpeta / f"{i:03d}-{''.join(c if c.isalnum() or c in '._- ' else '_' for c in nombre)[:120]}"
+            ruta.write_bytes(datos or b"")
+            archivos.append((nombre, ruta))
+        j = juzgado
+        contexto = {"correo": {"asunto": getattr(correo, "subject", ""), "cuerpo": getattr(correo, "body_text", ""),
+                               "remitente": f"{getattr(correo, 'remitente_nombre', '')} <{getattr(correo, 'remitente_email', '')}>",
+                               "remitente_correo": getattr(correo, "remitente_email", ""), "remitente_nombre": getattr(correo, "remitente_nombre", "")},
+                    "adjuntos": archivos, "carpeta": str(carpeta),
+                    "variables": {"radicado_23": radicado_23 or "", "juzgado": {x: getattr(j, x, "") for x in ("nombre", "codigo", "departamento", "municipio", "correo")} if j else {}}}
+        try:
+            r = ec.correr_segmento(tramo, est, "tutelas", contexto, orden.get("pasos") or {}, str(_corrida.get()), _salida, _cerrojo)
+        except Exception as e:
+            r = {"desenlace": "error", "motivo": f"{type(e).__name__}: {e}"[:300], "avisos": []}
+        evento("pasos_insertados", punto="antes_de_radicar", desenlace=r["desenlace"], motivo=r["motivo"], avisos=(r.get("avisos") or [])[:5])
+        if r["desenlace"] == "manual":
+            detenido["motivo"] = r["motivo"] or "PASO-DEL-FLUJO"
+            return False, None, f"un paso del flujo lo manda a revisión manual: {detenido['motivo']}", False
+        return radicar(correo=correo, juzgado=juzgado, radicado_23=radicado_23, adjuntos=adjuntos, **k)
+
+    def mover_con_motivo(correos_hilo, etiqueta, *a, **k):
+        # lo que paró un paso del flujo no fue un error al radicar
+        return mover(correos_hilo, "PASO-DEL-FLUJO" if detenido and etiqueta == "ERROR-RADICAR" else etiqueta, *a, **k)
+
+    o.sgdea.radicar_tutela = radicar_con_pasos
+    o._mover_hilo_fallido = mover_con_motivo
+    return ""
+
+
 def procesar(orden: dict) -> None:
     from Tutelas import operaciones as op
     from Tutelas.main import OrquestadorRadicacion
@@ -728,6 +788,10 @@ def procesar(orden: dict) -> None:
                tono="info", detalle=(enlace or "ningún correo del hilo remite el expediente por enlace")[:300])
         return enlace
     o._buscar_enlace_sharepoint = _buscar_enlace
+    no_corre = _instalar_estructura(o, orden, caso)
+    if no_corre:
+        evento("resultado", caso=caso, accion="error", segundos=0, motivo=no_corre[:500])
+        return
 
     evento("inicio", caso=caso, asunto=principal.subject, modelo="tutelas", flujo="tutelas", radicacion_real=REAL,
            hilo=[{"caso": carpeta.name, "recibido": c.fecha_recibido.isoformat(), "remitente": c.remitente_email} for carpeta, _, c in hilo])

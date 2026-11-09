@@ -17,12 +17,14 @@ import { programacionDe, estado as estadoDelProgramador, enlace as programadorEn
 import type { Corrida } from "./motor.ts";
 import * as integ from "./flujos_integraciones.ts";
 import * as salidasMedida from "./flujos_salidas.ts";
+import * as estructuras from "./estructuras.ts";
 
 /**
  * Los flujos de la plataforma.
  *
  * - De código: un motor de verdad (PQRD, Tutelas) que el visor observa. Su
- *   estructura es la del código; desde aquí se ajustan sus parámetros.
+ *   estructura es la del código salvo que se edite (estructuras.ts): se apagan o
+ *   reconfiguran etapas y se insertan nodos declarativos que el trabajador corre.
  * - Declarativos: un JSON de nodos y aristas que se crea en la web o en el
  *   chat y que ejecuta `puente/flujo_declarativo.py`. Se guardan con versión.
  *
@@ -743,6 +745,8 @@ export interface Flujo {
   original?: boolean;
   /** De qué flujo es copia (si lo es). */
   copia_de?: string;
+  /** De código: si su estructura fue editada (etapas apagadas o reconfiguradas, pasos insertados). Sin editar es la del código. */
+  editada?: boolean;
   /** Con qué arranca: el tipo del disparador (o «buzon_real» en los de código). */
   disparador?: string;
   /** Si tiene «Correspondencia» (arranca con un correo): los de código y los de entrada_correo o correo_nuevo. */
@@ -830,6 +834,7 @@ interface Guardado {
 
 export async function cargar(): Promise<void> {
   await cargarCopias();
+  await estructuras.cargar();
   // Cada almacén por flujo sabe de qué motor es una copia (nombres del job, compuerta, programación).
   entornos.enlace.baseDe = (id) => baseDe(id) ?? id;
   compuerta.enlace.tieneCompuerta = (id) => baseDe(id) !== null;
@@ -857,8 +862,9 @@ function aFlujo(d: Definicion, version: number, actualizado: number, nota?: stri
 }
 
 export function listar(): Flujo[] {
-  const propios = DE_CODIGO.filter((f) => existsSync(f.trabajador)).map((f) => ({ ...f, ...(originales[f.id] ?? {}) }));
-  const copias = [...copiasDeCodigo.values()].filter((f) => existsSync(f.trabajador)).sort((a, b) => a.nombre.localeCompare(b.nombre));
+  const editada = (f: Flujo): Flujo => ({ ...f, editada: Boolean(estructuras.obtener(f.id)) });
+  const propios = DE_CODIGO.filter((f) => existsSync(f.trabajador)).map((f) => editada({ ...f, ...(originales[f.id] ?? {}) }));
+  const copias = [...copiasDeCodigo.values()].filter((f) => existsSync(f.trabajador)).sort((a, b) => a.nombre.localeCompare(b.nombre)).map(editada);
   return [...propios, ...copias, ...[...declarativos.values()].sort((a, b) => a.nombre.localeCompare(b.nombre))];
 }
 
@@ -936,6 +942,7 @@ export async function borrar(id: string): Promise<boolean> {
     // una copia de pqrd o tutelas: su registro y su entorno (lo demás lo limpia el servidor)
     copiasDeCodigo.delete(id);
     await unlink(join(carpetaCodigo(), `${id}.json`)).catch(() => undefined);
+    await estructuras.borrarTodo(id);
     await entornos.borrarTodo(id);
     return true;
   }
@@ -1057,6 +1064,8 @@ export async function clonar(id: string, nombre: unknown, idNuevo?: unknown): Pr
   await guardarCopia(copia);
   copiasDeCodigo.set(nuevo, copia);
   await entornos.copiar(id, nuevo);
+  // la copia arranca con la estructura que tenga el original (si se editó) y desde ahí diverge sin tocarlo
+  await estructuras.copiar(id, nuevo);
   return { ok: true, flujo: copia };
 }
 
@@ -1145,8 +1154,18 @@ function ordenBase(id: string, f: Flujo, corrida: Corrida): Record<string, unkno
   if (f.tipo === "codigo") {
     const pqrd = baseDe(id) === "pqrd";
     const permitidas = pqrd ? ajustables().entorno : new Set<string>();
-    const propias = Object.fromEntries(Object.entries(entornos.paraCorrida(id).valores).filter(([k]) => permitidas.has(k)));
-    return { entorno: { ...(pqrd ? corrida.configuracion.entorno : {}), ...propias } };
+    const ent = entornos.paraCorrida(id);
+    const propias = Object.fromEntries(Object.entries(ent.valores).filter(([k]) => permitidas.has(k)));
+    const e = estructuras.obtener(id);
+    if (!e) return { entorno: { ...(pqrd ? corrida.configuracion.entorno : {}), ...propias } };
+    // la estructura editada: el trabajador apaga, reconfigura y corre los pasos insertados (con su entorno, sus conexiones y la IA global)
+    const insertados = e.definicion.nodos.filter((n) => n.tipo !== "etapa") as unknown as Definicion["nodos"];
+    return {
+      entorno: { ...(pqrd ? corrida.configuracion.entorno : {}), ...propias },
+      estructura: { definicion: e.definicion, version: e.version },
+      pasos: { flujo: id, entorno: ent.valores, entorno_secretos: ent.secretos, ia_global: ia.obtenerGlobal(), enlaces: descargas.paraOrden(),
+        credenciales: credenciales.paraCorrida(id, credencialesUsadas({ id, nombre: id, descripcion: "", modelo: "gemini-2.5-flash", nodos: insertados, aristas: [] } as unknown as Definicion)) },
+    };
   }
   if (!f.definicion) return {};
   const ent = entornos.paraCorrida(id);
@@ -1619,15 +1638,51 @@ export function catalogoDeclarativo(d: Definicion): Catalogo & { fases: { id: st
 
 let catalogoTutelas: Catalogo | null = null;
 
+/**
+ * El catálogo de un flujo de código con su estructura editada: las etapas apagadas o reconfiguradas llevan
+ * su config, los pasos insertados entran como nodos (con su punto, para que el lienzo los ponga junto a
+ * su etapa) y las aristas son las de la estructura (las del motor conservan su etiqueta).
+ */
+function conEstructura(cat: Catalogo, e: estructuras.Guardada): Catalogo {
+  const porId = new Map(e.definicion.nodos.map((n) => [n.id, n]));
+  const etiqueta = new Map(cat.aristas.map((a) => [`${a.desde}->${a.hacia}`, a.etiqueta]));
+  const tramoDe = new Map(e.tramos.flatMap((t) => t.nodos.map((x) => [x, t] as const)));
+  const aristas = e.definicion.aristas.map((a) => ({ desde: a.desde, hacia: a.hacia, etiqueta: etiqueta.get(`${a.desde}->${a.hacia}`) ?? (a.cuando && a.cuando !== "*" ? a.cuando : undefined) }));
+  const etapas = cat.nodos.map((n) => {
+    const x = porId.get(n.id);
+    const c = (x?.config ?? {}) as Record<string, unknown>;
+    return { ...n, ...(x?.nombre ? { nombre: x.nombre } : {}), siguientes: aristas.filter((a) => a.desde === n.id).map((a) => a.hacia),
+      ...(Object.keys(c).length ? { config: c } : {}), ...(c.deshabilitado === true ? { deshabilitado: true } : {}) };
+  });
+  const insertados = e.definicion.nodos.filter((n) => n.tipo !== "etapa").map((n) => {
+    const t = tramoDe.get(n.id);
+    const nodo = { id: n.id, tipo: n.tipo, nombre: n.nombre ?? n.id, descripcion: n.descripcion ?? "", config: n.config ?? {} } as unknown as Definicion["nodos"][number];
+    return {
+      id: n.id, nombre: n.nombre ?? n.id, descripcion: n.descripcion || (NOMBRE_TIPO as Record<string, string>)[n.tipo] || n.tipo, etapa_cronometro: n.id,
+      usa_ia: TIPOS_IA.has(n.tipo as never), categoria: (CATEGORIA as Record<string, string>)[n.tipo], tipo_declarativo: n.tipo, config: n.config ?? {},
+      siguientes: aristas.filter((a) => a.desde === n.id).map((a) => a.hacia),
+      ...(t ? { insertado: { punto: t.punto, nombre_punto: t.nombre, desde: t.desde, hacia: t.hacia } } : {}),
+      desenlaces: n.tipo === "salida" ? [{ accion: String((n.config as { desenlace?: string } | undefined)?.desenlace ?? ""), cuando: "al llegar aquí" }] : [],
+      reglas: describirConfig(nodo, e.definicion.aristas as Definicion["aristas"]), parametros: [],
+    };
+  });
+  return { ...cat, nodos: [...etapas, ...insertados] as unknown as Catalogo["nodos"], aristas };
+}
+
 export function catalogoDe(id: string): Catalogo | null {
   const f = obtener(id);
   if (!f) return null;
   const base = baseDe(f.id);
-  if (base === "pqrd") return catalogoDePqrd();
+  let cat: Catalogo | null = null;
+  if (base === "pqrd") cat = catalogoDePqrd();
   if (base === "tutelas") {
     const ruta = resolve(raiz, "catalogo", "tutelas.json");
     if (!catalogoTutelas && existsSync(ruta)) catalogoTutelas = JSON.parse(readFileSync(ruta, "utf8")) as Catalogo;
-    return catalogoTutelas;
+    cat = catalogoTutelas;
+  }
+  if (base) {
+    const e = estructuras.obtener(f.id);
+    return cat && e ? conEstructura(cat, e) : cat;
   }
   return f.definicion ? catalogoDeclarativo(f.definicion) : null;
 }

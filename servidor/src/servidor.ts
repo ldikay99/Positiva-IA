@@ -17,6 +17,7 @@ import * as recursos from "./recursos.ts";
 import { limiteTrabajadorMb, memoriaDelSistema } from "./medicion.ts";
 import * as espacio from "./espacio.ts";
 import * as flujos from "./flujos.ts";
+import * as estructuras from "./estructuras.ts";
 import * as credenciales from "./credenciales.ts";
 import * as entornos from "./entornos.ts";
 import * as programador from "./programador.ts";
@@ -230,7 +231,39 @@ function saludResumida(m: Motor) {
 
 app.get<{ Params: { id: string } }>("/api/flujos/:id", async (req, res) => {
   const f = flujos.obtener(req.params.id);
-  return f ? { ...f, trabajador: undefined } : res.code(404).send({ error: "ese flujo no existe" });
+  return f ? { ...f, trabajador: undefined, borrable: !flujos.esOriginal(f.id) } : res.code(404).send({ error: "ese flujo no existe" });
+});
+
+// La estructura de un flujo de código (pqrd, tutelas o una copia): sus etapas, los pasos insertados y sus aristas.
+app.get<{ Params: { id: string } }>("/api/flujos/:id/estructura", async (req, res) => {
+  const base = flujos.baseDe(req.params.id);
+  if (!base) return res.code(400).send({ error: "solo los flujos de código tienen estructura de etapas; un flujo declarativo se edita por su definición" });
+  return estructuras.vista(req.params.id, base);
+});
+
+app.post<{ Params: { id: string } }>("/api/flujos/:id/estructura/validar", async (req, res) => {
+  const base = flujos.baseDe(req.params.id);
+  if (!base) return res.code(400).send({ error: "ese flujo no es de código" });
+  return estructuras.validar(base, (req.body as { definicion?: unknown })?.definicion, entornos.nombresDeCache(req.params.id));
+});
+
+app.put<{ Params: { id: string } }>("/api/flujos/:id/estructura", async (req, res) => {
+  const id = req.params.id;
+  const base = flujos.baseDe(id);
+  if (!base) return res.code(400).send({ error: "ese flujo no es de código" });
+  const b = (req.body ?? {}) as { definicion?: unknown; nota?: string };
+  const r = await estructuras.guardar(id, base, b.definicion, b.nota, entornos.nombresDeCache(id));
+  if (!r.ok || !r.guardada) return res.code(400).send({ error: "la estructura no es válida", problemas: r.problemas });
+  avisarFlujo(id, { version: r.guardada.version, estructura: true });
+  return { ok: true, version: r.guardada.version, tramos: r.tramos, intercambio: r.intercambio, apagadas: r.apagadas };
+});
+
+/** Vuelve a la estructura del código (la editada queda guardada como versión). */
+app.delete<{ Params: { id: string } }>("/api/flujos/:id/estructura", async (req, res) => {
+  if (!flujos.baseDe(req.params.id)) return res.code(400).send({ error: "ese flujo no es de código" });
+  const ok = await estructuras.restablecer(req.params.id);
+  avisarFlujo(req.params.id, { estructura: true });
+  return { ok, restablecida: ok };
 });
 
 app.post("/api/flujos/validar", async (req) => flujos.validar((req.body as { definicion?: unknown })?.definicion ?? req.body));
