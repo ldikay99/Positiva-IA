@@ -307,6 +307,11 @@ def detectar_tipo(datos: bytes, nombre: str = "") -> str:
     """
     if not datos:
         return "vacio"
+    contenedor = _tipo_isobmff(datos)
+    if contenedor:
+        return contenedor
+    if datos[:4] == b"RIFF" and datos[8:12] == b"WEBP":
+        return "imagen"
     for firma, tipo in _FIRMAS:
         if datos.startswith(firma):
             return tipo
@@ -326,6 +331,26 @@ def detectar_tipo(datos: bytes, nombre: str = "") -> str:
     ext = nombre.lower().rsplit(".", 1)[-1] if "." in nombre else ""
     return {"pdf": "pdf", "docx": "docx", "xlsx": "xlsx",
             "csv": "texto", "txt": "texto", "eml": "texto"}.get(ext, "desconocido")
+
+
+# HEIF y AVIF son contenedores ISO-BMFF: «ftyp» en el byte 4 y despues la
+# marca mayor y las compatibles. Las fotos de iPhone llegan como HEIC.
+_MARCAS_AVIF = {b"avif", b"avis"}
+_MARCAS_HEIF = {b"heic", b"heix", b"hevc", b"hevx", b"heim", b"heis", b"hevm",
+                b"hevs", b"mif1", b"msf1", b"mif2"}
+
+
+def _tipo_isobmff(datos: bytes) -> str:
+    """"heic" (HEIF/HEIC), "imagen" (AVIF, que Pillow abre) o "" si no lo es."""
+    if len(datos) < 16 or datos[4:8] != b"ftyp":
+        return ""
+    largo = int.from_bytes(datos[0:4], "big")
+    marcas = {datos[8:12]} | {datos[i:i + 4] for i in range(16, min(largo, 64), 4)}
+    if marcas & _MARCAS_AVIF:
+        return "imagen"
+    if marcas & _MARCAS_HEIF:
+        return "heic"
+    return ""
 
 
 def _tipo_de_zip(datos: bytes) -> str:
@@ -1435,6 +1460,8 @@ def _imagen_a_markdown(
     inicio = time.monotonic()
     try:
         imagen = Image.open(io.BytesIO(datos))
+        if imagen.format == "TIFF" and getattr(imagen, "n_frames", 1) > 1:
+            return _tiff_de_varias_hojas(imagen, nombre, del_correo)
         # El OCR no admite todos los modos de color: CMYK de un escaner, paleta
         # con transparencia o 16 bits por canal lo hacen fallar. RGB y escala de
         # grises los acepta siempre, y convertir no pierde nada legible.
@@ -1463,6 +1490,140 @@ def _imagen_a_markdown(
         markdown=_encabezado(nombre, md),
         tipo_real="imagen", ocr_aplicado=True, truncado=truncado,
     )
+
+
+# Un TIFF de fax o de escaner trae una hoja por cuadro; Pillow abre solo la
+# primera si no se recorren. El tope es el mismo de las hojas de un PDF.
+def _tiff_de_varias_hojas(imagen, nombre: str,
+                          del_correo: PresupuestoDeOcr) -> Conversion:
+    total = int(getattr(imagen, "n_frames", 1))
+    hojas = min(total, LIMITE_PAGINAS_PDF)
+    partes: List[str] = []
+    avisos: List[str] = []
+    ilegibles = 0
+    for i in range(hojas):
+        if del_correo.queda() <= 0:
+            ilegibles += hojas - i
+            avisos.append(del_correo.motivo())
+            break
+        imagen.seek(i)
+        hoja = imagen.convert("RGB") if imagen.mode not in ("RGB", "L") else imagen.copy()
+        texto, confianza, fallo = _texto_de_imagen(
+            hoja, min(TIMEOUT_OCR_PAGINA_S, del_correo.queda()), presupuesto=del_correo)
+        if fallo or not texto.strip():
+            ilegibles += 1
+            if fallo:
+                avisos.append(f"hoja {i + 1}: {fallo}")
+            continue
+        partes.append(f"## Página {i + 1} {_marca_ocr(confianza)}\n\n"
+                      + _linea_dudosa(confianza, "página") + texto)
+    if total > hojas:
+        avisos.append(f"el TIFF trae {total} hojas; se leyeron las primeras {hojas}")
+    md, truncado = _truncar("\n\n".join(partes))
+    return Conversion(markdown=_encabezado(nombre, md) if partes else "",
+                      tipo_real="imagen", ocr_aplicado=True, truncado=truncado,
+                      aviso="; ".join(avisos), paginas=hojas,
+                      paginas_ilegibles=ilegibles)
+
+
+# HEIC/HEIF (las fotos de iPhone). Sus decodificadores libres (libheif,
+# libde265, x265) son LGPL o GPL, y la licencia del proyecto solo admite MIT,
+# BSD o Apache: no hay con que pasarlas a pixeles para tesseract. Gemini las
+# recibe tal cual (image/heic, image/heif), asi que se transcriben con vision,
+# dentro del mismo cupo de imagenes por correo que las hojas flojas.
+LIMITE_BYTES_VISION_DIRECTA = 15 * 1024 * 1024
+
+
+def _mime_heif(datos: bytes) -> str:
+    return "image/heic" if datos[8:12] in (b"heic", b"heix") else "image/heif"
+
+
+def _acepta_mime(funcion: Callable) -> bool:
+    import inspect
+
+    try:
+        parametros = inspect.signature(funcion).parameters.values()
+    except (TypeError, ValueError):
+        return False
+    return any(p.name == "mime" or p.kind is p.VAR_KEYWORD for p in parametros)
+
+
+def transcribir_con_vision(datos: bytes, mime: str,
+                           presupuesto: Optional[PresupuestoDeOcr]
+                           ) -> Tuple[str, str]:
+    """
+    (texto, motivo_del_fallo) de una imagen leida solo por el modelo, sin
+    tesseract: para lo que no se puede decodificar (HEIC) y para cuando un flujo
+    pide que un tipo de archivo se lea con vision.
+    """
+    transcribir = TRANSCRIPTOR_IA
+    if transcribir is None:
+        return "", "no hay modelo con vision en esta corrida"
+    if mime != "image/jpeg" and not _acepta_mime(transcribir):
+        return "", "el transcriptor de esta corrida solo recibe JPEG"
+    if len(datos) > LIMITE_BYTES_VISION_DIRECTA:
+        return "", (f"{len(datos) / 1048576:.1f} MB excede lo que se le pasa al "
+                    f"modelo ({LIMITE_BYTES_VISION_DIRECTA / 1048576:.0f} MB)")
+    del_correo = presupuesto if presupuesto is not None else PresupuestoDeOcr()
+    with _CERROJO_DEL_CUPO_IA:
+        if del_correo.imagenes_ia <= 0:
+            return "", (f"se agoto el cupo de vision del correo "
+                        f"({MAX_IMAGENES_IA_POR_CORREO} imagenes)")
+        del_correo.imagenes_ia -= 1
+    try:
+        texto = (transcribir(datos, mime=mime) if mime != "image/jpeg"
+                 else transcribir(datos))
+    except Exception as e:
+        return "", f"la vision fallo ({type(e).__name__}: {e})"[:300]
+    texto = normalizar(texto or "")
+    if texto.strip().upper() == "SIN_TEXTO":
+        return "", ""
+    return texto, ""
+
+
+def imagen_con_vision(datos: bytes, nombre: str,
+                      presupuesto: Optional[PresupuestoDeOcr] = None,
+                      tipo_real: str = "imagen") -> Conversion:
+    """Una imagen leida solo por el modelo, con el mismo markdown que el OCR."""
+    mime = ""
+    if tipo_real == "heic":
+        mime = _mime_heif(datos)
+    else:
+        try:
+            from PIL import Image, ImageOps
+
+            imagen = ImageOps.exif_transpose(Image.open(io.BytesIO(datos)))
+            salida = io.BytesIO()
+            imagen.convert("RGB").save(salida, format="JPEG", quality=90)
+            datos, mime = salida.getvalue(), "image/jpeg"
+        except Exception as e:
+            return Conversion(tipo_real=tipo_real, error=f"{type(e).__name__}: {e}")
+    inicio = time.monotonic()
+    try:
+        texto, fallo = transcribir_con_vision(datos, mime, presupuesto)
+    finally:
+        if presupuesto is not None:
+            presupuesto.gastar(time.monotonic() - inicio)
+    if fallo:
+        return Conversion(tipo_real=tipo_real, paginas=1, paginas_ilegibles=1,
+                          aviso=f"{nombre}: {fallo}")
+    if not texto.strip():
+        return Conversion(tipo_real=tipo_real, ocr_aplicado=True,
+                          markdown=_encabezado(nombre, "_(imagen sin texto reconocible)_"))
+    md, truncado = _truncar(f"## Imagen {_marca_ocr(None)}\n\n"
+                            + MARCA_TRANSCRITO_POR_IA + "\n\n" + texto)
+    return Conversion(markdown=_encabezado(nombre, md), tipo_real=tipo_real,
+                      ocr_aplicado=True, truncado=truncado)
+
+
+def _heic_a_markdown(datos: bytes, nombre: str,
+                     presupuesto: Optional[PresupuestoDeOcr] = None) -> Conversion:
+    if TRANSCRIPTOR_IA is None:
+        return Conversion(
+            tipo_real="heic",
+            error="tipo no soportado sin vision: heic (el OCR no decodifica "
+                  "HEIC/HEIF y esta corrida no tiene modelo con vision)")
+    return imagen_con_vision(datos, nombre, presupuesto, tipo_real="heic")
 
 
 def _docx_a_markdown(datos: bytes, nombre: str) -> Conversion:
@@ -1604,6 +1765,8 @@ def _p7m_a_markdown(datos: bytes, nombre: str,
                   f"{MAX_PROFUNDIDAD_SOBRE} niveles",
         )
 
+    if datos.lstrip()[:200].lower().startswith((b"content-type", b"mime-version")):
+        return _smime_a_markdown(datos, nombre, profundidad)
     encontrado = _carga_util_del_sobre(datos)
     if encontrado is None:
         # Algunos llegan como texto base64 en vez de DER.
@@ -1633,6 +1796,54 @@ def _p7m_a_markdown(datos: bytes, nombre: str,
     return interna
 
 
+_FIRMAS_SMIME = {"application/pkcs7-signature", "application/x-pkcs7-signature"}
+
+
+def _smime_a_markdown(datos: bytes, nombre: str, profundidad: int) -> Conversion:
+    """
+    Un smime.p7m que es un correo firmado (multipart/signed en texto MIME): el
+    mensaje va en claro junto a la firma. Antes se buscaba un PDF dentro y, al no
+    haberlo, el adjunto quedaba ilegible aunque el texto estuviera ahi.
+    """
+    import email
+    from email import policy
+
+    try:
+        mensaje = email.message_from_bytes(datos, policy=policy.default)
+    except Exception as e:
+        return Conversion(tipo_real="p7m", error=f"el correo firmado no se pudo leer ({type(e).__name__}: {e})")
+    plano: List[str] = []
+    html: List[str] = []
+    internos: List[Tuple[str, bytes]] = []
+    for parte in mensaje.walk():
+        if parte.is_multipart():
+            continue
+        tipo = parte.get_content_type()
+        if tipo in _FIRMAS_SMIME:
+            continue
+        carga = parte.get_payload(decode=True) or b""
+        archivo = parte.get_filename()
+        if archivo or not tipo.startswith("text/"):
+            internos.append((archivo or f"parte.{tipo.split('/')[-1]}", carga))
+            continue
+        texto = carga.decode(parte.get_content_charset() or "utf-8", "replace")
+        (plano if tipo == "text/plain" else html).append(texto)
+    cuerpo = "\n\n".join(plano) or re.sub(r"<[^>]+>", " ", "\n\n".join(html))
+    partes = [f"## Mensaje firmado\n\n{normalizar(cuerpo)}"] if cuerpo.strip() else []
+    avisos = []
+    for archivo, carga in internos:
+        interna = convertir(carga, archivo, _profundidad_sobre=profundidad + 1)
+        if interna.error:
+            avisos.append(f"{archivo}: {interna.error}")
+        elif interna.markdown:
+            partes.append(interna.markdown.replace("# ", "## ", 1))
+    if not partes:
+        return Conversion(tipo_real="p7m", error="el correo firmado no trae texto ni documentos")
+    md, truncado = _truncar("\n\n".join(partes))
+    return Conversion(markdown=_encabezado(nombre, md), tipo_real="p7m/correo",
+                      truncado=truncado, aviso="; ".join(avisos))
+
+
 def _encabezado(nombre: str, cuerpo: str) -> str:
     """
     Antepone el nombre del archivo como titulo.
@@ -1648,6 +1859,7 @@ def _encabezado(nombre: str, cuerpo: str) -> str:
 _CONVERSORES = {
     "pdf": _pdf_a_markdown,
     "imagen": _imagen_a_markdown,
+    "heic": _heic_a_markdown,
     "docx": _docx_a_markdown,
     "xlsx": _xlsx_a_markdown,
     "texto": _texto_a_markdown,
@@ -1689,6 +1901,8 @@ def convertir(
         return _pdf_a_markdown(datos, nombre, claves_candidatas, presupuesto)
     if tipo == "imagen":
         return _imagen_a_markdown(datos, nombre, presupuesto)
+    if tipo == "heic":
+        return _heic_a_markdown(datos, nombre, presupuesto)
     return conversor(datos, nombre)
 
 

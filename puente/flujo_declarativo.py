@@ -1745,9 +1745,9 @@ def _transcriptor(ia: Optional[dict] = None, al_terminar: Any = None):
     ia = dict(ia or {})
     proveedor, modelo = ia.get("proveedor") or "vertex", ia.get("modelo") or "gemini-2.5-flash"
 
-    def transcribir(jpeg: bytes) -> str:
+    def transcribir(jpeg: bytes, mime: str = "image/jpeg") -> str:
         r = ia_proveedores.generar(proveedor, modelo, "", tarea=INSTRUCCION_DE_TRANSCRIPCION, temperatura=0.0,
-                                   partes=[{"tipo": "imagen", "datos": jpeg, "mime": "image/jpeg"}], credencial=ia.get("credencial"),
+                                   partes=[{"tipo": "imagen", "datos": jpeg, "mime": mime}], credencial=ia.get("credencial"),
                                    flujo=ia.get("flujo") or "", sin_razonamiento=True, timeout=90)
         if al_terminar:
             al_terminar(r)

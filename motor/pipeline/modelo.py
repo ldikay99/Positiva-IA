@@ -211,9 +211,12 @@ class ModeloVertex:
         )
         return _turno_de_respuesta(respuesta, self.nombre)
 
-    def transcribir_imagen(self, jpeg: bytes) -> str:
+    def transcribir_imagen(self, jpeg: bytes, mime: str = "image/jpeg") -> str:
         """
         Texto visible de una imagen que el OCR no pudo leer.
+
+        `mime` es el formato de los bytes: JPEG para lo que ya paso por el OCR;
+        image/heic o image/heif para lo que no se puede decodificar aqui.
 
         Solo transcribe: no interpreta ni extrae campos, para que lo que sale
         pase por las mismas reglas que el texto de cualquier documento. Sin
@@ -224,7 +227,7 @@ class ModeloVertex:
 
         respuesta = cliente.models.generate_content(
             model=self.nombre,
-            contents=[types.Part.from_bytes(data=jpeg, mime_type="image/jpeg"),
+            contents=[types.Part.from_bytes(data=jpeg, mime_type=mime),
                       INSTRUCCION_DE_TRANSCRIPCION],
             config=types.GenerateContentConfig(
                 temperature=0.0,

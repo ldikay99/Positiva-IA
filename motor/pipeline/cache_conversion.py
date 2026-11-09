@@ -261,9 +261,9 @@ class _Vigilado:
     def __init__(self, original: Callable[[bytes], str]) -> None:
         self.original = original
 
-    def __call__(self, jpeg: bytes) -> str:
+    def __call__(self, jpeg: bytes, *a: Any, **k: Any) -> str:
         try:
-            return self.original(jpeg)
+            return self.original(jpeg, *a, **k)
         except Exception:
             fallos = _fallos_de_vision.get()
             if fallos is not None:

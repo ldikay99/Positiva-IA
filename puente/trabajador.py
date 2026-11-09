@@ -191,11 +191,11 @@ class ModeloObservado:
         """Las vueltas son del correo, no del modelo: en un lote lo comparten varios."""
         return _actual.get("vuelta", 0)
 
-    def transcribir_imagen(self, jpeg: bytes) -> str:
+    def transcribir_imagen(self, jpeg: bytes, mime: str = "image/jpeg") -> str:
         """Lo que el OCR no leyó lo transcribe el modelo con visión: se anuncia con su hoja."""
         t = time.time()
         try:
-            texto = self.real.transcribir_imagen(jpeg)
+            texto = self.real.transcribir_imagen(jpeg, mime) if mime != "image/jpeg" else self.real.transcribir_imagen(jpeg)
         except Exception as e:
             ms = int((time.time() - t) * 1000)
             donde = adjuntos.vision(ms, 0, False, f"{type(e).__name__}: {e}")
