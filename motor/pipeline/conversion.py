@@ -1570,11 +1570,20 @@ def transcribir_con_vision(datos: bytes, mime: str,
             return "", (f"se agoto el cupo de vision del correo "
                         f"({MAX_IMAGENES_IA_POR_CORREO} imagenes)")
         del_correo.imagenes_ia -= 1
-    try:
-        texto = (transcribir(datos, mime=mime) if mime != "image/jpeg"
-                 else transcribir(datos))
-    except Exception as e:
-        return "", f"la vision fallo ({type(e).__name__}: {e})"[:300]
+    # Lo que no se puede decodificar no tiene tesseract de respaldo: si el
+    # modelo se corta (se queda repitiendo un renglon), se le pide otra vez.
+    # Medido en la plataforma con gemini-3.1-flash-lite: 2 de 7 fotos HEIC
+    # del mismo correo se cortaron.
+    intentos = 1 if mime == "image/jpeg" else 2
+    for intento in range(intentos):
+        try:
+            texto = (transcribir(datos, mime=mime) if mime != "image/jpeg"
+                     else transcribir(datos))
+            break
+        except Exception as e:
+            if intento + 1 < intentos and "Cortada" in type(e).__name__:
+                continue
+            return "", f"la vision fallo ({type(e).__name__}: {e})"[:300]
     texto = normalizar(texto or "")
     if texto.strip().upper() == "SIN_TEXTO":
         return "", ""

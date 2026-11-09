@@ -103,6 +103,25 @@ def test_un_fallo_de_la_vision_deja_el_heic_ilegible_con_el_motivo(monkeypatch):
     assert c.ilegible and "TimeoutError" in c.aviso
 
 
+def test_un_heic_cortado_se_pide_otra_vez(monkeypatch):
+    from pipeline.modelo import TranscripcionCortada
+
+    llamadas = []
+
+    def corta_una_vez(datos, mime="image/jpeg"):
+        llamadas.append(mime)
+        if len(llamadas) == 1:
+            raise TranscripcionCortada("la transcripcion paso de 3000 tokens")
+        return "FORMULA MEDICA"
+
+    monkeypatch.setattr(conversion, "TRANSCRIPTOR_IA", corta_una_vez)
+    p = conversion.PresupuestoDeOcr()
+    c = conversion.convertir(HEIC, "foto.heic", presupuesto=p)
+    assert "FORMULA MEDICA" in c.markdown and llamadas == ["image/heic", "image/heic"]
+    # es una sola imagen del cupo, aunque se haya pedido dos veces
+    assert p.imagenes_ia == conversion.MAX_IMAGENES_IA_POR_CORREO - 1
+
+
 def test_el_heic_se_lee_una_vez_por_huella(vision, monkeypatch, tmp_path):
     monkeypatch.setenv("CACHE_CONVERSION", "si")
     monkeypatch.setenv("RUTA_CACHE_CONVERSION", str(tmp_path / "cache"))
