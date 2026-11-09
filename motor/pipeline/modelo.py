@@ -28,8 +28,12 @@ class Turno:
     texto: str = ""
     llamadas: List[Llamada] = field(default_factory=list)
     tokens_entrada: int = 0
+    # Incluye el razonamiento: se factura como salida.
     tokens_salida: int = 0
     modelo: str = ""
+    tokens_razonamiento: int = 0
+    # De la entrada, lo que Vertex sirvio de su cache implicita (cuesta menos).
+    tokens_cache: int = 0
 
     @property
     def quiere_herramientas(self) -> bool:
@@ -263,10 +267,14 @@ def _turno_de_respuesta(respuesta: Any, nombre_modelo: str) -> Turno:
         texto = getattr(respuesta, "text", "") or ""
 
     meta = getattr(respuesta, "usage_metadata", None)
+    razonamiento = getattr(meta, "thoughts_token_count", 0) or 0
     return Turno(
         texto=texto.strip(),
         llamadas=llamadas,
         tokens_entrada=getattr(meta, "prompt_token_count", 0) or 0,
-        tokens_salida=getattr(meta, "candidates_token_count", 0) or 0,
+        # Sin el razonamiento, el costo de cada vuelta salia a la mitad.
+        tokens_salida=(getattr(meta, "candidates_token_count", 0) or 0) + razonamiento,
         modelo=nombre_modelo,
+        tokens_razonamiento=razonamiento,
+        tokens_cache=getattr(meta, "cached_content_token_count", 0) or 0,
     )

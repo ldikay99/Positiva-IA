@@ -84,7 +84,9 @@ class Contador:
         meta = getattr(respuesta, "usage_metadata", None)
         if meta is not None:
             entrada = getattr(meta, "prompt_token_count", 0) or 0
-            salida = getattr(meta, "candidates_token_count", 0) or 0
+            # El razonamiento se factura como salida.
+            salida = ((getattr(meta, "candidates_token_count", 0) or 0)
+                      + (getattr(meta, "thoughts_token_count", 0) or 0))
         self.registrar(etiqueta, modelo, entrada, salida)
 
     # ── Agregados ──
