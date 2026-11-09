@@ -203,9 +203,35 @@ class ModeloVertex:
                       INSTRUCCION_DE_TRANSCRIPCION],
             config=types.GenerateContentConfig(
                 temperature=0.0,
-                thinking_config=types.ThinkingConfig(thinking_budget=0)),
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+                max_output_tokens=MAX_TOKENS_DE_TRANSCRIPCION,
+                http_options=types.HttpOptions(timeout=TIMEOUT_DE_TRANSCRIPCION_MS)),
         )
+        if _se_corto_por_largo(respuesta):
+            # Una hoja no da tanto texto: es el modelo repitiendo un renglon.
+            raise TranscripcionCortada(
+                f"la transcripcion paso de {MAX_TOKENS_DE_TRANSCRIPCION} tokens")
         return respuesta.text or ""
+
+
+# Una hoja densa transcrita son unos 1.500 tokens. Sin tope, en la linea base del
+# universo 4 de 116 transcripciones no volvieron: el modelo se quedaba
+# repitiendo un renglon hasta que la llamada se cortaba a los 90 s (el 39 % del
+# tiempo de vision), y la hoja se perdia igual.
+MAX_TOKENS_DE_TRANSCRIPCION = 3_000
+TIMEOUT_DE_TRANSCRIPCION_MS = 40_000
+
+
+class TranscripcionCortada(RuntimeError):
+    """El modelo llego al tope de salida: lo transcrito no es de fiar."""
+
+
+def _se_corto_por_largo(respuesta: Any) -> bool:
+    for candidato in getattr(respuesta, "candidates", None) or []:
+        razon = getattr(candidato, "finish_reason", None)
+        if razon is not None and "MAX_TOKENS" in str(getattr(razon, "name", razon)):
+            return True
+    return False
 
 
 INSTRUCCION_DE_TRANSCRIPCION = (
