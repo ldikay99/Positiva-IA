@@ -212,6 +212,10 @@ async def correr_correo(cid: str, modelo_real: Any, version: str) -> Dict[str, A
     limpio["id"] = cid
     email = EmailMessage.from_graph_api(limpio)
 
+    from harness import medicion
+
+    medicion.CORREO.set(cid)
+    cpu0 = os.times()
     modelo = ModeloContado(modelo_real)
     buzon = BuzonLocal(carpeta, crudo)
     servicio = ServicioSimulado()
@@ -255,6 +259,10 @@ async def correr_correo(cid: str, modelo_real: Any, version: str) -> Dict[str, A
     salida["costo_usd"] = round((modelo.tokens_entrada * PRECIO["entrada"]
                                  + modelo.tokens_salida * PRECIO["salida"]) / 1e6, 5)
     salida["reloj_s"] = round(time.time() - inicio, 1)
+    cpu1 = os.times()
+    # Solo dice algo con un trabajador: con varios, se cruzan los correos.
+    salida["cpu_s"] = round(sum(cpu1[:4]) - sum(cpu0[:4]), 2)
+    salida["medicion"] = medicion.de_correo(cid)
     return salida
 
 
@@ -262,7 +270,11 @@ async def correr_correo(cid: str, modelo_real: Any, version: str) -> Dict[str, A
 
 async def correr(ids: List[str], dir_v: Path, version: str, trabajadores: int,
                  tope_usd: float, progreso) -> None:
+    from harness import medicion
+
     modelo = modelo_vertex()
+    medicion.instalar_en_cliente(modelo)
+    medicion.instalar_en_resolver()
     sem = asyncio.Semaphore(trabajadores)
     gastado = {"usd": 0.0, "hechos": 0}
     parar = asyncio.Event()
@@ -274,14 +286,14 @@ async def correr(ids: List[str], dir_v: Path, version: str, trabajadores: int,
             r = await correr_correo(cid, modelo, version)
             (dir_v / f"{cid}.json").write_text(
                 json.dumps(r, ensure_ascii=False, indent=1), encoding="utf-8")
-            gastado["usd"] += r["costo_usd"]
+            gastado["usd"] += max(r["costo_usd"], r["medicion"]["usd"])
             gastado["hechos"] += 1
             ocr = r.get("ocr") or {}
             progreso(f"[{gastado['hechos']}/{len(ids)}] {cid} {r.get('desenlace', ''):<10} "
                      f"{r.get('motivo_manual', ''):<28} {r.get('reloj_s', 0):>6}s "
                      f"ocr={ocr.get('paginas_ocr_leidas', '-')} "
                      f"perd={ocr.get('paginas_perdidas_presupuesto', '-')} "
-                     f"${r['costo_usd']:.4f} total ${gastado['usd']:.3f}"
+                     f"${r['medicion']['usd']:.4f} total ${gastado['usd']:.3f}"
                      + (f" ERROR {r.get('error', '')[:80]}" if r.get("error") else ""))
             if gastado["usd"] > tope_usd and not parar.is_set():
                 progreso(f"ATENCION: gasto {gastado['usd']:.3f} USD > tope {tope_usd}: se detiene")
@@ -293,7 +305,8 @@ async def correr(ids: List[str], dir_v: Path, version: str, trabajadores: int,
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--muestra", required=True, help="json con la lista 'muestra' de {id}")
+    p.add_argument("--muestra", default="",
+                   help="json con la lista 'muestra' de {id}; sin ella, todo el universo")
     p.add_argument("--salida", required=True)
     p.add_argument("--version", required=True)
     p.add_argument("--casos", default="", help="ids separados por coma (subconjunto)")
@@ -310,7 +323,11 @@ def main(argv=None) -> int:
 
     dir_v = Path(args.salida) / args.version
     (dir_v / "textos").mkdir(parents=True, exist_ok=True)
-    ids = [m["id"] for m in json.loads(Path(args.muestra).read_text(encoding="utf-8"))["muestra"]]
+    if args.muestra:
+        ids = [m["id"] for m in json.loads(
+            Path(args.muestra).read_text(encoding="utf-8"))["muestra"]]
+    else:
+        ids = sorted(p.name for p in UNIVERSO.iterdir() if (p / "mensaje.json").exists())
     if args.casos:
         quiero = {x.strip() for x in args.casos.split(",") if x.strip()}
         ids = [i for i in ids if i in quiero]
@@ -330,10 +347,19 @@ def main(argv=None) -> int:
         archivo.flush()
         print(linea, file=sys.stderr, flush=True)
 
+    from harness import medicion
+
     inicio = time.time()
+    muestreo = medicion.Muestreador().iniciar()
     asyncio.run(correr(pendientes, dir_v, args.version, args.trabajadores,
                        args.tope_usd, progreso))
-    progreso(f"FIN {args.version}: {time.time() - inicio:.0f}s de reloj")
+    recursos = muestreo.cerrar()
+    recursos.update({"correos": len(pendientes), "trabajadores": args.trabajadores,
+                     "correos_por_minuto": round(len(pendientes) / max(1e-9, time.time() - inicio) * 60, 2)})
+    corridas = dir_v / "corridas.json"
+    previas = json.loads(corridas.read_text(encoding="utf-8")) if corridas.exists() else []
+    corridas.write_text(json.dumps(previas + [recursos], indent=1), encoding="utf-8")
+    progreso(f"FIN {args.version}: {time.time() - inicio:.0f}s de reloj; {recursos}")
     return 0
 
 
