@@ -32,6 +32,6 @@ def test_la_direccion_de_positiva_no_es_del_afectado():
 
 def test_domicilio_no_se_toma_por_direccion():
     """En un escrito, el domicilio suele ser la ciudad."""
-    texto = "PEDRO PABLO RUIZ, cedula 41234567. Domicilio: Chiriguana, Cesar."
+    texto = "PEDRO PABLO RUIZ, cedula 41234567. Domicilio: Ciudad del Norte."
     h, _ = extraer_direccion(texto, "PEDRO PABLO RUIZ", "41234567")
     assert h is None

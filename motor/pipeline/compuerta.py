@@ -330,7 +330,7 @@ _DIRECCION_VACIA = re.compile(
 )
 _CORREO_EN_TEXTO = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]{2,}")
 # Lo que el OCR deja de una direccion que no pudo leer: signos que ninguna
-# direccion lleva ("cale 6 A N.&! -3.."). Uno suelto puede ser un "#" mal leido;
+# direccion lleva ("calle 9 B N.&! -7.."). Uno suelto puede ser un "#" mal leido;
 # dos ya no es una direccion que lleve a alguna parte.
 _SIGNO_AJENO_A_UNA_DIRECCION = re.compile(r"[^\w\s#\-.,°º/()'\"]", re.UNICODE)
 MAX_SIGNOS_AJENOS_EN_DIRECCION = 1
@@ -1242,8 +1242,8 @@ def documento_del_que_es_un_recorte(numero: Any, nombre: Any, texto: str) -> str
     principio o al final), cuando lo escrito (lo que no salio del OCR de una
     imagen) trae el entero junto al nombre y no trae el recorte por si solo.
 
-    En el universo el agente tomo "6.769.353" del OCR de la foto de la cedula
-    cuando el cuerpo decia dos veces "Cc.16769353" junto al mismo nombre: la
+    En el universo el agente tomo "2.417.396" del OCR de la foto de la cedula
+    cuando el cuerpo decia dos veces "Cc.52417396" junto al mismo nombre: la
     lectura de la imagen perdio el primer digito. Al reves no vale: si el cuerpo
     escribe el numero corto, el largo de una historia clinica leida por OCR es
     el ruido.
@@ -1256,8 +1256,8 @@ def documento_del_que_es_un_recorte(numero: Any, nombre: Any, texto: str) -> str
         return ""
     vistos = set()
     for m in _CIFRA_CON_SEPARADORES.finditer(escrito):
-        # Los ceros a la izquierda no hacen otro numero ("0016769353" de la
-        # banda de la cedula es el mismo 16769353).
+        # Los ceros a la izquierda no hacen otro numero ("0052417396" de la
+        # banda de la cedula es el mismo 52417396).
         largo = re.sub(r"\D", "", m.group(0)).lstrip("0")
         if (largo in vistos or not 1 <= len(largo) - len(corto) <= 2
                 or not (largo.startswith(corto) or largo.endswith(corto))):

@@ -2527,7 +2527,7 @@ def extraer_tipo_solicitud(
 # Tambien la forma corta de las historias clinicas ("Dir:") y las de los
 # formularios ("Direccion para notificaciones:"): sin ellas la direccion que esta
 # en el bloque del paciente se le pedia al agente. "Domicilio:" no: en un escrito
-# suele ser la ciudad ("Domicilio: Chiriguana, Cesar").
+# suele ser la ciudad ("Domicilio: Ciudad del Norte").
 _ROTULO_DIRECCION = re.compile(
     r"(?i)(?:direcci[oó]n[ \t]*"
     r"(?:de\s+residencia(?:\s+habitual)?|de\s+notificaci[oó]n(?:es)?"

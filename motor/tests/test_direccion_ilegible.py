@@ -3,7 +3,7 @@ Lo que el OCR deja de una direccion que no pudo leer no se envia.
 
 Con las pistas en la tarea, el agente encontraba el rotulo de la direccion en
 un formulario escaneado y reportaba la lectura tal como salio
-("cale 6 A N.&! -3.."); la compuerta la dejaba pasar porque trae "barrio".
+("calle 9 B N.&! -7.."); la compuerta la dejaba pasar porque trae "barrio".
 """
 import pytest
 
@@ -17,15 +17,15 @@ def _revisar(direccion):
 
 
 def test_una_lectura_ilegible_no_es_una_direccion():
-    reparos, correcciones = _revisar("cale 6 A N.&! -3.. BARRIO. LO.. san.")
+    reparos, correcciones = _revisar("calle 9 B N.&! -7.. BARRIO. XO.. sur.")
     assert correcciones == {"direccion_afectado": ""}
     assert "ilegible" in reparos[0].detalle
     assert not reparos[0].bloqueante
 
 
 @pytest.mark.parametrize("direccion", [
-    "CL 165A NORTE #8 H - 60 APTO 203",
-    "VEREDA TAMBIRAL CALLEJON LAS PALMAS - ANDALUCIA",
+    "CL 100A NORTE #7 H - 10 APTO 301",
+    "VEREDA LA ESPERANZA CALLEJON LOS PINOS - MUNICIPIO",
     "CARRERA 7 £ 24 - 09 BARRIO SIN BARRIO",   # un "#" mal leido no basta
     "Carrera 7B N° 24-09",
     "KM 3 VIA AL MAR; FINCA LA ESPERANZA",

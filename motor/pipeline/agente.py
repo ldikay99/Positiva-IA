@@ -342,8 +342,8 @@ numero_documento_afectado — el documento del titular del caso. Cuidado: los
 
   Si el mismo numero aparece escrito en el correo o en un escrito con texto
   propio y tambien en una imagen leida por OCR (la foto de la cedula), vale lo
-  escrito: el OCR pierde o cambia digitos ("6.769.353" donde el correo dice
-  "16769353").
+  escrito: el OCR pierde o cambia digitos ("2.417.396" donde el correo dice
+  "52417396").
 
   Reporta SOLO los digitos. Los puntos y espacios con que se escribe legible
   —"41.234.567", "41 234 567"— son forma, no dato: quitalos. Reporta
