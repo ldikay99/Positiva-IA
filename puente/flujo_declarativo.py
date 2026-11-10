@@ -113,9 +113,8 @@ PROYECTO = os.environ.get("GCP_PROJECT", "positiva-sgda-prd-416417")
 # credenciales reales y en modo prueba.
 os.environ["MODO_TEST"] = "true"
 for _v in ("MICROSOFT_CLIENT_ID", "MICROSOFT_CLIENT_SECRET", "MICROSOFT_TENANT_ID", "OUTLOOK_REFRESH_TOKEN",
-           "OUTLOOK_FOLDER_ID", "REDIS_PASSWORD", "SUPABASE_SERVICE_ROLE_KEY", "SGDEA_CLIENT_SECRET", "SGDEA_PASSWORD"):
+           "OUTLOOK_FOLDER_ID", "REDIS_PASSWORD", "SGDEA_CLIENT_SECRET", "SGDEA_PASSWORD"):
     os.environ.setdefault(_v, "x")
-os.environ.setdefault("SUPABASE_URL", "http://127.0.0.1:9")
 sys.path.insert(0, str(MOTOR))
 
 _salida = sys.stdout

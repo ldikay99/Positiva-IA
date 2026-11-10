@@ -467,11 +467,9 @@ def _arrancar_motor() -> None:
     os.environ["DEDUP_EN_PRUEBAS"] = "false"
     for var in ("MICROSOFT_CLIENT_ID", "MICROSOFT_CLIENT_SECRET", "MICROSOFT_TENANT_ID",
                 "OUTLOOK_REFRESH_TOKEN", "OUTLOOK_FOLDER_ID", "REDIS_PASSWORD",
-                "SUPABASE_SERVICE_ROLE_KEY", "SGDEA_CLIENT_SECRET", "SGDEA_PASSWORD"):
+                "SGDEA_CLIENT_SECRET", "SGDEA_PASSWORD"):
         if not definida(var):  # lo que trae el entorno del flujo se conserva
             os.environ[var] = "x"
-    if not definida("SUPABASE_URL"):
-        os.environ["SUPABASE_URL"] = "http://127.0.0.1:9"
     os.chdir(motor)
     sys.path.insert(0, str(motor))
 

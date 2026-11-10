@@ -19,7 +19,7 @@ steps:
   # Deploy to Cloud Run Job (no Service)
   # Secretos gestionados en Secret Manager (nombres: GOOGLE_API_KEY,
   # MICROSOFT_CLIENT_SECRET, OUTLOOK_REFRESH_TOKEN, REDIS_PASSWORD,
-  # SUPABASE_SERVICE_ROLE_KEY, SGDEA_CLIENT_SECRET, SGDEA_PASSWORD).
+  # PQRD_CLOUDSQL_*, SGDEA_CLIENT_SECRET, SGDEA_PASSWORD).
   # El service account que ejecuta el job requiere rol
   # roles/secretmanager.secretAccessor sobre cada secreto.
   - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk'
@@ -42,7 +42,7 @@ steps:
       - '--max-retries'
       - '2'
       - '--set-secrets'
-      - 'MICROSOFT_CLIENT_SECRET=MICROSOFT_CLIENT_SECRET:latest,OUTLOOK_REFRESH_TOKEN=OUTLOOK_REFRESH_TOKEN:latest,REDIS_PASSWORD=REDIS_PASSWORD:latest,SUPABASE_SERVICE_ROLE_KEY=SUPABASE_SERVICE_ROLE_KEY:latest,SGDEA_CLIENT_SECRET=SGDEA_CLIENT_SECRET:latest,SGDEA_PASSWORD=SGDEA_PASSWORD:latest'
+      - 'MICROSOFT_CLIENT_SECRET=MICROSOFT_CLIENT_SECRET:latest,OUTLOOK_REFRESH_TOKEN=OUTLOOK_REFRESH_TOKEN:latest,REDIS_PASSWORD=REDIS_PASSWORD:latest,CLOUDSQL_HOST=PQRD_CLOUDSQL_HOST:latest,CLOUDSQL_USER=PQRD_CLOUDSQL_USER:latest,CLOUDSQL_PASSWORD=PQRD_CLOUDSQL_PASSWORD:latest,CLOUDSQL_INSTANCE=PQRD_CLOUDSQL_INSTANCE:latest,SGDEA_CLIENT_SECRET=SGDEA_CLIENT_SECRET:latest,SGDEA_PASSWORD=SGDEA_PASSWORD:latest'
 
 images:
   - 'us-east1-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/ms-radicacion-ia-pqrd:$COMMIT_SHA'

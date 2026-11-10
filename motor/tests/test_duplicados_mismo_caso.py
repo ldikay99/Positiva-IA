@@ -203,55 +203,49 @@ def test_sin_remitente_no_hay_vinculo():
 
 # ── La auditoria historica ──
 
-class TablaFalsa:
+class ConexionFalsa:
     """Registra lo que se le pregunta y responde lo que se le indique."""
 
     def __init__(self, datos):
         self.datos = datos
-        self.filtros = []
+        self.consultas = []
 
-    def table(self, _):
-        return self
+    def run(self, sql, **parametros):
+        self.consultas.append((sql, parametros))
+        return self.datos if sql.startswith("SELECT") else None
 
-    def select(self, _):
-        return self
-
-    def eq(self, *a):
-        return self
-
-    def gte(self, campo, valor):
-        self.filtros.append((campo, valor))
-        return self
-
-    def limit(self, _):
-        return self
-
-    def execute(self):
-        return type("R", (), {"data": self.datos})()
+    def close(self):
+        pass
 
 
 def _auditoria(monkeypatch, datos):
     from config.settings import settings
-    from services.supabase_client import SupabaseService
+    from services.registro_radicados import RegistroDeRadicados
 
     monkeypatch.setattr(settings, "DEDUP_EN_PRUEBAS", True)
-    s = SupabaseService()
-    s._client = TablaFalsa(datos)
+    conexion = ConexionFalsa(datos)
+    s = RegistroDeRadicados(conectar=lambda **kw: conexion)
+    s.conexion = conexion
     return s
+
+
+def _piso(s):
+    sql, parametros = s.conexion.consultas[-1]
+    return parametros.get("piso") if "fecha_radicacion >=" in sql else None
 
 
 @pytest.mark.asyncio
 async def test_solo_cuentan_los_radicados_desde_que_llego_el_correo(monkeypatch):
     s = _auditoria(monkeypatch, [])
     assert not await s.email_exists("a@b.co", "Solicitud", "2026-10-27T15:00:00Z")
-    assert s._client.filtros == [("fecha_radicacion", "2026-10-26T15:00:00")]
+    assert _piso(s) == "2026-10-26T15:00:00"
 
 
 @pytest.mark.asyncio
 async def test_sin_fecha_valida_se_consulta_sin_limite(monkeypatch):
-    s = _auditoria(monkeypatch, [{"numero_radicado": "ENT1"}])
+    s = _auditoria(monkeypatch, [["ENT1"]])
     assert await s.email_exists("a@b.co", "Solicitud", "no es una fecha")
-    assert s._client.filtros == []
+    assert _piso(s) is None
 
 
 @pytest.mark.asyncio

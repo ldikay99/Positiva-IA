@@ -16,8 +16,8 @@ google-genai==2.23.0
 # Microsoft Graph
 msal==1.38.0
 
-# Supabase
-supabase==2.31.0
+# Registro de radicados en Cloud SQL (Postgres). Python puro, BSD-3.
+pg8000==1.31.6
 
 # Configuration
 pydantic==2.13.5

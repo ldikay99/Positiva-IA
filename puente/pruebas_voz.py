@@ -59,6 +59,105 @@ def prueba_por_voz_el_borrado_queda_como_propuesta_con_boton() -> None:
         asistente.api, asistente.emitir, voz.enviar = api_real, emitir_real, enviar_real
 
 
+def prueba_las_operaciones_entre_flujos_estan_en_chat_y_voz() -> None:
+    """Cruzar flujos, diagnóstico y lo de la pantalla que faltaba: en el chat, en la voz y descritas en el SISTEMA."""
+    nuevas = {"comparar_flujos", "traer_nodos", "encadenar_flujos", "diagnosticar_flujo", "ver_programacion", "programar_flujo",
+              "ver_recursos", "ajustar_recursos", "archivos_del_flujo", "reiniciar_trabajador"}
+    en_chat = {h["name"] for h in asistente.HERRAMIENTAS}
+    en_voz = {h["name"] for h in voz.herramientas_de_voz()}
+    assert nuevas <= en_chat, nuevas - en_chat
+    assert nuevas <= en_voz, nuevas - en_voz
+    en_grupos = {n for g in asistente.GRUPOS.values() for n in g}
+    assert nuevas <= en_grupos, f"sin grupo (el chat escrito no las cargaría): {nuevas - en_grupos}"
+    for x in ("comparar_flujos", "traer_nodos", "encadenar_flujos", "subflujo", "diagnosticar_flujo", "ids=[…]", "Capacidades", "Lo que NO haces"):
+        assert x in asistente.SISTEMA, f"falta en SISTEMA: {x}"
+    for x in ("comparar_flujos", "diagnosticar_flujo", "capacidades", "ids=[…]"):
+        assert x in voz.NOTA_VOZ, f"falta en NOTA_VOZ: {x}"
+    # «diagnostica / qué puedes solucionar» y «compara / trae» cargan las herramientas en el chat escrito
+    for pedido in ("¿qué encuentras que puedas solucionar en este flujo?", "compara la copia con el original", "trae el paso de validación del otro flujo"):
+        assert "construir" in asistente._grupos_para(pedido, {"vista": "tablero"}), pedido
+
+
+def prueba_el_saludo_no_se_presenta() -> None:
+    fuente = inspect.getsource(voz.llamada)
+    assert "habla Vera" not in fuente, "el saludo no dice el nombre (regla de Jonathan)"
+    assert "sin presentarte ni decir tu nombre" in fuente
+
+
+def prueba_la_pantalla_no_corta_lo_que_dice_vera() -> None:
+    """El aviso de cambio de pantalla no se manda en cuanto llega (interrumpía la respuesta): espera una pausa en el reloj."""
+    fuente = inspect.getsource(voz.llamada)
+    subida = fuente[fuente.index("async def subida"):fuente.index("async def correr_herramienta")]
+    reloj = fuente[fuente.index("async def reloj"):]
+    assert "cambió de pantalla" not in subida, "la subida no debe mandar el aviso de pantalla en caliente"
+    assert "cambió de pantalla" in reloj and "en_pausa" in reloj
+    # se guarda con una pausa corta: la transcripción tardía queda en el mismo turno
+    assert "programar_guardado()" in fuente and "guardar_pendiente()" in fuente
+
+
+def prueba_las_transcripciones_se_pegan_con_espacio() -> None:
+    u = voz.unir_transcripcion
+    assert u("Listo, ya", "Tienes el flujo") == "Listo, ya Tienes el flujo"
+    assert u("es de la Policía Nacional.", "Ya puse a correr") == "es de la Policía Nacional. Ya puse a correr"
+    assert u("Te escu", "cho") == "Te escucho"
+    assert u("Hola ", "Vera") == "Hola Vera"
+    assert u("son 3.", "5 millones") == "son 3.5 millones"
+    assert u("listo", ".") == "listo."
+    assert u("", "Hola") == "Hola"
+    assert u("Bien,", "¿y tú?") == "Bien, ¿y tú?"
+
+
+def prueba_borrar_varios_es_una_propuesta_con_un_boton() -> None:
+    emitidos = []
+    flujos = {"copia-a": {"id": "copia-a", "nombre": "Copia A", "borrable": True}, "copia-b": {"id": "copia-b", "nombre": "Copia B", "borrable": True},
+              "pqrd": {"id": "pqrd", "nombre": "PQRD", "borrable": False}}
+    api_real, emitir_real, enviar_real = asistente.api, asistente.emitir, voz.enviar
+    asistente.api = lambda m, r, b=None: flujos.get(r.rsplit("/", 1)[-1], {"error": "ese flujo no existe"})
+    voz.enviar = lambda tipo, **d: emitidos.append((tipo, d))
+    asistente.emitir = voz._emitir_en_llamada
+    try:
+        turno = voz.Turno()
+        args = {"ids": ["copia-a", "copia-b", "pqrd", "no-hay"]}
+        res = asistente.ejecutar("proponer_borrado", args)
+        voz.anotar_en_turno(turno, "proponer_borrado", args, res)
+        assert res.get("propuesto") is True and res["ids"] == ["copia-a", "copia-b"], res
+        assert {x["id"] for x in res["fuera"]} == {"pqrd", "no-hay"}, res
+        prop = [d["propuesta"] for t, d in emitidos if t == "propuesta"]
+        assert len(prop) == 1 and prop[0]["accion"] == "borrar_flujos" and prop[0]["id"] == "copia-a,copia-b", prop
+        assert turno.propuestas == [{"accion": "borrar_flujos", "id": "copia-a,copia-b"}]
+        # uno solo sigue siendo la propuesta de siempre
+        turno2 = voz.Turno()
+        r1 = asistente.ejecutar("borrar_flujo", {"ids": ["copia-a"]})
+        voz.anotar_en_turno(turno2, "borrar_flujo", {"ids": ["copia-a"]}, r1)
+        assert turno2.propuestas == [{"accion": "borrar_flujo", "id": "copia-a"}], turno2.propuestas
+        assert "error" in asistente.ejecutar("proponer_borrado", {})
+    finally:
+        asistente.api, asistente.emitir, voz.enviar = api_real, emitir_real, enviar_real
+
+
+def prueba_al_agotar_las_vueltas_dice_que_quedo_hecho() -> None:
+    """La conversación real del 2026-11-09 (16 herramientas, 6 versiones guardadas): nada de «Me detuve tras varios pasos»."""
+    assert asistente.MAX_VUELTAS >= 28
+    assert "Me detuve tras varios pasos" not in inspect.getsource(asistente)
+    f = "pqrd-revision-adjuntos"
+    registro = [
+        ("ver_estructura", {"flujo": f}, {"flujo": f}),
+        ("agregar_nodo", {"flujo": f, "nodo": {"id": "hay_no_leidos"}}, {"guardado": False, "problemas": ["hay_no_leidos: no se llega a él"]}),
+        ("agregar_nodo", {"flujo": f, "nodo": {"id": "hay_no_leidos"}, "entre": ["conversion_a_markdown", "saneamiento"]}, {"guardado": True, "version": 1}),
+        ("agregar_nodo", {"flujo": f, "nodo": {"id": "nota_adjuntos"}}, {"guardado": True, "version": 2}),
+        ("agregar_nodo", {"flujo": f, "nodo": {"id": "revision_sin_documento"}}, {"guardado": False, "problemas": ["revision_sin_documento: no se llega a él desde ninguna etapa"]}),
+    ]
+    t = asistente.resumen_al_agotarse(registro, [], 30)
+    assert "versión 1" in t and "versión 2" in t and "hay_no_leidos" in t, t
+    assert "Faltó" in t and "revision_sin_documento" in t, t
+    assert "Me detuve" not in t
+    # lo que falló y después se arregló no queda como pendiente
+    t2 = asistente.resumen_al_agotarse(registro[:3], [], 30)
+    assert "Faltó" not in t2, t2
+    # sin nada guardado lo dice
+    assert "ningún cambio" in asistente.resumen_al_agotarse(registro[:2], [], 30)
+
+
 def principal() -> int:
     pruebas = [(n, f) for n, f in globals().items() if n.startswith("prueba_") and callable(f)]
     fallos = 0

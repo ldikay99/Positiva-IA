@@ -11,12 +11,13 @@ y el despliegue tenga PERMITIR_RADICACION_REAL=si) nunca escribe en un sistema r
 MODO_TEST corta el envío a SGDEA y las trazas, el buzón real va con un cliente que
 solo hace GET y lo que el job escribiría queda como escritura retenida. Con las
 credenciales reales en el entorno del flujo LEE de verdad: Graph (buzón, hilo,
-radicados) y Supabase (con `solo_lectura.ConsultaSupabase`, solo GET). Sin ellas,
-los dobles de siempre, y lo dice en el evento «fuentes». Vertex y el registro de
-personas son lecturas reales siempre.
+radicados) y el registro de radicados en Cloud SQL (sesión de solo lectura, solo
+SELECT; el INSERT lo retiene el grabador). Sin ellas, los dobles de siempre o, para
+el registro de radicados, «sin auditoría» como el job, y lo dice en el evento
+«fuentes». Vertex y el registro de personas son lecturas reales siempre.
 
 Con la compuerta ENCENDIDA (RADICACION_REAL=si y PERMITIR_RADICACION_REAL=si) corre
-como el job: MODO_TEST=false, OutlookService, RadicacionService y SupabaseService
+como el job: MODO_TEST=false, OutlookService, RadicacionService y RegistroDeRadicados
 reales, escrituras reales. Solo atiende correos traídos del buzón real.
 
 Protocolo: una orden JSON por línea en stdin; eventos por stdout, cada uno en
@@ -52,8 +53,10 @@ import solo_lectura  # noqa: E402  (junto a este archivo)
 REAL = solo_lectura.radicacion_real()
 _mascara = solo_lectura.Mascara().recordar()  # antes de tocar el entorno
 _SECRETOS_DEL_JOB = ("MICROSOFT_CLIENT_ID", "MICROSOFT_CLIENT_SECRET", "MICROSOFT_TENANT_ID",
-                     "OUTLOOK_REFRESH_TOKEN", "OUTLOOK_FOLDER_ID", "SUPABASE_URL",
-                     "SUPABASE_SERVICE_ROLE_KEY", "SGDEA_CLIENT_SECRET", "SGDEA_PASSWORD")
+                     "OUTLOOK_REFRESH_TOKEN", "OUTLOOK_FOLDER_ID",
+                     "SGDEA_CLIENT_SECRET", "SGDEA_PASSWORD")
+# El registro de radicados (Cloud SQL) es opcional en el job: sin estas corre «sin auditoría».
+_REGISTRO_DE_RADICADOS = ("CLOUDSQL_HOST", "CLOUDSQL_USER", "CLOUDSQL_PASSWORD")
 # Lo que la configuración del motor exige al importarse y no vino en el entorno del flujo.
 FALTANTES = solo_lectura.faltantes(_SECRETOS_DEL_JOB)
 
@@ -63,8 +66,6 @@ os.environ["DEDUP_EN_PRUEBAS"] = "false"
 for _var in _SECRETOS_DEL_JOB + ("REDIS_PASSWORD",):
     if not solo_lectura.definida(_var):  # lo real del entorno del flujo se conserva
         os.environ[_var] = "x"
-if not solo_lectura.definida("SUPABASE_URL"):
-    os.environ["SUPABASE_URL"] = "http://127.0.0.1:9"
 os.environ.setdefault("TEST_OUTPUT_DIR", str(TRABAJO / "grabador"))
 os.environ.setdefault("RUTA_LOGS", str(TRABAJO / "logs"))
 os.chdir(MOTOR)  # el motor no carga ningún .env: no hay uno en su carpeta
@@ -328,8 +329,12 @@ def instalar_ganchos() -> None:
         return rad_original(self, payload, n_adjuntos)
 
     def _registrar(self, accion, destino="", detalle=None):
-        evento("escritura", sistema="sgdea" if destino == "SGDEA" or "pqrd/" in destino else "otro",
-               operacion=accion, destino=destino, detalle=detalle)
+        if accion == "REGISTRO_RADICADO":
+            # el INSERT al registro de radicados (Cloud SQL) que MODO_TEST no ejecuta
+            sistema = "registro_radicados"
+        else:
+            sistema = "sgdea" if destino == "SGDEA" or "pqrd/" in destino else "otro"
+        evento("escritura", sistema=sistema, operacion=accion, destino=destino, detalle=detalle)
         return reg_original(self, accion, destino, detalle)
 
     grabador.registrar_radicacion, grabador.registrar = _radicacion, _registrar
@@ -1100,26 +1105,44 @@ _fuentes: Dict[str, Any] = {}
 
 def _auditoria():
     """
-    La capa de remitente y asunto (Supabase), como `correr._auditoria` del job.
+    El registro de radicados en Cloud SQL (auditoría y capa 6), como `correr._auditoria` del job.
 
-    Compuerta apagada: con SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY reales, el
-    SupabaseService del motor sobre `ConsultaSupabase` (solo GET); sus escrituras
-    siguen yendo al grabador de MODO_TEST. Sin ellas, la capa queda apagada.
-    Compuerta encendida: el SupabaseService real, como el job.
+    Sin CLOUDSQL_HOST, CLOUDSQL_USER o CLOUDSQL_PASSWORD en el entorno del flujo el
+    job corre «sin auditoría» (None): la capa 6 no consulta y el radicado no se
+    guarda. Aquí igual, y se dice en «fuentes» como un hecho, no como un error.
+
+    Compuerta apagada y configurado: el RegistroDeRadicados del motor con una
+    conexión de solo lectura (`solo_lectura.conectar_registro_solo_lectura`). La
+    instancia solo tiene IP privada: si no se alcanza, la capa queda degradada con
+    el motivo, como en el job con la base caída. El INSERT del radicado lo retiene
+    el grabador de MODO_TEST (REGISTRO_RADICADO), lo haga o no la lectura.
+    Compuerta encendida: el RegistroDeRadicados real, como el job.
     """
     from config import settings
-    from services.supabase_client import SupabaseService
+    from services.registro_radicados import RegistroDeRadicados
 
-    if REAL:
-        _fuentes["supabase"] = {"real": True, "detalle": "SupabaseService del job: lee y escribe"}
-        return SupabaseService()
-    if not (solo_lectura.definida("SUPABASE_URL") and solo_lectura.definida("SUPABASE_SERVICE_ROLE_KEY")):
-        _fuentes["supabase"] = {"real": False, "detalle": "sin SUPABASE_URL y SUPABASE_SERVICE_ROLE_KEY en el entorno del flujo: la capa de auditoría queda apagada"}
+    faltan = solo_lectura.faltantes(_REGISTRO_DE_RADICADOS)
+    if faltan:
+        _fuentes["registro_radicados"] = {
+            "real": False, "sin_auditoria": True,
+            "detalle": ("sin auditoría, como el job sin esa configuración: falta " + ", ".join(faltan)
+                        + " en el entorno del flujo. La capa 6 (remitente y asunto) no consulta y el radicado no se guarda")}
         return None
-    s = SupabaseService()  # en MODO_TEST no crea cliente
-    s._client = solo_lectura.ConsultaSupabase(settings.SUPABASE_URL, settings.SUPABASE_SERVICE_ROLE_KEY, evento, _mascara)
-    _fuentes["supabase"] = {"real": True, "detalle": "consulta radicados_pqrd con GET (solo select); las trazas quedan retenidas"}
-    return s
+    if REAL:
+        _fuentes["registro_radicados"] = {"real": True, "detalle": "RegistroDeRadicados del job: lee y guarda cada radicado"}
+        return RegistroDeRadicados()
+    registro = RegistroDeRadicados(conectar=solo_lectura.conectar_registro_solo_lectura(evento, _mascara))
+    motivo = solo_lectura.alcanza(settings.CLOUDSQL_HOST, settings.CLOUDSQL_PORT)
+    tabla = settings.CLOUDSQL_TABLE_RADICADOS_IAPQRD
+    if motivo:
+        _fuentes["registro_radicados"] = {
+            "real": False,
+            "detalle": (f"configurado pero no se alcanza ({_mascara(motivo)}): la capa 6 queda degradada como en el job "
+                        f"con la base caída; el INSERT a {tabla} queda retenido")}
+    else:
+        _fuentes["registro_radicados"] = {
+            "real": True, "detalle": f"consulta {tabla} en una sesión de solo lectura (solo SELECT); el INSERT queda retenido"}
+    return registro
 
 
 def _anunciar_fuentes(vivo: bool) -> None:
@@ -1130,7 +1153,7 @@ def _anunciar_fuentes(vivo: bool) -> None:
              if vivo else {"real": False, "detalle": "correo de la carpeta local: las consultas del buzón no encuentran nada"})
     lecturas = [
         {"sistema": "Microsoft Graph", **graph},
-        {"sistema": "Supabase", **_fuentes.get("supabase", {"real": False, "detalle": "sin configurar"})},
+        {"sistema": "Registro de radicados (Cloud SQL)", **_fuentes.get("registro_radicados", {"real": False, "detalle": "sin configurar"})},
         {"sistema": "Redis", "real": False, "detalle": "el job no usa la caché de hashes (correr.py no se la pasa al orquestador)"},
         {"sistema": "SGDEA", "real": REAL, "detalle": "radica de verdad" if REAL else "radicar, asignar y trazabilidad quedan retenidas (MODO_TEST)"},
         {"sistema": "Registro de personas", "real": True, "detalle": "consulta (GET) real"},

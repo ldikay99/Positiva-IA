@@ -1,11 +1,11 @@
 {
  "meta": {
-  "fuente": "motor/ (mcp-fix, 2f62a8b)",
-  "generado": "2026-11-06",
+  "fuente": "motor/ (mcp-fix, 6ecdf40)",
+  "generado": "2026-11-10",
   "punto_de_entrada": "correr.py -> pipeline/orquestador.py Orquestador.procesar",
   "total_nodos": 33,
-  "total_parametros": 532,
-  "parametros_sobrescribibles": 448,
+  "total_parametros": 566,
+  "parametros_sobrescribibles": 481,
   "criterio_sobrescribible": "true solo si setattr(modulo, NOMBRE, v) (o setattr(config.settings.settings, NOMBRE, v) para settings) cambia el comportamiento en tiempo de ejecucion; ver nota_sobrescritura y alcance_sobrescritura (total|parcial|antes_del_primer_uso|ninguno).",
   "motivos_manual": [
    "ADJUNTO_ILEGIBLE",
@@ -208,7 +208,7 @@
     },
     {
      "id": "lote_servicios",
-     "descripcion": "Se construyen: ModeloVertex(proyecto=GCP_PROJECT, ubicacion='global', endpoint_global=True), OutlookService(), RadicacionService(timeout=TIMEOUT_SGDEA_S), SupabaseService() (auditoria; None si falla), ConsultaDePersonas(url_base=MS_SGDEA_BETA_URL). NO se pasa cache= (la capa Redis queda apagada).",
+     "descripcion": "Se construyen: ModeloVertex(proyecto=GCP_PROJECT, ubicacion='global', endpoint_global=True), OutlookService(), RadicacionService(timeout=TIMEOUT_SGDEA_S), RegistroDeRadicados() (auditoria en Cloud SQL; None, con el aviso 'sin auditoria', si faltan CLOUDSQL_HOST, CLOUDSQL_USER o CLOUDSQL_PASSWORD o si falla), ConsultaDePersonas(url_base=MS_SGDEA_BETA_URL). NO se pasa cache= (la capa Redis queda apagada).",
      "modulo": "correr.py",
      "funcion": "main",
      "usa": [
@@ -234,7 +234,7 @@
      "descripcion": "Con true no ejecuta ninguna escritura: marcar/mover/reenviar/radicar/trazabilidad se graban en CSV bajo TEST_OUTPUT_DIR. Vertex, registro de personas, lecturas de Graph y GCS siguen ocurriendo.",
      "env": "MODO_TEST",
      "sobrescribible_en_caliente": true,
-     "nota_sobrescritura": "Si en la práctica: OutlookService y RadicacionService leen settings.MODO_TEST en cada llamada (objeto `config.settings.settings`). Pero SupabaseService decide crear su cliente al construirse, y correr.main lo comprueba al arrancar. No cambiarlo a mitad de corrida. (Es atributo de la instancia pydantic `config.settings.settings`, no constante de módulo; se cambia con setattr(config.settings.settings, 'MODO_TEST', v).)",
+     "nota_sobrescritura": "Si en la práctica: OutlookService y RadicacionService leen settings.MODO_TEST en cada llamada (objeto `config.settings.settings`). RegistroDeRadicados lo lee al guardar (en MODO_TEST graba el INSERT en vez de hacerlo), y correr.main lo comprueba al arrancar. No cambiarlo a mitad de corrida. (Es atributo de la instancia pydantic `config.settings.settings`, no constante de módulo; se cambia con setattr(config.settings.settings, 'MODO_TEST', v).)",
      "alcance_sobrescritura": "total",
      "archivo": "config/settings.py",
      "linea": null
@@ -539,7 +539,7 @@
      "nombre": "settings.DEDUP_EN_PRUEBAS",
      "tipo": "bool",
      "valor": false,
-     "descripcion": "Con MODO_TEST, ejecuta igualmente las consultas de deduplicacion (Graph hilo/asunto, Supabase, Redis). dedup_desactivada() = MODO_TEST and not DEDUP_EN_PRUEBAS.",
+     "descripcion": "Con MODO_TEST, ejecuta igualmente las consultas de deduplicacion (Graph hilo/asunto, registro de radicados, Redis). dedup_desactivada() = MODO_TEST and not DEDUP_EN_PRUEBAS.",
      "env": "DEDUP_EN_PRUEBAS",
      "sobrescribible_en_caliente": true,
      "nota_sobrescritura": "Si: dedup_desactivada() lee settings en cada consulta. (Es atributo de la instancia pydantic `config.settings.settings`, no constante de módulo; se cambia con setattr(config.settings.settings, 'DEDUP_EN_PRUEBAS', v).)",
@@ -2451,7 +2451,7 @@
      "nota_sobrescritura": "Si: pipeline.materializar lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/materializar.py",
-     "linea": 42,
+     "linea": 43,
      "es_regex": true
     },
     {
@@ -2473,7 +2473,7 @@
      "nota_sobrescritura": "Si: pipeline.materializar lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/materializar.py",
-     "linea": 37
+     "linea": 38
     },
     {
      "clave": "pipeline.volumen.LIMITE_PAGINAS_QUE_SE_CUENTAN",
@@ -2536,14 +2536,15 @@
   {
    "id": "deduplicacion_contenido",
    "nombre": "Deduplicación por contenido (capas 5-6)",
-   "descripcion": "Con los nombres de los adjuntos ya conocidos, comprueba el hash del contenido (cache) y el par remitente+asunto en la auditoría histórica de Supabase.",
+   "descripcion": "Con los nombres de los adjuntos ya conocidos, comprueba el hash del contenido (cache) y el par remitente+asunto en el registro de radicados (Cloud SQL, base gcpprolinktic), salvo si el remitente es un buzón de Positiva.",
    "etapa_cronometro": "deduplicacion",
    "modulo": "pipeline/duplicados.py",
    "funciones": [
     "Detector.comprobar_contenido",
     "duplicados.hash_del_correo",
-    "SupabaseService.email_exists",
-    "utils.hash.limpiar_asunto"
+    "RegistroDeRadicados.email_exists",
+    "utils.hash.limpiar_asunto",
+    "generic_filter.es_buzon_de_positiva"
    ],
    "usa_ia": false,
    "siguientes": [
@@ -2565,12 +2566,19 @@
     },
     {
      "id": "dedup_auditoria",
-     "descripcion": "Capa 6: SupabaseService.email_exists(remitente, limpiar_asunto(asunto), recibido) sobre la tabla radicados_pqrd con piso de fecha = recibido - MARGEN_DE_ZONA_HORARIA. Solo si la capa 5 no respondio. Apagada con dedup_desactivada().",
-     "modulo": "services/supabase_client.py",
-     "funcion": "SupabaseService.email_exists",
+     "descripcion": "Capa 6: RegistroDeRadicados.email_exists(remitente, limpiar_asunto(asunto), recibido): SELECT en Cloud SQL (tabla CLOUDSQL_TABLE_RADICADOS_IAPQRD, por defecto iapqrd_radicados_pqrd) por correo_remitente y asunto iguales con fecha_radicacion >= recibido - MARGEN_DE_ZONA_HORARIA. Solo si la capa 5 no respondio. Apagada con dedup_desactivada(). Sin CLOUDSQL_* el job corre sin auditoria y la capa queda 'no configurada'.",
+     "modulo": "services/registro_radicados.py",
+     "funcion": "RegistroDeRadicados.email_exists",
      "usa": [
-      "services.supabase_client.MARGEN_DE_ZONA_HORARIA"
+      "services.registro_radicados.MARGEN_DE_ZONA_HORARIA"
      ]
+    },
+    {
+     "id": "dedup_auditoria_no_positiva",
+     "descripcion": "La capa 6 no aplica si el remitente es un buzon de Positiva (es_buzon_de_positiva: @positiva.gov.co o @positivaseguros.com.co): la app (appconexionpositiva@) manda todas las PQRD con el mismo remitente y el mismo asunto, y las areas reenvian con el suyo.",
+     "modulo": "pipeline/duplicados.py",
+     "funcion": "Detector.comprobar_contenido",
+     "usa": []
     },
     {
      "id": "dedup_cronometro_compartido",
@@ -2582,18 +2590,64 @@
    ],
    "parametros": [
     {
-     "clave": "services.supabase_client.MARGEN_DE_ZONA_HORARIA",
-     "modulo": "services.supabase_client",
+     "clave": "services.registro_radicados.MARGEN_DE_ZONA_HORARIA",
+     "modulo": "services.registro_radicados",
      "nombre": "MARGEN_DE_ZONA_HORARIA",
      "tipo": "str",
      "valor": "timedelta(days=1)",
-     "descripcion": "La tabla guarda la fecha sin zona y el correo la trae en UTC: el margen evita que esa diferencia deje por fuera un radicado del mismo día.",
+     "descripcion": "El correo trae su llegada en UTC y el radicado se guarda con hora de Colombia: el margen evita dejar por fuera un radicado del mismo día.",
      "env": null,
      "sobrescribible_en_caliente": true,
-     "nota_sobrescritura": "Si: services.supabase_client lo lee como global dentro de sus funciones en cada llamada.",
+     "nota_sobrescritura": "Si: services.registro_radicados lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
-     "archivo": "services/supabase_client.py",
-     "linea": 15
+     "archivo": "services/registro_radicados.py",
+     "linea": 37
+    },
+    {
+     "clave": "services.registro_radicados.PAUSA_TRAS_CAIDA_S",
+     "modulo": "services.registro_radicados",
+     "nombre": "PAUSA_TRAS_CAIDA_S",
+     "tipo": "int",
+     "valor": 300,
+     "descripcion": "Tras un fallo de conexión no se reintenta en cada correo de la corrida: cada intento costaria el tiempo de espera completo.",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: services.registro_radicados lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "services/registro_radicados.py",
+     "linea": 34
+    },
+    {
+     "clave": "services.registro_radicados.TIEMPO_DE_CONEXION_S",
+     "modulo": "services.registro_radicados",
+     "nombre": "TIEMPO_DE_CONEXION_S",
+     "tipo": "int",
+     "valor": 10,
+     "descripcion": "Una conexión que no responde en este tiempo se da por caida: el job corre cada media hora y no puede quedarse esperando a la base en cada correo.",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: services.registro_radicados lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "services/registro_radicados.py",
+     "linea": 31
+    },
+    {
+     "clave": "services.registro_radicados._IDENTIFICADOR",
+     "modulo": "services.registro_radicados",
+     "nombre": "_IDENTIFICADOR",
+     "tipo": "dict",
+     "valor": {
+      "regex": "^[a-z_][a-z0-9_]{0,62}$",
+      "flags": ""
+     },
+     "descripcion": "",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: services.registro_radicados lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "services/registro_radicados.py",
+     "linea": 39,
+     "es_regex": true
     }
    ]
   },
@@ -2639,25 +2693,25 @@
      "modulo": "pipeline/conversion.py",
      "funcion": "_ocr_de_pagina",
      "usa": [
-      "pipeline.conversion.ANCHO_MAXIMO_OCR_PX",
       "pipeline.conversion.ANCHO_MINIMO_OCR_PX",
-      "pipeline.conversion.CONFIANZA_DUDOSA",
-      "pipeline.conversion.CONFIANZA_MINIMA_OSD",
-      "pipeline.conversion.CONFIANZA_REINTENTO_OSD",
+      "pipeline.conversion.CONFIANZA_PARA_VISION",
+      "pipeline.conversion.CONTRASTE_DE_TINTA",
       "pipeline.conversion.DPI_DE_RESPALDO_OCR",
       "pipeline.conversion.DPI_MAXIMO_OCR",
       "pipeline.conversion.DPI_MINIMO_OCR",
       "pipeline.conversion.FRACCION_DEL_TOPE_A_300_DPI",
+      "pipeline.conversion.FRACCION_DE_TINTA_DE_UNA_HOJA_EN_BLANCO",
       "pipeline.conversion.IDIOMAS_OCR",
-      "pipeline.conversion.INCLINACION_MAXIMA_GRADOS",
-      "pipeline.conversion.LADO_SONDEO_GIRO_PX",
+      "pipeline.conversion.LADO_MAXIMO_OCR_PX",
       "pipeline.conversion.MARCA_TRANSCRITO_POR_IA",
-      "pipeline.conversion.MEJORA_MINIMA_POR_GIRO",
       "pipeline.conversion.MINIMO_CARACTERES_OCR",
-      "pipeline.conversion.PASO_INCLINACION_GRADOS",
+      "pipeline.conversion.MOTIVO_EN_BLANCO",
+      "pipeline.conversion.TESSERACT_A_LA_VEZ",
       "pipeline.conversion.TIMEOUT_OCR_PAGINA_S",
       "pipeline.conversion.TRANSCRIPTOR_IA",
+      "pipeline.conversion._CERROJO_DEL_CUPO_IA",
       "pipeline.conversion._CONTROL",
+      "pipeline.conversion._CUPO_TESSERACT",
       "pipeline.conversion._ESPACIOS_RAROS",
       "pipeline.conversion._INVISIBLES"
      ]
@@ -2686,25 +2740,24 @@
      "modulo": "pipeline/conversion.py",
      "funcion": "_ocr_de_pagina",
      "usa": [
-      "pipeline.conversion.ANCHO_MAXIMO_OCR_PX",
       "pipeline.conversion.ANCHO_MINIMO_OCR_PX",
-      "pipeline.conversion.CONFIANZA_DUDOSA",
-      "pipeline.conversion.CONFIANZA_MINIMA_OSD",
-      "pipeline.conversion.CONFIANZA_REINTENTO_OSD",
+      "pipeline.conversion.CONFIANZA_PARA_VISION",
+      "pipeline.conversion.CONTRASTE_DE_TINTA",
       "pipeline.conversion.DPI_DE_RESPALDO_OCR",
       "pipeline.conversion.DPI_MAXIMO_OCR",
       "pipeline.conversion.DPI_MINIMO_OCR",
       "pipeline.conversion.FRACCION_DEL_TOPE_A_300_DPI",
-      "pipeline.conversion.IDIOMAS_OCR",
-      "pipeline.conversion.INCLINACION_MAXIMA_GRADOS",
-      "pipeline.conversion.LADO_SONDEO_GIRO_PX",
+      "pipeline.conversion.FRACCION_DE_TINTA_DE_UNA_HOJA_EN_BLANCO",
+      "pipeline.conversion.LADO_MAXIMO_OCR_PX",
       "pipeline.conversion.MARCA_TRANSCRITO_POR_IA",
-      "pipeline.conversion.MEJORA_MINIMA_POR_GIRO",
       "pipeline.conversion.MINIMO_CARACTERES_OCR",
-      "pipeline.conversion.PASO_INCLINACION_GRADOS",
+      "pipeline.conversion.MOTIVO_EN_BLANCO",
+      "pipeline.conversion.TESSERACT_A_LA_VEZ",
       "pipeline.conversion.TIMEOUT_OCR_PAGINA_S",
       "pipeline.conversion.TRANSCRIPTOR_IA",
+      "pipeline.conversion._CERROJO_DEL_CUPO_IA",
       "pipeline.conversion._CONTROL",
+      "pipeline.conversion._CUPO_TESSERACT",
       "pipeline.conversion._ESPACIOS_RAROS",
       "pipeline.conversion._INVISIBLES"
      ]
@@ -2755,25 +2808,32 @@
      "usa": [
       "pipeline.conversion.ANCHO_MINIMO_OCR_PX",
       "pipeline.conversion.CONFIANZA_DUDOSA",
-      "pipeline.conversion.CONFIANZA_REINTENTO_OSD",
+      "pipeline.conversion.CONTRASTE_DE_TINTA",
       "pipeline.conversion.DPI_DE_RESPALDO_OCR",
       "pipeline.conversion.DPI_MAXIMO_OCR",
       "pipeline.conversion.DPI_MINIMO_OCR",
       "pipeline.conversion.FRACCION_DEL_TOPE_A_300_DPI",
+      "pipeline.conversion.FRACCION_DE_TINTA_DE_UNA_HOJA_EN_BLANCO",
       "pipeline.conversion.FRACCION_MAXIMA_DE_PAGINA",
       "pipeline.conversion.FRACCION_MINIMA_DE_PAGINA",
+      "pipeline.conversion.LADO_MAXIMO_OCR_PX",
       "pipeline.conversion.LADO_MINIMO_DE_IMAGEN_PX",
       "pipeline.conversion.LIMITE_CARACTERES",
       "pipeline.conversion.LIMITE_FILAS_HOJA",
       "pipeline.conversion.LIMITE_PAGINAS_PDF",
       "pipeline.conversion.MARCA_TRANSCRITO_POR_IA",
       "pipeline.conversion.MAX_IMAGENES_POR_PAGINA",
-      "pipeline.conversion.MINIMO_CARACTERES_OCR",
+      "pipeline.conversion.MOTIVO_EN_BLANCO",
+      "pipeline.conversion.PAGINAS_OCR_EN_PARALELO",
       "pipeline.conversion.PRESUPUESTO_OCR_POR_CORREO_S",
       "pipeline.conversion.PRESUPUESTO_OCR_SEGUNDOS",
+      "pipeline.conversion.TESSERACT_A_LA_VEZ",
       "pipeline.conversion.TIMEOUT_OCR_PAGINA_S",
       "pipeline.conversion.TRANSCRIPTOR_IA",
+      "pipeline.conversion._CERROJO_DEL_CUPO_IA",
       "pipeline.conversion._CONTROL",
+      "pipeline.conversion._CUPO_DE_HOJAS",
+      "pipeline.conversion._CUPO_TESSERACT",
       "pipeline.conversion._ESPACIOS_RAROS",
       "pipeline.conversion._INVISIBLES"
      ]
@@ -2784,26 +2844,21 @@
      "modulo": "pipeline/conversion.py",
      "funcion": "_ocr_de_imagenes",
      "usa": [
-      "pipeline.conversion.ANCHO_MAXIMO_OCR_PX",
-      "pipeline.conversion.ANCHO_MINIMO_OCR_PX",
       "pipeline.conversion.CONFIANZA_DUDOSA",
-      "pipeline.conversion.CONFIANZA_MINIMA_OSD",
-      "pipeline.conversion.CONFIANZA_REINTENTO_OSD",
+      "pipeline.conversion.CONFIANZA_PARA_VISION",
       "pipeline.conversion.FRACCION_MAXIMA_DE_PAGINA",
       "pipeline.conversion.FRACCION_MINIMA_DE_PAGINA",
-      "pipeline.conversion.IDIOMAS_OCR",
-      "pipeline.conversion.INCLINACION_MAXIMA_GRADOS",
       "pipeline.conversion.LADO_MINIMO_DE_IMAGEN_PX",
-      "pipeline.conversion.LADO_SONDEO_GIRO_PX",
       "pipeline.conversion.MARCA_TRANSCRITO_POR_IA",
       "pipeline.conversion.MAX_IMAGENES_POR_PAGINA",
-      "pipeline.conversion.MEJORA_MINIMA_POR_GIRO",
       "pipeline.conversion.MINIMO_CARACTERES_OCR",
-      "pipeline.conversion.PASO_INCLINACION_GRADOS",
       "pipeline.conversion.PRESUPUESTO_OCR_SEGUNDOS",
+      "pipeline.conversion.TESSERACT_A_LA_VEZ",
       "pipeline.conversion.TIMEOUT_OCR_PAGINA_S",
       "pipeline.conversion.TRANSCRIPTOR_IA",
+      "pipeline.conversion._CERROJO_DEL_CUPO_IA",
       "pipeline.conversion._CONTROL",
+      "pipeline.conversion._CUPO_TESSERACT",
       "pipeline.conversion._ESPACIOS_RAROS",
       "pipeline.conversion._INVISIBLES"
      ]
@@ -2862,7 +2917,7 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 110
+     "linea": 176
     },
     {
      "clave": "pipeline.conversion.ANCHO_MINIMO_OCR_PX",
@@ -2876,7 +2931,7 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 109
+     "linea": 175
     },
     {
      "clave": "pipeline.conversion.CONFIANZA_DUDOSA",
@@ -2890,7 +2945,7 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 143
+     "linea": 218
     },
     {
      "clave": "pipeline.conversion.CONFIANZA_MINIMA_OSD",
@@ -2904,7 +2959,21 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 127
+     "linea": 193
+    },
+    {
+     "clave": "pipeline.conversion.CONFIANZA_PARA_VISION",
+     "modulo": "pipeline.conversion",
+     "nombre": "CONFIANZA_PARA_VISION",
+     "tipo": "float",
+     "valor": 0.8,
+     "descripcion": "Por debajo de esta confianza la hoja que tesseract leyo se le pasa al modelo con visión, que la transcribe (dentro del tope de imágenes por correo). Es un umbral aparte del de la relectura: medido el 2026-11-06 sobre once hojas reales entre 0,62 y 0,79 —ordenes medicas a mano, historias clinicas, formularios—, el modelo leyo el paciente, la cédula, el diagnóstico y el sexo donde tesseract dejaba ruido (\"1isnel Fegec Mura\" por \"Manuel Feged Murcia\"). Subir el de la relectura a 0,80 hacia buscar el giro en hojas derechas y llevo un PDF de 14 s a 193 s sin mejorar nada.",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/conversion.py",
+     "linea": 215
     },
     {
      "clave": "pipeline.conversion.CONFIANZA_REINTENTO_OSD",
@@ -2918,7 +2987,21 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 139
+     "linea": 205
+    },
+    {
+     "clave": "pipeline.conversion.CONTRASTE_DE_TINTA",
+     "modulo": "pipeline.conversion",
+     "nombre": "CONTRASTE_DE_TINTA",
+     "tipo": "int",
+     "valor": 80,
+     "descripcion": "Una hoja escaneada en blanco (el reverso de una hoja, una separadora) no tiene nada que leer, y costaba lo que la peor: tesseract la leia entera, como salia floja buscaba el giro con tres sondeos y al final se la mandaba al modelo con visión, que respondia SIN_TEXTO. La tinta se mide sobre la mitad de la resolucion: un pixel cuenta si es bastante mas oscuro que el fondo de la hoja.",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/conversion.py",
+     "linea": 1140
     },
     {
      "clave": "pipeline.conversion.DPI_DE_RESPALDO_OCR",
@@ -2932,7 +3015,7 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 74
+     "linea": 140
     },
     {
      "clave": "pipeline.conversion.DPI_MAXIMO_OCR",
@@ -2946,7 +3029,7 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 118
+     "linea": 184
     },
     {
      "clave": "pipeline.conversion.DPI_MINIMO_OCR",
@@ -2960,7 +3043,21 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 117
+     "linea": 183
+    },
+    {
+     "clave": "pipeline.conversion.FILAS_POR_FRANJA",
+     "modulo": "pipeline.conversion",
+     "nombre": "FILAS_POR_FRANJA",
+     "tipo": "int",
+     "valor": 256,
+     "descripcion": "",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/conversion.py",
+     "linea": 1262
     },
     {
      "clave": "pipeline.conversion.FRACCION_DEL_TOPE_A_300_DPI",
@@ -2974,7 +3071,21 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 73
+     "linea": 139
+    },
+    {
+     "clave": "pipeline.conversion.FRACCION_DE_TINTA_DE_UNA_HOJA_EN_BLANCO",
+     "modulo": "pipeline.conversion",
+     "nombre": "FRACCION_DE_TINTA_DE_UNA_HOJA_EN_BLANCO",
+     "tipo": "float",
+     "valor": 0.0005,
+     "descripcion": "Una hoja escaneada en blanco (el reverso de una hoja, una separadora) no tiene nada que leer, y costaba lo que la peor: tesseract la leia entera, como salia floja buscaba el giro con tres sondeos y al final se la mandaba al modelo con visión, que respondia SIN_TEXTO. La tinta se mide sobre la mitad de la resolucion: un pixel cuenta si es bastante mas oscuro que el fondo de la hoja.",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/conversion.py",
+     "linea": 1139
     },
     {
      "clave": "pipeline.conversion.FRACCION_MAXIMA_DE_PAGINA",
@@ -2988,7 +3099,7 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 96
+     "linea": 162
     },
     {
      "clave": "pipeline.conversion.FRACCION_MINIMA_DE_PAGINA",
@@ -3002,7 +3113,7 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 95
+     "linea": 161
     },
     {
      "clave": "pipeline.conversion.IDIOMAS_OCR",
@@ -3016,7 +3127,7 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 148
+     "linea": 223
     },
     {
      "clave": "pipeline.conversion.INCLINACION_MAXIMA_GRADOS",
@@ -3030,7 +3141,21 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 122
+     "linea": 188
+    },
+    {
+     "clave": "pipeline.conversion.LADO_MAXIMO_OCR_PX",
+     "modulo": "pipeline.conversion",
+     "nombre": "LADO_MAXIMO_OCR_PX",
+     "tipo": "int",
+     "valor": 4200,
+     "descripcion": "Lado mayor, en pixeles, de una hoja renderizada para OCR: un oficio a 300 dpi. Hay PDF cuya página mide lo que mide la foto que llevan (2550 x 3507 puntos): a 300 dpi eran 155 megapixeles, casi medio giga por hoja, tesseract se cortaba por tiempo y la memoria del proceso pasaba de 7 GB. Mas alla de la resolucion de la foto no hay nada que leer.",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/conversion.py",
+     "linea": 1096
     },
     {
      "clave": "pipeline.conversion.LADO_MINIATURA_PX",
@@ -3044,7 +3169,7 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 124
+     "linea": 190
     },
     {
      "clave": "pipeline.conversion.LADO_MINIMO_DE_IMAGEN_PX",
@@ -3058,7 +3183,7 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 79
+     "linea": 145
     },
     {
      "clave": "pipeline.conversion.LADO_SONDEO_GIRO_PX",
@@ -3072,7 +3197,21 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 131
+     "linea": 197
+    },
+    {
+     "clave": "pipeline.conversion.LIMITE_BYTES_VISION_DIRECTA",
+     "modulo": "pipeline.conversion",
+     "nombre": "LIMITE_BYTES_VISION_DIRECTA",
+     "tipo": "int",
+     "valor": 15728640,
+     "descripcion": "HEIC/HEIF (las fotos de iPhone). Sus decodificadores libres (libheif, libde265, x265) son LGPL o GPL, y la licencia del proyecto solo admite MIT, BSD o Apache: no hay con que pasarlas a pixeles para tesseract. Gemini las recibe tal cual (image/heic, image/heif), así que se transcriben con visión, dentro del mismo cupo de imágenes por correo que las hojas flojas.",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/conversion.py",
+     "linea": 1534
     },
     {
      "clave": "pipeline.conversion.LIMITE_CARACTERES",
@@ -3083,10 +3222,10 @@
      "descripcion": "Limite por documento. Los adjuntos de 200 páginas existen y no aportan mas información que las primeras: se convierten hasta el limite y queda anotado.",
      "env": null,
      "sobrescribible_en_caliente": true,
-     "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
+     "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada; pipeline.cache_conversion lo lee como atributo `modulo.LIMITE_CARACTERES` en tiempo de llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 37
+     "linea": 103
     },
     {
      "clave": "pipeline.conversion.LIMITE_FILAS_HOJA",
@@ -3100,7 +3239,7 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 39
+     "linea": 105
     },
     {
      "clave": "pipeline.conversion.LIMITE_PAGINAS_PDF",
@@ -3111,10 +3250,10 @@
      "descripcion": "Limite por documento. Los adjuntos de 200 páginas existen y no aportan mas información que las primeras: se convierten hasta el limite y queda anotado.",
      "env": null,
      "sobrescribible_en_caliente": true,
-     "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
+     "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada; pipeline.cache_conversion lo lee como atributo `modulo.LIMITE_PAGINAS_PDF` en tiempo de llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 38
+     "linea": 104
     },
     {
      "clave": "pipeline.conversion.MAX_IMAGENES_POR_PAGINA",
@@ -3128,7 +3267,7 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 100
+     "linea": 166
     },
     {
      "clave": "pipeline.conversion.MAX_PROFUNDIDAD_SOBRE",
@@ -3142,7 +3281,7 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 1314
+     "linea": 1736
     },
     {
      "clave": "pipeline.conversion.MEJORA_MINIMA_POR_GIRO",
@@ -3156,7 +3295,7 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 132
+     "linea": 198
     },
     {
      "clave": "pipeline.conversion.MINIMO_CARACTERES_OCR",
@@ -3170,7 +3309,36 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 140
+     "linea": 206
+    },
+    {
+     "clave": "pipeline.conversion.MOTIVO_EN_BLANCO",
+     "modulo": "pipeline.conversion",
+     "nombre": "MOTIVO_EN_BLANCO",
+     "tipo": "str",
+     "valor": "la pagina esta en blanco",
+     "descripcion": "Una hoja escaneada en blanco (el reverso de una hoja, una separadora) no tiene nada que leer, y costaba lo que la peor: tesseract la leia entera, como salia floja buscaba el giro con tres sondeos y al final se la mandaba al modelo con visión, que respondia SIN_TEXTO. La tinta se mide sobre la mitad de la resolucion: un pixel cuenta si es bastante mas oscuro que el fondo de la hoja.",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/conversion.py",
+     "linea": 1141
+    },
+    {
+     "clave": "pipeline.conversion.PAGINAS_OCR_EN_PARALELO",
+     "modulo": "pipeline.conversion",
+     "nombre": "PAGINAS_OCR_EN_PARALELO",
+     "tipo": "str",
+     "valor": "_entero_del_entorno(\n    \"OCR_PAGINAS_EN_PARALELO\", min(4, nucleos()))",
+     "descripcion": "Hojas de un mismo PDF que se leen a la vez. Un escaneo de ochenta hojas se leia de a una aunque la maquina tuviera los nucleos libres.",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/conversion.py",
+     "linea": 94,
+     "valor_es_expresion_fuente": true
     },
     {
      "clave": "pipeline.conversion.PASO_INCLINACION_GRADOS",
@@ -3184,7 +3352,7 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 123
+     "linea": 189
     },
     {
      "clave": "pipeline.conversion.PRESUPUESTO_OCR_POR_CORREO_S",
@@ -3198,7 +3366,7 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 62
+     "linea": 128
     },
     {
      "clave": "pipeline.conversion.PRESUPUESTO_OCR_SEGUNDOS",
@@ -3212,7 +3380,7 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 53
+     "linea": 119
     },
     {
      "clave": "pipeline.conversion.TIMEOUT_OCR_PAGINA_S",
@@ -3226,7 +3394,7 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 67
+     "linea": 133
     },
     {
      "clave": "pipeline.conversion._CARGAS_EN_SOBRE",
@@ -3257,7 +3425,22 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 1307
+     "linea": 1729
+    },
+    {
+     "clave": "pipeline.conversion._CERROJO_DEL_CUPO_IA",
+     "modulo": "pipeline.conversion",
+     "nombre": "_CERROJO_DEL_CUPO_IA",
+     "tipo": "str",
+     "valor": "threading.Lock()",
+     "descripcion": "Función que transcribe una imagen (bytes JPEG) con el modelo, o None. La pone el orquestador cuando trabaja con Vertex; en pruebas y sin modelo queda en None y el OCR es solo tesseract.",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada; pipeline.cache_conversion lo lee como atributo `modulo._CERROJO_DEL_CUPO_IA` en tiempo de llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/conversion.py",
+     "linea": 957,
+     "valor_es_expresion_fuente": true
     },
     {
      "clave": "pipeline.conversion._CONTROL",
@@ -3274,8 +3457,38 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 273,
+     "linea": 373,
      "es_regex": true
+    },
+    {
+     "clave": "pipeline.conversion._CUPO_DE_HOJAS",
+     "modulo": "pipeline.conversion",
+     "nombre": "_CUPO_DE_HOJAS",
+     "tipo": "str",
+     "valor": "threading.BoundedSemaphore(2 * TESSERACT_A_LA_VEZ)",
+     "descripcion": "Hojas renderizadas a la vez en todo el proceso. Cada una es una imagen de hasta 40 MB que espera su turno de lectura: con una rafaga de correos, sin este tope habria cinco correos por cuatro hojas en memoria.",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/conversion.py",
+     "linea": 99,
+     "valor_es_expresion_fuente": true
+    },
+    {
+     "clave": "pipeline.conversion._CUPO_TESSERACT",
+     "modulo": "pipeline.conversion",
+     "nombre": "_CUPO_TESSERACT",
+     "tipo": "str",
+     "valor": "threading.BoundedSemaphore(TESSERACT_A_LA_VEZ)",
+     "descripcion": "Lecturas de imagen (preparacion y tesseract) a la vez en todo el proceso, sumando todos los correos. Con cinco correos y varias hojas por correo en paralelo, sin tope habria mas procesos que nucleos, cada hoja tardaria varias veces mas (lo que hace saltar el tope por página) y la memoria se multiplica.",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/conversion.py",
+     "linea": 91,
+     "valor_es_expresion_fuente": true
     },
     {
      "clave": "pipeline.conversion._ESPACIOS_RAROS",
@@ -3292,7 +3505,7 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 278,
+     "linea": 378,
      "es_regex": true
     },
     {
@@ -3352,7 +3565,24 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 151
+     "linea": 226
+    },
+    {
+     "clave": "pipeline.conversion._FIRMAS_SMIME",
+     "modulo": "pipeline.conversion",
+     "nombre": "_FIRMAS_SMIME",
+     "tipo": "list",
+     "valor": [
+      "application/pkcs7-signature",
+      "application/x-pkcs7-signature"
+     ],
+     "descripcion": "",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/conversion.py",
+     "linea": 1808
     },
     {
      "clave": "pipeline.conversion._INVISIBLES",
@@ -3369,8 +3599,65 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 288,
+     "linea": 388,
      "es_regex": true
+    },
+    {
+     "clave": "pipeline.conversion._LIBC",
+     "modulo": "pipeline.conversion",
+     "nombre": "_LIBC",
+     "tipo": "list",
+     "valor": [],
+     "descripcion": "",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/conversion.py",
+     "linea": 54
+    },
+    {
+     "clave": "pipeline.conversion._MARCAS_AVIF",
+     "modulo": "pipeline.conversion",
+     "nombre": "_MARCAS_AVIF",
+     "tipo": "list",
+     "valor": [
+      "b'avif'",
+      "b'avis'"
+     ],
+     "descripcion": "HEIF y AVIF son contenedores ISO-BMFF: «ftyp» en el byte 4 y después la marca mayor y las compatibles. Las fotos de iPhone llegan como HEIC.",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/conversion.py",
+     "linea": 338
+    },
+    {
+     "clave": "pipeline.conversion._MARCAS_HEIF",
+     "modulo": "pipeline.conversion",
+     "nombre": "_MARCAS_HEIF",
+     "tipo": "list",
+     "valor": [
+      "b'heic'",
+      "b'heim'",
+      "b'heis'",
+      "b'heix'",
+      "b'hevc'",
+      "b'hevm'",
+      "b'hevs'",
+      "b'hevx'",
+      "b'mif1'",
+      "b'mif2'",
+      "b'msf1'"
+     ],
+     "descripcion": "HEIF y AVIF son contenedores ISO-BMFF: «ftyp» en el byte 4 y después la marca mayor y las compatibles. Las fotos de iPhone llegan como HEIC.",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/conversion.py",
+     "linea": 339
     },
     {
      "clave": "pipeline.materializar.LIMITE_BYTES_ADJUNTO",
@@ -3384,7 +3671,22 @@
      "nota_sobrescritura": "Si: pipeline.materializar lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/materializar.py",
-     "linea": 34
+     "linea": 35
+    },
+    {
+     "clave": "pipeline.conversion.TESSERACT_A_LA_VEZ",
+     "modulo": "pipeline.conversion",
+     "nombre": "TESSERACT_A_LA_VEZ",
+     "tipo": "str",
+     "valor": "_entero_del_entorno(\"OCR_TESSERACT_A_LA_VEZ\", nucleos())",
+     "descripcion": "Lecturas de imagen (preparacion y tesseract) a la vez en todo el proceso, sumando todos los correos. Con cinco correos y varias hojas por correo en paralelo, sin tope habria mas procesos que nucleos, cada hoja tardaria varias veces mas (lo que hace saltar el tope por página) y la memoria se multiplica.",
+     "env": null,
+     "sobrescribible_en_caliente": false,
+     "nota_sobrescritura": "No: en pipeline.conversion se usa al importar para construir otra constante.",
+     "alcance_sobrescritura": "ninguno",
+     "archivo": "pipeline/conversion.py",
+     "linea": 90,
+     "valor_es_expresion_fuente": true
     },
     {
      "clave": "pipeline.materializar.claves_candidatas_de.tope",
@@ -4078,7 +4380,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1405
+     "linea": 1417
     },
     {
      "clave": "pipeline.extraccion.ALCANCE_DE_LA_FIRMA",
@@ -4106,7 +4408,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1404
+     "linea": 1416
     },
     {
      "clave": "pipeline.extraccion.CARACTERES_DEL_ENCABEZADO_DEL_ADJUNTO",
@@ -4120,7 +4422,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 2958
+     "linea": 2977
     },
     {
      "clave": "pipeline.extraccion.CONFIANZA_DE_LA_GEOGRAFIA",
@@ -4134,7 +4436,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1359
+     "linea": 1371
     },
     {
      "clave": "pipeline.extraccion.CONFIANZA_DE_UN_NOMBRE_FIRME",
@@ -4148,7 +4450,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1749
+     "linea": 1761
     },
     {
      "clave": "pipeline.extraccion.DIFERENCIA_MAXIMA_ENTRE_ANIOS",
@@ -4176,7 +4478,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1933
+     "linea": 1945
     },
     {
      "clave": "pipeline.extraccion.FACTOR_VENTAJA",
@@ -4204,7 +4506,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 2959
+     "linea": 2978
     },
     {
      "clave": "pipeline.extraccion.LARGO_MINIMO_DIRECCION",
@@ -4218,7 +4520,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 2578
+     "linea": 2597
     },
     {
      "clave": "pipeline.extraccion.LINEAS_DE_LA_FIRMA",
@@ -4232,7 +4534,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1031
+     "linea": 1043
     },
     {
      "clave": "pipeline.extraccion.MAX_ADJUNTOS_EN_EL_CONTEXTO",
@@ -4246,7 +4548,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 2960
+     "linea": 2979
     },
     {
      "clave": "pipeline.extraccion.MAX_DISTANCIA_NOMBRE_DEL_REMITENTE",
@@ -4288,7 +4590,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1472
+     "linea": 1484
     },
     {
      "clave": "pipeline.extraccion.MAX_PALABRAS_NOMBRE",
@@ -4302,7 +4604,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1215
+     "linea": 1227
     },
     {
      "clave": "pipeline.extraccion.PALABRAS_PARA_DAR_EL_NOMBRE_POR_COMPLETO",
@@ -4316,7 +4618,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1649
+     "linea": 1661
     },
     {
      "clave": "pipeline.extraccion.PENALIZACION_POR_RECORTE",
@@ -4330,7 +4632,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1353
+     "linea": 1365
     },
     {
      "clave": "pipeline.extraccion.SEPARACION_DENTRO_DEL_NOMBRE",
@@ -4358,7 +4660,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 2160
+     "linea": 2172
     },
     {
      "clave": "pipeline.extraccion.TOPE_DEL_BLOQUE_AJENO_DIRECCION",
@@ -4372,7 +4674,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 2576
+     "linea": 2595
     },
     {
      "clave": "pipeline.extraccion.TOPE_DEL_MENSAJE",
@@ -4386,7 +4688,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1033
+     "linea": 1045
     },
     {
      "clave": "pipeline.extraccion.TOPE_PARA_LA_SOLICITUD",
@@ -4400,7 +4702,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 2460
+     "linea": 2472
     },
     {
      "clave": "pipeline.extraccion.VENTANA_DEL_TITULAR",
@@ -4414,7 +4716,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 2575
+     "linea": 2594
     },
     {
      "clave": "pipeline.extraccion.VENTANA_DE_CONCORDANCIA",
@@ -4428,7 +4730,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1901
+     "linea": 1913
     },
     {
      "clave": "pipeline.extraccion._ACENTOS",
@@ -4540,7 +4842,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1400,
+     "linea": 1412,
      "es_regex": true
     },
     {
@@ -4558,7 +4860,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 2362,
+     "linea": 2374,
      "es_regex": true
     },
     {
@@ -4620,7 +4922,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1484
+     "linea": 1496
     },
     {
      "clave": "pipeline.extraccion._AUTOIDENTIFICACION",
@@ -4666,7 +4968,7 @@
      "nombre": "_BLOQUE_DE_OTRO",
      "tipo": "dict",
      "valor": {
-      "regex": "(?i)codigo\\s+de\\s+habilitacion|r\\.?\\s?m\\.?\\s*\\d{4}|datos\\s+del\\s+(?:empleador|jefe|aportante)|\\bnit\\b\\s*:?\\s*\\d|numero\\s+de\\s+identificacion\\s+tributaria|positiva\\s+compa[nñ]ia|junta\\s+(?:regional|nacional)|razon\\s+social|empresa\\s+matriz|controlante|\\bciiu\\b",
+      "regex": "(?i)codigo\\s+de\\s+habilitacion|r\\.?\\s?m\\.?\\s*\\d{4}|datos\\s+del\\s+(?:empleador|jefe|aportante)|\\bnit\\b\\s*:?\\s*\\d|numero\\s+de\\s+identificacion\\s+tributaria|positiva\\s+compa[nñ]ia|arl\\s+positiva|junta\\s+(?:regional|nacional)|razon\\s+social|empresa\\s+matriz|controlante|\\bciiu\\b",
       "flags": ""
      },
      "descripcion": "Rotulos que abren el bloque de otro sujeto: la IPS, el empleador, Positiva, la Junta o el registro societario. Una dirección bajo cualquiera de ellos no es el domicilio del trabajador.",
@@ -4675,7 +4977,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 2522,
+     "linea": 2541,
      "es_regex": true
     },
     {
@@ -4716,7 +5018,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1401,
+     "linea": 1413,
      "es_regex": true
     },
     {
@@ -4731,7 +5033,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1170
+     "linea": 1182
     },
     {
      "clave": "pipeline.extraccion._DESPEDIDA_EN_LINEA",
@@ -4748,7 +5050,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 2236,
+     "linea": 2248,
      "es_regex": true
     },
     {
@@ -4820,7 +5122,7 @@
      "nota_sobrescritura": "Si: varias funciones lo leen como global en cada llamada. Excepcion: la regex 'en nombre de otro' se compilo con el en el primer uso y queda cacheada en _en_nombre_de_otro (ponerla a None para recompilar).",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1152
+     "linea": 1164
     },
     {
      "clave": "pipeline.extraccion._ETIQUETAS_SOLO_EN_EL_ASUNTO",
@@ -4836,7 +5138,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1165
+     "linea": 1177
     },
     {
      "clave": "pipeline.extraccion._FIN_DE_CLAUSULA",
@@ -4853,7 +5155,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1946,
+     "linea": 1958,
      "es_regex": true
     },
     {
@@ -4871,7 +5173,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 2204,
+     "linea": 2216,
      "es_regex": true
     },
     {
@@ -4889,7 +5191,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1926,
+     "linea": 1938,
      "es_regex": true
     },
     {
@@ -4908,7 +5210,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1225
+     "linea": 1237
     },
     {
      "clave": "pipeline.extraccion._FRONTERA_DE_CELDA",
@@ -4925,7 +5227,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1934,
+     "linea": 1946,
      "es_regex": true
     },
     {
@@ -4943,7 +5245,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1903,
+     "linea": 1915,
      "es_regex": true
     },
     {
@@ -4961,7 +5263,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1913,
+     "linea": 1925,
      "es_regex": true
     },
     {
@@ -4979,7 +5281,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1114,
+     "linea": 1126,
      "es_regex": true
     },
     {
@@ -4997,7 +5299,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1026,
+     "linea": 1038,
      "es_regex": true
     },
     {
@@ -5094,7 +5396,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1178
+     "linea": 1190
     },
     {
      "clave": "pipeline.extraccion._NIT_DE_POSITIVA",
@@ -5126,7 +5428,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1207
+     "linea": 1219
     },
     {
      "clave": "pipeline.extraccion._NOMBRES_CON_FORMA_DE_VERBO",
@@ -5155,7 +5457,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1490
+     "linea": 1502
     },
     {
      "clave": "pipeline.extraccion._NOMBRES_EN_CION",
@@ -5176,7 +5478,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1496
+     "linea": 1508
     },
     {
      "clave": "pipeline.extraccion._NO_ES_AFECTADO",
@@ -5203,7 +5505,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1221
+     "linea": 1233
     },
     {
      "clave": "pipeline.extraccion._NO_ES_DOMICILIO",
@@ -5220,7 +5522,25 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 2530,
+     "linea": 2549,
+     "es_regex": true
+    },
+    {
+     "clave": "pipeline.extraccion._ORGANIZACION_QUE_ESCRIBE",
+     "modulo": "pipeline.extraccion",
+     "nombre": "_ORGANIZACION_QUE_ESCRIBE",
+     "tipo": "dict",
+     "valor": {
+      "regex": "'([^']+)' es la organizacion; firma '",
+      "flags": ""
+     },
+     "descripcion": "",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/extraccion.py",
+     "linea": 1003,
      "es_regex": true
     },
     {
@@ -5244,7 +5564,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1297
+     "linea": 1309
     },
     {
      "clave": "pipeline.extraccion._PIDE_CORREGIR",
@@ -5261,7 +5581,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1943,
+     "linea": 1955,
      "es_regex": true
     },
     {
@@ -5279,7 +5599,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1981,
+     "linea": 1993,
      "es_regex": true
     },
     {
@@ -5297,7 +5617,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1989,
+     "linea": 2001,
      "es_regex": true
     },
     {
@@ -5315,7 +5635,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 2954,
+     "linea": 2973,
      "es_regex": true
     },
     {
@@ -5324,7 +5644,7 @@
      "nombre": "_ROTULO_DIRECCION",
      "tipo": "dict",
      "valor": {
-      "regex": "(?i)direcci[oó]n[ \\t]*(?:de\\s+residencia(?:\\s+habitual)?|de\\s+notificaci[oó]n)?[ \\t]*:[ \\t|]*",
+      "regex": "(?i)(?:direcci[oó]n[ \\t]*(?:de\\s+residencia(?:\\s+habitual)?|de\\s+notificaci[oó]n(?:es)?|para\\s+notificaci[oó]n(?:es)?|de\\s+domicilio|del\\s+domicilio|residencia|actual)?|\\bdir\\.?)[ \\t]*:[ \\t|]*",
       "flags": ""
      },
      "descripcion": "Rotulo 'Dirección (de residencia/de notificación):' que abre una dirección.",
@@ -5333,7 +5653,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 2515,
+     "linea": 2531,
      "es_regex": true
     },
     {
@@ -5351,7 +5671,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1883,
+     "linea": 1895,
      "es_regex": true
     },
     {
@@ -5369,7 +5689,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 2547,
+     "linea": 2566,
      "es_regex": true
     },
     {
@@ -5387,7 +5707,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1495,
+     "linea": 1507,
      "es_regex": true
     },
     {
@@ -5406,7 +5726,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 2166
+     "linea": 2178
     },
     {
      "clave": "pipeline.extraccion._TIPO_POR_MARCA",
@@ -5520,7 +5840,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 2413
+     "linea": 2425
     },
     {
      "clave": "pipeline.extraccion._TITULO_DE_ADJUNTO",
@@ -5537,7 +5857,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1937,
+     "linea": 1949,
      "es_regex": true
     },
     {
@@ -5555,7 +5875,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 2185,
+     "linea": 2197,
      "es_regex": true
     },
     {
@@ -5573,7 +5893,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 2172,
+     "linea": 2184,
      "es_regex": true
     },
     {
@@ -5603,7 +5923,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1500
+     "linea": 1512
     },
     {
      "clave": "pipeline.extraccion._VALOR_SEXO",
@@ -5624,7 +5944,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1888
+     "linea": 1900
     },
     {
      "clave": "pipeline.extraccion._VERBO_CONJUGADO",
@@ -5641,7 +5961,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1488,
+     "linea": 1500,
      "es_regex": true
     },
     {
@@ -5656,7 +5976,7 @@
      "nota_sobrescritura": "Si: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1234,
+     "linea": 1246,
      "valor_resumido": {
       "resumido": true,
       "tamano_caracteres": 3610
@@ -7270,7 +7590,7 @@
      "nota_sobrescritura": "Parcial, se marca como no sobrescribible: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada. PERO en pipeline.extraccion se usa al importar para construir otra constante.",
      "alcance_sobrescritura": "parcial",
      "archivo": "pipeline/extraccion.py",
-     "linea": 2381
+     "linea": 2393
     },
     {
      "clave": "pipeline.extraccion.MOTIVOS_DE_AUSENCIA_CONSTATADA",
@@ -7287,7 +7607,7 @@
      "nota_sobrescritura": "Parcial, se marca como no sobrescribible: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada. PERO pipeline.agente lo copia con `from pipeline.extraccion import MOTIVOS_DE_AUSENCIA_CONSTATADA` al importar (para cambiarlo ahí: setattr(pipeline.agente, 'MOTIVOS_DE_AUSENCIA_CONSTATADA', v)); pipeline.correccion lo copia con `from pipeline.extraccion import MOTIVOS_DE_AUSENCIA_CONSTATADA` al importar (para cambiarlo ahí: setattr(pipeline.correccion, 'MOTIVOS_DE_AUSENCIA_CONSTATADA', v)).",
      "alcance_sobrescritura": "parcial",
      "archivo": "pipeline/extraccion.py",
-     "linea": 2710
+     "linea": 2729
     },
     {
      "clave": "pipeline.extraccion.SEXO_FEMENINO",
@@ -7301,7 +7621,7 @@
      "nota_sobrescritura": "Parcial, se marca como no sobrescribible: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada. PERO en pipeline.extraccion se usa al importar para construir otra constante.",
      "alcance_sobrescritura": "parcial",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1881
+     "linea": 1893
     },
     {
      "clave": "pipeline.extraccion.SEXO_MASCULINO",
@@ -7315,7 +7635,7 @@
      "nota_sobrescritura": "Parcial, se marca como no sobrescribible: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada. PERO en pipeline.extraccion se usa al importar para construir otra constante.",
      "alcance_sobrescritura": "parcial",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1880
+     "linea": 1892
     },
     {
      "clave": "pipeline.extraccion.UMBRAL_CONFIANZA",
@@ -7343,7 +7663,7 @@
      "nota_sobrescritura": "No: en pipeline.extraccion se usa al importar para construir otra constante.",
      "alcance_sobrescritura": "ninguno",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1204
+     "linea": 1216
     },
     {
      "clave": "pipeline.extraccion._PALABRA",
@@ -7357,7 +7677,7 @@
      "nota_sobrescritura": "No: en pipeline.extraccion se usa al importar para construir otra constante.",
      "alcance_sobrescritura": "ninguno",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1188
+     "linea": 1200
     },
     {
      "clave": "pipeline.extraccion._PALABRAS_DE_FRASE",
@@ -7417,7 +7737,7 @@
      "nota_sobrescritura": "Parcial, se marca como no sobrescribible: pipeline.extraccion lo lee como global dentro de sus funciones en cada llamada. PERO en pipeline.extraccion se usa al importar para construir otra constante.",
      "alcance_sobrescritura": "parcial",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1477
+     "linea": 1489
     },
     {
      "clave": "pipeline.extraccion._PALABRA_INTERIOR",
@@ -7431,7 +7751,7 @@
      "nota_sobrescritura": "No: en pipeline.extraccion se usa al importar para construir otra constante.",
      "alcance_sobrescritura": "ninguno",
      "archivo": "pipeline/extraccion.py",
-     "linea": 1200
+     "linea": 1212
     },
     {
      "clave": "pipeline.extraccion._PRIMERA_PERSONA",
@@ -7484,7 +7804,7 @@
      "nota_sobrescritura": "No: en pipeline.extraccion se usa al importar para construir otra constante.",
      "alcance_sobrescritura": "ninguno",
      "archivo": "pipeline/extraccion.py",
-     "linea": 2541
+     "linea": 2560
     },
     {
      "clave": "pipeline.extraccion._SE_IDENTIFICA",
@@ -7996,7 +8316,7 @@
       "telefono_afectado"
      ],
      "nombre": "Teléfono",
-     "descripcion": "Teléfono de contacto.",
+     "descripcion": "Telefono de contacto.",
      "usa": [
       "pipeline.extraccion.FACTOR_VENTAJA",
       "pipeline.extraccion.MAX_DISTANCIA_NOMBRE_DOC",
@@ -8009,7 +8329,7 @@
       "nombre_remitente"
      ],
      "nombre": "Nombre del remitente",
-     "descripcion": "Nombre del remitente por la cascada de `utils.generic_filter`, agregando evidencia y confianza según la capa que lo resolvio.",
+     "descripcion": "Nombre del remitente por la cascada de `utils.generic_filter`, agregando evidencia y confianza segun la capa que lo resolvio.",
      "usa": [
       "pipeline.extraccion.LINEAS_DE_LA_FIRMA",
       "pipeline.extraccion.MAX_PALABRAS_DE_UN_NOMBRE",
@@ -8179,14 +8499,16 @@
    "reglas": [
     {
      "id": "vis_solo_lo_flojo",
-     "descripcion": "Solo se transcribe una hoja o imagen cuya lectura de tesseract salio floja (confianza < CONFIANZA_REINTENTO_OSD o menos de MINIMO_CARACTERES_OCR caracteres útiles), y solo si queda cupo en PresupuestoDeOcr.imagenes_ia.",
+     "descripcion": "Se transcribe una hoja o imagen cuya lectura de tesseract salio por debajo de CONFIANZA_PARA_VISION (0,80) o con menos de MINIMO_CARACTERES_OCR caracteres útiles, y solo si queda cupo en PresupuestoDeOcr.imagenes_ia. Es un umbral aparte del de la relectura (CONFIANZA_REINTENTO_OSD): medido sobre hojas reales entre 0,62 y 0,79, el modelo leyo paciente, cédula, diagnóstico y sexo donde tesseract dejaba ruido.",
      "modulo": "pipeline/conversion.py",
      "funcion": "_con_respaldo_ia",
      "usa": [
+      "pipeline.conversion.CONFIANZA_PARA_VISION",
       "pipeline.conversion.CONFIANZA_REINTENTO_OSD",
       "pipeline.conversion.MARCA_TRANSCRITO_POR_IA",
       "pipeline.conversion.MINIMO_CARACTERES_OCR",
       "pipeline.conversion.TRANSCRIPTOR_IA",
+      "pipeline.conversion._CERROJO_DEL_CUPO_IA",
       "pipeline.conversion._CONTROL",
       "pipeline.conversion._ESPACIOS_RAROS",
       "pipeline.conversion._INVISIBLES"
@@ -8198,10 +8520,11 @@
      "modulo": "pipeline/conversion.py",
      "funcion": "_con_respaldo_ia",
      "usa": [
-      "pipeline.conversion.CONFIANZA_REINTENTO_OSD",
+      "pipeline.conversion.CONFIANZA_PARA_VISION",
       "pipeline.conversion.MARCA_TRANSCRITO_POR_IA",
       "pipeline.conversion.MINIMO_CARACTERES_OCR",
       "pipeline.conversion.TRANSCRIPTOR_IA",
+      "pipeline.conversion._CERROJO_DEL_CUPO_IA",
       "pipeline.conversion._CONTROL",
       "pipeline.conversion._ESPACIOS_RAROS",
       "pipeline.conversion._INVISIBLES"
@@ -8213,7 +8536,9 @@
      "modulo": "pipeline/modelo.py",
      "funcion": "ModeloVertex.transcribir_imagen",
      "usa": [
-      "pipeline.modelo.INSTRUCCION_DE_TRANSCRIPCION"
+      "pipeline.modelo.INSTRUCCION_DE_TRANSCRIPCION",
+      "pipeline.modelo.MAX_TOKENS_DE_TRANSCRIPCION",
+      "pipeline.modelo.TIMEOUT_DE_TRANSCRIPCION_MS"
      ]
     }
    ],
@@ -8230,7 +8555,7 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 781
+     "linea": 949
     },
     {
      "clave": "pipeline.conversion.MAX_IMAGENES_IA_POR_CORREO",
@@ -8244,7 +8569,7 @@
      "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 70
+     "linea": 136
     },
     {
      "clave": "pipeline.conversion.TRANSCRIPTOR_IA",
@@ -8255,10 +8580,10 @@
      "descripcion": "Función que transcribe una imagen (bytes JPEG) con el modelo, o None. La pone el orquestador cuando trabaja con Vertex; en pruebas y sin modelo queda en None y el OCR es solo tesseract.",
      "env": null,
      "sobrescribible_en_caliente": true,
-     "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada; pipeline.orquestador lo lee como atributo `modulo.TRANSCRIPTOR_IA` en tiempo de llamada.",
+     "nota_sobrescritura": "Si: pipeline.conversion lo lee como global dentro de sus funciones en cada llamada; pipeline.cache_conversion lo lee como atributo `modulo.TRANSCRIPTOR_IA` en tiempo de llamada; pipeline.orquestador lo lee como atributo `modulo.TRANSCRIPTOR_IA` en tiempo de llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/conversion.py",
-     "linea": 788
+     "linea": 956
     },
     {
      "clave": "pipeline.modelo.INSTRUCCION_DE_TRANSCRIPCION",
@@ -8269,10 +8594,10 @@
      "descripcion": "",
      "env": null,
      "sobrescribible_en_caliente": true,
-     "nota_sobrescritura": "Si: pipeline.modelo lo lee como global dentro de sus funciones en cada llamada.",
+     "nota_sobrescritura": "Si: pipeline.modelo lo lee como global dentro de sus funciones en cada llamada; pipeline.cache_conversion lo lee como atributo `modulo.INSTRUCCION_DE_TRANSCRIPCION` en tiempo de llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/modelo.py",
-     "linea": 207
+     "linea": 265
     }
    ]
   },
@@ -8845,7 +9170,7 @@
      "nota_sobrescritura": "Si: pipeline.workspace lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/workspace.py",
-     "linea": 509
+     "linea": 521
     },
     {
      "clave": "pipeline.workspace._VENTANA_LINEAS",
@@ -8859,7 +9184,7 @@
      "nota_sobrescritura": "Si: pipeline.workspace lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/workspace.py",
-     "linea": 506
+     "linea": 518
     },
     {
      "clave": "servidor_mcp.herramientas.MAX_CARACTERES_CONSULTA",
@@ -8873,7 +9198,7 @@
      "nota_sobrescritura": "Si: servidor_mcp.herramientas lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "servidor_mcp/herramientas.py",
-     "linea": 360
+     "linea": 363
     },
     {
      "clave": "servidor_mcp.herramientas.MAX_TRAMOS_POR_CONSULTA",
@@ -8887,7 +9212,7 @@
      "nota_sobrescritura": "Si: servidor_mcp.herramientas lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "servidor_mcp/herramientas.py",
-     "linea": 359
+     "linea": 362
     },
     {
      "clave": "pipeline.indice.NIVEL_DETALLE",
@@ -9121,7 +9446,7 @@
      "nota_sobrescritura": "Parcial, se marca como no sobrescribible: servidor_mcp.herramientas lo lee como global dentro de sus funciones en cada llamada. PERO en servidor_mcp.herramientas se usa como valor por defecto de un argumento (se fija al definir la función).",
      "alcance_sobrescritura": "parcial",
      "archivo": "servidor_mcp/herramientas.py",
-     "linea": 358
+     "linea": 361
     }
    ]
   },
@@ -9169,13 +9494,18 @@
       "pipeline.agente.ESQUEMAS_HERRAMIENTAS",
       "pipeline.agente.LARGO_DE_LA_EXPLICACION",
       "pipeline.agente.MAX_CARACTERES_HERRAMIENTA_VIEJA",
+      "pipeline.agente.MAX_CARACTERES_PISTA",
+      "pipeline.agente.MAX_CARACTERES_PISTAS",
       "pipeline.agente.MAX_CARACTERES_RESPUESTA_HERRAMIENTA",
       "pipeline.agente.MAX_CORRECCIONES_DE_FORMATO",
       "pipeline.agente.MAX_ITERACIONES",
+      "pipeline.agente.PREGUNTA_DE_PISTA",
+      "pipeline.agente.TRAMOS_POR_PISTA",
       "pipeline.agente.TURNOS_TRAS_AVISAR_QUE_NO_FALTA_NADA",
       "pipeline.agente.VENTANA_HISTORIAL",
       "pipeline.agente.VUELTAS_DE_AVISO",
       "pipeline.agente.VUELTAS_POR_DEFECTO",
+      "pipeline.agente._ESTADOS_ILEGIBLES",
       "pipeline.agente._INVOCACION_EN_TEXTO",
       "pipeline.agente._MARCA_CRITERIOS"
      ]
@@ -9204,13 +9534,18 @@
       "pipeline.agente.ESQUEMAS_HERRAMIENTAS",
       "pipeline.agente.LARGO_DE_LA_EXPLICACION",
       "pipeline.agente.MAX_CARACTERES_HERRAMIENTA_VIEJA",
+      "pipeline.agente.MAX_CARACTERES_PISTA",
+      "pipeline.agente.MAX_CARACTERES_PISTAS",
       "pipeline.agente.MAX_CARACTERES_RESPUESTA_HERRAMIENTA",
       "pipeline.agente.MAX_CORRECCIONES_DE_FORMATO",
       "pipeline.agente.MAX_ITERACIONES",
+      "pipeline.agente.PREGUNTA_DE_PISTA",
+      "pipeline.agente.TRAMOS_POR_PISTA",
       "pipeline.agente.TURNOS_TRAS_AVISAR_QUE_NO_FALTA_NADA",
       "pipeline.agente.VENTANA_HISTORIAL",
       "pipeline.agente.VUELTAS_DE_AVISO",
       "pipeline.agente.VUELTAS_POR_DEFECTO",
+      "pipeline.agente._ESTADOS_ILEGIBLES",
       "pipeline.agente._INVOCACION_EN_TEXTO",
       "pipeline.agente._MARCA_CRITERIOS"
      ]
@@ -9239,13 +9574,18 @@
       "pipeline.agente.ESQUEMAS_HERRAMIENTAS",
       "pipeline.agente.LARGO_DE_LA_EXPLICACION",
       "pipeline.agente.MAX_CARACTERES_HERRAMIENTA_VIEJA",
+      "pipeline.agente.MAX_CARACTERES_PISTA",
+      "pipeline.agente.MAX_CARACTERES_PISTAS",
       "pipeline.agente.MAX_CARACTERES_RESPUESTA_HERRAMIENTA",
       "pipeline.agente.MAX_CORRECCIONES_DE_FORMATO",
       "pipeline.agente.MAX_ITERACIONES",
+      "pipeline.agente.PREGUNTA_DE_PISTA",
+      "pipeline.agente.TRAMOS_POR_PISTA",
       "pipeline.agente.TURNOS_TRAS_AVISAR_QUE_NO_FALTA_NADA",
       "pipeline.agente.VENTANA_HISTORIAL",
       "pipeline.agente.VUELTAS_DE_AVISO",
       "pipeline.agente.VUELTAS_POR_DEFECTO",
+      "pipeline.agente._ESTADOS_ILEGIBLES",
       "pipeline.agente._INVOCACION_EN_TEXTO",
       "pipeline.agente._MARCA_CRITERIOS"
      ]
@@ -9263,13 +9603,18 @@
       "pipeline.agente.ESQUEMAS_HERRAMIENTAS",
       "pipeline.agente.LARGO_DE_LA_EXPLICACION",
       "pipeline.agente.MAX_CARACTERES_HERRAMIENTA_VIEJA",
+      "pipeline.agente.MAX_CARACTERES_PISTA",
+      "pipeline.agente.MAX_CARACTERES_PISTAS",
       "pipeline.agente.MAX_CARACTERES_RESPUESTA_HERRAMIENTA",
       "pipeline.agente.MAX_CORRECCIONES_DE_FORMATO",
       "pipeline.agente.MAX_ITERACIONES",
+      "pipeline.agente.PREGUNTA_DE_PISTA",
+      "pipeline.agente.TRAMOS_POR_PISTA",
       "pipeline.agente.TURNOS_TRAS_AVISAR_QUE_NO_FALTA_NADA",
       "pipeline.agente.VENTANA_HISTORIAL",
       "pipeline.agente.VUELTAS_DE_AVISO",
       "pipeline.agente.VUELTAS_POR_DEFECTO",
+      "pipeline.agente._ESTADOS_ILEGIBLES",
       "pipeline.agente._INVOCACION_EN_TEXTO",
       "pipeline.agente._MARCA_CRITERIOS"
      ]
@@ -9287,13 +9632,18 @@
       "pipeline.agente.ESQUEMAS_HERRAMIENTAS",
       "pipeline.agente.LARGO_DE_LA_EXPLICACION",
       "pipeline.agente.MAX_CARACTERES_HERRAMIENTA_VIEJA",
+      "pipeline.agente.MAX_CARACTERES_PISTA",
+      "pipeline.agente.MAX_CARACTERES_PISTAS",
       "pipeline.agente.MAX_CARACTERES_RESPUESTA_HERRAMIENTA",
       "pipeline.agente.MAX_CORRECCIONES_DE_FORMATO",
       "pipeline.agente.MAX_ITERACIONES",
+      "pipeline.agente.PREGUNTA_DE_PISTA",
+      "pipeline.agente.TRAMOS_POR_PISTA",
       "pipeline.agente.TURNOS_TRAS_AVISAR_QUE_NO_FALTA_NADA",
       "pipeline.agente.VENTANA_HISTORIAL",
       "pipeline.agente.VUELTAS_DE_AVISO",
       "pipeline.agente.VUELTAS_POR_DEFECTO",
+      "pipeline.agente._ESTADOS_ILEGIBLES",
       "pipeline.agente._INVOCACION_EN_TEXTO",
       "pipeline.agente._MARCA_CRITERIOS"
      ]
@@ -9341,7 +9691,7 @@
      "modulo": "pipeline.agente",
      "nombre": "CABECERA",
      "tipo": "str",
-     "valor": "Eres un extractor de datos para la radicacion de PQRD de Positiva ARL.\n\nTu tarea: resolver UNICAMENTE los campos que se te indiquen como pendientes.\nLos campos ya resueltos no se tocan.\n\nCOMO TRABAJAR\n0. El asunto y el encabezado del correo ya vienen en la tarea. tipo_solicitud y\n   tipo_remitente casi siempre se deciden solo con eso: resuelvelos primero,\n   sin usar herramientas.\n1. Si falta algo mas, `listar_documentos` para ver que hay, sin leer nada. Cada\n   adjunto trae su indice por hoja: \"p3 cedula ocr0.58 id1:CC\" es la pagina 3,\n   una cedula leida por OCR con confianza 0.58 y un numero con marca CC.\n2. Ubica el dato antes de leer. `buscar_en_documentos` si conoces el texto o\n   el numero (no importan tildes, mayusculas, saltos de linea ni los puntos de\n   una cifra); `consultar_documentos` si solo sabes que buscas (\"cedula del\n   trabajador\", \"dias de incapacidad\"): devuelve los tramos mas pertinentes.\n3. `leer_documento` solo del fragmento que necesites: por lineas, o la hoja\n   entera con `pagina`.\n4. `reportar_hallazgo` por cada campo, y termina.\n\nLos codigos validos de los campos numericos vienen en la tarea: no hace falta\npedirlos. `consultar_catalogo` esta ahi por si necesitas uno que no venga.\n\nTrabaja en pocas vueltas. Si tras dos busquedas un dato no aparece, no esta:\nno lo reportes y sigue con el resto.\n\nREGLAS\n- Nunca inventes. Si el dato no esta, no reportes el campo: se enviara a\n  revision manual, que es preferible a un dato falso.\n- La evidencia es obl …",
+     "valor": "Eres un extractor de datos para la radicacion de PQRD de Positiva ARL.\n\nTu tarea: resolver UNICAMENTE los campos que se te indiquen como pendientes.\nLos campos ya resueltos no se tocan.\n\nCOMO TRABAJAR\n0. El asunto y el encabezado del correo ya vienen en la tarea. tipo_solicitud y\n   tipo_remitente casi siempre se deciden solo con eso: resuelvelos primero,\n   sin usar herramientas.\n1. La tarea trae la lista de DOCUMENTOS con el indice por hoja de cada\n   adjunto: \"p3 cedula ocr0.58 id1:CC\" es la pagina 3, una cedula leida por OCR\n   con confianza 0.58 y un numero con marca CC. Trae tambien PISTAS: los tramos\n   del texto que mejor responden a cada campo pendiente, con su documento y\n   linea. Si una pista ya responde un campo, reportalo sin buscar mas.\n   `listar_documentos` solo hace falta si la tarea no trae la lista.\n2. Si falta algo, ubica el dato antes de leer. `buscar_en_documentos` si\n   conoces el texto o el numero (no importan tildes, mayusculas, saltos de\n   linea ni los puntos de una cifra; puedes limitarla a un `documento`);\n   `consultar_documentos` si solo sabes que buscas (\"cedula del trabajador\",\n   \"dias de incapacidad\"): devuelve los tramos mas pertinentes.\n3. `leer_documento` solo del fragmento que necesites: por lineas, o la hoja\n   entera con `pagina`.\n4. `reportar_hallazgo` por cada campo, y termina.\n\nPide en la MISMA vuelta todas las herramientas que no dependan una de otra:\nreporta lo que ya tengas a la vez que buscas lo que falta. Una vuelta cuesta lo\n …",
      "descripcion": "Prompt de sistema del agente sin los criterios por campo (instrucciones generales y reglas).",
      "env": null,
      "sobrescribible_en_caliente": true,
@@ -9351,7 +9701,7 @@
      "linea": 315,
      "valor_resumido": {
       "resumido": true,
-      "tamano_caracteres": 3660
+      "tamano_caracteres": 4134
      }
     },
     {
@@ -9372,7 +9722,7 @@
      "nota_sobrescritura": "Si: pipeline.agente lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/agente.py",
-     "linea": 710
+     "linea": 726
     },
     {
      "clave": "pipeline.agente.CRITERIOS",
@@ -9385,7 +9735,7 @@
       "nombre_afectado": "nombre_afectado — la persona titular del caso, no quien escribe. Si el correo\n  dice \"solicito por el trabajador X\" y lo firma Y, el afectado es X.\n  En un certificado de aportes, quien \"realizo los siguientes aportes\" es el\n  PAGADOR —el empleador— y el afiliado va en el listado que sigue: tomar el\n  primero radica al empleador en lugar del trabajador.\n  Si el correo nombra a la persona en corto arriba y entera mas abajo, reporta\n  la forma completa: el registro necesita los apellidos.\n  Hay correos que existen para CORREGIR un dato ya cargado, y traen las dos\n  identidades: \"solicito la anulacion del Furat a nombre de X, identificacion\n  que no corresponde al colaborador accidentado\" y luego \"el cargue de Y, quien\n  si presento el accidente\". El afectado es Y. La identidad que el correo pide\n  anular no es la buena, aunque lleve el rotulo mas claro.\n\n  Cuando una EMPRESA pide algo para si misma —su estado de cuenta o de\n  cartera, un paz y salvo, habilitar su usuario en la plataforma, asesoria o\n  capacitacion en SST, copias de las afiliaciones de sus trabajadores— la\n  afectada es la EMPRESA: su razon social, con su NIT y tipo NIT. Quien firma\n  (representante legal, gerente, contador) es el remitente, no el afectado,\n  aunque su cedula aparezca junto a su nombre.\n\n  NO es el afectado quien el texto presenta con OTRO papel:\n  - el medico o profesional que firma: lleva \"R.M.\", \"Registro\", \"Tarjeta\n    profesional\" o va tras \"Impresion realizada por\" / \"Firmado\n    electronicamente por\". En una historia clinica el paciente esta en\n    \"DATOS DEL PACIENTE\": \"Nombres\", \"Apellidos\", \"No. de Identificacion\";\n  - el supervisor, el ordenador del gasto o el contratante de un contrato o\n    de un certificado de afiliacion (\"INFORMACION DEL CONTRATANTE\");\n  - quien firma una carta sobre \"el trabajador X\" o \"el funcionario X\": el\n    afectado es X;\n  - el destinatario del saludo \"Señor(a) X\" de una respuesta de Positiva que\n    viene citada en el hilo: es a quien Positiva contesto, que suele ser quien\n    escribe, no la persona del tramite.\n  Si el correo trata de VARIAS personas con documento (una lista o planilla\n  de trabajadores) o da dos documentos distintos para la misma persona sin\n  decir cual vale, no elijas uno: no reportes el campo.",
       "nombre_remitente": "nombre_remitente — quien escribe, no quien reenvia. Si el correo viene de un\n  buzon de Positiva (@positiva.gov.co, notificaciones, servicio al cliente,\n  medicina laboral), el remitente NO es el funcionario que reenvio: esta en el\n  encabezado \"De:\" del hilo citado o en la firma del ciudadano. Un area\n  (\"Gerencia Medica\", \"Grupo de Medicina Laboral\") tampoco es un nombre.\n  Reportar al funcionario deja la PQRD a nombre de Positiva.\n  Si una PERSONA firma —en el correo o en la carta adjunta que lo acompaña—\n  el remitente es esa persona, aunque escriba en nombre de su empresa: la\n  razon social es el membrete, no quien escribe.\n  Solo cuando ninguna persona firma y escribe una organizacion (tipo_remitente\n  2) desde el buzon de un area —\"Gestion del Talento Humano\", \"Seguridad y\n  Salud en el Trabajo\", \"planeacion\"— el remitente es la ORGANIZACION:\n  \"Universidad del Atlantico\", \"Alcaldia de Yopal\", \"Hospital Federico\n  Lleras\". Tomala de la firma, del membrete o del cuerpo; nunca reportes el\n  area sola ni el dominio del correo.\n  Reporta el nombre COMPLETO: si la firma o el \"De:\" lo abrevian (\"JORGE A.\n  BARRERA\") y el correo o sus adjuntos lo traen entero, reporta el entero.\n\n  Lo mismo para nombre_afectado: el cargo no es parte del nombre. \"la servidora\n  publica LYDA ESMERALDA DIAZ ESPINOSA\" es \"LYDA ESMERALDA DIAZ ESPINOSA\".\n\n  El NIT de la entidad que escribe no es el documento de una persona: no lo\n  reportes como numero_documento_afectado de un trabajador.",
       "sexo_afectado": "sexo_afectado — SOLO si el correo lo declara, de una de estas dos formas:\n  un rotulo (\"Sexo: F\", \"Genero: Masculino\") o la concordancia gramatical junto\n  al nombre del afectado (\"la trabajadora ANA LOPEZ\", \"identificada con\",\n  \"el señor PEDRO RUIZ\").\n  Una historia clinica tambien lo declara con el adjetivo suelto: \"PACIENTE\n  FEMENINA DE 43 AÑOS\".\n  NO cuentan las formas dobles del formulario impreso, que no sabe a quien va a\n  atender: \"identificado(a)\", \"Señor(a)\", \"atendido al (la) paciente\". Tampoco\n  la tabla de codigos de una planilla (\"M Masculino / F Femenino\"), que son las\n  opciones y no la persona.\n  NUNCA lo deduzcas del nombre de pila. Hay nombres de los dos sexos, y\n  suponerlo deja en la base un dato falso sobre una persona real. Si el texto\n  no lo dice, no reportes el campo: SGDEA acepta \"no determinado\".",
-      "numero_documento_afectado": "numero_documento_afectado — el documento del titular del caso. Cuidado: los\n  correos traen numeros de radicado, siniestro, factura e incapacidad. Solo\n  cuenta el que este junto a una marca de identidad (CC, cedula, identificado)\n  o al nombre del afectado. Validalo con `validar_documento`.\n  La cedula que acompaña al \"R.M.\" o al registro profesional es del medico, y\n  la del supervisor, el contratante o el representante legal que firma es de\n  ellos: busca la del paciente o trabajador en su propio bloque.\n\n  Reporta SOLO los digitos. Los puntos y espacios con que se escribe legible\n  —\"41.234.567\", \"41 234 567\"— son forma, no dato: quitalos. Reporta\n  \"41234567\".\n\n  Lo que lleva letras pegadas al numero NO es un documento al que le sobren\n  las letras: \"ENT3413618689913\" es un radicado, \"S001223884\" un recibo y\n  \"ABC12345\" no se sabe que es. No los partas para quedarte con los digitos:\n  eso fabrica una cedula que no existe. Si no hay un documento limpio, no\n  reportes el campo.\n\n  La excepcion es el pasaporte, que SI es alfanumerico: \"AB123456\" se reporta\n  entero, con sus letras, y `tipo_documento_afectado` va como pasaporte. No\n  toda persona atendida es colombiana.\n  Con `consultar_persona` puedes ver a quien tiene SGDEA con ese documento: si\n  el nombre coincide con el del correo, es una confirmacion fuerte. Que no\n  aparezca no descarta el numero —esa persona puede no estar vinculada, y el\n  registro exige el tipo de documento, que quiza no sea el que consultaste—,\n  asi que no cambies de candidato solo porque uno no salga.",
+      "numero_documento_afectado": "numero_documento_afectado — el documento del titular del caso. Cuidado: los\n  correos traen numeros de radicado, siniestro, factura e incapacidad. Solo\n  cuenta el que este junto a una marca de identidad (CC, cedula, identificado)\n  o al nombre del afectado. Validalo con `validar_documento`.\n  La cedula que acompaña al \"R.M.\" o al registro profesional es del medico, y\n  la del supervisor, el contratante o el representante legal que firma es de\n  ellos: busca la del paciente o trabajador en su propio bloque.\n\n  Si el mismo numero aparece escrito en el correo o en un escrito con texto\n  propio y tambien en una imagen leida por OCR (la foto de la cedula), vale lo\n  escrito: el OCR pierde o cambia digitos (\"2.417.396\" donde el correo dice\n  \"52417396\").\n\n  Reporta SOLO los digitos. Los puntos y espacios con que se escribe legible\n  —\"41.234.567\", \"41 234 567\"— son forma, no dato: quitalos. Reporta\n  \"41234567\".\n\n  Lo que lleva letras pegadas al numero NO es un documento al que le sobren\n  las letras: \"ENT3413618689913\" es un radicado, \"S001223884\" un recibo y\n  \"ABC12345\" no se sabe que es. No los partas para quedarte con los digitos:\n  eso fabrica una cedula que no existe. Si no hay un documento limpio, no\n  reportes el campo.\n\n  La excepcion es el pasaporte, que SI es alfanumerico: \"AB123456\" se reporta\n  entero, con sus letras, y `tipo_documento_afectado` va como pasaporte. No\n  toda persona atendida es colombiana.\n  Con `consultar_persona` puedes ver a quien tiene SGDEA con ese documento: si\n  el nombre coincide con el del correo, es una confirmacion fuerte. Que no\n  aparezca no descarta el numero —esa persona puede no estar vinculada, y el\n  registro exige el tipo de documento, que quiza no sea el que consultaste—,\n  asi que no cambies de candidato solo porque uno no salga.",
       "tipo_documento_afectado": "tipo_documento_afectado — se sigue del numero: la marca que lo acompaña en el\n  texto manda (CC, CE, TI, pasaporte, NIT). Si el correo trae el NIT de la\n  empresa y la cedula del trabajador, el del afectado es el de la persona.\n  Un numero con letras solo puede ser pasaporte. Uno de quince digitos es un\n  permiso especial de permanencia (5). \"PPT\" o \"PT\" es el permiso por\n  proteccion temporal (4), de siete digitos casi siempre. La tarjeta de\n  identidad (6) de un menor tiene diez u once digitos y empieza por 1.\n  No reportes cedula (1) por defecto: si el texto no dice el tipo, no lo\n  reportes.\n\n  El tipo y el nombre tienen que hablar del mismo sujeto. Una razon social\n  —SAS, LTDA, S.A., FUNDACION, COOPERATIVA— con un tipo de documento de\n  persona natural es un par que no se sostiene: o el nombre no es el del\n  afectado, o el tipo esta mal. Revisa cual de los dos leiste mal antes de\n  reportar; si no puedes decidirlo, deja el campo pendiente.",
       "telefono_afectado": "telefono_afectado — el contacto del afectado, no el conmutador de la empresa\n  ni el de la firma de quien escribe. Un numero de diez digitos que empieza\n  por 3 es celular y uno que empieza por 60 es fijo; con indicativo de otro\n  pais va con su \"+\". Si esta junto a \"CC\" o \"cedula\" es un documento, no un\n  telefono. Si solo hay lineas corporativas, no reportes el campo.\n  Reporta SOLO los digitos: sin espacios, guiones ni parentesis. Copialo tal\n  como aparece, entero. No completes ni corrijas digitos: el numero se\n  comprueba contra el plan de numeracion colombiano y uno con un prefijo que no\n  existe se descarta.\n  NO reportes un numero de relleno, aunque tenga la forma correcta: el que\n  repite un digito (3333333333), el que es una secuencia (1234567), ni los\n  ejemplos del formulario (6017654821, 6027654321, 7654321, 3000000000). Tienen\n  diez digitos y empiezan bien, y aun asi no llaman a nadie. Sin telefono el\n  correo se radica igual; con uno falso, no.\n  Tampoco es del afectado el que vive en el bloque de OTRA persona: el campo\n  \"Datos del jefe inmediato\" de un FURAT, o el membrete del medico al pie de\n  una historia clinica, que lleva su \"R.M.\" al lado. En un FURAT el del\n  trabajador esta dentro de \"INFORMACION DE LA PERSONA QUE SE ACCIDENTO\".",
       "direccion_afectado": "direccion_afectado — el domicilio del afectado, no el de quien lo atiende ni el\n  de quien lo emplea. Un documento trae varias: el membrete de la IPS lleva su\n  \"Codigo de Habilitacion\" al lado, el bloque del empleador lleva su NIT o su\n  razon social, y el destinatario de una carta aparece bajo \"Señores\". Solo\n  cuenta la que este en el bloque del propio afectado, junto a su nombre o su\n  documento, bajo rotulos como \"Datos del paciente\", \"Datos del afiliado\" o su\n  propia firma. Un numero de consultorio delata la direccion de un medico. La\n  ciudad y el departamento van en campos aparte: reporta solo la linea de la\n  direccion. Si no puedes saber de quien es, no reportes el campo.\n\n  Reporta SOLO la direccion. En una linea corrida vienen pegados otros datos\n  —\"CALLE 10 # 5-20 Cel 3105551234\", \"CRA 7 45-12 correo pedro@mail.com\"— y el\n  telefono o el correo no son parte del domicilio: corta antes de ellos.\n\n  NO reportes el campo cuando lo que hay es la marca de que no se informo:\n  \"No reporta\", \"N/R\", \"NO REGISTRA\", \"N/A\", \"undefined\", \"Ninguna\". Eso no es\n  una direccion, es la ausencia de una, y guardarla escribe en el registro un\n  domicilio que no lleva a ninguna parte. Deja el campo sin reportar.\n\n  Una direccion rural SI es una direccion. \"CORREGIMIENTO EL SALADO LOTE 1\",\n  \"KILOMETRO 17 VIA DINAMARCA\", \"VEREDA LA ESPERANZA FINCA EL PORVENIR\" son\n  domicilios validos: buena parte del pais no vive en calles ni carreras. No\n  exijas que empiece por \"calle\", \"carrera\" o \"avenida\".",
@@ -9399,7 +9749,7 @@
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/agente.py",
      "linea": 315,
-     "valor_nota": "18453 caracteres en total; se incluye completo porque cada criterio es editable por separado"
+     "valor_nota": "18709 caracteres en total; se incluye completo porque cada criterio es editable por separado"
     },
     {
      "clave": "pipeline.agente.LARGO_DE_LA_EXPLICACION",
@@ -9413,7 +9763,7 @@
      "nota_sobrescritura": "Si: pipeline.agente lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/agente.py",
-     "linea": 662
+     "linea": 678
     },
     {
      "clave": "pipeline.agente.MAX_CARACTERES_HERRAMIENTA_VIEJA",
@@ -9427,7 +9777,35 @@
      "nota_sobrescritura": "Si: pipeline.agente lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/agente.py",
-     "linea": 629
+     "linea": 645
+    },
+    {
+     "clave": "pipeline.agente.MAX_CARACTERES_PISTA",
+     "modulo": "pipeline.agente",
+     "nombre": "MAX_CARACTERES_PISTA",
+     "tipo": "int",
+     "valor": 700,
+     "descripcion": "Palabras con que se pregunta al indice por cada campo pendiente. Los tipos de solicitud y de remitente no llevan: salen del asunto y el encabezado, que ya van en la tarea. La dirección y el teléfono tampoco: el tramo que mejor \"responde\" suele ser el membrete de la IPS o el bloque del empleador, y con el delante el agente lo reportaba (en el corpus etiquetado, cuatro direcciones donde el correo no trae la del afectado). Esos los busca el agente con el criterio de su bloque.",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.agente lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/agente.py",
+     "linea": 824
+    },
+    {
+     "clave": "pipeline.agente.MAX_CARACTERES_PISTAS",
+     "modulo": "pipeline.agente",
+     "nombre": "MAX_CARACTERES_PISTAS",
+     "tipo": "int",
+     "valor": 2800,
+     "descripcion": "Viaja en cada vuelta, pero como parte del prefijo que la cache implicita de Vertex reutiliza: se paga entero una vez y al diez por ciento las demas.",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.agente lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/agente.py",
+     "linea": 827
     },
     {
      "clave": "pipeline.agente.MAX_CARACTERES_RESPUESTA_HERRAMIENTA",
@@ -9456,6 +9834,42 @@
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/agente.py",
      "linea": 61
+    },
+    {
+     "clave": "pipeline.agente.PREGUNTA_DE_PISTA",
+     "modulo": "pipeline.agente",
+     "nombre": "PREGUNTA_DE_PISTA",
+     "tipo": "dict",
+     "valor": {
+      "nombre_afectado": "nombre paciente trabajador afiliado accidentado identificado",
+      "numero_documento_afectado": "cedula identificacion paciente trabajador afiliado",
+      "tipo_documento_afectado": "cedula identificacion tipo documento",
+      "sexo_afectado": "sexo genero femenino masculino",
+      "nombre_remitente": "atentamente cordialmente firma cargo",
+      "numero_documento_remitente": "nit cedula firma representante",
+      "tipo_documento_remitente": "nit cedula firma representante"
+     },
+     "descripcion": "Palabras con que se pregunta al indice por cada campo pendiente. Los tipos de solicitud y de remitente no llevan: salen del asunto y el encabezado, que ya van en la tarea. La dirección y el teléfono tampoco: el tramo que mejor \"responde\" suele ser el membrete de la IPS o el bloque del empleador, y con el delante el agente lo reportaba (en el corpus etiquetado, cuatro direcciones donde el correo no trae la del afectado). Esos los busca el agente con el criterio de su bloque.",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.agente lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/agente.py",
+     "linea": 814
+    },
+    {
+     "clave": "pipeline.agente.TRAMOS_POR_PISTA",
+     "modulo": "pipeline.agente",
+     "nombre": "TRAMOS_POR_PISTA",
+     "tipo": "int",
+     "valor": 2,
+     "descripcion": "Palabras con que se pregunta al indice por cada campo pendiente. Los tipos de solicitud y de remitente no llevan: salen del asunto y el encabezado, que ya van en la tarea. La dirección y el teléfono tampoco: el tramo que mejor \"responde\" suele ser el membrete de la IPS o el bloque del empleador, y con el delante el agente lo reportaba (en el corpus etiquetado, cuatro direcciones donde el correo no trae la del afectado). Esos los busca el agente con el criterio de su bloque.",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.agente lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/agente.py",
+     "linea": 823
     },
     {
      "clave": "pipeline.agente.TURNOS_TRAS_AVISAR_QUE_NO_FALTA_NADA",
@@ -9500,6 +9914,24 @@
      "linea": 51
     },
     {
+     "clave": "pipeline.agente._ESTADOS_ILEGIBLES",
+     "modulo": "pipeline.agente",
+     "nombre": "_ESTADOS_ILEGIBLES",
+     "tipo": "list",
+     "valor": [
+      "error_conversion",
+      "tipo_no_soportado",
+      "excede_limite"
+     ],
+     "descripcion": "Viaja en cada vuelta, pero como parte del prefijo que la cache implicita de Vertex reutiliza: se paga entero una vez y al diez por ciento las demas.",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.agente lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/agente.py",
+     "linea": 828
+    },
+    {
      "clave": "pipeline.agente._INVOCACION_EN_TEXTO",
      "modulo": "pipeline.agente",
      "nombre": "_INVOCACION_EN_TEXTO",
@@ -9514,7 +9946,7 @@
      "nota_sobrescritura": "Si. herramienta_pedida_en_texto lo usa en cada turno (se compilo con los nombres de ESQUEMAS_HERRAMIENTAS al importar).",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/agente.py",
-     "linea": 687,
+     "linea": 703,
      "es_regex": true
     },
     {
@@ -9529,7 +9961,35 @@
      "nota_sobrescritura": "Si (prompt_de_sistema lo usa en cada llamada como titulo del bloque), aunque también se uso al importar para partir el prompt.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/agente.py",
-     "linea": 427
+     "linea": 440
+    },
+    {
+     "clave": "pipeline.modelo.MAX_TOKENS_DE_TRANSCRIPCION",
+     "modulo": "pipeline.modelo",
+     "nombre": "MAX_TOKENS_DE_TRANSCRIPCION",
+     "tipo": "int",
+     "valor": 3000,
+     "descripcion": "Una hoja densa transcrita son unos 1.500 tokens. Sin tope, en la línea base del universo 16 de 332 transcripciones no volvieron: el modelo se quedaba repitiendo un renglon hasta que la llamada se cortaba a los 90 s (la mitad del tiempo de visión), y la hoja se perdia igual.",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.modelo lo lee como global dentro de sus funciones en cada llamada; pipeline.cache_conversion lo lee como atributo `modulo.MAX_TOKENS_DE_TRANSCRIPCION` en tiempo de llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/modelo.py",
+     "linea": 249
+    },
+    {
+     "clave": "pipeline.modelo.TIMEOUT_DE_TRANSCRIPCION_MS",
+     "modulo": "pipeline.modelo",
+     "nombre": "TIMEOUT_DE_TRANSCRIPCION_MS",
+     "tipo": "int",
+     "valor": 40000,
+     "descripcion": "Una hoja densa transcrita son unos 1.500 tokens. Sin tope, en la línea base del universo 16 de 332 transcripciones no volvieron: el modelo se quedaba repitiendo un renglon hasta que la llamada se cortaba a los 90 s (la mitad del tiempo de visión), y la hoja se perdia igual.",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.modelo lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/modelo.py",
+     "linea": 250
     },
     {
      "clave": "pipeline.modelo._CANDADO_DEL_CLIENTE",
@@ -9560,7 +10020,7 @@
      "nota_sobrescritura": "Si: pipeline.modelo lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/modelo.py",
-     "linea": 218
+     "linea": 276
     },
     {
      "clave": "pipeline.modelo._ROL_POR_DEFECTO",
@@ -9574,7 +10034,7 @@
      "nota_sobrescritura": "Si: pipeline.modelo lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/modelo.py",
-     "linea": 219
+     "linea": 277
     },
     {
      "clave": "servidor_mcp.herramientas.CATALOGOS",
@@ -9637,7 +10097,7 @@
      "nota_sobrescritura": "Si. `invocar` busca HERRAMIENTAS[nombre] en cada llamada: sustituir una entrada por un envoltorio intercepta la herramienta para el agente y el revisor.",
      "alcance_sobrescritura": "total",
      "archivo": "servidor_mcp/herramientas.py",
-     "linea": 744
+     "linea": 747
     },
     {
      "clave": "servidor_mcp.herramientas.MAX_CARACTERES_RESPUESTA",
@@ -9787,6 +10247,10 @@
          },
          "contexto_lineas": {
           "type": "integer"
+         },
+         "documento": {
+          "type": "string",
+          "description": "id de un documento, para buscar solo en el; sin el, en todos"
          }
         },
         "required": [
@@ -9821,10 +10285,10 @@
      "nota_sobrescritura": "Parcial. agente.resolver lo lee como global en cada vuelta (lo que se le declara al modelo), pero pipeline.orquestador lo copio al importar (esquemas del revisor) y _INVOCACION_EN_TEXTO se compilo con sus nombres al importar.",
      "alcance_sobrescritura": "parcial",
      "archivo": "pipeline/agente.py",
-     "linea": 471,
+     "linea": 484,
      "valor_resumido": {
       "resumido": true,
-      "tamano_caracteres": 3313,
+      "tamano_caracteres": 3425,
       "elementos": 9
      }
     },
@@ -9847,17 +10311,17 @@
      "modulo": "pipeline.agente",
      "nombre": "SISTEMA",
      "tipo": "str",
-     "valor": "Eres un extractor de datos para la radicacion de PQRD de Positiva ARL.\n\nTu tarea: resolver UNICAMENTE los campos que se te indiquen como pendientes.\nLos campos ya resueltos no se tocan.\n\nCOMO TRABAJAR\n0. El asunto y el encabezado del correo ya vienen en la tarea. tipo_solicitud y\n   tipo_remitente casi siempre se deciden solo con eso: resuelvelos primero,\n   sin usar herramientas.\n1. Si falta algo mas, `listar_documentos` para ver que hay, sin leer nada. Cada\n   adjunto trae su indice por hoja: \"p3 cedula ocr0.58 id1:CC\" es la pagina 3,\n   una cedula leida por OCR con confianza 0.58 y un numero con marca CC.\n2. Ubica el dato antes de leer. `buscar_en_documentos` si conoces el texto o\n   el numero (no importan tildes, mayusculas, saltos de linea ni los puntos de\n   una cifra); `consultar_documentos` si solo sabes que buscas (\"cedula del\n   trabajador\", \"dias de incapacidad\"): devuelve los tramos mas pertinentes.\n3. `leer_documento` solo del fragmento que necesites: por lineas, o la hoja\n   entera con `pagina`.\n4. `reportar_hallazgo` por cada campo, y termina.\n\nLos codigos validos de los campos numericos vienen en la tarea: no hace falta\npedirlos. `consultar_catalogo` esta ahi por si necesitas uno que no venga.\n\nTrabaja en pocas vueltas. Si tras dos busquedas un dato no aparece, no esta:\nno lo reportes y sigue con el resto.\n\nREGLAS\n- Nunca inventes. Si el dato no esta, no reportes el campo: se enviara a\n  revision manual, que es preferible a un dato falso.\n- La evidencia es obl …",
+     "valor": "Eres un extractor de datos para la radicacion de PQRD de Positiva ARL.\n\nTu tarea: resolver UNICAMENTE los campos que se te indiquen como pendientes.\nLos campos ya resueltos no se tocan.\n\nCOMO TRABAJAR\n0. El asunto y el encabezado del correo ya vienen en la tarea. tipo_solicitud y\n   tipo_remitente casi siempre se deciden solo con eso: resuelvelos primero,\n   sin usar herramientas.\n1. La tarea trae la lista de DOCUMENTOS con el indice por hoja de cada\n   adjunto: \"p3 cedula ocr0.58 id1:CC\" es la pagina 3, una cedula leida por OCR\n   con confianza 0.58 y un numero con marca CC. Trae tambien PISTAS: los tramos\n   del texto que mejor responden a cada campo pendiente, con su documento y\n   linea. Si una pista ya responde un campo, reportalo sin buscar mas.\n   `listar_documentos` solo hace falta si la tarea no trae la lista.\n2. Si falta algo, ubica el dato antes de leer. `buscar_en_documentos` si\n   conoces el texto o el numero (no importan tildes, mayusculas, saltos de\n   linea ni los puntos de una cifra; puedes limitarla a un `documento`);\n   `consultar_documentos` si solo sabes que buscas (\"cedula del trabajador\",\n   \"dias de incapacidad\"): devuelve los tramos mas pertinentes.\n3. `leer_documento` solo del fragmento que necesites: por lineas, o la hoja\n   entera con `pagina`.\n4. `reportar_hallazgo` por cada campo, y termina.\n\nPide en la MISMA vuelta todas las herramientas que no dependan una de otra:\nreporta lo que ya tengas a la vez que buscas lo que falta. Una vuelta cuesta lo\n …",
      "descripcion": "El prompt con TODOS los criterios. Se conserva para poder leerlo de una pieza y para las medidas que comparan contra el prompt completo.",
      "env": null,
      "sobrescribible_en_caliente": false,
      "nota_sobrescritura": "No. No se usa en el pipeline (solo referencia/medidas).",
      "alcance_sobrescritura": "ninguno",
      "archivo": "pipeline/agente.py",
-     "linea": 452,
+     "linea": 465,
      "valor_resumido": {
       "resumido": true,
-      "tamano_caracteres": 21891
+      "tamano_caracteres": 22621
      }
     },
     {
@@ -9889,7 +10353,7 @@
      "nota_sobrescritura": "No. Solo lo usa _partir_el_prompt, que se ejecuta una vez al importar para construir CABECERA/CRITERIOS.",
      "alcance_sobrescritura": "ninguno",
      "archivo": "pipeline/agente.py",
-     "linea": 429,
+     "linea": 442,
      "es_regex": true
     },
     {
@@ -9897,7 +10361,7 @@
      "modulo": "pipeline.agente",
      "nombre": "_TEXTO_SISTEMA",
      "tipo": "str",
-     "valor": "Eres un extractor de datos para la radicacion de PQRD de Positiva ARL.\n\nTu tarea: resolver UNICAMENTE los campos que se te indiquen como pendientes.\nLos campos ya resueltos no se tocan.\n\nCOMO TRABAJAR\n0. El asunto y el encabezado del correo ya vienen en la tarea. tipo_solicitud y\n   tipo_remitente casi siempre se deciden solo con eso: resuelvelos primero,\n   sin usar herramientas.\n1. Si falta algo mas, `listar_documentos` para ver que hay, sin leer nada. Cada\n   adjunto trae su indice por hoja: \"p3 cedula ocr0.58 id1:CC\" es la pagina 3,\n   una cedula leida por OCR con confianza 0.58 y un numero con marca CC.\n2. Ubica el dato antes de leer. `buscar_en_documentos` si conoces el texto o\n   el numero (no importan tildes, mayusculas, saltos de linea ni los puntos de\n   una cifra); `consultar_documentos` si solo sabes que buscas (\"cedula del\n   trabajador\", \"dias de incapacidad\"): devuelve los tramos mas pertinentes.\n3. `leer_documento` solo del fragmento que necesites: por lineas, o la hoja\n   entera con `pagina`.\n4. `reportar_hallazgo` por cada campo, y termina.\n\nLos codigos validos de los campos numericos vienen en la tarea: no hace falta\npedirlos. `consultar_catalogo` esta ahi por si necesitas uno que no venga.\n\nTrabaja en pocas vueltas. Si tras dos busquedas un dato no aparece, no esta:\nno lo reportes y sigue con el resto.\n\nREGLAS\n- Nunca inventes. Si el dato no esta, no reportes el campo: se enviara a\n  revision manual, que es preferible a un dato falso.\n- La evidencia es obl …",
+     "valor": "Eres un extractor de datos para la radicacion de PQRD de Positiva ARL.\n\nTu tarea: resolver UNICAMENTE los campos que se te indiquen como pendientes.\nLos campos ya resueltos no se tocan.\n\nCOMO TRABAJAR\n0. El asunto y el encabezado del correo ya vienen en la tarea. tipo_solicitud y\n   tipo_remitente casi siempre se deciden solo con eso: resuelvelos primero,\n   sin usar herramientas.\n1. La tarea trae la lista de DOCUMENTOS con el indice por hoja de cada\n   adjunto: \"p3 cedula ocr0.58 id1:CC\" es la pagina 3, una cedula leida por OCR\n   con confianza 0.58 y un numero con marca CC. Trae tambien PISTAS: los tramos\n   del texto que mejor responden a cada campo pendiente, con su documento y\n   linea. Si una pista ya responde un campo, reportalo sin buscar mas.\n   `listar_documentos` solo hace falta si la tarea no trae la lista.\n2. Si falta algo, ubica el dato antes de leer. `buscar_en_documentos` si\n   conoces el texto o el numero (no importan tildes, mayusculas, saltos de\n   linea ni los puntos de una cifra; puedes limitarla a un `documento`);\n   `consultar_documentos` si solo sabes que buscas (\"cedula del trabajador\",\n   \"dias de incapacidad\"): devuelve los tramos mas pertinentes.\n3. `leer_documento` solo del fragmento que necesites: por lineas, o la hoja\n   entera con `pagina`.\n4. `reportar_hallazgo` por cada campo, y termina.\n\nPide en la MISMA vuelta todas las herramientas que no dependan una de otra:\nreporta lo que ya tengas a la vez que buscas lo que falta. Una vuelta cuesta lo\n …",
      "descripcion": "Prompt de sistema completo del agente (fuente de CABECERA y CRITERIOS).",
      "env": null,
      "sobrescribible_en_caliente": false,
@@ -9907,7 +10371,7 @@
      "linea": 77,
      "valor_resumido": {
       "resumido": true,
-      "tamano_caracteres": 21891
+      "tamano_caracteres": 22621
      }
     },
     {
@@ -9946,7 +10410,7 @@
      "nota_sobrescritura": "Antes del primer uso: ModeloVertex._obtener_cliente lo lee al crear el genai.Client y lo cachea en self._cliente; después de la primera llamada de esa instancia ya no tiene efecto (hay que crear otro ModeloVertex o poner modelo._cliente = None).",
      "alcance_sobrescritura": "antes_del_primer_uso",
      "archivo": "pipeline/modelo.py",
-     "linea": 45
+     "linea": 49
     },
     {
      "clave": "servidor_mcp.herramientas.CAMPOS_REPORTABLES",
@@ -9972,7 +10436,7 @@
      "nota_sobrescritura": "Parcial, se marca como no sobrescribible: servidor_mcp.herramientas lo lee como global dentro de sus funciones en cada llamada. PERO pipeline.agente lo copia con `from servidor_mcp.herramientas import CAMPOS_REPORTABLES` al importar (para cambiarlo ahí: setattr(pipeline.agente, 'CAMPOS_REPORTABLES', v)).",
      "alcance_sobrescritura": "parcial",
      "archivo": "servidor_mcp/herramientas.py",
-     "linea": 659
+     "linea": 662
     },
     {
      "clave": "servidor_mcp.herramientas._NOMBRE_TIPO_DOCUMENTO",
@@ -10651,6 +11115,7 @@
       "pipeline.compuerta.ENTRE_NOMBRE_Y_ROTULO",
       "pipeline.compuerta.MAX_DIGITOS",
       "pipeline.compuerta.MAX_PALABRAS_DIRECCION",
+      "pipeline.compuerta.MAX_SIGNOS_AJENOS_EN_DIRECCION",
       "pipeline.compuerta.METODOS_DEL_AGENTE",
       "pipeline.compuerta.MIN_DIGITOS",
       "pipeline.compuerta.OBLIGATORIOS",
@@ -10658,10 +11123,14 @@
       "pipeline.compuerta.PISO_POR_CAMPO",
       "pipeline.compuerta.TIPOS_ALFANUMERICOS",
       "pipeline.compuerta.TIPOS_DE_ORGANIZACION",
+      "pipeline.compuerta.TIPO_REMITENTE_TERCERO",
       "pipeline.compuerta.VENTANA_DEL_TITULAR",
       "pipeline.compuerta._ANTEPUESTO_A_UNA_ENTIDAD",
       "pipeline.compuerta._ANTES_DEL_NOMBRE",
+      "pipeline.compuerta._BLOQUE_DE_OCR",
       "pipeline.compuerta._CARGOS",
+      "pipeline.compuerta._CC_PEGADO",
+      "pipeline.compuerta._CIFRA_CON_SEPARADORES",
       "pipeline.compuerta._CONECTORES_DE_NOMBRE",
       "pipeline.compuerta._CONECTORES_TRAS_EL_NUMERO",
       "pipeline.compuerta._CORREO_EN_TEXTO",
@@ -10679,6 +11148,7 @@
       "pipeline.compuerta._MOTIVO_POR_CAUSA",
       "pipeline.compuerta._MOTIVO_POR_CODIGO",
       "pipeline.compuerta._NOMBRE_AL_FINAL",
+      "pipeline.compuerta._NO_ES_UN_DOCUMENTO",
       "pipeline.compuerta._NUMERACION_DE_DIRECCION",
       "pipeline.compuerta._NUMERO_DE_PERSONA",
       "pipeline.compuerta._OTRO_TIPO_EN_EL_TEXTO",
@@ -10695,6 +11165,7 @@
       "pipeline.compuerta._ROTULO_ENTRE_NOMBRE_Y_NUMERO",
       "pipeline.compuerta._ROTULO_IDENTIDAD",
       "pipeline.compuerta._ROTULO_PROFESIONAL",
+      "pipeline.compuerta._SIGNO_AJENO_A_UNA_DIRECCION",
       "pipeline.compuerta._SOLO_UN_NUMERO",
       "pipeline.compuerta._SUJETO_POR_PAPEL",
       "pipeline.compuerta._SUSTENTO_POR_CAMPO",
@@ -10716,6 +11187,7 @@
       "pipeline.compuerta.ENTRE_NOMBRE_Y_ROTULO",
       "pipeline.compuerta.MAX_DIGITOS",
       "pipeline.compuerta.MAX_PALABRAS_DIRECCION",
+      "pipeline.compuerta.MAX_SIGNOS_AJENOS_EN_DIRECCION",
       "pipeline.compuerta.METODOS_DEL_AGENTE",
       "pipeline.compuerta.MIN_DIGITOS",
       "pipeline.compuerta.OBLIGATORIOS",
@@ -10723,10 +11195,14 @@
       "pipeline.compuerta.PISO_POR_CAMPO",
       "pipeline.compuerta.TIPOS_ALFANUMERICOS",
       "pipeline.compuerta.TIPOS_DE_ORGANIZACION",
+      "pipeline.compuerta.TIPO_REMITENTE_TERCERO",
       "pipeline.compuerta.VENTANA_DEL_TITULAR",
       "pipeline.compuerta._ANTEPUESTO_A_UNA_ENTIDAD",
       "pipeline.compuerta._ANTES_DEL_NOMBRE",
+      "pipeline.compuerta._BLOQUE_DE_OCR",
       "pipeline.compuerta._CARGOS",
+      "pipeline.compuerta._CC_PEGADO",
+      "pipeline.compuerta._CIFRA_CON_SEPARADORES",
       "pipeline.compuerta._CONECTORES_DE_NOMBRE",
       "pipeline.compuerta._CONECTORES_TRAS_EL_NUMERO",
       "pipeline.compuerta._CORREO_EN_TEXTO",
@@ -10744,6 +11220,7 @@
       "pipeline.compuerta._MOTIVO_POR_CAUSA",
       "pipeline.compuerta._MOTIVO_POR_CODIGO",
       "pipeline.compuerta._NOMBRE_AL_FINAL",
+      "pipeline.compuerta._NO_ES_UN_DOCUMENTO",
       "pipeline.compuerta._NUMERACION_DE_DIRECCION",
       "pipeline.compuerta._NUMERO_DE_PERSONA",
       "pipeline.compuerta._OTRO_TIPO_EN_EL_TEXTO",
@@ -10760,6 +11237,7 @@
       "pipeline.compuerta._ROTULO_ENTRE_NOMBRE_Y_NUMERO",
       "pipeline.compuerta._ROTULO_IDENTIDAD",
       "pipeline.compuerta._ROTULO_PROFESIONAL",
+      "pipeline.compuerta._SIGNO_AJENO_A_UNA_DIRECCION",
       "pipeline.compuerta._SOLO_UN_NUMERO",
       "pipeline.compuerta._SUJETO_POR_PAPEL",
       "pipeline.compuerta._SUSTENTO_POR_CAMPO",
@@ -10781,6 +11259,7 @@
       "pipeline.compuerta.ENTRE_NOMBRE_Y_ROTULO",
       "pipeline.compuerta.MAX_DIGITOS",
       "pipeline.compuerta.MAX_PALABRAS_DIRECCION",
+      "pipeline.compuerta.MAX_SIGNOS_AJENOS_EN_DIRECCION",
       "pipeline.compuerta.METODOS_DEL_AGENTE",
       "pipeline.compuerta.MIN_DIGITOS",
       "pipeline.compuerta.OBLIGATORIOS",
@@ -10788,10 +11267,14 @@
       "pipeline.compuerta.PISO_POR_CAMPO",
       "pipeline.compuerta.TIPOS_ALFANUMERICOS",
       "pipeline.compuerta.TIPOS_DE_ORGANIZACION",
+      "pipeline.compuerta.TIPO_REMITENTE_TERCERO",
       "pipeline.compuerta.VENTANA_DEL_TITULAR",
       "pipeline.compuerta._ANTEPUESTO_A_UNA_ENTIDAD",
       "pipeline.compuerta._ANTES_DEL_NOMBRE",
+      "pipeline.compuerta._BLOQUE_DE_OCR",
       "pipeline.compuerta._CARGOS",
+      "pipeline.compuerta._CC_PEGADO",
+      "pipeline.compuerta._CIFRA_CON_SEPARADORES",
       "pipeline.compuerta._CONECTORES_DE_NOMBRE",
       "pipeline.compuerta._CONECTORES_TRAS_EL_NUMERO",
       "pipeline.compuerta._CORREO_EN_TEXTO",
@@ -10809,6 +11292,7 @@
       "pipeline.compuerta._MOTIVO_POR_CAUSA",
       "pipeline.compuerta._MOTIVO_POR_CODIGO",
       "pipeline.compuerta._NOMBRE_AL_FINAL",
+      "pipeline.compuerta._NO_ES_UN_DOCUMENTO",
       "pipeline.compuerta._NUMERACION_DE_DIRECCION",
       "pipeline.compuerta._NUMERO_DE_PERSONA",
       "pipeline.compuerta._OTRO_TIPO_EN_EL_TEXTO",
@@ -10825,6 +11309,7 @@
       "pipeline.compuerta._ROTULO_ENTRE_NOMBRE_Y_NUMERO",
       "pipeline.compuerta._ROTULO_IDENTIDAD",
       "pipeline.compuerta._ROTULO_PROFESIONAL",
+      "pipeline.compuerta._SIGNO_AJENO_A_UNA_DIRECCION",
       "pipeline.compuerta._SOLO_UN_NUMERO",
       "pipeline.compuerta._SUJETO_POR_PAPEL",
       "pipeline.compuerta._SUSTENTO_POR_CAMPO",
@@ -10846,6 +11331,7 @@
       "pipeline.compuerta.ENTRE_NOMBRE_Y_ROTULO",
       "pipeline.compuerta.MAX_DIGITOS",
       "pipeline.compuerta.MAX_PALABRAS_DIRECCION",
+      "pipeline.compuerta.MAX_SIGNOS_AJENOS_EN_DIRECCION",
       "pipeline.compuerta.METODOS_DEL_AGENTE",
       "pipeline.compuerta.MIN_DIGITOS",
       "pipeline.compuerta.OBLIGATORIOS",
@@ -10853,10 +11339,14 @@
       "pipeline.compuerta.PISO_POR_CAMPO",
       "pipeline.compuerta.TIPOS_ALFANUMERICOS",
       "pipeline.compuerta.TIPOS_DE_ORGANIZACION",
+      "pipeline.compuerta.TIPO_REMITENTE_TERCERO",
       "pipeline.compuerta.VENTANA_DEL_TITULAR",
       "pipeline.compuerta._ANTEPUESTO_A_UNA_ENTIDAD",
       "pipeline.compuerta._ANTES_DEL_NOMBRE",
+      "pipeline.compuerta._BLOQUE_DE_OCR",
       "pipeline.compuerta._CARGOS",
+      "pipeline.compuerta._CC_PEGADO",
+      "pipeline.compuerta._CIFRA_CON_SEPARADORES",
       "pipeline.compuerta._CONECTORES_DE_NOMBRE",
       "pipeline.compuerta._CONECTORES_TRAS_EL_NUMERO",
       "pipeline.compuerta._CORREO_EN_TEXTO",
@@ -10874,6 +11364,7 @@
       "pipeline.compuerta._MOTIVO_POR_CAUSA",
       "pipeline.compuerta._MOTIVO_POR_CODIGO",
       "pipeline.compuerta._NOMBRE_AL_FINAL",
+      "pipeline.compuerta._NO_ES_UN_DOCUMENTO",
       "pipeline.compuerta._NUMERACION_DE_DIRECCION",
       "pipeline.compuerta._NUMERO_DE_PERSONA",
       "pipeline.compuerta._OTRO_TIPO_EN_EL_TEXTO",
@@ -10890,6 +11381,7 @@
       "pipeline.compuerta._ROTULO_ENTRE_NOMBRE_Y_NUMERO",
       "pipeline.compuerta._ROTULO_IDENTIDAD",
       "pipeline.compuerta._ROTULO_PROFESIONAL",
+      "pipeline.compuerta._SIGNO_AJENO_A_UNA_DIRECCION",
       "pipeline.compuerta._SOLO_UN_NUMERO",
       "pipeline.compuerta._SUJETO_POR_PAPEL",
       "pipeline.compuerta._SUSTENTO_POR_CAMPO",
@@ -10911,6 +11403,7 @@
       "pipeline.compuerta.ENTRE_NOMBRE_Y_ROTULO",
       "pipeline.compuerta.MAX_DIGITOS",
       "pipeline.compuerta.MAX_PALABRAS_DIRECCION",
+      "pipeline.compuerta.MAX_SIGNOS_AJENOS_EN_DIRECCION",
       "pipeline.compuerta.METODOS_DEL_AGENTE",
       "pipeline.compuerta.MIN_DIGITOS",
       "pipeline.compuerta.OBLIGATORIOS",
@@ -10918,10 +11411,14 @@
       "pipeline.compuerta.PISO_POR_CAMPO",
       "pipeline.compuerta.TIPOS_ALFANUMERICOS",
       "pipeline.compuerta.TIPOS_DE_ORGANIZACION",
+      "pipeline.compuerta.TIPO_REMITENTE_TERCERO",
       "pipeline.compuerta.VENTANA_DEL_TITULAR",
       "pipeline.compuerta._ANTEPUESTO_A_UNA_ENTIDAD",
       "pipeline.compuerta._ANTES_DEL_NOMBRE",
+      "pipeline.compuerta._BLOQUE_DE_OCR",
       "pipeline.compuerta._CARGOS",
+      "pipeline.compuerta._CC_PEGADO",
+      "pipeline.compuerta._CIFRA_CON_SEPARADORES",
       "pipeline.compuerta._CONECTORES_DE_NOMBRE",
       "pipeline.compuerta._CONECTORES_TRAS_EL_NUMERO",
       "pipeline.compuerta._CORREO_EN_TEXTO",
@@ -10939,6 +11436,7 @@
       "pipeline.compuerta._MOTIVO_POR_CAUSA",
       "pipeline.compuerta._MOTIVO_POR_CODIGO",
       "pipeline.compuerta._NOMBRE_AL_FINAL",
+      "pipeline.compuerta._NO_ES_UN_DOCUMENTO",
       "pipeline.compuerta._NUMERACION_DE_DIRECCION",
       "pipeline.compuerta._NUMERO_DE_PERSONA",
       "pipeline.compuerta._OTRO_TIPO_EN_EL_TEXTO",
@@ -10955,6 +11453,7 @@
       "pipeline.compuerta._ROTULO_ENTRE_NOMBRE_Y_NUMERO",
       "pipeline.compuerta._ROTULO_IDENTIDAD",
       "pipeline.compuerta._ROTULO_PROFESIONAL",
+      "pipeline.compuerta._SIGNO_AJENO_A_UNA_DIRECCION",
       "pipeline.compuerta._SOLO_UN_NUMERO",
       "pipeline.compuerta._SUJETO_POR_PAPEL",
       "pipeline.compuerta._SUSTENTO_POR_CAMPO",
@@ -11002,8 +11501,10 @@
      "modulo": "pipeline/compuerta.py",
      "funcion": "_revisar_direccion",
      "usa": [
+      "pipeline.compuerta.MAX_SIGNOS_AJENOS_EN_DIRECCION",
       "pipeline.compuerta._CORREO_EN_TEXTO",
       "pipeline.compuerta._DIRECCION_VACIA",
+      "pipeline.compuerta._SIGNO_AJENO_A_UNA_DIRECCION",
       "pipeline.compuerta._SOLO_UN_NUMERO"
      ]
     },
@@ -11019,6 +11520,7 @@
       "pipeline.compuerta.ENTRE_NOMBRE_Y_ROTULO",
       "pipeline.compuerta.MAX_DIGITOS",
       "pipeline.compuerta.MAX_PALABRAS_DIRECCION",
+      "pipeline.compuerta.MAX_SIGNOS_AJENOS_EN_DIRECCION",
       "pipeline.compuerta.METODOS_DEL_AGENTE",
       "pipeline.compuerta.MIN_DIGITOS",
       "pipeline.compuerta.OBLIGATORIOS",
@@ -11026,10 +11528,14 @@
       "pipeline.compuerta.PISO_POR_CAMPO",
       "pipeline.compuerta.TIPOS_ALFANUMERICOS",
       "pipeline.compuerta.TIPOS_DE_ORGANIZACION",
+      "pipeline.compuerta.TIPO_REMITENTE_TERCERO",
       "pipeline.compuerta.VENTANA_DEL_TITULAR",
       "pipeline.compuerta._ANTEPUESTO_A_UNA_ENTIDAD",
       "pipeline.compuerta._ANTES_DEL_NOMBRE",
+      "pipeline.compuerta._BLOQUE_DE_OCR",
       "pipeline.compuerta._CARGOS",
+      "pipeline.compuerta._CC_PEGADO",
+      "pipeline.compuerta._CIFRA_CON_SEPARADORES",
       "pipeline.compuerta._CONECTORES_DE_NOMBRE",
       "pipeline.compuerta._CONECTORES_TRAS_EL_NUMERO",
       "pipeline.compuerta._CORREO_EN_TEXTO",
@@ -11047,6 +11553,7 @@
       "pipeline.compuerta._MOTIVO_POR_CAUSA",
       "pipeline.compuerta._MOTIVO_POR_CODIGO",
       "pipeline.compuerta._NOMBRE_AL_FINAL",
+      "pipeline.compuerta._NO_ES_UN_DOCUMENTO",
       "pipeline.compuerta._NUMERACION_DE_DIRECCION",
       "pipeline.compuerta._NUMERO_DE_PERSONA",
       "pipeline.compuerta._OTRO_TIPO_EN_EL_TEXTO",
@@ -11063,6 +11570,7 @@
       "pipeline.compuerta._ROTULO_ENTRE_NOMBRE_Y_NUMERO",
       "pipeline.compuerta._ROTULO_IDENTIDAD",
       "pipeline.compuerta._ROTULO_PROFESIONAL",
+      "pipeline.compuerta._SIGNO_AJENO_A_UNA_DIRECCION",
       "pipeline.compuerta._SOLO_UN_NUMERO",
       "pipeline.compuerta._SUJETO_POR_PAPEL",
       "pipeline.compuerta._SUSTENTO_POR_CAMPO",
@@ -11084,6 +11592,7 @@
       "pipeline.compuerta.ENTRE_NOMBRE_Y_ROTULO",
       "pipeline.compuerta.MAX_DIGITOS",
       "pipeline.compuerta.MAX_PALABRAS_DIRECCION",
+      "pipeline.compuerta.MAX_SIGNOS_AJENOS_EN_DIRECCION",
       "pipeline.compuerta.METODOS_DEL_AGENTE",
       "pipeline.compuerta.MIN_DIGITOS",
       "pipeline.compuerta.OBLIGATORIOS",
@@ -11091,10 +11600,14 @@
       "pipeline.compuerta.PISO_POR_CAMPO",
       "pipeline.compuerta.TIPOS_ALFANUMERICOS",
       "pipeline.compuerta.TIPOS_DE_ORGANIZACION",
+      "pipeline.compuerta.TIPO_REMITENTE_TERCERO",
       "pipeline.compuerta.VENTANA_DEL_TITULAR",
       "pipeline.compuerta._ANTEPUESTO_A_UNA_ENTIDAD",
       "pipeline.compuerta._ANTES_DEL_NOMBRE",
+      "pipeline.compuerta._BLOQUE_DE_OCR",
       "pipeline.compuerta._CARGOS",
+      "pipeline.compuerta._CC_PEGADO",
+      "pipeline.compuerta._CIFRA_CON_SEPARADORES",
       "pipeline.compuerta._CONECTORES_DE_NOMBRE",
       "pipeline.compuerta._CONECTORES_TRAS_EL_NUMERO",
       "pipeline.compuerta._CORREO_EN_TEXTO",
@@ -11112,6 +11625,7 @@
       "pipeline.compuerta._MOTIVO_POR_CAUSA",
       "pipeline.compuerta._MOTIVO_POR_CODIGO",
       "pipeline.compuerta._NOMBRE_AL_FINAL",
+      "pipeline.compuerta._NO_ES_UN_DOCUMENTO",
       "pipeline.compuerta._NUMERACION_DE_DIRECCION",
       "pipeline.compuerta._NUMERO_DE_PERSONA",
       "pipeline.compuerta._OTRO_TIPO_EN_EL_TEXTO",
@@ -11128,6 +11642,7 @@
       "pipeline.compuerta._ROTULO_ENTRE_NOMBRE_Y_NUMERO",
       "pipeline.compuerta._ROTULO_IDENTIDAD",
       "pipeline.compuerta._ROTULO_PROFESIONAL",
+      "pipeline.compuerta._SIGNO_AJENO_A_UNA_DIRECCION",
       "pipeline.compuerta._SOLO_UN_NUMERO",
       "pipeline.compuerta._SUJETO_POR_PAPEL",
       "pipeline.compuerta._SUSTENTO_POR_CAMPO",
@@ -11167,6 +11682,7 @@
       "pipeline.compuerta.ENTRE_NOMBRE_Y_ROTULO",
       "pipeline.compuerta.MAX_DIGITOS",
       "pipeline.compuerta.MAX_PALABRAS_DIRECCION",
+      "pipeline.compuerta.MAX_SIGNOS_AJENOS_EN_DIRECCION",
       "pipeline.compuerta.METODOS_DEL_AGENTE",
       "pipeline.compuerta.MIN_DIGITOS",
       "pipeline.compuerta.OBLIGATORIOS",
@@ -11174,10 +11690,14 @@
       "pipeline.compuerta.PISO_POR_CAMPO",
       "pipeline.compuerta.TIPOS_ALFANUMERICOS",
       "pipeline.compuerta.TIPOS_DE_ORGANIZACION",
+      "pipeline.compuerta.TIPO_REMITENTE_TERCERO",
       "pipeline.compuerta.VENTANA_DEL_TITULAR",
       "pipeline.compuerta._ANTEPUESTO_A_UNA_ENTIDAD",
       "pipeline.compuerta._ANTES_DEL_NOMBRE",
+      "pipeline.compuerta._BLOQUE_DE_OCR",
       "pipeline.compuerta._CARGOS",
+      "pipeline.compuerta._CC_PEGADO",
+      "pipeline.compuerta._CIFRA_CON_SEPARADORES",
       "pipeline.compuerta._CONECTORES_DE_NOMBRE",
       "pipeline.compuerta._CONECTORES_TRAS_EL_NUMERO",
       "pipeline.compuerta._CORREO_EN_TEXTO",
@@ -11195,6 +11715,7 @@
       "pipeline.compuerta._MOTIVO_POR_CAUSA",
       "pipeline.compuerta._MOTIVO_POR_CODIGO",
       "pipeline.compuerta._NOMBRE_AL_FINAL",
+      "pipeline.compuerta._NO_ES_UN_DOCUMENTO",
       "pipeline.compuerta._NUMERACION_DE_DIRECCION",
       "pipeline.compuerta._NUMERO_DE_PERSONA",
       "pipeline.compuerta._OTRO_TIPO_EN_EL_TEXTO",
@@ -11211,6 +11732,7 @@
       "pipeline.compuerta._ROTULO_ENTRE_NOMBRE_Y_NUMERO",
       "pipeline.compuerta._ROTULO_IDENTIDAD",
       "pipeline.compuerta._ROTULO_PROFESIONAL",
+      "pipeline.compuerta._SIGNO_AJENO_A_UNA_DIRECCION",
       "pipeline.compuerta._SOLO_UN_NUMERO",
       "pipeline.compuerta._SUJETO_POR_PAPEL",
       "pipeline.compuerta._SUSTENTO_POR_CAMPO",
@@ -11234,7 +11756,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1006
+     "linea": 1024
     },
     {
      "clave": "pipeline.compuerta.DIGITOS_QUE_NO_NOMBRAN",
@@ -11248,7 +11770,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 415
+     "linea": 422
     },
     {
      "clave": "pipeline.compuerta.ENTRE_NOMBRE_Y_ROTULO",
@@ -11262,7 +11784,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1047
+     "linea": 1069
     },
     {
      "clave": "pipeline.compuerta.MAX_DIGITOS",
@@ -11291,7 +11813,21 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 796
+     "linea": 813
+    },
+    {
+     "clave": "pipeline.compuerta.MAX_SIGNOS_AJENOS_EN_DIRECCION",
+     "modulo": "pipeline.compuerta",
+     "nombre": "MAX_SIGNOS_AJENOS_EN_DIRECCION",
+     "tipo": "int",
+     "valor": 1,
+     "descripcion": "Lo que el OCR deja de una dirección que no pudo leer: signos que ninguna dirección lleva (\"calle 9 B N.&! -7..\"). Uno suelto puede ser un \"#\" mal leido; dos ya no es una dirección que lleve a alguna parte.",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/compuerta.py",
+     "linea": 336
     },
     {
      "clave": "pipeline.compuerta.METODOS_DEL_AGENTE",
@@ -11307,7 +11843,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 834
+     "linea": 851
     },
     {
      "clave": "pipeline.compuerta.MIN_DIGITOS",
@@ -11355,7 +11891,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 614
+     "linea": 621
     },
     {
      "clave": "pipeline.compuerta.PISO_POR_CAMPO",
@@ -11411,6 +11947,20 @@
      "copia_de": "utils.tipos_documento.TIPOS_DE_ORGANIZACION"
     },
     {
+     "clave": "pipeline.compuerta.TIPO_REMITENTE_TERCERO",
+     "modulo": "pipeline.compuerta",
+     "nombre": "TIPO_REMITENTE_TERCERO",
+     "tipo": "int",
+     "valor": 2,
+     "descripcion": "Código de SGDEA para un remitente que es un tercero: una empresa u otra entidad.",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/compuerta.py",
+     "linea": 639
+    },
+    {
      "clave": "pipeline.compuerta.VENTANA_DEL_TITULAR",
      "modulo": "pipeline.compuerta",
      "nombre": "VENTANA_DEL_TITULAR",
@@ -11422,7 +11972,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1008
+     "linea": 1026
     },
     {
      "clave": "pipeline.compuerta._ANTEPUESTO_A_UNA_ENTIDAD",
@@ -11441,7 +11991,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 719
+     "linea": 736
     },
     {
      "clave": "pipeline.compuerta._ANTES_DEL_NOMBRE",
@@ -11469,7 +12019,25 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1227
+     "linea": 1338
+    },
+    {
+     "clave": "pipeline.compuerta._BLOQUE_DE_OCR",
+     "modulo": "pipeline.compuerta",
+     "nombre": "_BLOQUE_DE_OCR",
+     "tipo": "dict",
+     "valor": {
+      "regex": "(?si)#{2,3} [^#\\n]{0,80}\\(ocr.*?(?=\\s#{1,3} |\\Z)",
+      "flags": ""
+     },
+     "descripcion": "Un bloque leido por OCR o transcrito de una imagen: desde su encabezado (\"## Página 3 (OCR...\", \"### Imagen incrustada (OCR\") hasta el siguiente. El texto de roles llega en una sola línea: el bloque termina donde empieza el siguiente encabezado (\" # \", \" ## \").",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/compuerta.py",
+     "linea": 1226,
+     "es_regex": true
     },
     {
      "clave": "pipeline.compuerta._CARGOS",
@@ -11507,7 +12075,43 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 468
+     "linea": 475
+    },
+    {
+     "clave": "pipeline.compuerta._CC_PEGADO",
+     "modulo": "pipeline.compuerta",
+     "nombre": "_CC_PEGADO",
+     "tipo": "dict",
+     "valor": {
+      "regex": "(?i)(?<=[a-zà-ÿ])(?=c\\.\\s?c\\.\\s?(?:no\\.?\\s?)?\\d)",
+      "flags": ""
+     },
+     "descripcion": "",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/compuerta.py",
+     "linea": 866,
+     "es_regex": true
+    },
+    {
+     "clave": "pipeline.compuerta._CIFRA_CON_SEPARADORES",
+     "modulo": "pipeline.compuerta",
+     "nombre": "_CIFRA_CON_SEPARADORES",
+     "tipo": "dict",
+     "valor": {
+      "regex": "(?<![\\d.])\\d[\\d.]{4,16}\\d(?![\\d])",
+      "flags": ""
+     },
+     "descripcion": "Una cifra con sus puntos de miles; sin espacios: con ellos se pegaban dos números seguidos (\"1058973051 28\").",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/compuerta.py",
+     "linea": 1219,
+     "es_regex": true
     },
     {
      "clave": "pipeline.compuerta._CONECTORES_DE_NOMBRE",
@@ -11531,7 +12135,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 624
+     "linea": 631
     },
     {
      "clave": "pipeline.compuerta._CONECTORES_TRAS_EL_NUMERO",
@@ -11551,7 +12155,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1009
+     "linea": 1027
     },
     {
      "clave": "pipeline.compuerta._CORREO_EN_TEXTO",
@@ -11595,7 +12199,7 @@
      "nombre": "_DOCUMENTO_EN_ADJUNTO",
      "tipo": "dict",
      "valor": {
-      "regex": "(?i)(?<![a-z])(?:cc|c\\.c\\.?|ti|ce|cedula)[\\s_.\\-]*(\\d{6,10})(?!\\d)",
+      "regex": "(?i)(?<![a-z])(?:cc|c\\.c\\.?|ti|ce|cedula)[\\s_.\\-]*(\\d{6,10})(?!\\d)|^(?!(?:19|20)\\d{6}\\b)(\\d{6,10})[\\s_\\-]+[a-zñáéíóú]{2,}[\\s_\\-]+[a-zñáéíóú]{2,}",
       "flags": ""
      },
      "descripcion": "El documento en el nombre de un adjunto: \"CC_45459599_...pdf\".",
@@ -11604,7 +12208,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1470,
+     "linea": 1581,
      "es_regex": true
     },
     {
@@ -11631,7 +12235,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1744
+     "linea": 1862
     },
     {
      "clave": "pipeline.compuerta._ENTRE_NOMBRE_Y_NUMERO",
@@ -11668,7 +12272,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1189
+     "linea": 1211
     },
     {
      "clave": "pipeline.compuerta._FIN_DE_LA_RAZON_SOCIAL",
@@ -11685,7 +12289,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1585,
+     "linea": 1703,
      "es_regex": true
     },
     {
@@ -11703,7 +12307,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1368,
+     "linea": 1479,
      "es_regex": true
     },
     {
@@ -11721,7 +12325,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1334,
+     "linea": 1445,
      "es_regex": true
     },
     {
@@ -11739,7 +12343,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1684,
+     "linea": 1802,
      "es_regex": true
     },
     {
@@ -11835,7 +12439,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 786
+     "linea": 803
     },
     {
      "clave": "pipeline.compuerta._MARCAS_DE_ENTIDAD_DELANTE",
@@ -11867,7 +12471,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1692
+     "linea": 1810
     },
     {
      "clave": "pipeline.compuerta._MARCA_DE_DOCUMENTO",
@@ -11884,7 +12488,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 849,
+     "linea": 867,
      "es_regex": true
     },
     {
@@ -11902,7 +12506,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 853,
+     "linea": 871,
      "es_regex": true
     },
     {
@@ -11920,7 +12524,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 855,
+     "linea": 873,
      "es_regex": true
     },
     {
@@ -11938,7 +12542,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 502
+     "linea": 509
     },
     {
      "clave": "pipeline.compuerta._MINUSCULA_MAYUSCULA",
@@ -11955,7 +12559,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 848,
+     "linea": 865,
      "es_regex": true
     },
     {
@@ -11975,7 +12579,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 2404
+     "linea": 2560
     },
     {
      "clave": "pipeline.compuerta._MOTIVO_POR_CAUSA",
@@ -11995,7 +12599,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 2392
+     "linea": 2548
     },
     {
      "clave": "pipeline.compuerta._MOTIVO_POR_CODIGO",
@@ -12013,7 +12617,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 2413
+     "linea": 2569
     },
     {
      "clave": "pipeline.compuerta._NIT_DE_POSITIVA",
@@ -12027,7 +12631,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1590
+     "linea": 1708
     },
     {
      "clave": "pipeline.compuerta._NIT_ROTULADO",
@@ -12044,7 +12648,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1582,
+     "linea": 1700,
      "es_regex": true
     },
     {
@@ -12062,7 +12666,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1696,
+     "linea": 1814,
      "es_regex": true
     },
     {
@@ -12080,7 +12684,25 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1466,
+     "linea": 1577,
+     "es_regex": true
+    },
+    {
+     "clave": "pipeline.compuerta._NO_ES_UN_DOCUMENTO",
+     "modulo": "pipeline.compuerta",
+     "nombre": "_NO_ES_UN_DOCUMENTO",
+     "tipo": "dict",
+     "valor": {
+      "regex": "^(?:3\\d{9}|60\\d{8}|(?:19|20)\\d{2}(?:0[1-9]|1[0-2])(?:\\d{2})?)$",
+      "flags": ""
+     },
+     "descripcion": "Lo que junto a un nombre no es su documento: un celular o un fijo de diez digitos y una fecha o un periodo (\"202301\", \"20260115\").",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/compuerta.py",
+     "linea": 1274,
      "es_regex": true
     },
     {
@@ -12098,7 +12720,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 793,
+     "linea": 810,
      "es_regex": true
     },
     {
@@ -12116,7 +12738,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1461,
+     "linea": 1572,
      "es_regex": true
     },
     {
@@ -12134,7 +12756,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1876,
+     "linea": 1994,
      "es_regex": true
     },
     {
@@ -12207,7 +12829,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 586
+     "linea": 593
     },
     {
      "clave": "pipeline.compuerta._PALABRAS_DE_ENTIDAD",
@@ -12248,7 +12870,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 617
+     "linea": 624
     },
     {
      "clave": "pipeline.compuerta._PALABRAS_GENERICAS_DE_ENTIDAD",
@@ -12285,7 +12907,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1608
+     "linea": 1726
     },
     {
      "clave": "pipeline.compuerta._RADICADO_EN_NOMBRE",
@@ -12302,7 +12924,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 408,
+     "linea": 415,
      "es_regex": true
     },
     {
@@ -12320,7 +12942,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1587,
+     "linea": 1705,
      "es_regex": true
     },
     {
@@ -12355,7 +12977,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 607
+     "linea": 614
     },
     {
      "clave": "pipeline.compuerta._ROL_DE_OTRO",
@@ -12372,7 +12994,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 998,
+     "linea": 1016,
      "es_regex": true
     },
     {
@@ -12390,7 +13012,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1328,
+     "linea": 1439,
      "es_regex": true
     },
     {
@@ -12408,7 +13030,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 994,
+     "linea": 1012,
      "es_regex": true
     },
     {
@@ -12433,7 +13055,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1225
+     "linea": 1336
     },
     {
      "clave": "pipeline.compuerta._ROTULO_DE_OTRO_DELANTE",
@@ -12450,7 +13072,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1376,
+     "linea": 1487,
      "es_regex": true
     },
     {
@@ -12468,7 +13090,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1463,
+     "linea": 1574,
      "es_regex": true
     },
     {
@@ -12486,7 +13108,25 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 847,
+     "linea": 864,
+     "es_regex": true
+    },
+    {
+     "clave": "pipeline.compuerta._SIGNO_AJENO_A_UNA_DIRECCION",
+     "modulo": "pipeline.compuerta",
+     "nombre": "_SIGNO_AJENO_A_UNA_DIRECCION",
+     "tipo": "dict",
+     "valor": {
+      "regex": "[^\\w\\s#\\-.,°º/()'\\\"]",
+      "flags": "UNICODE"
+     },
+     "descripcion": "Lo que el OCR deja de una dirección que no pudo leer: signos que ninguna dirección lleva (\"calle 9 B N.&! -7..\"). Uno suelto puede ser un \"#\" mal leido; dos ya no es una dirección que lleve a alguna parte.",
+     "env": null,
+     "sobrescribible_en_caliente": true,
+     "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
+     "alcance_sobrescritura": "total",
+     "archivo": "pipeline/compuerta.py",
+     "linea": 335,
      "es_regex": true
     },
     {
@@ -12498,13 +13138,13 @@
       "regex": "^\\s*\\+?\\d[\\d\\s().+-]{5,}\\s*$",
       "flags": ""
      },
-     "descripcion": "Formas con que un formulario representa \"sin dato\". Llegan como texto y se guardan como si fueran una dirección.",
+     "descripcion": "Lo que el OCR deja de una dirección que no pudo leer: signos que ninguna dirección lleva (\"calle 9 B N.&! -7..\"). Uno suelto puede ser un \"#\" mal leido; dos ya no es una dirección que lleve a alguna parte.",
      "env": null,
      "sobrescribible_en_caliente": true,
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 332,
+     "linea": 337,
      "es_regex": true
     },
     {
@@ -12522,7 +13162,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1420,
+     "linea": 1531,
      "es_regex": true
     },
     {
@@ -12544,7 +13184,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 838
+     "linea": 855
     },
     {
      "clave": "pipeline.compuerta._TELEFONOS_DE_EJEMPLO",
@@ -12584,7 +13224,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 411,
+     "linea": 418,
      "es_regex": true
     },
     {
@@ -12602,7 +13242,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1570,
+     "linea": 1688,
      "es_regex": true
     },
     {
@@ -12620,7 +13260,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1685,
+     "linea": 1803,
      "es_regex": true
     },
     {
@@ -12638,7 +13278,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 1578,
+     "linea": 1696,
      "es_regex": true
     },
     {
@@ -12668,7 +13308,7 @@
      "nota_sobrescritura": "Si: pipeline.compuerta lo lee como global dentro de sus funciones en cada llamada.",
      "alcance_sobrescritura": "total",
      "archivo": "pipeline/compuerta.py",
-     "linea": 600
+     "linea": 607
     },
     {
      "clave": "pipeline.compuerta.CONFIANZA_PARA_RADICAR",
@@ -12696,7 +13336,7 @@
      "nota_sobrescritura": "No: en pipeline.compuerta se usa al importar para construir otra constante.",
      "alcance_sobrescritura": "ninguno",
      "archivo": "pipeline/compuerta.py",
-     "linea": 985
+     "linea": 1003
     },
     {
      "clave": "pipeline.compuerta._ROTULO_IDENTIDAD",
@@ -12710,7 +13350,7 @@
      "nota_sobrescritura": "No: en pipeline.compuerta se usa al importar para construir otra constante.",
      "alcance_sobrescritura": "ninguno",
      "archivo": "pipeline/compuerta.py",
-     "linea": 990
+     "linea": 1008
     },
     {
      "clave": "pipeline.compuerta._ROTULO_PROFESIONAL",
@@ -12724,7 +13364,7 @@
      "nota_sobrescritura": "No: en pipeline.compuerta se usa al importar para construir otra constante.",
      "alcance_sobrescritura": "ninguno",
      "archivo": "pipeline/compuerta.py",
-     "linea": 981
+     "linea": 999
     }
    ]
   },
@@ -12954,7 +13594,7 @@
      "linea": 187,
      "valor_resumido": {
       "resumido": true,
-      "tamano_caracteres": 4518,
+      "tamano_caracteres": 4515,
       "elementos": 17
      }
     },
@@ -13022,7 +13662,7 @@
       ],
       [
        "ESQUEMA_DESALINEADO",
-       "PGRST\\d+|could\\s+not\\s+find\\s+the\\s+'.*'\\s+column",
+       "'C':\\s*'42703'|column\\s+\\S+\\s+(?:of\\s+relation\\s+\\S+\\s+)?does\\s+not\\s+exist",
        false
       ],
       [
@@ -13179,7 +13819,7 @@
      "linea": 39,
      "valor_resumido": {
       "resumido": true,
-      "tamano_caracteres": 4183,
+      "tamano_caracteres": 4180,
       "elementos": 17
      }
     },
@@ -13766,11 +14406,13 @@
   {
    "id": "cierre_outlook",
    "nombre": "Cierre en Outlook (radicado)",
-   "descripcion": "Con el número de radicado, guarda el hash para la deduplicación, etiqueta el correo con el radicado y lo mueve a la carpeta de radicación exitosa.",
+   "descripcion": "Con el número de radicado, guarda el hash para la deduplicación, guarda el radicado en el registro de radicados (Cloud SQL), etiqueta el correo con el radicado y lo mueve a la carpeta de radicación exitosa.",
    "etapa_cronometro": "cierre_outlook",
    "modulo": "pipeline/orquestador.py",
    "funciones": [
     "Detector.registrar_radicado",
+    "Detector.guardar_en_auditoria",
+    "RegistroDeRadicados.guardar_radicado",
     "Orquestador._mover_a_exitosa",
     "utils.radicado.etiqueta_para",
     "Orquestador._archivar",
@@ -13787,6 +14429,13 @@
     }
    ],
    "reglas": [
+    {
+     "id": "cie_registro",
+     "descripcion": "Guarda el radicado en el registro de radicados (INSERT ... WHERE NOT EXISTS por numero_radicado: número, asunto, remitente, fecha, documento del afectado), el que consulta la capa 6. Nunca bloquea: un fallo queda como aviso 'registro de radicados degradado'. Sin auditoria o con radicado 'DRY-RUN' no hace nada; en MODO_TEST graba REGISTRO_RADICADO en vez de insertar.",
+     "modulo": "pipeline/duplicados.py",
+     "funcion": "Detector.guardar_en_auditoria",
+     "usa": []
+    },
     {
      "id": "cie_etiqueta",
      "descripcion": "Si el radicado no tiene forma ENT<número>, se etiqueta como 'RADICADO:<valor>' y se avisa (contrato con SGDEA cambiado).",
@@ -13807,7 +14456,7 @@
     },
     {
      "id": "cie_resto_del_hilo",
-     "descripcion": "Tras radicar, los demas correos del hilo que siguen en la bandeja se mueven a Duplicados de una vez (antes salia uno por corrida). Se quedan los de afuera con adjuntos: su propia comprobacion decide si traen documentos nuevos.",
+     "descripcion": "Tras radicar o detectar un duplicado, del resto del hilo que sigue en la bandeja se mueven a Duplicados de una vez solo los que con seguridad lo son: los de un buzon de Positiva y los reenvios exactos de este correo (mismo remitente, texto propio identico y los mismos documentos). Lo demas se queda para pasar por anexos y seguimiento en la corrida siguiente.",
      "modulo": "pipeline/orquestador.py",
      "funcion": "Orquestador._archivar_el_resto_del_hilo",
      "usa": []
@@ -14421,7 +15070,7 @@
   {
    "id": "duplicado",
    "nombre": "Duplicado",
-   "descripcion": "El correo ya estaba radicado: se retiran las marcas de proceso, se mueve a la carpeta de duplicados y con el el resto del hilo que siga en la bandeja (menos los de afuera con adjuntos).",
+   "descripcion": "El correo ya estaba radicado: se retiran las marcas de proceso, se mueve a la carpeta de duplicados y con el los reenvios exactos y lo de Positiva que siga del hilo en la bandeja.",
    "etapa_cronometro": null,
    "modulo": "pipeline/orquestador.py",
    "funciones": [
@@ -15263,39 +15912,39 @@
    ]
   },
   {
-   "id": "supabase",
-   "nombre": "Supabase (auditoria radicados_pqrd)",
-   "tipo": "registro_personas",
-   "modulo": "services/supabase_client.py (SupabaseService)",
+   "id": "registro_radicados",
+   "nombre": "Registro de radicados (Cloud SQL, iapqrd_radicados_pqrd)",
+   "tipo": "base_de_datos",
+   "modulo": "services/registro_radicados.py (RegistroDeRadicados)",
    "configuracion": [
-    "SUPABASE_URL",
-    "SUPABASE_SERVICE_ROLE_KEY",
+    "CLOUDSQL_HOST",
+    "CLOUDSQL_USER",
+    "CLOUDSQL_PASSWORD",
+    "CLOUDSQL_INSTANCE",
+    "CLOUDSQL_PORT",
+    "CLOUDSQL_DB",
+    "CLOUDSQL_SSL",
+    "CLOUDSQL_TABLE_RADICADOS_IAPQRD",
     "MODO_TEST",
     "DEDUP_EN_PRUEBAS"
    ],
-   "notas": "Tipo real: auditoria/base de datos. Con MODO_TEST el cliente no se crea (_client=None). El pipeline nuevo solo lee (capa 6 de deduplicacion).",
+   "notas": "Postgres de SGDEA (base gcpprolinktic), solo con IP privada y TLS: el job llega por la VPC con pg8000. Es la auditoria del job: guarda cada radicado y responde la capa 6 de deduplicacion (remitente + asunto, que no aplica a buzones de Positiva). Sin CLOUDSQL_HOST, CLOUDSQL_USER o CLOUDSQL_PASSWORD el job corre 'sin auditoria' (auditoria=None). Cada consulta abre y cierra su conexion (tope 10 s) y tras una caida no se reintenta en 300 s. En MODO_TEST el INSERT se graba en el grabador (REGISTRO_RADICADO) en vez de ejecutarse. Reemplaza a Supabase (radicados_pqrd) desde 1d11744.",
    "operaciones": [
     {
      "nombre": "email_exists(correo_remitente, asunto, recibido)",
      "metodo": "SELECT",
-     "ruta": "table radicados_pqrd .select(numero_radicado).eq(correo_remitente).eq(asunto)[.gte(fecha_radicacion, recibido-1d)].limit(1)",
+     "ruta": "SELECT numero_radicado FROM iapqrd_radicados_pqrd WHERE correo_remitente = :remitente AND asunto = :asunto [AND fecha_radicacion >= recibido-1d] LIMIT 1",
      "escribe": false,
      "usado_por_pipeline": true,
      "modo_test": "False si dedup_desactivada()"
     },
     {
-     "nombre": "save_radicado_record(...)",
+     "nombre": "guardar_radicado(numero_radicado, asunto, correo_remitente, numero_documento_afectado, ...)",
      "metodo": "INSERT",
-     "ruta": "table radicados_pqrd",
+     "ruta": "INSERT INTO iapqrd_radicados_pqrd (...) SELECT ... WHERE NOT EXISTS (mismo numero_radicado) RETURNING id",
      "escribe": true,
-     "usado_por_pipeline": false
-    },
-    {
-     "nombre": "radicado_exists_by_doc / get_today_stats",
-     "metodo": "SELECT",
-     "ruta": "table radicados_pqrd",
-     "escribe": false,
-     "usado_por_pipeline": false
+     "usado_por_pipeline": true,
+     "modo_test": "no inserta: graba REGISTRO_RADICADO"
     }
    ]
   },
@@ -15453,14 +16102,29 @@
    "secreto": true
   },
   {
-   "nombre": "SUPABASE_URL",
-   "uso": "Supabase (auditoria, capa 6 de deduplicacion) (obligatoria).",
+   "nombre": "CLOUDSQL_HOST",
+   "uso": "Registro de radicados en Cloud SQL (auditoria, capa 6 de deduplicacion): host (IP privada). Sin el, el job corre sin auditoria.",
    "secreto": true
   },
   {
-   "nombre": "SUPABASE_SERVICE_ROLE_KEY",
-   "uso": "Supabase: clave service role (obligatoria).",
+   "nombre": "CLOUDSQL_USER",
+   "uso": "Registro de radicados: usuario.",
    "secreto": true
+  },
+  {
+   "nombre": "CLOUDSQL_PASSWORD",
+   "uso": "Registro de radicados: contrasena.",
+   "secreto": true
+  },
+  {
+   "nombre": "CLOUDSQL_INSTANCE",
+   "uso": "Registro de radicados: nombre de la instancia (informativo).",
+   "secreto": false
+  },
+  {
+   "nombre": "CLOUDSQL_TABLE_RADICADOS_IAPQRD",
+   "uso": "Tabla de radicados. Default iapqrd_radicados_pqrd.",
+   "secreto": false
   },
   {
    "nombre": "SGDEA_CLIENT_SECRET",
@@ -16049,7 +16713,7 @@
   "no_ocurren": [
    "Radicacion en SGDEA: RadicacionService.radicar_pqrd con MODO_TEST graba el payload y devuelve id_radicado 'DRY-RUN-ENT' (no pide token); crear_trazabilidad tambien se corta.",
    "Graph: ninguna llamada (BuzonLocal).",
-   "Supabase y Redis: no se construyen (auditoria=None, cache=None).",
+   "Registro de radicados (Cloud SQL) y Redis: no se construyen (auditoria=None, cache=None).",
    "GCS: no hay Ejecucion ni escritura de informes."
   ],
   "efectos_en_desenlaces": [

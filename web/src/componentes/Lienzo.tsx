@@ -66,7 +66,7 @@ interface VistaLectura {
   total: number;
 }
 
-const NOMBRE_METODO: Record<string, string> = { texto: "texto propio del PDF", ocr: "OCR", vision: "visión IA", ilegible: "sin texto legible" };
+const NOMBRE_METODO: Record<string, string> = { texto: "texto propio del PDF", ocr: "OCR", vision: "visión IA", ilegible: "sin texto legible", cache: "leída en una corrida anterior" };
 
 const LecturaEnNodo = memo(function LecturaEnNodo({ v }: { v: VistaLectura }) {
   const irA = usar((s) => s.irA);
@@ -318,6 +318,16 @@ function porPasillo(sx: number, sy: number, sp: Position, tx: number, ty: number
 const COLOR_FLECHA = { inactivo: "#bcc8da", recorrido: "#4aa83f", activo: "#0094ff", resaltado: "#5cb8ff", regla: "#5a7fbf" };
 
 /** Cable con flecha; mientras la corriente pasa, unas chispas recorren el trazo. */
+/**
+ * Entre dos pasos con cables de ida y vuelta (conversión ⇄ visión) las dos etiquetas caían en
+ * el mismo punto. En un tramo vertical, la de subida se corre hacia arriba y la de bajada hacia
+ * abajo, sobre la misma línea.
+ */
+function desfase(sx: number, sy: number, tx: number, ty: number): number {
+  if (Math.abs(tx - sx) > 40) return 0;
+  return ty < sy ? -13 : 13;
+}
+
 const Cable = memo(function Cable({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, data, markerEnd }: EdgeProps<Edge<DatosCable>>) {
   const [ruta, lx, ly] =
     data?.carril !== undefined
@@ -338,7 +348,7 @@ const Cable = memo(function Cable({ id, sourceX, sourceY, targetX, targetY, sour
         ))}
       {mostrarEtiqueta && (
         <EdgeLabelRenderer>
-          <div className={`cable-etiqueta ${estado}`} style={{ transform: `translate(-50%, -50%) translate(${lx}px, ${ly}px)` }}>
+          <div className={`cable-etiqueta ${estado}`} style={{ transform: `translate(-50%, -50%) translate(${lx}px, ${ly + desfase(sourceX, sourceY, targetX, targetY)}px)` }}>
             {data!.etiqueta}
           </div>
         </EdgeLabelRenderer>
@@ -471,7 +481,8 @@ function disponer(catalogo: Catalogo, reglas: Regla[]): Disposicion {
   fases.push({ id: "__fase-salidas", type: "fase", position: { x: -18, y: y0 }, data: { nombre: "Desvíos y salidas", numero: "", ancho: anchoTotal, alto: altoSalidas, pista: "donde termina un correo que no se radica" }, draggable: false, selectable: false, focusable: false, zIndex: -1 });
 
   const yReglas = -280;
-  fases.push({ id: "__fase-reglas", type: "fase", position: { x: -18, y: yReglas }, data: { nombre: "Reglas personalizadas", numero: "", ancho: anchoTotal, alto: 214, pista: "clic derecho en el lienzo para agregar una" }, draggable: false, selectable: false, focusable: false, zIndex: -1 });
+  // La banda de reglas solo aparece cuando hay reglas: vacía asomaba su borde bajo la barra del lienzo.
+  if (reglas.length) fases.push({ id: "__fase-reglas", type: "fase", position: { x: -18, y: yReglas }, data: { nombre: "Reglas personalizadas", numero: "", ancho: anchoTotal, alto: 214, pista: "clic derecho en el lienzo para agregar una" }, draggable: false, selectable: false, focusable: false, zIndex: -1 });
   const porAncla: Record<string, number> = {};
   for (const r of reglas) {
     const ancla = ANCLA_DEL_PUNTO[r.punto];
@@ -698,7 +709,8 @@ function LienzoDeCodigo() {
   const [menu, setMenu] = useState<Menu>(null);
   const [encima, setEncima] = useState<string | null>(null);
   const [bloqueado, setBloqueado] = useState(false);
-  const [minimapa, setMinimapa] = useState(true);
+  // El minimapa tapa pasos en pantallas medianas: arranca abierto solo en las anchas.
+  const [minimapa, setMinimapa] = useState(() => window.innerWidth >= 1680);
   const encuadrado = useRef(false);
   // Zoom semántico: de lejos cada nodo muestra solo su categoría y su nombre, en grande.
   const lejos = useStore((s) => s.transform[2] < 0.62);
@@ -1219,7 +1231,8 @@ function LienzoDeCodigo() {
           <MiniMap
             pannable
             zoomable
-            position="bottom-right"
+            position="bottom-left"
+            className="minimapa-izq"
             style={{ width: 168, height: 104 }}
             nodeBorderRadius={6}
             nodeColor={(n) => {

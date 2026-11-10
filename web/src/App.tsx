@@ -191,7 +191,7 @@ function PastillaCompuerta({ flujo, abrir }: { flujo: string; abrir: () => void 
       title={real ? "Las corridas de este flujo escriben de verdad en SGDEA y el buzón, como el job" : "Corre completo en simulación: lo que se radicaría o movería queda registrado aquí, sin enviarse"}
     >
       <Icono n={real ? "alerta" : "candado"} tam={11} />
-      {real ? "Radicación real: encendida" : "Radicación real: apagada (simulación)"}
+      <span className="etq-larga">{real ? "Radicación real: encendida" : "Radicación real: apagada"}</span><span className="etq-corta">{real ? "Radicación real" : "Simulación"}</span>
     </button>
   );
 }
@@ -584,8 +584,25 @@ export default function App() {
     return () => window.removeEventListener("positiva:control", oir);
   }, [enfocar, irA]);
 
+  // Con el inspector abierto sobre un paso o una ejecución, en pantallas medianas la
+  // correspondencia cede su espacio al lienzo y vuelve sola al cerrarlo.
+  const cedida = useRef(false);
+  useEffect(() => {
+    const ocupa = Boolean(foco && foco.tipo !== "correo" && vista === "flujo");
+    if (ocupa && ancho >= 1100 && ancho < 1720) {
+      setBandeja((v) => {
+        if (v) cedida.current = true;
+        return false;
+      });
+    } else if (!foco && cedida.current) {
+      cedida.current = false;
+      setBandeja(true);
+    }
+  }, [foco, ancho, vista]);
+
   const alternar = () =>
     setBandeja((v) => {
+      cedida.current = false;
       if (ancho >= 1100) guardarLocal("positiva-ia:bandeja-visible", !v);
       return !v;
     });

@@ -468,7 +468,7 @@ const CONSECUENCIAS: Record<string, string[]> = {
   pqrd: [
     "Radica en SGDEA las PQRD que el motor dé por buenas.",
     "Etiqueta, mueve y reenvía los correos del buzón servicioalcliente@positiva.gov.co.",
-    "Deja las trazas de radicación en Supabase.",
+    "Guarda cada radicado en el registro de radicados de Cloud SQL (iapqrd_radicados_pqrd).",
   ],
   tutelas: [
     "Radica las tutelas en SGDEA y crea su trazabilidad.",

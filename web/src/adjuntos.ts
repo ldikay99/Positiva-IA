@@ -6,7 +6,8 @@
 import { CAMPOS, OBLIGATORIOS, nombreCampo } from "./flujo.ts";
 import type { Corrida, Evento } from "./tipos.ts";
 
-export type Metodo = "texto" | "ocr" | "vision" | "ilegible";
+/** «cache»: la hoja ya se había leído en otra corrida (misma huella); se muestra su imagen sin repetir la lectura. */
+export type Metodo = "texto" | "ocr" | "vision" | "ilegible" | "cache";
 
 export interface PasoHoja {
   paso: "texto_pdf" | "tesseract" | "sin_preparar" | "giro" | "sondeo" | "girada" | "vision";

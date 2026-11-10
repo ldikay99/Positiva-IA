@@ -6,8 +6,8 @@ SGDEA se cae, mandar el correo a una cola humana le cuesta tiempo a una persona
 para que descubra que no habia nada que revisar. El job corre cada 30 minutos:
 dejarlo en la bandeja lo reintenta solo.
 
-El limite se cuenta en la ETIQUETA del propio correo y no en Redis ni en
-Supabase. Un fallo de infraestructura puede ser precisamente que esos servicios
+El limite se cuenta en la ETIQUETA del propio correo y no en Redis ni en la
+base de radicados. Un fallo de infraestructura puede ser precisamente que esos servicios
 esten caidos, y entonces el contador viviria en lo mismo que fallo. La etiqueta
 viaja con el correo, sobrevive al reinicio del job y se lee sin salir a ningun
 sitio ademas de Graph, que ya hizo falta para traer el correo.

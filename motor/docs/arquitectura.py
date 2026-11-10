@@ -339,7 +339,7 @@ def diagrama_flujo_correo():
 
     for titulo, sub in [
         ("Capa 5", "hash de contenido en la caché (Redis)"),
-        ("Capa 6", "remitente + asunto en la auditoría (Supabase)"),
+        ("Capa 6", "remitente + asunto en el registro de radicados (Cloud SQL)"),
     ]:
         flecha(d, cx, y, cx, y - GAP)
         y = fila_capa(y - GAP, H2, titulo, sub, "DUPLICADO")
@@ -601,7 +601,7 @@ story.append(tabla(
         ["3", "El hilo (por conversationId) ya fue radicado", "Microsoft Graph", "Sí"],
         ["4", "El asunto (limpio) ya fue radicado", "Microsoft Graph", "Sí"],
         ["5", "El hash de asunto+remitente+adjuntos ya existe", "caché (fuera de uso)", "—"],
-        ["6", "Ya hay un registro con ese remitente y ese asunto limpio", "auditoría Supabase", "Sí"],
+        ["6", "Ya hay un registro con ese remitente y ese asunto limpio", "registro de radicados (Cloud SQL)", "Sí"],
     ],
     anchos=[1.3 * cm, 8.0 * cm, 4.0 * cm, 2.9 * cm],
 ))
@@ -2096,7 +2096,7 @@ story.append(P(
 story.append(h2("El interruptor de seguridad: MODO_TEST"))
 story.append(P(
     "`config/settings.py` exige como variables de entorno obligatorias solo los secretos "
-    "(credenciales de Microsoft Graph, Supabase y SGDEA); el resto de la configuración va "
+    "(credenciales de Microsoft Graph, Cloud SQL y SGDEA); el resto de la configuración va "
     "fija en el código. `MODO_TEST` es el interruptor que decide si la corrida escribe de verdad: "
     "`correr.py` exige `MODO_TEST=true` para aceptar la bandera `--seco` (que además de eso, "
     "tampoco radica ni mueve el correo — construye el `Orquestador` con `radicador=None` y "

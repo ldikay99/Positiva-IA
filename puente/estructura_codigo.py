@@ -378,7 +378,7 @@ def correr_segmento(tramo: Dict[str, Any], defi: Dict[str, Any], base: str, cont
     fd.preparar_secretos(orden)
     entorno = {str(k): "" if v is None else str(v) for k, v in (orden.get("entorno") or {}).items()}
     e = fd.Ejecucion(sintetica, corrida, "gemini-2.5-flash", credenciales=orden.get("credenciales") or {}, entorno=entorno,
-                     flujo=str(orden.get("flujo") or base), ia_global=orden.get("ia_global"))
+                     flujo=str(orden.get("flujo") or base), ia_global=orden.get("ia_global"), subflujos=orden.get("subflujos") or {})
     correo = dict(contexto.get("correo") or {})
     nombres = [n for n, _ in contexto.get("adjuntos") or []]
     e.correo = {**correo, "adjuntos_texto": contexto.get("adjuntos_texto") or "", "adjuntos_nombres": nombres,

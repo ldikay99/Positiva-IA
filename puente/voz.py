@@ -44,7 +44,7 @@ TOPE_HERRAMIENTA = 45
 TOPE_LARGA = 300
 # Estas corren en segundo plano durante la llamada: Vera sigue hablando y haciendo otras cosas.
 LARGAS = {"responder_por_escrito", "probar_flujo", "correr_flujo", "correr_buzon", "ver_buzon", "listar_correos", "ver_logs",
-          "subir_adjuntos_a_flujo", "leer_buzon_flujo", "clonar_flujo"}
+          "subir_adjuntos_a_flujo", "leer_buzon_flujo", "clonar_flujo", "diagnosticar_flujo"}
 VOZ_POR_DEFECTO = "Laomedeia"
 
 NOTA_VOZ = """
@@ -61,10 +61,13 @@ Cómo trabajas en la llamada (dos manos):
 - «Ver», «muéstrame», «ábreme», «dónde está» = ábrelo EN PANTALLA con la herramienta de navegación que corresponda (por ejemplo, correos → abrir_correspondencia; una corrida → abrir_corrida; un documento → abrir_adjuntos) y di un dato concreto de lo que quedó a la vista («Ahí están: 389 correos, el más reciente es de Seguros Bolívar»).
 - Lo rápido lo haces tú directamente: moverte por la plataforma (navegar, abrir_*, ajustar_lienzo, centrar_nodo, filtrar_correos, seleccionar_correos), consultas cortas (resumen_tablero, listar_flujos, ultimas_corridas, estado_motor, listar_correos, ver_buzon) y acciones (correr_correos, correr_buzon, cancelar_cola).
 - Tienes las mismas herramientas que el chat escrito y las mismas reglas (no inventas, en modo prueba «se radicaría», borrar es proponer con botón). Lo largo de leer (tablas, listas, definiciones) lo dejas en el chat con escribir_en_chat y dices lo esencial en una frase.
-- Lo que necesita pensar o escribir bien —crear o cambiar un flujo, cualquier «¿por qué…?», analizar fallas, explicar resultados, comparar, cualquier lista o tabla de más de tres cosas— se lo pasas SIEMPRE a responder_por_escrito con un pedido claro y completo (y NO hagas tú esa misma parte: lo que delegas no lo repites con otras herramientas), SIN consultar ni concluir nada antes (no llames otras herramientas primero ni adelantes una respuesta): delega de una vez y espera su resultado. Lo que digas después sale SOLO de lo que devolvió responder_por_escrito. Esa herramienta lo resuelve y lo deja escrito en el chat; tú dices en una frase lo esencial («Te lo dejé en el chat: fueron tres a manual por falta de cédula»).
+- Lo que necesita pensar o escribir bien —crear un flujo, cambios de varios pasos, cualquier «¿por qué…?», explicar resultados, cualquier lista o tabla de más de tres cosas— se lo pasas SIEMPRE a responder_por_escrito con un pedido claro y completo (y NO hagas tú esa misma parte: lo que delegas no lo repites con otras herramientas), SIN consultar ni concluir nada antes (no llames otras herramientas primero ni adelantes una respuesta): delega de una vez y espera su resultado. Lo que digas después sale SOLO de lo que devolvió responder_por_escrito. Esa herramienta lo resuelve y lo deja escrito en el chat; tú dices en una frase lo esencial («Te lo dejé en el chat: fueron tres a manual por falta de cédula»).
 - Trabajas en paralelo: las tareas largas (responder_por_escrito, probar o correr flujos, el buzón real, listar correos) corren en segundo plano y te responden «en_curso». Di en pocas palabras que ya estás en eso («Lo estoy revisando») y SIGUE atendiendo: puedes responder otras preguntas y lanzar otras herramientas mientras tanto. Cuando llegue «[Resultado de la tarea N]», cuéntalo en una o dos frases y continúa.
 - Cambios puntuales a un flujo (apagar una etapa, quitar o agregar un paso, cambiar cómo se lee un tipo de archivo, también en PQRD, tutelas y sus copias) los haces tú con editar_nodo, agregar_nodo, eliminar_nodo o editar_aristas (antes ver_estructura si es de código); lo que necesita armar varios pasos o pensar, por responder_por_escrito.
-- Borrar: llama a proponer_borrado y di «Te dejé el botón para confirmar el borrado». Nunca digas que no puedes borrar.
+- Borrar: llama a proponer_borrado (varios a la vez: ids=[…], un solo botón) y di «Te dejé el botón para confirmar el borrado». Nunca digas que no puedes borrar.
+- Cruzar flujos lo haces tú: comparar_flujos (di cuántos pasos cambian y los dos más importantes; el detalle, con escribir_en_chat), traer_nodos (copiar pasos de un flujo a otro) y encadenar_flujos (que un flujo llame a otro). Di qué quedó guardado y su versión.
+- «¿Qué puedes hacer?», «¿cuáles son tus capacidades?»: dilo en dos o tres frases con los grupos de tus capacidades y un ejemplo concreto de cada uno (crear y editar flujos, también PQRD y sus copias; cruzar flujos: comparar, traer pasos, encadenar; correr correos y el buzón en prueba; revisar y diagnosticar corridas; moverte por la pantalla), y deja la lista completa en el chat con escribir_en_chat. Nada genérico como «ayudo a crear y operar flujos».
+- «¿Qué encuentras que puedas solucionar?», «¿qué falla en este flujo?»: diagnosticar_flujo del flujo en pantalla (sin preguntar cuál); cuando llegue, di los dos hallazgos más importantes con su cifra y el arreglo que propones, deja la lista completa con sus arreglos en el chat (escribir_en_chat) y ofrece aplicarlos.
 - Después de una herramienta nunca te quedes callada.
 - Si solo oyes ruido o algo sin sentido, no respondas.
 - Despedida: cuando la persona se despida o pida colgar, despídete en UNA frase cálida, corta y variada, en español y que tenga que ver con lo que hicieron (por ejemplo «Listo, quedó corriendo; cualquier cosa me llamas.» o «Perfecto, te dejo el resumen en el chat. ¡Que te rinda!»). No repitas siempre la misma despedida, no digas «con gusto, hablamos» de memoria, y llama a terminar_llamada SOLO después de terminar la frase.
@@ -151,15 +154,25 @@ PANTALLA_INICIAL: Dict[str, Any] = {}
 
 
 def anotar_en_turno(turno: "Turno", nombre: str, args: Dict[str, Any], res: Any) -> None:
-    """Lo que una herramienta deja en el turno: flujos cambiados y propuestas (el botón de confirmar, igual que por escrito)."""
-    if not isinstance(res, dict):
-        return
-    if nombre == "guardar_flujo" and res.get("flujo"):
-        turno.cambiados.add(res["flujo"]["id"])
-    if nombre in ("editar_nodo", "agregar_nodo", "eliminar_nodo", "editar_aristas", "restablecer_estructura", "configurar_ia_flujo") and (res.get("guardado") or res.get("ok")):
-        turno.cambiados.add(args.get("flujo"))
-    if nombre in ("proponer_borrado", "borrar_flujo") and res.get("propuesto"):
-        turno.propuestas.append({"accion": "borrar_flujo", "id": args.get("id")})
+    """Lo que una herramienta deja en el turno: flujos cambiados y propuestas (el botón de confirmar), con la misma regla que por escrito."""
+    asistente.anotar_resultado(nombre, args, res, turno.cambiados, turno.propuestas)
+
+
+def unir_transcripcion(previo: str, nuevo: str) -> str:
+    """Pega un fragmento de la transcripción de Gemini Live al anterior. Los fragmentos a veces llegan sin el
+    espacio entre frases («Listo, ya» + «Tienes…», «Nacional.» + «Ya puse…»): se pone donde falta, sin partir palabras."""
+    if not previo or not nuevo:
+        return previo + nuevo
+    a, b = previo[-1], nuevo[0]
+    if a.isspace() or b.isspace() or b in ".,;:!?…)»":
+        return previo + nuevo
+    if a in ".,;:" and b.isdigit() and len(previo) > 1 and previo[-2].isdigit():
+        return previo + nuevo  # 3.5, 1,2
+    if a in ".!?…,;:»)" and (b.isalnum() or b in "¿¡«("):
+        return previo + " " + nuevo
+    if a.isalpha() and a.islower() and b.isupper():
+        return previo + " " + nuevo  # «ya» + «Tienes»: dentro de una palabra no hay mayúscula
+    return previo + nuevo
 
 
 class Turno:
@@ -350,6 +363,29 @@ async def llamada(primera: Any, abrir: Any, types: Any, cid: str, flujo: str, pr
         await asyncio.to_thread(api, "POST", f"/api/chats/{cid}/turno", cuerpo)
         enviar("guardado", cambiados=sorted(t.cambiados))
 
+    cierre: Dict[str, Any] = {"tarea": None}
+
+    async def _guardar_luego() -> None:
+        await asyncio.sleep(0.9)
+        cierre["tarea"] = None
+        await guardar()
+
+    def programar_guardado() -> None:
+        if cierre["tarea"] is not None:
+            cierre["tarea"].cancel()
+        cierre["tarea"] = asyncio.create_task(_guardar_luego())
+
+    async def guardar_pendiente() -> None:
+        t = cierre["tarea"]
+        if t is not None:
+            cierre["tarea"] = None
+            t.cancel()
+            await guardar()
+
+    # Un cambio de pantalla se le cuenta a Vera en una pausa (ni ella ni la persona hablando): mandarle
+    # contenido mientras habla corta su respuesta («Buenas tardes, habla», «Listo, ya» + «Tienes…»).
+    pantalla_pendiente: Dict[str, Any] = {"nota": None, "ultima": asistente.describir_pantalla(PANTALLA_INICIAL, flujo)}
+
     async def subida() -> None:
         while not colgar.is_set():
             trama = await asyncio.to_thread(leer_trama)
@@ -366,6 +402,7 @@ async def llamada(primera: Any, abrir: Any, types: Any, cid: str, flujo: str, pr
                 continue
             m = json.loads(datos)
             if m.get("tipo") == "texto" and m.get("texto"):
+                await guardar_pendiente()
                 actividad["entrada"] = time.monotonic()
                 actividad["turno_abierto"] = True
                 turno.escuchado += (" " if turno.escuchado else "") + m["texto"]
@@ -375,7 +412,8 @@ async def llamada(primera: Any, abrir: Any, types: Any, cid: str, flujo: str, pr
                 pantalla_actual["flujo"] = (m.get("pantalla") or {}).get("flujo") or flujo
                 asistente.PANTALLA["flujo"] = pantalla_actual["flujo"]
                 nota = asistente.describir_pantalla(m.get("pantalla") or {}, (m.get("pantalla") or {}).get("flujo") or flujo)
-                await sesion.send_client_content(turns=types.Content(role="user", parts=[types.Part(text=f"[Aviso del sistema, no respondas a esto: la persona cambió de pantalla.]\n{nota}")]), turn_complete=False)
+                # se entrega en una pausa (reloj), y solo si cambió de verdad
+                pantalla_pendiente["nota"] = None if nota == pantalla_pendiente["ultima"] else nota
             elif m.get("tipo") == "mic_off":
                 await sesion.send_realtime_input(audio_stream_end=True)
             elif m.get("tipo") == "fin":
@@ -493,12 +531,13 @@ async def llamada(primera: Any, abrir: Any, types: Any, cid: str, flujo: str, pr
                                 actividad["salida"] = time.monotonic()
                                 enviar_audio(p.inline_data.data)
                     if sc.input_transcription and sc.input_transcription.text:
-                        turno.escuchado += sc.input_transcription.text
+                        await guardar_pendiente()  # la persona empezó otro turno: el anterior se guarda ya
+                        turno.escuchado = unir_transcripcion(turno.escuchado, sc.input_transcription.text)
                         actividad["entrada"] = time.monotonic()
                         actividad["turno_abierto"] = True
                         enviar("escuchado", texto=sc.input_transcription.text, total=turno.escuchado)
                     if sc.output_transcription and sc.output_transcription.text and not (despedida["hecha"] and despedida["completa"]):
-                        turno.dicho += sc.output_transcription.text
+                        turno.dicho = unir_transcripcion(turno.dicho, sc.output_transcription.text)
                         silencio["desde"] = 0.0
                         enviar("dicho", texto=sc.output_transcription.text, total=turno.dicho)
                     if sc.interrupted:
@@ -514,7 +553,9 @@ async def llamada(primera: Any, abrir: Any, types: Any, cid: str, flujo: str, pr
                         # Si devolvió una herramienta y todavía no habló de su resultado, lo que
                         # diga después pertenece a esta misma pregunta: se guarda junto.
                         if not silencio["desde"] and not (turno.pasos and not turno.dicho.strip()):
-                            await guardar()
+                            # La transcripción de lo que dijo puede llegar un poco después del fin del turno:
+                            # se guarda tras una pausa corta, para no cortar la frase («Me pediste que te…»).
+                            programar_guardado()
                 if m.go_away:
                     # La sesión se vence pronto: se renueva por dentro y la llamada sigue.
                     if not await renovar("la sesión se renueva"):
@@ -536,6 +577,7 @@ async def llamada(primera: Any, abrir: Any, types: Any, cid: str, flujo: str, pr
                     and ahora - actividad["entrada"] > 1.5 and not despedida["hecha"]):
                 numero, nombre, res = pendientes.pop(0)
                 texto = json.dumps(res, ensure_ascii=False, default=str)[:12000]
+                await guardar_pendiente()
                 try:
                     await sesion.send_client_content(turns=types.Content(role="user", parts=[types.Part(text=(
                         f"[Resultado de la tarea {numero} ({nombre})]: {texto}\n"
@@ -544,7 +586,15 @@ async def llamada(primera: Any, abrir: Any, types: Any, cid: str, flujo: str, pr
                     actividad["turno_abierto"] = True
                 except Exception:
                     pendientes.insert(0, (numero, nombre, res))
-            if silencio["desde"] and time.monotonic() - silencio["desde"] > 6 and not despedida["hecha"]:
+            en_pausa = not actividad["turno_abierto"] and ahora - actividad["salida"] > 1.5 and ahora - actividad["entrada"] > 1.5
+            if pantalla_pendiente["nota"] and en_pausa and not despedida["hecha"]:
+                nota, pantalla_pendiente["nota"] = pantalla_pendiente["nota"], None
+                try:
+                    await sesion.send_client_content(turns=types.Content(role="user", parts=[types.Part(text=f"[Aviso del sistema, no respondas a esto: la persona cambió de pantalla.]\n{nota}")]), turn_complete=False)
+                    pantalla_pendiente["ultima"] = nota
+                except Exception:
+                    pantalla_pendiente["nota"] = nota
+            if silencio["desde"] and time.monotonic() - silencio["desde"] > 6 and ahora - actividad["salida"] > 1.5 and not despedida["hecha"]:
                 silencio["desde"] = 0.0
                 try:
                     await sesion.send_client_content(turns=types.Content(role="user", parts=[types.Part(text="[Aviso del sistema: la herramienta ya terminó. Di ahora, en una frase y en español, lo esencial del resultado.]")]), turn_complete=True)
@@ -561,8 +611,8 @@ async def llamada(primera: Any, abrir: Any, types: Any, cid: str, flujo: str, pr
     try:
         await sesion.send_client_content(turns=types.Content(role="user", parts=[types.Part(text=(
             f"[Aviso del sistema: la llamada acaba de conectarse. Saluda tú primero con UNA frase corta y natural, empezando por «{franja.capitalize()}», "
-            + ("y di tu nombre una sola vez («habla Vera»), " if primera_llamada else "sin presentarte, ")
-            + "y deja la puerta abierta para que la persona hable (por ejemplo «¿qué hacemos?» o «cuéntame»). Nada de listas de lo que puedes hacer.]"))]),
+            "sin presentarte ni decir tu nombre ni el de la plataforma, "
+            "y deja la puerta abierta para que la persona hable (por ejemplo «¿qué hacemos?» o «cuéntame»). Nada de listas de lo que puedes hacer.]"))]),
             turn_complete=True)
     except Exception:
         pass
@@ -573,6 +623,9 @@ async def llamada(primera: Any, abrir: Any, types: Any, cid: str, flujo: str, pr
     vivas = list(tareas_vivas.values())
     if vivas:
         await asyncio.wait(vivas, timeout=120)
+    if cierre["tarea"] is not None:
+        cierre["tarea"].cancel()
+        cierre["tarea"] = None
     await guardar()
     enviar("terminando", motivo="colgado")
 

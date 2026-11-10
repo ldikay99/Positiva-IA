@@ -745,6 +745,14 @@ class Orquestador:
                             recordar(email, radicado)
                         if fallo:
                             res.avisos.append(f"deduplicacion degradada: {fallo}")
+                        guardar = getattr(self.duplicados, "guardar_en_auditoria", None)
+                        if guardar is not None:
+                            documento = hallazgos.get("numero_documento_afectado")
+                            fallo = await guardar(
+                                email, radicado,
+                                getattr(documento, "valor", "") or "")
+                            if fallo:
+                                res.avisos.append(f"registro de radicados degradado: {fallo}")
                         await self._mover_a_exitosa(email, radicado, res.avisos)
                 else:
                     res.accion = "manual"

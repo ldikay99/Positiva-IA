@@ -25,7 +25,7 @@ from services.gemini import GeminiService
 from services.document_extractor import DocumentExtractorService
 from services.gemini_agents import LangChainAgents
 from services.radicacion import RadicacionService
-from services.supabase_client import SupabaseService
+from services.registro_radicados import RegistroDeRadicados
 from services.cloud_storage import CloudStorageDownloader, extraer_urls_cloud
 from services.asignacion_ia_client import AsignacionIAClient
 
@@ -77,7 +77,7 @@ class PqrdOrchestrator:
         self.document_extractor = DocumentExtractorService()
         self.langchain = LangChainAgents()
         self.radicacion = RadicacionService()
-        self.supabase = SupabaseService()
+        self.registro = RegistroDeRadicados()
         self.logger = RichLogger(verbose=verbose)
         self.clasificador_remitente = ClasificadorRemitente(self.gemini)
         self.cloud_storage = CloudStorageDownloader()
@@ -89,9 +89,9 @@ class PqrdOrchestrator:
         if hasattr(self.redis, "close"):
             await self.redis.close()
 
-        # Cerrar Supabase
-        if hasattr(self.supabase, "close"):
-            self.supabase.close()
+        # Cerrar el registro de radicados
+        if hasattr(self.registro, "close"):
+            self.registro.close()
 
         # Cerrar Gemini client
         if hasattr(self.langchain, "close"):
@@ -252,18 +252,18 @@ class PqrdOrchestrator:
                 },
             )
 
-            # 3. Verificar duplicado en SUPABASE (por asunto + remitente)
+            # 3. Verificar duplicado en el registro de radicados (por asunto + remitente)
             self.logger.step_start(
-                "SUPABASE_CHECK", "Verificando duplicado en Supabase..."
+                "REGISTRO_CHECK", "Verificando duplicado en el registro de radicados..."
             )
             correo_remitente = email.from_address.address if email.from_address else ""
             if correo_remitente and email.subject:
-                exists_in_supabase = await self.supabase.email_exists(
+                exists_in_registro = await self.registro.email_exists(
                     correo_remitente, email.subject
                 )
-                if exists_in_supabase:
+                if exists_in_registro:
                     self.logger.step_warning(
-                        "Correo duplicado encontrado en Supabase (mismo asunto + remitente)"
+                        "Correo duplicado encontrado en el registro de radicados (mismo asunto + remitente)"
                     )
                     await self.outlook.move_email(
                         email_id, settings.OUTLOOK_FOLDER_DUPLICADOS
@@ -273,7 +273,7 @@ class PqrdOrchestrator:
                     result.duration_ms = int((time.time() - start_time) * 1000)
                     self.logger.finish_duplicate(result.duration_ms)
                     return result
-            self.logger.step_success("No encontrado en Supabase")
+            self.logger.step_success("No encontrado en el registro de radicados")
 
             # 4. Verificar duplicado en REDIS (por hash de contenido)
             self.logger.step_start("REDIS_CHECK", "Verificando duplicado en Redis...")
@@ -851,27 +851,24 @@ class PqrdOrchestrator:
                     "Error guardando en Redis (continuando de todas formas)"
                 )
 
-            # 19. Guardar en Supabase (no bloqueante - la radicación ya fue exitosa)
-            self.logger.step_start("SUPABASE", "Guardando registro en Supabase...")
+            # 19. Guardar en el registro de radicados (no bloqueante - la radicación ya fue exitosa)
+            self.logger.step_start("REGISTRO", "Guardando en el registro de radicados...")
             try:
-                await self.supabase.save_radicado_record(
+                await self.registro.guardar_radicado(
                     numero_radicado=radicacion_response.id_radicado,
-                    fecha_radicacion=radicacion_response.fecha_radicacion,
                     asunto=email.subject,
                     correo_remitente=email.from_address.address
                     if email.from_address
                     else "",
                     asignado_automatico=asignado_automatico,
                     persona_asignada=persona_asignada,
-                    email_hash=email_hash,
-                    email_id=email_id,
                     numero_documento_afectado=ai_data.numero_documento_afectado,
                 )
-                self.logger.step_success("Registro guardado en Supabase")
-            except Exception as supabase_error:
-                # Supabase es opcional - no debe fallar la radicación
+                self.logger.step_success("Guardado en el registro de radicados")
+            except Exception as error_registro:
+                # El registro no debe fallar la radicación
                 self.logger.step_warning(
-                    f"Error en Supabase (no crítico): {str(supabase_error)}"
+                    f"Error en el registro de radicados (no crítico): {str(error_registro)}"
                 )
 
             # 20. Etiquetar correo con numero de radicado

@@ -40,6 +40,16 @@ const NOMBRE_HERRAMIENTA: Record<string, string> = {
   editar_aristas: "Cambia las conexiones",
   proponer_borrado: "Propone borrar un flujo",
   borrar_flujo: "Propone borrar un flujo",
+  comparar_flujos: "Compara dos flujos",
+  traer_nodos: "Trae pasos de otro flujo",
+  encadenar_flujos: "Encadena dos flujos",
+  diagnosticar_flujo: "Diagnostica el flujo",
+  ver_programacion: "Revisa la programación",
+  programar_flujo: "Cambia la programación",
+  ver_recursos: "Revisa los recursos",
+  ajustar_recursos: "Ajusta los recursos",
+  archivos_del_flujo: "Revisa los archivos del flujo",
+  reiniciar_trabajador: "Reinicia un trabajador",
   enfocar_flujo: "Abre el flujo en pantalla",
   navegar: "Te lleva a otra vista",
   abrir_corrida: "Abre una corrida",
@@ -208,6 +218,8 @@ window.addEventListener("popstate", () => reportarPantalla());
 
 /** Lo que Vera hace en la pantalla de la persona (igual en el chat escrito y en la llamada). */
 async function aplicarEnPantalla(d: { tipo: string; [k: string]: unknown }) {
+  // Un flujo que Vera acaba de crear o clonar todavía no está en la lista de esta pestaña.
+  if (typeof d.flujo === "string" && d.flujo && !usar.getState().flujos.some((f) => f.id === d.flujo)) await usar.getState().cargarFlujos().catch(() => undefined);
   const s = usar.getState();
   if (d.tipo === "enfocar" && typeof d.flujo === "string") {
     await s.cambiarFlujo(d.flujo);
@@ -527,6 +539,18 @@ export function Chat() {
         await pedir(`/api/flujos/${encodeURIComponent(p.id)}`, { method: "DELETE" });
         avisar(`Flujo «${flujos.find((f) => f.id === p.id)?.nombre ?? p.id}» borrado`, "info");
         void cargarFlujos();
+      } else if (acepta && p.accion === "borrar_flujos") {
+        // uno por uno: si uno falla, los demás siguen y se dice cuál quedó
+        const fallos: string[] = [];
+        for (const id of p.id.split(",").filter(Boolean)) {
+          try {
+            await pedir(`/api/flujos/${encodeURIComponent(id)}`, { method: "DELETE" });
+          } catch (e) {
+            fallos.push(`${flujos.find((f) => f.id === id)?.nombre ?? id}: ${(e as Error).message}`);
+          }
+        }
+        avisar(fallos.length ? `No se borraron: ${fallos.join(" · ")}` : `${p.id.split(",").length} flujos borrados`, fallos.length ? "error" : "info");
+        void cargarFlujos();
       }
       await pedir(`/api/chats/${actual.id}/propuestas`, { method: "POST", body: JSON.stringify({ mensaje: i, accion: p.accion, objetivo: p.id, estado: acepta ? "hecha" : "descartada" }) });
     } catch (e) {
@@ -657,13 +681,15 @@ export function Chat() {
                         {!!m.propuestas?.length && (
                           <div className="chat-propuestas">
                             {m.propuestas.map((p) => {
-                              const nombre = flujos.find((f) => f.id === p.id)?.nombre ?? p.id;
-                              if (p.estado) return <span key={p.id} className="chat-propuesta-hecha">{p.estado === "hecha" ? `Borraste «${nombre}».` : `Decidiste no borrar «${nombre}».`}</span>;
+                              const ids = p.accion === "borrar_flujos" ? p.id.split(",").filter(Boolean) : [p.id];
+                              const nombre = ids.map((id) => `«${flujos.find((f) => f.id === id)?.nombre ?? id}»`).join(", ").replace(/^«(.*)»$/, "$1");
+                              const varios = ids.length > 1;
+                              if (p.estado) return <span key={p.id} className="chat-propuesta-hecha">{varios ? (p.estado === "hecha" ? `Borraste ${nombre}.` : `Decidiste no borrar ${nombre}.`) : p.estado === "hecha" ? `Borraste «${nombre}».` : `Decidiste no borrar «${nombre}».`}</span>;
                               return (
                                 <div key={p.id} className="chat-propuesta">
-                                  <span>¿Borrar el flujo «{nombre}»? No se puede deshacer.</span>
+                                  <span>{varios ? `¿Borrar estos ${ids.length} flujos: ${nombre}? No se puede deshacer.` : `¿Borrar el flujo «${nombre}»? No se puede deshacer.`}</span>
                                   <div>
-                                    <button className="boton chico peligro" onClick={() => void resolverPropuesta(i, p, true)}>Sí, borrar</button>
+                                    <button className="boton chico peligro" onClick={() => void resolverPropuesta(i, p, true)}>{varios ? `Sí, borrar los ${ids.length}` : "Sí, borrar"}</button>
                                     <button className="boton chico fantasma" autoFocus onClick={() => void resolverPropuesta(i, p, false)}>Ahora no</button>
                                   </div>
                                 </div>

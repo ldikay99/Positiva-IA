@@ -72,7 +72,7 @@ es exactamente lo que hace el servicio real.
 ## Seguridad
 
 Nada se escribe en un sistema real. El motor corre con `MODO_TEST`: el envío a SGDEA se corta y
-se muestra como simulado, y las credenciales de SGDEA, Redis y Supabase son falsas. Sí se
+se muestra como simulado, las credenciales de SGDEA y Redis son falsas y el INSERT al registro de radicados (Cloud SQL) queda retenido. Sí se
 consultan Vertex AI, el registro de personas y el buzón, que son lecturas.
 
 El buzón real (`puente/buzon_vivo.py`) lee los secretos de Graph de Secret Manager con el ADC

@@ -24,7 +24,7 @@ import { cifrar, descifrar } from "./credenciales.ts";
 
 export const NOMBRE = /^[A-Z][A-Z0-9_]{0,63}$/;
 /** Lo que un flujo nunca puede poner en su entorno: lo maneja la plataforma. */
-export const PROTEGIDAS = /^(MODO_TEST|DEDUP_EN_PRUEBAS|SUPABASE_\w*|MICROSOFT_\w*|OUTLOOK_\w*|SGDEA_\w*|REDIS_\w*|PQRD_\w*|TUTELAS_\w*|GOOGLE_\w*|GCP_\w*|PROYECTO_SECRETOS|PATH|HOME|USER|SHELL|PYTHON\w*|NODE_\w*|NPM_\w*|LD_\w*|RUTA_\w*|CLAVE_CREDENCIALES|HTTP_HOSTS_PERMITIDOS|HTTPS?_PROXY|NO_PROXY|PUERTO|HOST|TRABAJADORES_MAX|TESSDATA_PREFIX|API_INTERNA|NIVEL_LOG|SSL_\w*|REQUESTS_CA_BUNDLE|CURL_\w*|DATABASE_\w*)$/;
+export const PROTEGIDAS = /^(MODO_TEST|DEDUP_EN_PRUEBAS|SUPABASE_\w*|CLOUDSQL_\w*|MICROSOFT_\w*|OUTLOOK_\w*|SGDEA_\w*|REDIS_\w*|PQRD_\w*|TUTELAS_\w*|GOOGLE_\w*|GCP_\w*|PROYECTO_SECRETOS|PATH|HOME|USER|SHELL|PYTHON\w*|NODE_\w*|NPM_\w*|LD_\w*|RUTA_\w*|CLAVE_CREDENCIALES|HTTP_HOSTS_PERMITIDOS|HTTPS?_PROXY|NO_PROXY|PUERTO|HOST|TRABAJADORES_MAX|TESSDATA_PREFIX|API_INTERNA|NIVEL_LOG|SSL_\w*|REQUESTS_CA_BUNDLE|CURL_\w*|DATABASE_\w*)$/;
 /**
  * Lo que NINGÚN flujo puede poner, ni siquiera un flujo de código con los nombres de
  * su job: el modo prueba, la compuerta y su segunda llave, y lo interno de la plataforma.
@@ -43,6 +43,9 @@ export const NOMBRES_DEL_JOB: Record<string, ReadonlySet<string>> = {
     "OUTLOOK_FOLDER_DUPLICADOS", "OUTLOOK_FOLDER_ERROR_RADICAR", "OUTLOOK_FOLDER_RADICACION_EXITOSA",
     "OUTLOOK_FOLDER_REENVIADO_OTRA_AREA", "OUTLOOK_FOLDER_REVISAR_MANUAL",
     "REDIS_PASSWORD", "REDIS_HOST", "REDIS_PORT",
+    // Registro de radicados en Cloud SQL (motor desde 1d11744; infra los monta de PQRD_CLOUDSQL_*).
+    "CLOUDSQL_HOST", "CLOUDSQL_USER", "CLOUDSQL_PASSWORD", "CLOUDSQL_INSTANCE", "CLOUDSQL_PORT", "CLOUDSQL_DB", "CLOUDSQL_SSL", "CLOUDSQL_TABLE_RADICADOS_IAPQRD",
+    // El motor ya no los lee (1d11744 quitó Supabase); se aceptan para no romper los entornos ya copiados.
     "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY",
     "SGDEA_CLIENT_SECRET", "SGDEA_PASSWORD", "SGDEA_TOKEN_URL", "SGDEA_CLIENT_ID", "SGDEA_USERNAME",
     "OPENAI_API_KEY", "GOOGLE_API_KEY", "GCP_PROJECT", "GCP_LOCATION", "CORREO_DE_AVISOS",

@@ -1,6 +1,12 @@
 # Divergencias con producción
 
-`motor/` nació como copia sin cambios de `mcp-fix` en `7540e18` (ver `ORIGEN`). Desde el 2026-11-09 diverge: aquí se mide y se aligera el motor. Cada fila dice qué cambió, por qué, cómo se midió y si conviene llevarlo a producción. Las cifras completas están en `docs/RENDIMIENTO_MOTOR.md`.
+`motor/` nació como copia sin cambios de `mcp-fix` en `7540e18`. Desde el 2026-11-09 diverge: aquí se mide y se aligera el motor.
+
+**Al día con producción en `6ecdf40` (2026-11-10, ver `ORIGEN`).** Se aplicó encima el diff `7540e18..6ecdf40` de `mcp-fix` (sin conflictos), en vez de correr `catalogo/sincronizar_motor.sh`, que deja `motor/` idéntico al commit y borraría las divergencias de esta tabla:
+- `1d11744`: el job ya no usa Supabase; guarda cada radicado en Cloud SQL (base `gcpprolinktic`, tabla `iapqrd_radicados_pqrd`) con `services/registro_radicados.py` (`RegistroDeRadicados`, pg8000, variables `CLOUDSQL_*`), y la capa 6 consulta esa tabla. Sin `CLOUDSQL_HOST`, `CLOUDSQL_USER` o `CLOUDSQL_PASSWORD`, «sin auditoría».
+- `6ecdf40`: la capa 6 (remitente y asunto) no aplica a buzones de Positiva (`es_buzon_de_positiva`).
+
+Comprobado: fuera de los archivos de las tablas de abajo, `motor/` es byte a byte el `git archive` de `6ecdf40` (con las mismas exclusiones del script). Los archivos que difieren son exactamente los de estas divergencias: `harness/universo.py`, `pipeline/{agente,compuerta,conversion,costo,extraccion,materializar,modelo,workspace}.py`, `servidor_mcp/herramientas.py` y cuatro pruebas, más los archivos nuevos de abajo. La próxima sincronización tiene que hacerse igual (diff del último `ORIGEN` al commit nuevo), no con el script. Cada fila dice qué cambió, por qué, cómo se midió y si conviene llevarlo a producción. Las cifras completas están en `docs/RENDIMIENTO_MOTOR.md`.
 
 Para portar un cambio basta con su commit: todos tocan solo `motor/` (salvo los marcados como de la plataforma) y traen sus pruebas.
 
@@ -47,5 +53,6 @@ Para portar un cambio basta con su commit: todos tocan solo `motor/` (salvo los 
 
 ## Solo en la plataforma
 
+- `puente/trabajador.py`: el registro de radicados va como en el job (sin `CLOUDSQL_*`, «sin auditoría», anunciado en «fuentes» como hecho y no como fallo); con `CLOUDSQL_*` y la compuerta apagada, con una conexión de solo lectura (`solo_lectura.conectar_registro_solo_lectura`: sesión read only, solo SELECT, prueba de alcance de 3 s porque la instancia solo tiene IP privada) y el INSERT retenido en el grabador (evento `escritura` con `sistema: registro_radicados`).
 - `puente/trabajador.py`: con la caché del motor, la plataforma le da su carpeta y anuncia cada acierto (evento `cache_conversion`); `modelo_fin` lleva los tokens de razonamiento y de caché.
 - `web/`: el detalle de cada ejecución muestra el tiempo por etapa, las llamadas al modelo por quién, los tokens (de entrada desde la caché y de salida en razonamiento), las hojas leídas con OCR y los adjuntos tomados de la caché.

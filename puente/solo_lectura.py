@@ -2,11 +2,15 @@
 Lo que necesitan los trabajadores de PQRD y tutelas para leer de verdad SIN escribir.
 
 Con la compuerta de radicación apagada el motor corre en MODO_TEST, y MODO_TEST
-apaga también algunas lecturas (Supabase no crea cliente, Redis de tutelas no
-consulta). Aquí no se sale de MODO_TEST: se ponen adaptadores que solo saben leer.
+apaga también algunas lecturas (Redis de tutelas no consulta). Aquí no se sale de
+MODO_TEST: se ponen adaptadores que solo saben leer.
 
-  - `ConsultaSupabase`: el `table().select().eq()…execute()` que usa el motor, sobre
-    PostgREST con GET. insert, update, upsert, delete y rpc lanzan PermissionError.
+  - `conectar_registro_solo_lectura`: el `conectar` del registro de radicados de
+    PQRD (Cloud SQL, pg8000) en una sesión de solo lectura que solo deja SELECT, con
+    una prueba rápida de alcance (la instancia solo tiene IP privada).
+  - `ConsultaSupabase`: el `table().select().eq()…execute()` de supabase-py sobre
+    PostgREST con GET (PQRD lo usaba hasta el motor 1d11744; queda para quien lo
+    necesite). insert, update, upsert, delete y rpc lanzan PermissionError.
   - `RedisSoloLectura`: un cliente de Redis que solo deja GET, EXISTS, TTL y PING.
   - `conectar_postgres_solo_lectura`: una sesión con default_transaction_read_only.
 
@@ -208,6 +212,93 @@ class RedisSoloLectura:
         if nombre in self.PERMITIDOS:
             return getattr(self._real, nombre)
         raise PermissionError(f"Redis en solo lectura: {nombre} no está permitido")
+
+
+# ------------------------------------------- registro de radicados (Cloud SQL)
+
+# Lo único que el registro de radicados del motor ejecuta para leer: fijar la zona
+# horaria de la sesión y el SELECT de la capa 6. El INSERT no llega aquí en
+# MODO_TEST (el motor lo graba en el grabador); si llegara, se rechaza.
+_SENTENCIAS_DE_LECTURA = ("select ", "set time zone ")
+# Cloud SQL del job solo tiene IP privada: desde el visor casi nunca se alcanza.
+# Se prueba una vez por proceso con un tope corto en vez de esperar los 10 s del
+# motor en cada correo.
+TIEMPO_DE_PRUEBA_S = 3.0
+_alcance: Dict[Tuple[str, int], str] = {}
+
+
+def alcanza(host: str, puerto: int, tope_s: float = TIEMPO_DE_PRUEBA_S) -> str:
+    """Cadena vacía si se abre una conexión TCP a host:puerto; si no, el motivo. Se recuerda por proceso."""
+    clave = (host, int(puerto))
+    if clave not in _alcance:
+        import socket
+
+        try:
+            with socket.create_connection(clave, timeout=tope_s):
+                _alcance[clave] = ""
+        except OSError as e:
+            _alcance[clave] = (f"{type(e).__name__}: no se alcanza en {tope_s:g} s "
+                               "(Cloud SQL del job solo tiene IP privada, dentro de la VPC)")
+    return _alcance[clave]
+
+
+class _ConexionSoloLectura:
+    """Una conexión de pg8000.native que solo deja leer, en una sesión de solo lectura."""
+
+    def __init__(self, real, evento: Optional[Callable[..., None]], mascara: Optional[Callable[[str], str]]) -> None:
+        self._real, self._evento, self._mascara = real, evento, mascara
+
+    def run(self, sql: str, **parametros: Any):
+        if not sql.strip().lower().startswith(_SENTENCIAS_DE_LECTURA):
+            raise PermissionError("registro de radicados en solo lectura: solo SELECT")
+        es_consulta = sql.strip().lower().startswith("select ")
+        t = time.time()
+        try:
+            filas = self._real.run(sql, **parametros)
+        except Exception as e:
+            if self._evento and es_consulta:
+                self._evento("lectura_real", sistema="registro de radicados (Cloud SQL)", operacion="select iapqrd_radicados_pqrd",
+                             ok=False, ms=int((time.time() - t) * 1000), error=_error(e, self._mascara))
+            raise
+        if self._evento and es_consulta:
+            self._evento("lectura_real", sistema="registro de radicados (Cloud SQL)", operacion="select iapqrd_radicados_pqrd",
+                         ok=True, ms=int((time.time() - t) * 1000), resultado=f"{len(filas or [])} fila(s)")
+        return filas
+
+    def close(self) -> None:
+        self._real.close()
+
+
+def conectar_registro_solo_lectura(evento: Optional[Callable[..., None]] = None,
+                                   mascara: Optional[Callable[[str], str]] = None,
+                                   conectar: Optional[Callable[..., Any]] = None,
+                                   probar: Callable[[str, int], str] = alcanza) -> Callable[..., Any]:
+    """
+    El `conectar` que recibe `RegistroDeRadicados` del motor, de solo lectura.
+
+    Antes de abrir prueba si el host se alcanza (una vez por proceso): si no, lanza
+    ConnectionError al instante y el motor lo trata como la base caída (la capa 6
+    queda «degradada» con el motivo, como en el job). La sesión queda en
+    `default_transaction_read_only` y la conexión solo deja pasar SELECT.
+    """
+
+    def _conectar(**kw: Any):
+        motivo = probar(kw.get("host", ""), int(kw.get("port") or 5432))
+        if motivo:
+            if evento:
+                evento("lectura_real", sistema="registro de radicados (Cloud SQL)", operacion="conectar",
+                       ok=False, ms=0, error=_error(ConnectionError(motivo), mascara))
+            raise ConnectionError(motivo)
+        if conectar is None:
+            import pg8000.native
+
+            real = pg8000.native.Connection(**kw)
+        else:
+            real = conectar(**kw)
+        real.run("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
+        return _ConexionSoloLectura(real, evento, mascara)
+
+    return _conectar
 
 
 # ------------------------------------------------------------------ Postgres

@@ -20,11 +20,11 @@ import pytest
 
 RAIZ = Path(__file__).resolve().parent.parent
 
-# Los diez secretos que `config.settings` exige.
+# Los secretos que `config.settings` exige, mas el de Redis.
 SECRETOS = (
     "MICROSOFT_CLIENT_ID", "MICROSOFT_CLIENT_SECRET", "MICROSOFT_TENANT_ID",
     "OUTLOOK_REFRESH_TOKEN", "OUTLOOK_FOLDER_ID", "REDIS_PASSWORD",
-    "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "SGDEA_CLIENT_SECRET",
+    "SGDEA_CLIENT_SECRET",
     "SGDEA_PASSWORD",
 )
 

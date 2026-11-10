@@ -78,12 +78,11 @@ def test_redis_con_dns_caido_degrada_pero_queda_registrado():
     assert clase.severidad is Severidad.DEGRADA
 
 
-def test_supabase_con_esquema_desalineado_no_se_reintenta():
-    """PGRST204: la columna no existe. Reintentar no la crea, hay que migrar."""
+def test_tabla_con_esquema_desalineado_no_se_reintenta():
+    """42703: la columna no existe. Reintentar no la crea, hay que migrar."""
     clase = clasificar(
-        cuerpo="{'message': \"Could not find the 'numero_documento_afectado' "
-               "column of 'radicados_pqrd' in the schema cache\", "
-               "'code': 'PGRST204'}"
+        cuerpo="{'S': 'ERROR', 'C': '42703', 'M': 'column \"numero_documento_afectado\" "
+               "of relation \"iapqrd_radicados_pqrd\" does not exist'}"
     )
     assert clase.codigo == "ESQUEMA_DESALINEADO"
     assert clase.reintentable is False

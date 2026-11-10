@@ -18,7 +18,7 @@ RAIZ = Path(__file__).resolve().parent.parent
 if str(RAIZ) not in sys.path:
     sys.path.insert(0, str(RAIZ))
 
-# Valores ficticios: estas pruebas NO usan Outlook, Redis, Supabase ni SGDEA.
+# Valores ficticios: estas pruebas NO usan Outlook, Redis, la base de radicados ni SGDEA.
 _SECRETOS_FICTICIOS = {
     "MICROSOFT_CLIENT_ID": "test",
     "MICROSOFT_CLIENT_SECRET": "test",
@@ -26,8 +26,6 @@ _SECRETOS_FICTICIOS = {
     "OUTLOOK_REFRESH_TOKEN": "test",
     "OUTLOOK_FOLDER_ID": "test",
     "REDIS_PASSWORD": "test",
-    "SUPABASE_URL": "https://test.supabase.co",
-    "SUPABASE_SERVICE_ROLE_KEY": "test",
     "SGDEA_CLIENT_SECRET": "test",
     "SGDEA_PASSWORD": "test",
     # Cinturon extra: si algo intentara escribir, MODO_TEST lo bloquea.

@@ -37,16 +37,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-# Esta medida no habla con Outlook, Supabase ni SGDEA: solo con Vertex, que va
+# Esta medida no habla con Outlook, la base de radicados ni SGDEA: solo con Vertex, que va
 # por ADC. Los secretos de esos servicios se rellenan con ficticios ANTES de
 # importar el proyecto (como tests/conftest.py), asi ningun cliente del cliente
 # puede autenticarse aunque algo intentara llamarlo.
 for _clave in ("MICROSOFT_CLIENT_ID", "MICROSOFT_CLIENT_SECRET",
                "MICROSOFT_TENANT_ID", "OUTLOOK_REFRESH_TOKEN", "OUTLOOK_FOLDER_ID",
-               "REDIS_PASSWORD", "SGDEA_CLIENT_SECRET", "SGDEA_PASSWORD",
-               "SUPABASE_SERVICE_ROLE_KEY"):
+               "REDIS_PASSWORD", "SGDEA_CLIENT_SECRET", "SGDEA_PASSWORD"):
     os.environ.setdefault(_clave, "e2e-ficticio")
-os.environ.setdefault("SUPABASE_URL", "https://e2e-ficticio.supabase.co")
 os.environ["MODO_TEST"] = "true"
 
 from harness.atribucion import coincide  # noqa: E402

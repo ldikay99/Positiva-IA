@@ -124,8 +124,8 @@ muestra como llamada sin métricas, que es mejor que estimar.
 | `GCP_LOCATION` | `us-east1` | No: hardcodeada |
 | `GOOGLE_API_KEY` | — | **No se usa.** Ver arriba |
 
-Los diez secretos obligatorios de `config/settings.py` son de Outlook, Redis,
-Supabase y SGDEA. **Ninguno es de Vertex**: Vertex va por ADC.
+Los secretos obligatorios de `config/settings.py` son de Outlook y SGDEA, y los
+del registro de radicados son de Cloud SQL. **Ninguno es de Vertex**: Vertex va por ADC.
 
 ### Permisos de la service account
 

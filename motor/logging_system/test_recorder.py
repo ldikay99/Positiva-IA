@@ -2,14 +2,14 @@
 Grabador de escrituras para MODO_TEST.
 
 Cuando settings.MODO_TEST=True, las escrituras del agente (radicar/traza/asignar
-en SGDEA, etiquetar/mover/reenviar en Outlook, guardar dedup en Redis/Supabase)
+en SGDEA, etiquetar/mover/reenviar en Outlook, guardar dedup en Redis y en la base de radicados)
 NO se ejecutan: se registran aqui en archivos CSV para poder validar TODO lo que
 el agente HARIA, sin tocar produccion.
 
 Salidas (en settings.TEST_OUTPUT_DIR, por defecto ./salidas_prueba/):
   - radicaciones.csv : 1 fila por radicacion -> tabla para validar los datos extraidos.
   - escrituras.csv   : 1 fila por cada escritura interceptada (radicar, traza,
-                       asignar, etiquetar, mover, reenviar, redis, supabase),
+                       asignar, etiquetar, mover, reenviar, redis, registro),
                        correlacionada con el correo por el contexto.
 """
 import csv

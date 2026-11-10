@@ -265,6 +265,7 @@ def _instalar_conversion(conversion) -> None:
             finally:
                 _estado["profundidad"] -= 1
         _estado["profundidad"] = 1
+        _estado["convertido"] = True
         doc = _abrir_adjunto(conversion, datos, nombre, a[0] if a else k.get("claves_candidatas"))
         try:
             c = convertir_original(datos, nombre, *a, **k)
@@ -470,12 +471,32 @@ def _abrir_adjunto(conversion, datos: bytes, nombre: str, claves) -> Optional[Di
     return doc
 
 
+MAX_HOJAS_DE_CACHE = 80
+
+
+def _hojas_de_cache(doc: Dict[str, Any]) -> None:
+    """
+    El adjunto salió de la caché de conversión (ya se había leído en otra corrida): el motor
+    no pasó por ninguna hoja, pero la pantalla igual muestra cada una con su imagen, marcada
+    como leída antes, en vez de una hoja en blanco.
+    """
+    for numero in range(1, min(doc.get("paginas") or 0, MAX_HOJAS_DE_CACHE) + 1):
+        archivos = _preparar_hoja(doc, numero)
+        doc["hojas"][numero] = "cache"
+        _evento("hoja", adjunto=doc["clave"], nombre=doc["nombre"], pagina=numero, total=doc.get("paginas") or 0,
+                metodo="cache", ms=0, pasos=[{"paso": "cache"}], girada=0, relectura_200=False, vision=False,
+                vision_intentada=False, **archivos)
+
+
 @_seguro("adjunto")
 def _cerrar_adjunto(doc, c, error: str = "") -> None:
     if not doc:
         return
     _estado["doc"] = None
     _estado["ultimo"] = doc["clave"]
+    # Las hojas de un adjunto que salió de la caché se renderizan antes de cerrar el PDF.
+    if not error and not doc["hojas"] and (doc.get("pdf") is not None or doc.get("imagen") is not None):
+        _hojas_de_cache(doc)
     if doc.get("pdf") is not None:
         try:
             doc["pdf"].close()
@@ -904,3 +925,35 @@ def instalar(evento: Callable[..., None]) -> None:
 
     _instalar_conversion(conversion)
     _instalar_workspace(workspace)
+    _instalar_cache(conversion)
+
+
+def _instalar_cache(conversion) -> None:
+    """
+    Un acierto de la caché de conversión del motor no llama a `conversion.convertir`, así que
+    el adjunto no pasaba por el visor: sus hojas quedaban sin imagen. Aquí se anuncia igual,
+    con cada hoja renderizada y marcada como leída antes.
+    """
+    try:
+        from pipeline import cache_conversion
+    except ImportError:
+        return
+    original = cache_conversion.convertir
+
+    @functools.wraps(original)
+    def convertir(datos, nombre, claves_candidatas=None, presupuesto=None):
+        # Si el motor convirtió de verdad, el envoltorio de conversion.convertir lo marca en el
+        # estado de ESTE correo (los contadores de la caché son de todo el proceso).
+        _estado["convertido"] = False
+        c = original(datos, nombre, claves_candidatas, presupuesto=presupuesto)
+        if not _estado.get("convertido") and c is not None and _estado.get("dir") and not _estado.get("doc"):
+            _adjunto_de_cache(conversion, datos, nombre, claves_candidatas, c)
+        return c
+
+    cache_conversion.convertir = convertir
+
+
+@_seguro("adjunto")
+def _adjunto_de_cache(conversion, datos, nombre, claves, c) -> None:
+    doc = _abrir_adjunto(conversion, datos, nombre, claves)
+    _cerrar_adjunto(doc, c)

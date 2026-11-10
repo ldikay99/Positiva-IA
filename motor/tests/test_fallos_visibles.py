@@ -280,7 +280,7 @@ async def test_un_cliente_que_se_traga_el_error_tampoco_engaña_al_agente(tmp_pa
 @pytest.mark.parametrize("modulo,clase", [
     ("services.outlook", "OutlookService"),
     ("services.redis_client", "RedisService"),
-    ("services.supabase_client", "SupabaseService"),
+    ("services.registro_radicados", "RegistroDeRadicados"),
 ])
 def test_los_clientes_de_consulta_exponen_ultimo_error(modulo, clase):
     """

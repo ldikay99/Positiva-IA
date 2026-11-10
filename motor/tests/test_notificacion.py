@@ -60,7 +60,7 @@ def test_el_correo_no_nombra_piezas_del_sistema(motivo):
     prohibidos = (
         "modelo", "pipeline", "compuerta", "cloudflare", "backend", "traza",
         "corpus", "agente", "token", "prompt", "sgdea", "vertex", "gemini",
-        "redis", "supabase", "ocr", "regex", "json", "api", "log",
+        "redis", "postgres", "ocr", "regex", "json", "api", "log",
     )
     texto = _texto(redactar("manual", motivo=motivo)).lower()
     encontrados = [p for p in prohibidos if re.search(rf"\b{p}\w*\b", texto)]

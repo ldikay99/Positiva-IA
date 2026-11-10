@@ -222,9 +222,12 @@ def _auditoria():
     informe de cada correo.
     """
     try:
-        from services.supabase_client import SupabaseService
+        from services.registro_radicados import RegistroDeRadicados
 
-        return SupabaseService()
+        if not RegistroDeRadicados.configurado():
+            print("AVISO: sin auditoria (faltan CLOUDSQL_HOST, CLOUDSQL_USER o CLOUDSQL_PASSWORD)")
+            return None
+        return RegistroDeRadicados()
     except Exception as e:
         print(f"AVISO: sin auditoria ({type(e).__name__}: {e})")
         return None

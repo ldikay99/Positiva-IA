@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { pedir, usar } from "../estado.ts";
 import { Icono } from "../iconos.tsx";
 import { peso } from "./Archivos.tsx";
+import { DialogoCruzar, type ModoCruzar } from "./CruzarFlujos.tsx";
 import "./archivos.css";
 
 /**
@@ -61,6 +62,8 @@ export function AccionesFlujo({ flujo, variante = "cabecera", alClonar }: { fluj
   const [error, setError] = useState("");
   const [enviando, setEnviando] = useState(false);
   const [borrado, setBorrado] = useState<Borrado | null>(null);
+  // comparar con otro flujo y traer pasos de otro (CruzarFlujos.tsx), en la cabecera del flujo
+  const [cruzar, setCruzar] = useState<ModoCruzar | null>(null);
   const caja = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -183,6 +186,16 @@ export function AccionesFlujo({ flujo, variante = "cabecera", alClonar }: { fluj
         <button type="button" className={`boton chico fantasma ${panel === "clonar" ? "activo" : ""}`} aria-expanded={panel === "clonar"} aria-label="Clonar" onClick={() => abrir("clonar")} title="Hacer una copia independiente para editarla">
           <Icono n="copiar" tam={13} /><span className="etq">Clonar</span>
         </button>
+        {variante === "cabecera" && (
+          <>
+            <button type="button" className={`boton chico fantasma ${cruzar === "comparar" ? "activo" : ""}`} aria-label="Comparar con otro flujo" onClick={() => { setPanel(null); setCruzar("comparar"); }} title="Comparar con otro flujo: pasos, conexiones y configuración">
+              <Icono n="capas" tam={13} /><span className="etq">Comparar</span>
+            </button>
+            <button type="button" className={`boton chico fantasma ${cruzar === "traer" ? "activo" : ""}`} aria-label="Traer pasos de otro flujo" onClick={() => { setPanel(null); setCruzar("traer"); }} title="Copiar pasos de otro flujo a este">
+              <Icono n="mas_circulo" tam={13} /><span className="etq">Traer pasos</span>
+            </button>
+          </>
+        )}
         {borrable ? (
           <button type="button" className={`boton chico fantasma af-borrar ${panel === "borrar" ? "activo" : ""}`} aria-expanded={panel === "borrar"} aria-label="Borrar" onClick={() => abrir("borrar")} title="Borrar el flujo con sus corridas, entorno y archivos">
             <Icono n="papelera" tam={13} /><span className="etq">Borrar</span>
@@ -194,6 +207,7 @@ export function AccionesFlujo({ flujo, variante = "cabecera", alClonar }: { fluj
         )}
       </div>
       <AnimatePresence>{contenido}</AnimatePresence>
+      {variante === "cabecera" && <DialogoCruzar abierto={cruzar !== null} cerrar={() => setCruzar(null)} flujo={flujo} modo={cruzar ?? "comparar"} />}
     </div>
   );
 }

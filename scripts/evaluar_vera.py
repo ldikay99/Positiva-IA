@@ -273,6 +273,105 @@ CASOS += [
 ]
 
 
+# ------------------------------------------------------------------ pedido 2026-11-10: Vera y operaciones entre flujos
+_ENTRADA = {"id": "inicio", "tipo": "entrada_manual", "nombre": "Inicio", "config": {"campos": [{"nombre": "texto", "tipo": "texto"}]}}
+_LIMPIAR = {"id": "limpiar", "tipo": "transformar", "nombre": "Limpiar", "config": {"operaciones": [{"op": "plantilla", "plantilla": "{{entrada.texto}}", "salida": "limpio"}]}}
+_FIN = {"id": "fin", "tipo": "salida", "nombre": "Fin", "config": {"desenlace": "completar"}}
+EV_ORIGEN = {"id": "ev-origen", "nombre": "EV Origen", "modelo": "gemini-2.5-flash",
+             "nodos": [_ENTRADA, _LIMPIAR, {"id": "urgente", "tipo": "condicion", "nombre": "¿Urgente?", "config": {"campo": "limpio", "operador": "contiene", "valor": "urgente"}},
+                       {"id": "a_mano", "tipo": "salida", "nombre": "Revisión urgente", "config": {"desenlace": "manual", "motivo": "URGENTE"}}, _FIN],
+             "aristas": [{"desde": "inicio", "hacia": "limpiar"}, {"desde": "limpiar", "hacia": "urgente"}, {"desde": "urgente", "hacia": "a_mano", "cuando": "si"}, {"desde": "urgente", "hacia": "fin"}]}
+EV_DESTINO = {"id": "ev-destino", "nombre": "EV Destino", "modelo": "gemini-2.5-flash", "nodos": [_ENTRADA, _LIMPIAR, _FIN],
+              "aristas": [{"desde": "inicio", "hacia": "limpiar"}, {"desde": "limpiar", "hacia": "fin"}]}
+EV_LLAMADO = {"id": "ev-llamado", "nombre": "EV Llamado", "modelo": "gemini-2.5-flash",
+              "nodos": [_ENTRADA, {"id": "mayus", "tipo": "transformar", "nombre": "Mayúsculas", "config": {"operaciones": [{"op": "mayusculas", "de": "entrada.texto", "salida": "grande"}]}}, _FIN],
+              "aristas": [{"desde": "inicio", "hacia": "mayus"}, {"desde": "mayus", "hacia": "fin"}]}
+EV_LLAMADOR = {**EV_DESTINO, "id": "ev-llamador", "nombre": "EV Llamador"}
+
+
+def _preparar(*defs):
+    for d in defs:
+        api("DELETE", f"/api/flujos/{d['id']}")
+        r = api("PUT", f"/api/flujos/{d['id']}", {"definicion": d})
+        assert r.get("flujo"), r
+
+
+def _borrar(*ids):
+    for i in ids:
+        api("DELETE", f"/api/flujos/{i}")
+
+
+def _nodos(fid):
+    return {n["id"]: n for n in ((api("GET", f"/api/flujos/{fid}") or {}).get("definicion") or {}).get("nodos") or []}
+
+
+def _trajo(evs):
+    d, o = _nodos("ev-destino"), _nodos("ev-origen")
+    return "urgente" in d and "a_mano" in d and len(o) == 5 and not re.search(r"me detuve", _texto(evs))
+
+
+def _encadeno(evs):
+    sub = [n for n in _nodos("ev-llamador").values() if n["tipo"] in ("subflujo", "llamar_flujo") and (n.get("config") or {}).get("flujo") == "ev-llamado"]
+    if not sub:
+        return False
+    c = correr("ev-llamador", {"texto": "hola"})
+    return bool(c) and c.get("estado") == "terminada" and (c.get("resultado") or {}).get("accion") not in ("error", None)
+
+
+CAPACIDADES = [r"cre", r"edit|cambi", r"compar|traer|trae|encaden|cruz", r"corr", r"revis|diagn|explic", r"pantalla|abrir|naveg|mover"]
+_cubre = lambda t: sum(1 for x in CAPACIDADES if re.search(x, t)) >= 5 and not re.search(r"ayudo a crear y operar flujos de procesamiento", t)
+
+
+def _dos_propuestas(evs, ids):
+    props = [(e.get("propuesta") or {}) for e in evs if e.get("tipo") == "propuesta"]
+    return any(p.get("accion") == "borrar_flujos" and set((p.get("id") or "").split(",")) == set(ids) for p in props) and all(not api("GET", f"/api/flujos/{i}").get("http") for i in ids)
+
+
+def _multi_edicion(evs):
+    e = api("GET", "/api/flujos/ev-pqrd-multi/estructura") or {}
+    puntos = {t.get("punto") for t in e.get("tramos") or []}
+    return {"con_los_documentos", "antes_de_validar"} <= puntos and not re.search(r"me detuve tras varios pasos", _texto(evs))
+
+
+CASOS += [
+    {"nombre": "capacidades concretas", "flujo": None,
+     "pedido": "Vera, ¿qué puedes hacer tú? Cuéntame, ¿cuáles son todas tus capacidades?",
+     "espera_texto": _cubre},
+    {"nombre": "voz: capacidades concretas", "flujo": None,
+     "voz": "Vera, ¿qué puedes hacer tú? Cuéntame, ¿cuáles son todas tus capacidades?",
+     "espera_voz": lambda dicho, usadas, propuestas, emitidas: _cubre(dicho) or ("escribir_en_chat" in usadas and sum(1 for x in CAPACIDADES if re.search(x, dicho)) >= 3)},
+    {"nombre": "diagnóstico del flujo", "flujo": None, "pantalla": {"vista": "flujo", "flujo": "pqrd", "nombreFlujo": "Radicación de PQRD"},
+     "pedido": "Digamos en el flujo que estamos actualmente, ¿qué encuentras que puedas solucionar?",
+     "espera_eventos": lambda evs: "diagnosticar_flujo" in _usadas(evs) and re.search(r"\d", _texto(evs)) is not None
+     and re.search(r"manual|error|sin_documento", _texto(evs)) is not None and re.search(r"puedo|propong|aplic|ajust|agreg|cambi", _texto(evs)) is not None},
+    {"nombre": "voz: qué puedes solucionar", "flujo": None,
+     "voz": "En el flujo de PQRD, ¿qué encuentras que puedas solucionar?",
+     "espera_voz": lambda dicho, usadas, propuestas, emitidas: "diagnosticar_flujo" in usadas},
+    {"nombre": "comparar dos flujos", "flujo": None, "preparar": lambda: _preparar(EV_ORIGEN, EV_DESTINO),
+     "pedido": "Compara los flujos ev-destino y ev-origen: ¿en qué se diferencian?",
+     "espera_eventos": lambda evs: "comparar_flujos" in _usadas(evs) and re.search(r"urgente", _texto(evs)) is not None,
+     "limpiar": lambda: _borrar("ev-origen", "ev-destino")},
+    {"nombre": "traer pasos de otro flujo", "flujo": None, "preparar": lambda: _preparar(EV_ORIGEN, EV_DESTINO),
+     "pedido": "Trae a ev-destino el paso «¿Urgente?» de ev-origen con su salida de revisión urgente, entre limpiar y fin. El origen no se toca.",
+     "espera_eventos": _trajo, "limpiar": lambda: _borrar("ev-origen", "ev-destino")},
+    {"nombre": "encadenar dos flujos", "flujo": None, "preparar": lambda: _preparar(EV_LLAMADO, EV_LLAMADOR),
+     "pedido": "Haz que ev-llamador llame al flujo ev-llamado (pasándole el texto de su entrada) después de limpiar y antes de fin, y córrelo con texto 'hola'.",
+     "espera_eventos": _encadeno, "limpiar": lambda: _borrar("ev-llamador", "ev-llamado")},
+    {"nombre": "borrar dos flujos: un botón", "flujo": None, "preparar": lambda: (_copia("ev-del-a"), _copia("ev-del-b")),
+     "pedido": "Borra las copias ev-del-a y ev-del-b.",
+     "espera_eventos": lambda evs: _dos_propuestas(evs, ["ev-del-a", "ev-del-b"]), "limpiar": lambda: _borrar("ev-del-a", "ev-del-b")},
+    {"nombre": "voz: borrar dos flujos", "flujo": None, "preparar": lambda: (_copia("ev-vdel-a"), _copia("ev-vdel-b")),
+     "voz": "Borra las copias ev-vdel-a y ev-vdel-b.",
+     "espera_voz": lambda dicho, usadas, propuestas, emitidas: {"accion": "borrar_flujos", "id": "ev-vdel-a,ev-vdel-b"} in propuestas
+     or {"accion": "borrar_flujos", "id": "ev-vdel-b,ev-vdel-a"} in propuestas,
+     "limpiar": lambda: _borrar("ev-vdel-a", "ev-vdel-b")},
+    {"nombre": "varias ediciones sin cortarse", "flujo": None, "preparar": lambda: _copia("ev-pqrd-multi"),
+     "pedido": "En la copia ev-pqrd-multi agrega un paso con los documentos leídos: si quedó algún adjunto que el motor no pudo leer, que deje una nota para el agente con la lista de esos adjuntos. "
+               "Luego, antes de validar, que mande a revisión manual con motivo SIN_DOCUMENTO si no hay número de documento del afectado. No toques el original.",
+     "espera_eventos": _multi_edicion, "limpiar": lambda: _borrar("ev-pqrd-multi")},
+]
+
+
 def voz_simulada(pedido, modelo):
     """
     La ruta de la voz sin audio: el mismo sistema (SISTEMA + NOTA_VOZ), las mismas herramientas
@@ -319,12 +418,15 @@ AFIRMA = re.compile(r"ya (lo |la )?(tienes|ves|est[aá]s viendo)|ah[ií] (lo |la
 def main():
     a = argparse.ArgumentParser()
     a.add_argument("--solo", type=int)
+    a.add_argument("--nombre", action="append", help="solo los casos cuyo nombre contenga esto (se puede repetir)")
     a.add_argument("--modelo", default="gemini-3-flash-preview")
     a.add_argument("--conservar", action="store_true", help="no borrar lo creado (para revisarlo)")
     x = a.parse_args()
     filas = []
     for i, caso in enumerate(CASOS):
         if x.solo is not None and i != x.solo:
+            continue
+        if x.nombre and not any(n.lower() in caso["nombre"].lower() for n in x.nombre):
             continue
         if caso.get("preparar"):
             caso["preparar"]()

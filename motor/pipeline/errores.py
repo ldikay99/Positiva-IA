@@ -123,7 +123,7 @@ CLASES: Tuple[Clase, ...] = (
         motivo_manual="",
         descripcion=(
             "la tabla destino no tiene la columna que se intenta escribir "
-            "(PGRST204). No se arregla reintentando: hay que migrar el esquema"
+            "(42703). No se arregla reintentando: hay que migrar el esquema"
         ),
     ),
     Clase(
@@ -214,7 +214,7 @@ _FIRMAS: Tuple[Tuple[str, str, bool], ...] = (
     ("ORIGEN_INALCANZABLE", r"error\s*52[0-9]|cloudflare_error|"
                             r"could\s+not\s+establish\s+a\s+tcp\s+connection|"
                             r"web\s+server\s+is\s+down", False),
-    ("ESQUEMA_DESALINEADO", r"PGRST\d+|could\s+not\s+find\s+the\s+'.*'\s+column",
+    ("ESQUEMA_DESALINEADO", r"'C':\s*'42703'|column\s+\S+\s+(?:of\s+relation\s+\S+\s+)?does\s+not\s+exist",
      False),
     ("DNS_NO_RESUELVE", r"name\s+or\s+service\s+not\s+known|"
                         r"nodename\s+nor\s+servname|getaddrinfo\s+failed|"

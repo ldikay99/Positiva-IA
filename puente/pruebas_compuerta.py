@@ -175,9 +175,62 @@ def escenario_tutelas() -> None:
     print("OK")
 
 
+class _ConexionFalsa:
+    """La conexión de pg8000.native que usaría el registro de radicados, sin red."""
+
+    def __init__(self, **kw):
+        self.kw = kw
+        self.sentencias = []
+
+    def run(self, sql, **parametros):
+        self.sentencias.append(sql)
+        return []
+
+    def close(self):
+        pass
+
+
+def prueba_registro_solo_lectura() -> None:
+    """La conexión del registro de radicados queda en solo lectura y solo deja pasar SELECT."""
+    import solo_lectura as sl
+
+    abiertas, eventos = [], []
+
+    def conectar(**kw):
+        abiertas.append(_ConexionFalsa(**kw))
+        return abiertas[-1]
+
+    abrir = sl.conectar_registro_solo_lectura(lambda t, **d: eventos.append((t, d)), conectar=conectar, probar=lambda h, p: "")
+    c = abrir(host="10.0.0.5", port=5432, password=SECRETO)
+    assert abiertas[0].sentencias == ["SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY"]
+    c.run("SET TIME ZONE 'America/Bogota'")
+    assert c.run('SELECT numero_radicado FROM "t" WHERE correo_remitente = :r LIMIT 1', r="a@b.co") == []
+    for sql in ("INSERT INTO t VALUES (1)", "UPDATE t SET x = 1", "DELETE FROM t", "  insert into t values (1)", "WITH x AS (DELETE FROM t) SELECT 1"):
+        try:
+            c.run(sql)
+        except PermissionError:
+            continue
+        raise AssertionError(f"el registro de radicados dejó pasar {sql!r}")
+    assert [e[1]["ok"] for e in eventos if e[0] == "lectura_real"] == [True]
+    # inalcanzable: falla al instante, sin abrir nada, y lo anuncia
+    abrir = sl.conectar_registro_solo_lectura(lambda t, **d: eventos.append((t, d)), conectar=conectar, probar=lambda h, p: "no se alcanza")
+    try:
+        abrir(host="10.0.0.5", port=5432)
+    except ConnectionError:
+        pass
+    else:
+        raise AssertionError("un host que no se alcanza tiene que fallar")
+    assert len(abiertas) == 1 and eventos[-1][1]["ok"] is False
+
+
 def escenario_pqrd() -> None:
-    """Compuerta apagada: Supabase en solo GET y sus trazas al grabador; el buzón que escribe no existe."""
+    """
+    Compuerta apagada con CLOUDSQL_*: el registro de radicados lee en solo lectura y su
+    INSERT queda retenido en el grabador; el buzón que escribe no existe.
+    """
     import asyncio
+
+    import pg8000.native
 
     import trabajador as tr
 
@@ -187,37 +240,28 @@ def escenario_pqrd() -> None:
     from config import settings
 
     assert settings.MODO_TEST is True
-    assert settings.SUPABASE_SERVICE_ROLE_KEY == SECRETO, "el secreto del entorno del flujo se conserva"
+    assert settings.CLOUDSQL_PASSWORD == SECRETO, "el secreto del entorno del flujo se conserva"
+    conexiones = []
+
+    def falsa(**kw):
+        conexiones.append(_ConexionFalsa(**kw))
+        return conexiones[-1]
+
+    pg8000.native.Connection = falsa  # sin red: la instancia real solo tiene IP privada
+    tr.solo_lectura._alcance[(settings.CLOUDSQL_HOST, settings.CLOUDSQL_PORT)] = ""  # como si se alcanzara
     s = tr._auditoria()
-    assert isinstance(s._client, tr.solo_lectura.ConsultaSupabase)
-    llamadas = []
-
-    class Http:
-        @staticmethod
-        def get(url, params=None, headers=None, timeout=None):
-            llamadas.append(url)
-
-            class R:
-                status_code = 200
-
-                @staticmethod
-                def json():
-                    return []
-            return R()
-
-    s._client._http = Http
+    assert type(s).__name__ == "RegistroDeRadicados"
     settings.DEDUP_EN_PRUEBAS = True  # como con un correo del buzón real
     assert asyncio.run(s.email_exists("a@b.co", "Asunto", "2026-11-01T10:00:00Z")) is False
-    assert llamadas and llamadas[0].endswith("/rest/v1/radicados_pqrd")
-    # la traza no sale: MODO_TEST la manda al grabador
-    asyncio.run(s.save_radicado_record("ENT-1", "2026-11-06", asunto="x", correo_remitente="a@b.co"))
-    assert len(llamadas) == 1
-    try:
-        s._client.table("radicados_pqrd").insert({"x": 1})
-    except PermissionError:
-        pass
-    else:
-        raise AssertionError("Supabase dejó pasar un insert")
+    assert s.ultimo_error == "", s.ultimo_error
+    sentencias = conexiones[0].sentencias
+    assert sentencias[0].startswith("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY"), sentencias
+    assert sentencias[-1].startswith('SELECT numero_radicado FROM "iapqrd_radicados_pqrd"'), sentencias
+    assert conexiones[0].kw["password"] == SECRETO
+    tr.instalar_ganchos()  # el gancho del grabador que anuncia lo retenido
+    # el INSERT no sale: MODO_TEST lo manda al grabador y el trabajador lo anuncia como escritura retenida
+    asyncio.run(s.guardar_radicado("ENT1", asunto="x", correo_remitente="a@b.co", numero_documento_afectado="123"))
+    assert len(conexiones) == 1, "guardar no abre conexión en MODO_TEST"
     import buzon_vivo
 
     try:
@@ -228,22 +272,54 @@ def escenario_pqrd() -> None:
         raise AssertionError("el buzón que escribe no puede existir con la compuerta apagada")
     tr._anunciar_fuentes(True)
     ev = _eventos(salida.getvalue())
+    retenida = [e for e in ev if e["tipo"] == "escritura" and e.get("sistema") == "registro_radicados"]
+    assert retenida and retenida[0]["operacion"] == "REGISTRO_RADICADO" and retenida[0]["detalle"]["numero_radicado"] == "ENT1", retenida
+    assert [e for e in ev if e["tipo"] == "lectura_real" and e.get("ok")], "la lectura de la capa 6 se anuncia"
     compuerta = next(e for e in ev if e["tipo"] == "compuerta")
     assert compuerta["radicacion_real"] is False and "apagada" in compuerta["texto"]
     fuentes = {x["sistema"]: x for x in next(e for e in ev if e["tipo"] == "fuentes")["lecturas"]}
-    assert fuentes["Supabase"]["real"] is True and fuentes["SGDEA"]["real"] is False
+    assert fuentes["Registro de radicados (Cloud SQL)"]["real"] is True and fuentes["SGDEA"]["real"] is False
+    assert "Supabase" not in fuentes
+    assert SECRETO not in salida.getvalue()
+    print("OK")
+
+
+def escenario_pqrd_inalcanzable() -> None:
+    """Con CLOUDSQL_* pero sin alcance (IP privada): la capa 6 queda degradada al instante, como en el job con la base caída."""
+    import asyncio
+    import time
+
+    import trabajador as tr
+
+    salida = io.StringIO()
+    tr._salida = salida
+    from config import settings
+
+    t = time.time()
+    s = tr._auditoria()
+    assert s is not None
+    f = tr._fuentes["registro_radicados"]
+    assert f["real"] is False and "no se alcanza" in f["detalle"], f
+    settings.DEDUP_EN_PRUEBAS = True
+    assert asyncio.run(s.email_exists("a@b.co", "Asunto")) is False
+    assert "no se alcanza" in s.ultimo_error, s.ultimo_error
+    assert time.time() - t < 8, "no espera los 10 s del motor"
+    ev = _eventos(salida.getvalue())
+    assert [e for e in ev if e["tipo"] == "lectura_real" and e.get("ok") is False]
     assert SECRETO not in salida.getvalue()
     print("OK")
 
 
 def escenario_pqrd_sin_credenciales() -> None:
-    """Sin credenciales de Supabase: la capa queda apagada (el doble de siempre) y se dice."""
+    """Sin CLOUDSQL_*: «sin auditoría», como el job, y se dice como un hecho, no como un fallo."""
     import trabajador as tr
 
     salida = io.StringIO()
     tr._salida = salida
     assert tr._auditoria() is None
-    assert tr._fuentes["supabase"]["real"] is False
+    f = tr._fuentes["registro_radicados"]
+    assert f["real"] is False and f["sin_auditoria"] is True and "sin auditoría" in f["detalle"], f
+    assert "CLOUDSQL_HOST" in f["detalle"]
     print("OK")
 
 
@@ -256,16 +332,21 @@ def _correr(escenario: str, **entorno: str) -> None:
 
 def principal() -> int:
     if len(sys.argv) > 1:
-        {"tutelas": escenario_tutelas, "pqrd": escenario_pqrd, "pqrd_sin": escenario_pqrd_sin_credenciales}[sys.argv[1]]()
+        {"tutelas": escenario_tutelas, "pqrd": escenario_pqrd, "pqrd_inalcanzable": escenario_pqrd_inalcanzable,
+         "pqrd_sin": escenario_pqrd_sin_credenciales}[sys.argv[1]]()
         return 0
     pruebas = [
         ("la compuerta no se enciende sin la segunda llave", prueba_compuerta_sin_segunda_llave),
         ("Supabase: solo GET, sin escrituras", prueba_supabase_solo_get),
         ("Redis: solo lectura", prueba_redis_solo_lee),
+        ("registro de radicados (Cloud SQL): sesión de solo lectura, solo SELECT", prueba_registro_solo_lectura),
         ("máscara de los secretos del flujo", prueba_mascara),
         ("tutelas con la compuerta apagada: lee y retiene", lambda: _correr("tutelas", **{"TUTELAS-REDIS-PASSWORD": SECRETO, "SECRETOS_DEL_FLUJO": "TUTELAS-REDIS-PASSWORD"})),
-        ("pqrd con la compuerta apagada: Supabase en GET, trazas retenidas", lambda: _correr("pqrd", SUPABASE_URL="https://base.ejemplo.invalid", SUPABASE_SERVICE_ROLE_KEY=SECRETO, SECRETOS_DEL_FLUJO="SUPABASE_SERVICE_ROLE_KEY")),
-        ("pqrd sin credenciales: doble de siempre", lambda: _correr("pqrd_sin")),
+        ("pqrd con la compuerta apagada: registro de radicados en solo lectura, INSERT retenido",
+         lambda: _correr("pqrd", CLOUDSQL_HOST="10.20.30.40", CLOUDSQL_USER="lector", CLOUDSQL_PASSWORD=SECRETO, SECRETOS_DEL_FLUJO="CLOUDSQL_PASSWORD")),
+        ("pqrd con CLOUDSQL_* que no se alcanza: capa 6 degradada al instante",
+         lambda: _correr("pqrd_inalcanzable", CLOUDSQL_HOST="127.0.0.1", CLOUDSQL_PORT="1", CLOUDSQL_USER="lector", CLOUDSQL_PASSWORD=SECRETO, SECRETOS_DEL_FLUJO="CLOUDSQL_PASSWORD")),
+        ("pqrd sin CLOUDSQL_*: sin auditoría, como el job", lambda: _correr("pqrd_sin")),
     ]
     fallos = 0
     for nombre, f in pruebas:

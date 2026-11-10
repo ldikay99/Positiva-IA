@@ -21,7 +21,8 @@ from typing import Any, Dict, List, Optional
 
 API = os.environ.get("API_INTERNA", f"http://127.0.0.1:{os.environ.get('PUERTO', '8080')}")
 PROYECTO = os.environ.get("GCP_PROJECT", "positiva-sgda-prd-416417")
-MAX_VUELTAS = 14
+# Un pedido de varias ediciones encadenadas (ver, ayuda de nodos, agregar, corregir, volver a ver) usa ~20 vueltas.
+MAX_VUELTAS = int(os.environ.get("VERA_MAX_VUELTAS", "30"))
 
 
 def emitir(tipo: str, **datos: Any) -> None:
@@ -128,9 +129,19 @@ Cómo trabajas:
 7. Consultar: resumen_tablero, listar_flujos, leer_flujo, listar_correos, ver_correo, ver_buzon, ultimas_corridas, ver_corrida, ver_logs, estado_motor, listar_nodos, ver_nodo, ver_configuracion, historial_configuracion, listar_perfiles, listar_chats.
 8. Actuar (en modo prueba): correr_correos (correos descargados), correr_buzon (los próximos del buzón real, en el orden del job, solo lectura), cancelar_cola, probar_flujo, ajustar_parametro_pqrd, aplicar_perfil, guardar_perfil. Antes de correr muchos correos (más de 10), confirma cuántos.
 9. Tienes la conversación completa: lo que dijo la persona antes (también lo hablado en llamadas), los adjuntos que mandó (imágenes y documentos, que puedes ver) y lo que hiciste en turnos anteriores. Úsalo; no pidas que repitan lo ya dicho.
-10. Para borrar un flujo (o una copia de PQRD o tutelas) usa proponer_borrado: no borra, le deja a la persona un botón para confirmar. Dilo así: «Te dejé el botón para confirmar el borrado». Nunca digas «no puedo borrar». Solo los originales PQRD y tutelas no se borran; si es uno de ellos, dilo y ofrece borrar sus copias.
-11. Renombra esta conversación con renombrar_chat cuando el tema quede claro o la persona lo pida.
-12. Respuestas cortas (una a cinco líneas) salvo que pidan detalle; usa markdown (listas, tablas, **negritas**, `ids`) cuando ayude a leer. Si listas muchas cosas, usa una tabla corta.
+10. Para borrar un flujo (o una copia de PQRD o tutelas) usa proponer_borrado; para varios a la vez, proponer_borrado con ids=[…] (una sola propuesta con un botón para todos). No borra, le deja a la persona un botón para confirmar. Dilo así: «Te dejé el botón para confirmar el borrado». Nunca digas «no puedo borrar». Solo los originales PQRD y tutelas no se borran; si es uno de ellos, dilo y ofrece borrar sus copias.
+11. Cruzar flujos: comparar_flujos dice qué pasos, conexiones y configuración difieren entre dos flujos (por ejemplo una copia y su original); traer_nodos copia uno o varios pasos (con sus conexiones internas) de un flujo a otro, renombra los ids que chocan, los conecta donde se pida (entre=[desde, hacia], o aristas) y guarda una versión nueva del destino sin tocar el origen (en pqrd, tutelas y sus copias solo dentro de un punto de inserción, igual que agregar_nodo; con simular=true lo revisa sin guardar). Encadenar flujos: un paso «subflujo» (o «llamar_flujo») corre otro flujo declarativo que empiece con entrada_manual, le pasa una entrada y usa su resultado ({{<salida>.resultado}}, accion, motivo y lo que traiga con traer); sale por el desenlace del otro (radicado, manual…) si hay arista con ese nombre, o por «ok». Hasta 3 niveles y nunca a sí mismo. Para ponerlo usa encadenar_flujos (revisa que el otro flujo se pueda llamar, arma la entrada con sus campos y evita ciclos); en un flujo de código va dentro de un punto de inserción y solo con «subflujo».
+12. Diagnóstico: ante «¿qué puedes solucionar / mejorar / qué falla en este flujo?» llama a diagnosticar_flujo (revisa sus últimas corridas, los motivos de revisión manual, los errores, los avisos, la validación, el entorno y la programación) y responde con lo que encontró, con cifras (p. ej. «3 de 20 a manual por SIN_DOCUMENTO»), y para cada hallazgo el arreglo concreto que TÚ puedes aplicar con tus herramientas (qué nodo, qué cambio); ofrece aplicarlos y, si la persona dice que sí, hazlo y pruébalo. Nunca respondas con un solo dato suelto sin revisar.
+13. Capacidades: si preguntan qué puedes hacer, responde con esto, concreto y agrupado (por voz, en dos o tres frases con los grupos y un ejemplo):
+   - Crear flujos y automatizaciones con nodos (IA, correo, Drive, bases de datos, APIs, documentos Word/Excel/PowerPoint/PDF, aprobaciones, programaciones, webhooks), desde cero o desde una plantilla, y probarlos paso a paso.
+   - Editar cualquier flujo, también PQRD, tutelas y sus copias: agregar, quitar, renombrar y reconfigurar pasos, apagar etapas, cambiar cómo se lee cada tipo de archivo, conexiones; versiones y restaurar.
+   - Operar la plataforma: clonar, renombrar, comparar flujos, traer pasos de uno a otro, encadenarlos, proponer borrar uno o varios (con tu botón), programarlos, ajustar sus recursos.
+   - Correr: correos de la correspondencia, el buzón real en solo lectura, flujos con una entrada o con archivos que adjuntes, reintentar, cancelar la cola.
+   - Revisar y explicar: corridas, logs, por qué algo quedó en revisión manual, diagnóstico de un flujo con arreglos, costos y modelos de IA, tablero, notificaciones y aprobaciones (estas las decide la persona).
+   - Moverte por la pantalla: abrir flujos, correos, corridas, adjuntos, el lienzo, conexiones y el entorno; variables y secretos (los secretos los escribe la persona).
+   Lo que NO haces: radicar de verdad en SGDEA, escribir en sistemas de Positiva, ver o escribir claves, aprobar por la persona ni borrar sin su botón.
+14. Renombra esta conversación con renombrar_chat cuando el tema quede claro o la persona lo pida.
+15. Respuestas cortas (una a cinco líneas) salvo que pidan detalle; usa markdown (listas, tablas, **negritas**, `ids`) cuando ayude a leer. Si listas muchas cosas, usa una tabla corta.
 
 {INDICE_NODOS}"""
 
@@ -207,8 +218,8 @@ HERRAMIENTAS = [
     {"name": "agregar_nodo", "description": "Agrega un nodo (nodo) o varios de una vez (nodos) a un flujo (declarativo o de código) con sus aristas, y quita las aristas de quitar, en UN solo guardado: un tramo con ramas (una condición y su salida) se agrega así, porque cada guardado valida el flujo entero. Con entre=[desde, hacia] y un solo nodo lo inserta en esa arista (quita desde→hacia y une desde→nodo→hacia); en un flujo de código es como se inserta un paso en un punto. Valida y guarda.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "nodo": {"type": "object"}, "nodos": {"type": "array", "items": {"type": "object"}}, "aristas": {"type": "array", "items": {"type": "object"}}, "quitar": {"type": "array", "items": {"type": "object"}}, "entre": {"type": "array", "items": {"type": "string"}}}, "required": ["flujo"]}},
     {"name": "eliminar_nodo", "description": "Elimina un nodo de un flujo (declarativo o un paso insertado en uno de código; las etapas del motor no se eliminan, se apagan) y sus aristas. Con reconectar=true une a quienes llegaban a él con a quienes él llevaba. Valida y guarda.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "nodo": {"type": "string"}, "reconectar": {"type": "boolean"}}, "required": ["flujo", "nodo"]}},
     {"name": "editar_aristas", "description": "Agrega y/o quita aristas {desde, hacia, cuando} de un flujo (declarativo o de código). Valida y guarda.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "agregar": {"type": "array", "items": {"type": "object"}}, "quitar": {"type": "array", "items": {"type": "object"}}}, "required": ["flujo"]}},
-    {"name": "proponer_borrado", "description": "Propone borrar un flujo (declarativo o una copia de PQRD o tutelas): la persona ve un botón para confirmarlo. No borra por sí sola. Solo los originales pqrd y tutelas no se borran.", "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "motivo": {"type": "string"}}, "required": ["id"]}},
-    {"name": "borrar_flujo", "description": "Igual que proponer_borrado: deja a la persona el botón para confirmar el borrado de un flujo (nunca borra sin esa confirmación).", "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "motivo": {"type": "string"}}, "required": ["id"]}},
+    {"name": "proponer_borrado", "description": "Propone borrar un flujo (id) o varios a la vez (ids=[…], una sola propuesta con un botón para todos), declarativos o copias de PQRD o tutelas: la persona ve un botón para confirmarlo. No borra por sí sola. Solo los originales pqrd y tutelas no se borran.", "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "ids": {"type": "array", "items": {"type": "string"}}, "motivo": {"type": "string"}}}},
+    {"name": "borrar_flujo", "description": "Igual que proponer_borrado (id o ids): deja a la persona el botón para confirmar el borrado (nunca borra sin esa confirmación).", "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "ids": {"type": "array", "items": {"type": "string"}}, "motivo": {"type": "string"}}}},
     {"name": "ver_estructura", "description": "La estructura editable de un flujo de código (pqrd, tutelas o una copia): sus nodos (etapas y pasos insertados) y aristas, si está editada, y las reglas: puntos de inserción con sus datos y efectos, etapas que se apagan, opciones de cada etapa (lectores por tipo de archivo, cupo de visión) y etapas intercambiables.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}}, "required": ["flujo"]}},
     {"name": "restablecer_estructura", "description": "Vuelve un flujo de código a la estructura del código (quita lo editado; la versión editada queda guardada).", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}}, "required": ["flujo"]}},
     {"name": "navegar", "description": "Lleva la pantalla de la persona a una vista. vista: tablero | flujo | adjuntos | corridas | logs | herramientas | proveedores | configuracion. Con flujo, cambia también el flujo elegido.", "parameters": {"type": "object", "properties": {"vista": {"type": "string"}, "flujo": {"type": "string"}}, "required": ["vista"]}},
@@ -218,6 +229,16 @@ HERRAMIENTAS = [
     {"name": "listar_chats", "description": "Las conversaciones guardadas con su título y fecha.", "parameters": {"type": "object", "properties": {}}},
     {"name": "ver_pantalla", "description": "Lo que la persona está viendo AHORA MISMO en su navegador: la pantalla, el flujo (si hay uno abierto), lo seleccionado, lo abierto y la dirección. Úsalo SIEMPRE antes de afirmar qué tiene en pantalla, cuando diga «aquí», «lo que veo», «volvamos a…», o cuando diga que no ve algo.", "parameters": {"type": "object", "properties": {}}},
     {"name": "enfocar_flujo", "description": "Abre ese flujo en la pantalla de la persona (por ejemplo, el que acabas de crear).", "parameters": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}},
+    {"name": "comparar_flujos", "description": "Compara dos flujos (declarativos, de código o uno de cada; por ejemplo una copia y su original): pasos que solo están en uno, pasos con distinta configuración campo por campo, conexiones distintas y datos del flujo (nombre, IA).", "parameters": {"type": "object", "properties": {"a": {"type": "string", "description": "id del primer flujo"}, "b": {"type": "string", "description": "id del segundo flujo"}}, "required": ["a", "b"]}},
+    {"name": "traer_nodos", "description": "Copia uno o varios pasos de un flujo (origen) a otro (destino) con sus conexiones internas: renombra los ids que chocan, los conecta con entre=[desde, hacia] (una conexión del destino donde insertarlos) o con aristas (con los ids nuevos o los del origen), quita las de quitar, valida y guarda una versión nueva del destino. El origen no se toca. En pqrd, tutelas y sus copias van dentro de un punto de inserción. Las etapas del motor no se copian. simular=true lo revisa sin guardar.", "parameters": {"type": "object", "properties": {"origen": {"type": "string"}, "destino": {"type": "string"}, "nodos": {"type": "array", "items": {"type": "string"}}, "entre": {"type": "array", "items": {"type": "string"}}, "aristas": {"type": "array", "items": {"type": "object"}}, "quitar": {"type": "array", "items": {"type": "object"}}, "renombrar": {"type": "object", "description": "{id_en_origen: id_nuevo}"}, "simular": {"type": "boolean"}}, "required": ["origen", "destino", "nodos"]}},
+    {"name": "encadenar_flujos", "description": "Hace que un flujo llame a otro: agrega un paso «subflujo» en flujo que corre el flujo llamar (declarativo que empiece con entrada_manual) con una entrada y deja su resultado en salida (con traer copia variables suyas). Revisa que se pueda llamar, arma la entrada con los campos que pide y evita ciclos. Se conecta con entre=[desde, hacia] o con aristas. Valida y guarda.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string", "description": "el flujo que llama"}, "llamar": {"type": "string", "description": "el flujo llamado"}, "entre": {"type": "array", "items": {"type": "string"}}, "aristas": {"type": "array", "items": {"type": "object"}}, "entrada": {"type": "object", "description": "{campo del llamado: plantilla con datos del que llama}"}, "traer": {"type": "object"}, "salida": {"type": "string"}, "id": {"type": "string"}, "nombre": {"type": "string"}}, "required": ["flujo", "llamar"]}},
+    {"name": "diagnosticar_flujo", "description": "Revisa de verdad un flujo para decir qué se puede solucionar: sus últimas corridas (desenlaces, motivos de revisión manual con ejemplos, errores y avisos frecuentes), la validación de su definición, su entorno (variables sin valor), sus notificaciones y su programación; devuelve hallazgos con cifras y el arreglo que tú puedes aplicar a cada uno.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "n": {"type": "integer", "description": "cuántas corridas recientes revisar (por defecto 30)"}}, "required": ["flujo"]}},
+    {"name": "ver_programacion", "description": "La programación como el job de un flujo de código (pqrd, tutelas o una copia): si está activa, su cron, cuántos correos toma, la del job real y la última ejecución. Los declarativos se programan con su disparador «programado» (editar_nodo).", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}}, "required": ["flujo"]}},
+    {"name": "programar_flujo", "description": "Cambia la programación como el job de un flujo de código: activo (true/false), cron, n (correos por corrida, 1–150) y zona. Corre en modo prueba y lee el buzón en solo lectura. Solo si la persona lo pide.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "activo": {"type": "boolean"}, "cron": {"type": "string"}, "n": {"type": "integer"}, "zona": {"type": "string"}}, "required": ["flujo"]}},
+    {"name": "ver_recursos", "description": "Los recursos de un flujo: trabajadores, corridas a la vez, tamaño de la cola y tiempo máximo por corrida (los propios y los por defecto).", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}}, "required": ["flujo"]}},
+    {"name": "ajustar_recursos", "description": "Cambia los recursos de un flujo (rige desde ya): trabajadores, corridas_simultaneas, cola_max, tiempo_max_s; null vuelve al valor por defecto.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "trabajadores": {"type": "integer"}, "corridas_simultaneas": {"type": "integer"}, "cola_max": {"type": "integer"}, "tiempo_max_s": {"type": "integer"}}, "required": ["flujo"]}},
+    {"name": "archivos_del_flujo", "description": "Los archivos subidos al espacio de un flujo (id, nombre, tipo, tamaño) y sus reglas (tipos permitidos, tamaño máximo).", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}}, "required": ["flujo"]}},
+    {"name": "reiniciar_trabajador", "description": "Reinicia un trabajador trabado de un flujo (su número sale en estado_motor); si estaba ocupado, su corrida queda en error con el motivo.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "trabajador": {"type": "integer"}}, "required": ["flujo", "trabajador"]}},
     {"name": "ajustar_parametro_pqrd", "description": "Cambia un parámetro del motor de PQRD (clave del catálogo, ej. pipeline.compuerta.CONFIANZA_PARA_RADICAR). Rige desde el próximo correo.", "parameters": {"type": "object", "properties": {"clave": {"type": "string"}, "valor": {}, "nota": {"type": "string"}}, "required": ["clave", "valor"]}},
 ]
 
@@ -294,6 +315,16 @@ def ejecutar(nombre: str, a: Dict[str, Any]) -> Any:
             if a.get(alias) and nombre not in ("ver_corrida", "abrir_corrida", "reintentar_corrida"):
                 a["flujo"] = a[alias]
                 break
+    if nombre == "traer_nodos":
+        a.setdefault("destino", a.get("flujo") or a.get("hacia_flujo"))
+        a.setdefault("origen", a.get("desde_flujo") or a.get("de"))
+        if isinstance(a.get("nodos"), str):
+            a["nodos"] = [a["nodos"]]
+    if nombre == "comparar_flujos":
+        a.setdefault("a", a.get("flujo") or a.get("id"))
+        a.setdefault("b", a.get("con") or a.get("otro"))
+    if nombre in ("proponer_borrado", "borrar_flujo") and not a.get("id") and not a.get("ids"):
+        return {"error": "di id (un flujo) o ids (varios)"}
     # probar_flujo con una entrada (sin correo) es correr el flujo con esa entrada
     if nombre == "probar_flujo" and not a.get("caso") and (a.get("entrada") is not None or a.get("archivos")):
         return _ejecutar("correr_flujo", {"id": a.get("flujo") or a.get("id"), "entrada": a.get("entrada") or {}, "esperar": True})
@@ -455,6 +486,10 @@ def _mover_pantalla(nombre: str, a: Dict[str, Any]) -> Any:
         quitar = [(x.get("desde"), x.get("hacia")) for x in a.get("quitar") or []]
         d["aristas"] = [x for x in d["aristas"] if (x["desde"], x["hacia"]) not in quitar] + list(a.get("agregar") or [])
         return _guardar(d)
+    if nombre in ("proponer_borrado", "borrar_flujo") and len(set(a.get("ids") or []) | ({a["id"]} if a.get("id") else set())) > 1:
+        return _proponer_varios(list(dict.fromkeys([*([a["id"]] if a.get("id") else []), *(a.get("ids") or [])])), a.get("motivo") or "")
+    if nombre in ("proponer_borrado", "borrar_flujo") and not a.get("id"):
+        a = {**a, "id": (a.get("ids") or [""])[0]}
     if nombre in ("proponer_borrado", "borrar_flujo"):
         f = api("GET", f"/api/flujos/{a['id']}")
         if not isinstance(f, dict) or f.get("error"):
@@ -919,7 +954,228 @@ def _mover_pantalla(nombre: str, a: Dict[str, Any]) -> Any:
         conf.pop("modelos", None)
         conf.setdefault("parametros", {})[a["clave"]] = a["valor"]
         return api("PUT", "/api/configuracion", {"configuracion": conf, "nota": a.get("nota") or "ajustado desde el chat"})
+    if nombre == "comparar_flujos":
+        from urllib.parse import quote
+        r = api("GET", f"/api/flujos/{quote(str(a['a']))}/comparar?con={quote(str(a['b']))}")
+        if isinstance(r, dict) and not r.get("error"):
+            r["nota"] = "Para traer pasos de uno al otro: traer_nodos. Di lo esencial (cuántos pasos distintos y cuáles) y deja el detalle largo en el chat."
+        return r
+    if nombre == "traer_nodos":
+        cuerpo = {"desde": a["origen"], "nodos": list(a.get("nodos") or [])}
+        for k in ("entre", "aristas", "quitar", "renombrar", "simular"):
+            if a.get(k) not in (None, "", []):
+                cuerpo[k] = a[k]
+        r = api("POST", f"/api/flujos/{a['destino']}/traer", cuerpo)
+        if isinstance(r, dict) and r.get("guardado"):
+            emitir("control", accion="editor", op="recargar")
+            r.pop("definicion", None)
+        elif isinstance(r, dict) and (r.get("problemas") or r.get("error")) and not a.get("simular"):
+            r["nota"] = "No se guardó. Corrige según el error y los problemas (dónde conectar con entre o aristas, ids, puntos de inserción) y vuelve a intentar."
+        return r
+    if nombre == "encadenar_flujos":
+        return _encadenar(a)
+    if nombre == "diagnosticar_flujo":
+        return _diagnosticar(a["flujo"], int(a.get("n") or 30))
+    if nombre == "ver_programacion":
+        return api("GET", f"/api/flujos/{a['flujo']}/programacion")
+    if nombre == "programar_flujo":
+        cuerpo = {k: a[k] for k in ("activo", "cron", "n", "zona") if a.get(k) is not None}
+        if not cuerpo:
+            return {"error": "di qué cambiar: activo, cron, n o zona"}
+        return api("PUT", f"/api/flujos/{a['flujo']}/programacion", cuerpo)
+    if nombre == "ver_recursos":
+        return api("GET", f"/api/flujos/{a['flujo']}/recursos")
+    if nombre == "ajustar_recursos":
+        cuerpo = {k: a[k] for k in ("trabajadores", "corridas_simultaneas", "cola_max", "tiempo_max_s") if k in a}
+        if not cuerpo:
+            return {"error": "di qué cambiar: trabajadores, corridas_simultaneas, cola_max o tiempo_max_s"}
+        return api("PUT", f"/api/flujos/{a['flujo']}/recursos", cuerpo)
+    if nombre == "archivos_del_flujo":
+        r = api("GET", f"/api/flujos/{a['flujo']}/archivos")
+        if isinstance(r, dict) and isinstance(r.get("archivos"), list):
+            r["archivos"] = [{k: x.get(k) for k in ("id", "nombre", "tipo", "tamano", "subido")} for x in r["archivos"][:60]]
+        return r
+    if nombre == "reiniciar_trabajador":
+        return api("POST", f"/api/flujos/{a['flujo']}/trabajadores/{int(a['trabajador'])}/reiniciar", {})
     return {"error": f"herramienta desconocida {nombre}"}
+
+
+def _proponer_varios(ids: List[str], motivo: str) -> Dict[str, Any]:
+    """Una sola propuesta con un botón para borrar varios flujos; los originales y los que no existen quedan fuera, con su motivo."""
+    elegidos, fuera = [], []
+    for i in ids[:25]:
+        f = api("GET", f"/api/flujos/{i}")
+        if not isinstance(f, dict) or f.get("error"):
+            fuera.append({"id": i, "motivo": "no existe"})
+        elif f.get("borrable") is False or (f.get("borrable") is None and i in ("pqrd", "tutelas")):
+            fuera.append({"id": i, "motivo": "es un original de producción (PQRD o tutelas): no se borra; sus copias sí"})
+        else:
+            elegidos.append((i, f.get("nombre") or i))
+    if not elegidos:
+        return {"error": "ninguno de esos flujos se puede borrar", "fuera": fuera}
+    if len(elegidos) == 1:
+        r = _mover_pantalla("proponer_borrado", {"id": elegidos[0][0], "motivo": motivo})
+        return {**r, "ids": [elegidos[0][0]], **({"fuera": fuera} if fuera else {})} if isinstance(r, dict) else r
+    propuesta = {"accion": "borrar_flujos", "id": ",".join(i for i, _ in elegidos), "ids": [i for i, _ in elegidos],
+                 "etiqueta": f"Borrar {len(elegidos)} flujos: " + ", ".join(f"«{n}»" for _, n in elegidos), "descripcion": motivo}
+    emitir("propuesta", propuesta=propuesta)
+    return {"propuesto": True, "ids": [i for i, _ in elegidos], **({"fuera": fuera} if fuera else {}),
+            "nota": "La persona ve UN botón para confirmar el borrado de todos esos flujos. NO están borrados: di que le dejaste el botón para confirmarlo"
+                    + (" y cuáles quedaron fuera y por qué." if fuera else ".")}
+
+
+def _disparador_de(defi: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    try:
+        import nodos_declarativos
+        disp = set(nodos_declarativos.DISPARADORES)
+    except Exception:
+        disp = {"entrada_correo", "entrada_manual", "programado", "webhook", "correo_nuevo", "entrada_archivos"}
+    return next((n for n in defi.get("nodos") or [] if n.get("tipo") in disp), None)
+
+
+def _llama_a(fid: str, buscado: str, pila: List[str]) -> bool:
+    """Si fid (o lo que fid llama, hasta 4 niveles) llama a buscado."""
+    if len(pila) > 4:
+        return False
+    f = api("GET", f"/api/flujos/{fid}")
+    defi = (f or {}).get("definicion") if isinstance(f, dict) else None
+    if not defi:
+        return False
+    for n in defi.get("nodos") or []:
+        if n.get("tipo") in ("subflujo", "llamar_flujo"):
+            otro = str((n.get("config") or {}).get("flujo") or "")
+            if otro == buscado or (otro and otro not in pila and _llama_a(otro, buscado, pila + [otro])):
+                return True
+    return False
+
+
+def _encadenar(a: Dict[str, Any]) -> Any:
+    """Un paso «subflujo» en a['flujo'] que corre a['llamar'] (el resto lo valida el guardado, como agregar_nodo)."""
+    flujo, llamar = a["flujo"], a["llamar"]
+    if flujo == llamar:
+        return {"error": "un flujo no se puede llamar a sí mismo"}
+    otro = api("GET", f"/api/flujos/{llamar}")
+    if not isinstance(otro, dict) or otro.get("error"):
+        return {"error": f"no existe el flujo {llamar}"}
+    if otro.get("tipo") != "declarativo" or not otro.get("definicion"):
+        return {"error": f"«{otro.get('nombre') or llamar}» es un flujo de código: solo se pueden llamar flujos declarativos que empiecen con entrada_manual. "
+                         "Para usar su lógica, trae sus pasos con traer_nodos o arma un declarativo con lo que necesitas."}
+    disp = _disparador_de(otro["definicion"])
+    if not disp or disp.get("tipo") != "entrada_manual":
+        return {"error": f"«{otro.get('nombre')}» empieza con {disp.get('tipo') if disp else 'nada'}: para que otro lo llame tiene que empezar con entrada_manual",
+                "nota": "Si la persona quiere, cámbiale el disparador a entrada_manual con sus campos (editar_nodo) y vuelve a encadenar."}
+    if _llama_a(llamar, flujo, [llamar]):
+        return {"error": f"«{otro.get('nombre')}» ya llama (directa o indirectamente) a «{flujo}»: encadenarlos haría un ciclo"}
+    campos = [c for c in (disp.get("config") or {}).get("campos") or [] if isinstance(c, dict) and c.get("nombre")]
+    entrada = dict(a.get("entrada") or {})
+    quien = api("GET", f"/api/flujos/{flujo}")
+    if not isinstance(quien, dict) or quien.get("error"):
+        return {"error": f"no existe el flujo {flujo}"}
+    if not entrada and quien.get("tipo") == "declarativo":
+        propio = _disparador_de(quien.get("definicion") or {}) or {}
+        mios = {c.get("nombre") for c in (propio.get("config") or {}).get("campos") or [] if isinstance(c, dict)}
+        entrada = {c["nombre"]: "{{entrada." + c["nombre"] + "}}" for c in campos if c["nombre"] in mios}
+    faltan = [c["nombre"] for c in campos if c.get("obligatorio", True) and c["nombre"] not in entrada]
+    if faltan:
+        return {"error": f"«{otro.get('nombre')}» pide estos campos y no sé con qué llenarlos: {', '.join(faltan)}",
+                "campos_que_pide": [{k: c.get(k) for k in ("nombre", "tipo", "obligatorio", "descripcion") if c.get(k) is not None} for c in campos],
+                "nota": "Vuelve a llamar con entrada={campo: plantilla con los datos del flujo que llama} (en un flujo de código, los datos del punto de inserción: ver_estructura → reglas.puntos[].datos)."}
+    base_id = re.sub(r"[^a-z0-9_]", "_", "llamar_" + llamar.replace("-", "_"))[:40]
+    nodo = {"id": a.get("id") or base_id, "tipo": "subflujo", "nombre": (a.get("nombre") or f"Llamar a «{otro.get('nombre') or llamar}»")[:80],
+            "config": {"flujo": llamar, "entrada": entrada, "salida": a.get("salida") or llamar.replace("-", "_")[:40],
+                       **({"traer": a["traer"]} if isinstance(a.get("traer"), dict) and a["traer"] else {})}}
+    r = _mover_pantalla("agregar_nodo", {"flujo": flujo, "nodo": nodo, **({"entre": a["entre"]} if a.get("entre") else {}), **({"aristas": a["aristas"]} if a.get("aristas") else {})})
+    if isinstance(r, dict) and r.get("guardado"):
+        r.update(paso=nodo["id"], llama_a=llamar, entrada=entrada, salida=nodo["config"]["salida"],
+                 nota=f"Quedó: «{flujo}» corre «{llamar}» en el paso {nodo['id']}; su resultado queda en {{{{{nodo['config']['salida']}.resultado}}}} (y accion, motivo). "
+                      "Sale por el desenlace del otro si hay una arista con ese nombre, o por «ok». Pruébalo corriendo el flujo.")
+    return r
+
+
+MOTIVOS_PQRD = {
+    "SIN_DOCUMENTO": "falta el número de documento del afectado: revisa si estaba en un adjunto que no se leyó (lectores de conversion_a_markdown, cupo de visión) o agrega un paso «antes de validar» que lo busque en el texto",
+    "SIN_NOMBRE": "falta un nombre: revisa la lectura de adjuntos o agrega un paso que lo extraiga con ia_extraer",
+    "VALIDACION_RECHAZO": "la compuerta rechazó los datos: mira sin_resolver y avisos de esas corridas",
+    "DOCUMENTO_DE_OTRA_PERSONA": "el documento leído es de otra persona: revisa la atribución en esas corridas",
+    "DOCUMENTO_AMBIGUO": "hubo varios documentos posibles: un paso que elija el del afectado puede ayudar",
+}
+
+
+def _diagnosticar(flujo: str, n: int) -> Dict[str, Any]:
+    """Revisa un flujo de verdad y devuelve hallazgos con cifras y arreglos que Vera puede aplicar."""
+    import collections
+    f = api("GET", f"/api/flujos/{flujo}")
+    if not isinstance(f, dict) or f.get("error"):
+        return {"error": f"no existe el flujo {flujo}"}
+    hallazgos: List[Dict[str, Any]] = []
+    corridas = api("GET", f"/api/corridas?flujo={flujo}")
+    corridas = corridas[: max(1, min(200, n))] if isinstance(corridas, list) else []
+    terminadas = [c for c in corridas if c.get("resultado")]
+    desenlaces = collections.Counter(str((c.get("resultado") or {}).get("accion") or c.get("estado")) for c in corridas)
+    manuales: Dict[str, List[str]] = collections.defaultdict(list)
+    errores: Dict[str, List[str]] = collections.defaultdict(list)
+    avisos: collections.Counter = collections.Counter()
+    sin_resolver: collections.Counter = collections.Counter()
+    for c in terminadas:
+        r = c["resultado"]
+        accion, motivo = str(r.get("accion") or ""), str(r.get("motivo") or "").strip()
+        if accion == "manual":
+            manuales[motivo or "(sin motivo)"].append(c["id"])
+        if accion == "error" or c.get("estado") == "fallida":
+            errores[motivo[:160] or "(sin detalle)"].append(c["id"])
+        for x in r.get("avisos") or []:
+            avisos[re.sub(r"\d{3,}|\b[0-9a-f]{12,}\b", "#", str(x))[:140]] += 1
+        for x in r.get("sin_resolver") or []:
+            sin_resolver[str(x)] += 1
+    total = len(terminadas)
+    if not corridas:
+        hallazgos.append({"tipo": "sin_corridas", "detalle": "no tiene corridas todavía", "arreglo": "pruébalo: probar_flujo con un correo de su correspondencia o correr_flujo con una entrada de ejemplo"})
+    for motivo, ids in sorted(manuales.items(), key=lambda x: -len(x[1])):
+        pista = next((v for k, v in MOTIVOS_PQRD.items() if motivo.upper().startswith(k)), None)
+        hallazgos.append({"tipo": "revision_manual", "motivo": motivo, "cuantas": len(ids), "de": total, "ejemplos": ids[:3],
+                          "arreglo": pista or "mira una de ejemplo (ver_corrida) para ver qué dato faltó y ajusta el paso que lo produce (editar_nodo) o agrega uno que lo resuelva (agregar_nodo)"})
+    for motivo, ids in sorted(errores.items(), key=lambda x: -len(x[1])):
+        hallazgos.append({"tipo": "error", "motivo": motivo, "cuantas": len(ids), "de": total, "ejemplos": ids[:3],
+                          "arreglo": "si es un fallo del trabajador (SIGSEGV, memoria, tiempo) revisa estado_motor y ver_recursos y reintenta la corrida (reintentar_corrida); "
+                                     "si es de un paso, revisa su configuración (ayuda_nodo) y considera reintentos, continuar_si_falla o una rama de error"})
+    for aviso, k in avisos.most_common(4):
+        if k >= 2 or total <= 3:
+            hallazgos.append({"tipo": "aviso_frecuente", "aviso": aviso, "veces": k, "arreglo": "revisa la etapa que lo produce en una corrida de ejemplo (ver_logs con la corrida)"})
+    if sin_resolver:
+        hallazgos.append({"tipo": "campos_sin_resolver", "campos": dict(sin_resolver.most_common(6)), "arreglo": "campos que el flujo no logró llenar: revisa su extracción o agrega un paso que los busque"})
+    validacion: Any = None
+    if f.get("tipo") == "declarativo" and f.get("definicion"):
+        v = api("POST", "/api/flujos/validar", {"definicion": f["definicion"]})
+        validacion = (v or {}).get("problemas") or []
+        apagados = [x["id"] for x in f["definicion"].get("nodos") or [] if (x.get("config") or {}).get("deshabilitado")]
+        if apagados:
+            hallazgos.append({"tipo": "pasos_apagados", "nodos": apagados, "arreglo": "si no es a propósito, enciéndelos con editar_nodo config.deshabilitado=null"})
+    elif f.get("tipo") == "codigo":
+        e = api("GET", f"/api/flujos/{flujo}/estructura")
+        if isinstance(e, dict) and e.get("editada"):
+            v = api("POST", f"/api/flujos/{flujo}/estructura/validar", {"definicion": e.get("definicion")})
+            validacion = (v or {}).get("problemas") or []
+            if e.get("apagadas"):
+                hallazgos.append({"tipo": "etapas_apagadas", "etapas": e["apagadas"], "arreglo": "si no es a propósito, enciéndelas con editar_nodo config.deshabilitado=null"})
+        prog = api("GET", f"/api/flujos/{flujo}/programacion")
+        if isinstance(prog, dict) and not prog.get("error") and prog.get("activo"):
+            hallazgos.append({"tipo": "programacion", "activa": True, "cron": prog.get("cron"), "arreglo": "solo si la persona lo pide: programar_flujo"})
+    if validacion:
+        hallazgos.insert(0, {"tipo": "no_valida", "problemas": validacion[:8], "arreglo": "corrígelo con editar_nodo / editar_aristas según cada problema"})
+    ent = api("GET", f"/api/flujos/{flujo}/entorno")
+    if isinstance(ent, list):
+        vacias = [x.get("nombre") for x in ent if x.get("definido") is False]
+        if vacias:
+            hallazgos.append({"tipo": "entorno_sin_valor", "variables": vacias, "arreglo": "las no secretas con definir_variable; los secretos los escribe la persona (pedir_secreto)"})
+    notas = api("GET", "/api/notificaciones")
+    if isinstance(notas, dict) and isinstance(notas.get("notificaciones"), list):
+        mias = [x for x in notas["notificaciones"] if x.get("flujo") == flujo and not x.get("leida")][:5]
+        if mias:
+            hallazgos.append({"tipo": "notificaciones", "pendientes": [{k: x.get(k) for k in ("tipo", "titulo", "texto")} for x in mias]})
+    return {"flujo": flujo, "nombre": f.get("nombre"), "tipo": f.get("tipo"), "revisadas": len(corridas), "desenlaces": dict(desenlaces),
+            "hallazgos": hallazgos or [{"tipo": "sin_problemas", "detalle": "no encontré fallas en las corridas revisadas ni en su definición"}],
+            "nota": "Responde con los hallazgos más importantes y sus cifras, y para cada uno el arreglo concreto que puedes aplicar tú (qué nodo y qué cambio). "
+                    "Ofrece aplicarlos; en flujos de producción (pqrd, tutelas) propón hacerlo en una copia (clonar_flujo)."}
 
 
 CONVERSACION: Dict[str, Any] = {"id": None}
@@ -930,13 +1186,15 @@ CONVERSACION: Dict[str, Any] = {"id": None}
 # carga ella misma con cargar_herramientas.
 GRUPOS: Dict[str, List[str]] = {
     "nucleo": ["cargar_herramientas", "ver_pantalla", "listar_flujos", "leer_flujo", "navegar", "abrir_vista", "tipos_de_nodo", "ayuda_nodo", "reglas_de_flujos",
-               "enfocar_flujo", "controlar_editor", "ajustar_lienzo", "centrar_nodo", "historial", "ver_corrida", "ultimas_corridas", "renombrar_chat"],
+               "enfocar_flujo", "controlar_editor", "ajustar_lienzo", "centrar_nodo", "historial", "ver_corrida", "ultimas_corridas", "renombrar_chat",
+               "diagnosticar_flujo"],
     "construir": ["validar_flujo", "guardar_flujo", "editar_nodo", "agregar_nodo", "eliminar_nodo", "editar_aristas", "proponer_borrado", "borrar_flujo",
-                  "ver_estructura", "restablecer_estructura",
+                  "ver_estructura", "restablecer_estructura", "comparar_flujos", "traer_nodos", "encadenar_flujos",
                   "renombrar_flujo", "clonar_flujo", "versiones_flujo", "restaurar_version", "plantillas", "instalar_plantilla",
                   "plantillas_documento", "crear_plantilla_documento"],
     "correr": ["probar_paso", "archivos_de_corrida", "correr_flujo", "probar_flujo", "correr_correos", "correr_buzon", "cancelar_cola", "reintentar_corrida", "subir_adjuntos_a_flujo",
-               "estado_motor", "ver_logs"],
+               "estado_motor", "ver_logs", "ver_programacion", "programar_flujo", "ver_recursos", "ajustar_recursos", "archivos_del_flujo",
+               "reiniciar_trabajador"],
     "correo": ["listar_correos", "ver_correo", "ver_buzon", "leer_buzon_flujo", "abrir_correspondencia", "filtrar_correos", "abrir_correo",
                "seleccionar_correos", "abrir_adjuntos", "abrir_proceso", "abrir_corrida"],
     "conexiones": ["listar_credenciales", "tipos_de_credencial", "pedir_credencial", "ver_entorno", "definir_variable", "quitar_variable",
@@ -947,7 +1205,7 @@ GRUPOS: Dict[str, List[str]] = {
              "listar_nodos", "ver_nodo"],
 }
 DESCRIPCION_GRUPOS = {
-    "construir": "crear, editar, validar, guardar, clonar, renombrar, versiones y plantillas de flujos; plantillas de documentos (Word, Excel, PowerPoint, correo HTML)",
+    "construir": "crear, editar, validar, guardar, clonar, renombrar, comparar, traer pasos entre flujos, encadenarlos, versiones y plantillas de flujos; plantillas de documentos (Word, Excel, PowerPoint, correo HTML)",
     "correr": "correr y probar flujos, correos o el buzón, subir adjuntos del chat, reintentar, logs y motor",
     "correo": "correspondencia de un flujo: listar, ver, leer su buzón, abrir y seleccionar correos y adjuntos",
     "conexiones": "conexiones (credenciales), variables de entorno, secretos y manifiesto",
@@ -956,8 +1214,8 @@ DESCRIPCION_GRUPOS = {
     "pqrd": "configuración, perfiles, parámetros y nodos del motor de PQRD y tutelas",
 }
 PISTAS = {
-    "construir": r"crea|arma|haz un flujo|automatiz|nodo|paso|etapa|apaga|enciende|desactiv|reordena|insert|formato|heic|lector|edita|cambia|agrega|quita|elimina|borra|renombr|clon|copia|duplic|plantilla|versi|valida|guarda|arregla|corrige|genera|powerpoint|presentaci|diapositiv|pptx|zip|xml|json|csv|html",
-    "correr": r"corre|ejecut|prueba|procesa|reintent|lanza|log|motor|trabajador|adjunt|archivo|documento|imagen|pdf|excel|word|powerpoint|presentaci|diapositiv|pptx|zip|muestr",
+    "construir": r"crea|arma|haz un flujo|automatiz|nodo|paso|etapa|compar|cruz|diferenc|trae|traer|copia|encaden|llam|subflujo|soluciona|mejora|diagn|capacidad|puedes hacer|apaga|enciende|desactiv|reordena|insert|formato|heic|lector|edita|cambia|agrega|quita|elimina|borra|renombr|clon|copia|duplic|plantilla|versi|valida|guarda|arregla|corrige|genera|powerpoint|presentaci|diapositiv|pptx|zip|xml|json|csv|html",
+    "correr": r"corre|ejecut|prueba|procesa|reintent|lanza|log|motor|trabajador|program|horario|cron|recurso|cola|adjunt|archivo|documento|imagen|pdf|excel|word|powerpoint|presentaci|diapositiv|pptx|zip|muestr",
     "correo": r"correo|buzón|buzon|bandeja|correspondencia|mail|outlook|gmail|remitente|asunto",
     "conexiones": r"conexi|credencial|llave|api key|token|secreto|variable|entorno|manifiesto|cuenta|conectar|oauth",
     "ia": r"\bia\b|modelo|proveedor|gemini|openai|claude|gpt|deepseek|vertex|anthropic|mistral|groq|ollama|openrouter|costo|cuesta|gasto|precio|tarifa|token|visión|vision",
@@ -1164,6 +1422,96 @@ def describir_pantalla(p: Dict[str, Any], flujo: str) -> str:
     return "\n".join(lineas)
 
 
+# ------------------------------------------------------------------ lo que deja cada herramienta
+# Lo usan el chat escrito, el de otros proveedores y la voz (voz.anotar_en_turno): una sola regla.
+EDITAN_FLUJO = {"editar_nodo", "agregar_nodo", "eliminar_nodo", "editar_aristas", "configurar_ia_flujo", "encadenar_flujos"}
+
+
+def anotar_resultado(nombre: str, args: Dict[str, Any], res: Any, cambiados: set, propuestas: List[Dict[str, Any]]) -> None:
+    """Los flujos que cambió una herramienta y las propuestas que dejó (el botón de borrar)."""
+    if not isinstance(res, dict):
+        return
+    nuevo = res.get("flujo") if isinstance(res.get("flujo"), dict) else None
+    if nombre in ("guardar_flujo", "clonar_flujo", "duplicar_flujo", "instalar_plantilla") and nuevo and nuevo.get("id"):
+        cambiados.add(nuevo["id"])
+    if nombre in EDITAN_FLUJO and res.get("guardado") and args.get("flujo"):
+        cambiados.add(args["flujo"])
+    if nombre == "traer_nodos" and res.get("guardado") and args.get("destino"):
+        cambiados.add(args["destino"])
+    if nombre == "restablecer_estructura" and res.get("ok") and args.get("flujo"):
+        cambiados.add(args["flujo"])
+    if nombre in ("renombrar_flujo", "restaurar_version") and not res.get("error") and args.get("id"):
+        cambiados.add(args["id"])
+    if nombre == "ajustar_parametro_pqrd" and not res.get("error"):
+        cambiados.add("pqrd")
+    if nombre in ("proponer_borrado", "borrar_flujo") and res.get("propuesto"):
+        ids = [i for i in (res.get("ids") or ([args["id"]] if args.get("id") else list(args.get("ids") or []))) if i]
+        if len(ids) > 1:
+            propuestas.append({"accion": "borrar_flujos", "id": ",".join(ids)})
+        elif ids:
+            propuestas.append({"accion": "borrar_flujo", "id": ids[0]})
+
+
+def _que_hizo(nombre: str, a: Dict[str, Any]) -> str:
+    a = a or {}
+    nodos = a.get("nodos") if isinstance(a.get("nodos"), list) else ([a.get("nodo")] if a.get("nodo") else [])
+    ids = ", ".join(str(x.get("id") if isinstance(x, dict) else x) for x in nodos if x)
+    return {
+        "editar_nodo": f"cambié el paso {a.get('nodo')}",
+        "agregar_nodo": f"agregué {ids or 'pasos'}",
+        "eliminar_nodo": f"quité el paso {a.get('nodo')}",
+        "editar_aristas": "cambié conexiones",
+        "configurar_ia_flujo": "cambié la IA del flujo",
+        "encadenar_flujos": f"hice que llame a «{a.get('llamar')}»",
+        "traer_nodos": f"traje {ids or 'pasos'} de «{a.get('origen')}»",
+        "guardar_flujo": "guardé el flujo",
+        "restablecer_estructura": "volví a la estructura del código",
+        "clonar_flujo": f"cloné «{a.get('id')}»",
+        "renombrar_flujo": "le cambié el nombre",
+        "restaurar_version": f"restauré la versión {a.get('version')}",
+    }.get(nombre, nombre)
+
+
+def resumen_al_agotarse(registro: List[tuple], propuestas: List[Dict[str, Any]], vueltas: int) -> str:
+    """Si se acaban las vueltas: qué quedó guardado (con versión) y qué faltó, sacado de lo que hicieron las herramientas."""
+    hechos: List[str] = []
+    fallas: Dict[str, List[str]] = {}
+    otras: List[str] = []
+    revisado: Dict[str, int] = {}
+    for nombre, args, res in registro:
+        r = res if isinstance(res, dict) else {}
+        args = args or {}
+        nuevo = r.get("flujo") if isinstance(r.get("flujo"), dict) else {}
+        flujo = args.get("destino") or args.get("flujo") or nuevo.get("id") or args.get("id") or (args.get("definicion") or {}).get("id") or ""
+        if nombre in EDITAN_FLUJO | {"traer_nodos", "guardar_flujo", "restablecer_estructura", "clonar_flujo", "renombrar_flujo", "restaurar_version"}:
+            ok = bool(r.get("guardado") or (nombre in ("guardar_flujo", "clonar_flujo", "renombrar_flujo", "restaurar_version") and nuevo) or (nombre == "restablecer_estructura" and r.get("ok")))
+            version = r.get("version") or nuevo.get("version")
+            if ok:
+                hechos.append(f"- {_que_hizo(nombre, args)} en `{flujo}`" + (f": guardado, versión {version}" if version is not None else ": guardado"))
+                fallas.pop(flujo, None)  # lo que falló antes en ese flujo se corrigió después
+            else:
+                motivo = (r.get("problemas") or [r.get("error") or "no se guardó"])[0]
+                fallas.setdefault(flujo, []).append(f"- {_que_hizo(nombre, args)} en `{flujo}`: no se guardó ({str(motivo)[:180]})")
+        elif r.get("error"):
+            otras.append(f"- {nombre}: {str(r['error'])[:160]}")
+        else:
+            revisado[nombre] = revisado.get(nombre, 0) + 1
+    for p in propuestas:
+        hechos.append(f"- te dejé el botón para confirmar el borrado de `{p.get('id')}`")
+    lineas = [f"Llegué al tope de {vueltas} pasos en esta respuesta y paré antes de terminar."]
+    if hechos:
+        lineas += ["", "**Quedó hecho:**", *hechos]
+    else:
+        lineas += ["", "No alcancé a guardar ningún cambio todavía."]
+        if revisado:
+            lineas.append("Alcancé a revisar: " + ", ".join(f"{n}" + (f" ({k})" if k > 1 else "") for n, k in revisado.items()) + ".")
+    pendientes = [x for v in fallas.values() for x in v[-1:]] + otras[-3:]
+    if pendientes:
+        lineas += ["", "**Faltó o no quedó:**", *pendientes]
+    lineas += ["", "Si me dices «sigue», continúo desde ahí."]
+    return "\n".join(lineas)
+
+
 def conversar(entrada: Dict[str, Any], aviso: Any = None) -> Dict[str, Any]:
     """El chat escrito: responde a la conversación con herramientas. `aviso(tipo, **datos)`
     recibe cada paso (por defecto, la salida estándar). Devuelve texto, pasos, cambios y propuestas."""
@@ -1212,9 +1560,10 @@ def conversar(entrada: Dict[str, Any], aviso: Any = None) -> Dict[str, Any]:
     cambiados: set = set()
     propuestas: List[Dict[str, Any]] = []
     pasos: List[Dict[str, Any]] = []
+    registro: List[tuple] = []
+    # Si se acaban las vueltas con herramientas pendientes, la respuesta sale de lo que devolvieron las herramientas
+    # (resumen_al_agotarse), no del modelo: obligado a contestar sin herramientas llegó a decir que guardó lo que no guardó.
     for vuelta in range(MAX_VUELTAS):
-        if vuelta == MAX_VUELTAS - 1:  # la última vuelta obliga a responder con texto
-            config.tool_config = types.ToolConfig(function_calling_config=types.FunctionCallingConfig(mode="NONE"))
         try:
             r = cliente.models.generate_content(model=modelo, contents=contenidos, config=config)
         except Exception as e:  # tiempo agotado o error pasajero: un reintento
@@ -1246,20 +1595,14 @@ def conversar(entrada: Dict[str, Any], aviso: Any = None) -> Dict[str, Any]:
             if ll.name == "cargar_herramientas" and isinstance(res, dict) and res.get("cargados"):
                 activos.extend(g for g in res["cargados"] if g not in activos)
                 config.tools = [_herramientas()]
-            if ll.name == "guardar_flujo" and isinstance(res, dict) and res.get("flujo"):
-                cambiados.add(res["flujo"]["id"])
-            if ll.name in ("editar_nodo", "agregar_nodo", "eliminar_nodo", "editar_aristas") and isinstance(res, dict) and res.get("guardado"):
-                cambiados.add(args["flujo"])
-            if ll.name in ("proponer_borrado", "borrar_flujo") and isinstance(res, dict) and res.get("propuesto"):
-                propuestas.append({"accion": "borrar_flujo", "id": args.get("id")})
-            if ll.name == "ajustar_parametro_pqrd" and isinstance(res, dict) and not res.get("error"):
-                cambiados.add("pqrd")
+            anotar_resultado(ll.name, args, res, cambiados, propuestas)
+            registro.append((ll.name, args, res))
             texto_res = json.dumps(res, ensure_ascii=False, default=str)
             pasos.append({"nombre": ll.name, "argumentos": resumen, "resultado": texto_res[:600]})
             avisar("resultado_herramienta", nombre=ll.name, resultado=texto_res[:1500])
             respuestas.append(types.Part.from_function_response(name=ll.name, response={"resultado": res}))
         contenidos.append(types.Content(role="user", parts=respuestas))
-    texto = "Me detuve tras varios pasos sin terminar. Dime cómo seguimos."
+    texto = resumen_al_agotarse(registro, propuestas, MAX_VUELTAS)
     avisar("texto", texto=texto)
     avisar("fin", flujos_cambiados=sorted(cambiados))
     return {"texto": texto, "pasos": pasos, "cambiados": sorted(cambiados), "propuestas": propuestas}
@@ -1300,17 +1643,14 @@ def _conversar_con_proveedor(entrada: Dict[str, Any], ia: Dict[str, Any], avisar
     cambiados: set = set()
     propuestas: List[Dict[str, Any]] = []
     pasos: List[Dict[str, Any]] = []
+    registro: List[tuple] = []
 
     def ejecutar_y_anotar(nombre: str, args: Dict[str, Any]) -> Any:
         resumen = {k: (v if k != "definicion" else {"id": (v or {}).get("id"), "nodos": len((v or {}).get("nodos", []))}) for k, v in args.items()}
         avisar("herramienta", nombre=nombre, argumentos=resumen)
         res = ejecutar(nombre, args)
-        if nombre == "guardar_flujo" and isinstance(res, dict) and res.get("flujo"):
-            cambiados.add(res["flujo"]["id"])
-        if nombre in ("editar_nodo", "agregar_nodo", "eliminar_nodo", "editar_aristas", "configurar_ia_flujo") and isinstance(res, dict) and res.get("guardado"):
-            cambiados.add(args.get("flujo"))
-        if nombre in ("proponer_borrado", "borrar_flujo") and isinstance(res, dict) and res.get("propuesto"):
-            propuestas.append({"accion": "borrar_flujo", "id": args.get("id")})
+        anotar_resultado(nombre, args, res, cambiados, propuestas)
+        registro.append((nombre, args, res))
         texto_res = json.dumps(res, ensure_ascii=False, default=str)
         pasos.append({"nombre": nombre, "argumentos": resumen, "resultado": texto_res[:600]})
         avisar("resultado_herramienta", nombre=nombre, resultado=texto_res[:1500])
@@ -1319,6 +1659,10 @@ def _conversar_con_proveedor(entrada: Dict[str, Any], ia: Dict[str, Any], avisar
     r = conversar_con_herramientas(ia["proveedor"], ia["modelo"], entrada.get("credencial_ia") or {}, sistema, mensajes, herramientas,
                                    ejecutar_y_anotar, max_vueltas=MAX_VUELTAS, temperatura=ia.get("temperatura"), flujo="vera")
     texto = r.get("texto") or "(sin respuesta)"
+    historial = r.get("historial") or []
+    if r.get("vueltas", 0) >= MAX_VUELTAS and historial and historial[-1].get("rol") == "herramienta":
+        # se acabaron las vueltas con herramientas pendientes: lo hecho y lo que faltó, de las herramientas
+        texto = resumen_al_agotarse(registro, propuestas, MAX_VUELTAS)
     avisar("texto", texto=texto)
     avisar("fin", flujos_cambiados=sorted(cambiados))
     return {"texto": texto, "pasos": pasos, "cambiados": sorted(cambiados), "propuestas": propuestas}

@@ -239,6 +239,35 @@ function BandejaDeSalida({ elegidos, modo, setModo, alLimpiar, alCorrer, ocupado
  * las consultas al buzón de verdad. Nada se escribe: lo que el job marcaría,
  * movería o reenviaría aparece en el flujo como bloqueado.
  */
+/**
+ * Con el buzón al día, el panel no queda en blanco: muestra los últimos correos
+ * descargados para correr uno con un clic.
+ */
+function RecientesDescargados({ porCaso }: { porCaso: Record<string, Corrida> }) {
+  const bandeja = usar((s) => s.bandeja);
+  const procesar = usar((s) => s.procesar);
+  const enfocar = usar((s) => s.enfocar);
+  const recientes = [...bandeja].sort((a, b) => b.recibido.localeCompare(a.recibido)).slice(0, 6);
+  if (!recientes.length) return null;
+  return (
+    <section className="recientes-desc" aria-label="Últimos correos descargados">
+      <h4>Últimos descargados</h4>
+      {recientes.map((c) => {
+        const r = porCaso[c.caso]?.resultado;
+        return (
+          <div key={c.caso} className="reciente-fila">
+            <button className="reciente-abrir" onClick={() => enfocar({ tipo: "correo", caso: c.caso })} title="Ver el correo">
+              <b>{c.asunto || "(sin asunto)"}</b>
+              <small>{c.remitente || c.remitenteCorreo}{c.adjuntos.length ? ` · ${c.adjuntos.length} adjunto${c.adjuntos.length === 1 ? "" : "s"}` : ""}{r ? ` · ${nombreResultado(String(r.accion), true)}` : ""}</small>
+            </button>
+            <button className="boton chico fantasma" onClick={() => void procesar([c.caso])} title="Correr este correo" aria-label={`Correr ${c.asunto}`}><Icono n="play" tam={12} /></button>
+          </div>
+        );
+      })}
+    </section>
+  );
+}
+
 function PanelBuzon({ porCaso, verDescargados }: { porCaso: Record<string, Corrida>; verDescargados?: () => void }) {
   const buzon = usar((s) => s.buzon);
   const cargando = usar((s) => s.cargandoBuzon);
@@ -343,6 +372,7 @@ function PanelBuzon({ porCaso, verDescargados }: { porCaso: Record<string, Corri
             {verDescargados && <button className="boton chico" onClick={verDescargados}><Icono n="bandeja" tam={13} />Ver los descargados</button>}
           </div>
         )}
+        {buzon && !buzon.error && !correos.length && <RecientesDescargados porCaso={porCaso} />}
       </div>
       <BandejaDeSalida
         elegidos={elegidos.map((id) => ({ clave: id, nombre: porId.get(id)?.remitente || porId.get(id)?.remitenteCorreo || "?" }))}

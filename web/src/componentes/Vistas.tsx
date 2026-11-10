@@ -325,14 +325,15 @@ export function VistaProveedores() {
     for (const e of recientes) {
       if (e.tipo === "modelo_fin") sumar("vertex", e);
       else if (e.tipo === "proveedor") sumar("registro_personas", e);
-      else if (e.tipo === "escritura") sumar(e.sistema === "sgdea" ? "sgdea_radicacion" : "graph", e);
+      else if (e.tipo === "escritura") sumar(e.sistema === "sgdea" ? "sgdea_radicacion" : e.sistema === "registro_radicados" ? "registro_radicados" : "graph", e);
+      else if (e.tipo === "lectura_real" && String(e.sistema).startsWith("registro de radicados")) sumar("registro_radicados", e);
     }
     return a;
   }, [recientes]);
   if (!catalogo) return null;
   return (
     <div className="vista">
-      <Cabecera titulo="Sistemas que consulta" sub="Con qué sistemas habla el flujo. Las lecturas son reales (Vertex AI, el registro de personas); lo que se escribiría en SGDEA o en el buzón no se envía: queda registrado para que veas qué habría pasado. Toca uno para ver sus operaciones." />
+      <Cabecera titulo="Sistemas que consulta" sub="Con qué sistemas habla el flujo. Las lecturas son reales (Vertex AI, el registro de personas); lo que se escribiría en SGDEA, en el buzón o en el registro de radicados de Cloud SQL no se envía: queda registrado para que veas qué habría pasado. Toca uno para ver sus operaciones." />
       <div className="rejilla">
         {catalogo.proveedores.map((p) => {
           const act = actividad[p.id] ?? (p.id.includes("sgdea") && p.id.includes("radic") ? actividad.sgdea_radicacion : undefined);

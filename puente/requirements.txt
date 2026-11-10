@@ -4,7 +4,8 @@
 pypdfium2==4.30.0
 # Conectores de los flujos declarativos (puente/conectores/):
 # PostgreSQL en Python puro (BSD-3-Clause) y MySQL/MariaDB en Python puro (MIT).
-pg8000==1.31.5
+# La misma versión que motor/requirements.txt (el registro de radicados del job la usa).
+pg8000==1.31.6
 # Correos .msg de Outlook en la bandeja de prueba de un flujo (archivo compuesto OLE; BSD-2-Clause).
 olefile==0.47
 PyMySQL==1.1.2

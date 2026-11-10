@@ -4,9 +4,9 @@ Configuracion del microservicio usando Pydantic Settings
 Variables de entorno requeridas (solo secretos):
   MICROSOFT_CLIENT_ID, MICROSOFT_CLIENT_SECRET, MICROSOFT_TENANT_ID,
   OUTLOOK_REFRESH_TOKEN, OUTLOOK_FOLDER_ID,
-
-  SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY,
   SGDEA_CLIENT_SECRET, SGDEA_PASSWORD
+
+Registro de radicados: CLOUDSQL_HOST, CLOUDSQL_USER, CLOUDSQL_PASSWORD.
 """
 from functools import lru_cache
 from pathlib import Path
@@ -24,10 +24,21 @@ class Settings(BaseSettings):
     MICROSOFT_TENANT_ID: str
     OUTLOOK_REFRESH_TOKEN: str
     OUTLOOK_FOLDER_ID: str
-    SUPABASE_URL: str
-    SUPABASE_SERVICE_ROLE_KEY: str
     SGDEA_CLIENT_SECRET: str
     SGDEA_PASSWORD: str
+
+    # ── Registro de radicados en Cloud SQL (base gcpprolinktic de SGDEA) ──
+    # Infra los monta desde Secret Manager (PQRD_CLOUDSQL_*). El job guarda ahi
+    # cada radicado y deduplica por remitente y asunto contra esa tabla.
+    CLOUDSQL_HOST: str = ""
+    CLOUDSQL_USER: str = ""
+    CLOUDSQL_PASSWORD: str = ""
+    CLOUDSQL_INSTANCE: str = ""
+    CLOUDSQL_PORT: int = 5432
+    CLOUDSQL_DB: str = "gcpprolinktic"
+    CLOUDSQL_SSL: bool = True
+    CLOUDSQL_TABLE_RADICADOS_IAPQRD: str = "iapqrd_radicados_pqrd"
+
 
     # ── Configuracion hardcodeada (no requiere env vars) ──
 
@@ -126,7 +137,7 @@ def dedup_desactivada() -> bool:
     """
     Si las consultas de deduplicacion estan apagadas.
 
-    Unico criterio para Outlook, Redis y Supabase, de modo que las tres capas
+    Unico criterio para Outlook, Redis y la base de radicados, de modo que las tres capas
     queden siempre encendidas o apagadas a la vez.
     """
     return bool(settings.MODO_TEST) and not bool(settings.DEDUP_EN_PRUEBAS)

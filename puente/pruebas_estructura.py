@@ -193,6 +193,37 @@ def prueba_el_tramo_fija_campos_y_agrega_documento() -> None:
     assert "foto.heic" in str(r["variables"]["documento_extra"]), r["variables"]
 
 
+def prueba_un_paso_de_pqrd_llama_a_otro_flujo() -> None:
+    """Encadenar: un «subflujo» insertado en una copia de PQRD corre un flujo declarativo y sigue según cómo terminó."""
+    sub = {"id": "validar-doc", "nombre": "Validar documento", "modelo": "gemini-2.5-flash",
+           "nodos": [{"id": "inicio", "tipo": "entrada_manual", "nombre": "Inicio", "config": {"campos": [{"nombre": "documento", "tipo": "texto"}]}},
+                     {"id": "hay", "tipo": "condicion", "nombre": "¿Hay?", "config": {"campo": "entrada.documento", "operador": "no_vacio"}},
+                     {"id": "bien", "tipo": "salida", "nombre": "Bien", "config": {"desenlace": "completar"}},
+                     {"id": "mal", "tipo": "salida", "nombre": "Mal", "config": {"desenlace": "manual", "motivo": "SIN_DOC_EN_SUBFLUJO"}}],
+           "aristas": [{"desde": "inicio", "hacia": "hay"}, {"desde": "hay", "hacia": "bien", "cuando": "si"}, {"desde": "hay", "hacia": "mal", "cuando": "no"}]}
+    d = _pqrd()
+    _sin(d, "registro_de_personas", "compuerta")
+    d["nodos"] += [{"id": "llamar_validador", "tipo": "subflujo", "nombre": "Validar en el otro flujo",
+                    "config": {"flujo": "validar-doc", "entrada": {"documento": "{{campos.numero_documento_afectado}}"}, "salida": "validacion"}},
+                   {"id": "a_revision", "tipo": "salida", "nombre": "A revisión", "config": {"desenlace": "manual", "motivo": "{{validacion.motivo}}"}}]
+    d["aristas"] += [{"desde": "registro_de_personas", "hacia": "llamar_validador"}, {"desde": "llamar_validador", "hacia": "compuerta"},
+                     {"desde": "llamar_validador", "hacia": "a_revision", "cuando": "manual"}]
+    v = ec.validar("pqrd", d)
+    assert v["ok"], v["problemas"]
+    tramo = next(t for t in v["tramos"] if t["punto"] == "antes_de_validar")
+    orden = {"subflujos": {"validar-doc": {"definicion": sub}}}
+    r = ec.correr_segmento(tramo, d, "pqrd", {"correo": {}, "variables": {"campos": {"numero_documento_afectado": "12345678"}}}, orden, "prueba-sub", io.StringIO(), threading.Lock())
+    assert r["desenlace"] == "sigue", r
+    r = ec.correr_segmento(tramo, d, "pqrd", {"correo": {}, "variables": {"campos": {"numero_documento_afectado": ""}}}, orden, "prueba-sub", io.StringIO(), threading.Lock())
+    assert r["desenlace"] == "manual" and r["motivo"] == "SIN_DOC_EN_SUBFLUJO", r
+    # sin el flujo llamado en la orden, falla con su motivo (no se inventa; el trabajador lo deja como error del paso)
+    try:
+        ec.correr_segmento(tramo, d, "pqrd", {"correo": {}, "variables": {"campos": {"numero_documento_afectado": "1"}}}, {}, "prueba-sub", io.StringIO(), threading.Lock())
+        raise AssertionError("debió fallar sin el flujo llamado")
+    except Exception as e:  # noqa: BLE001
+        assert "validar-doc" in str(e), e
+
+
 # ------------------------------------------------------------------ en el trabajador
 
 class _Trabajador:

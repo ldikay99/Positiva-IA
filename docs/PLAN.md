@@ -161,7 +161,7 @@ El proyecto nació como PQRD y quedan cosas de PQRD que se ven en todos los fluj
 
 - [ ] Probar en una llamada real del navegador la renovación de la sesión (más de 10 minutos) y la despedida completa.
 
-- [x] Saludo propio al conectar, según la hora («Buenas noches, habla Vera, cuéntame.»); despedidas variadas y ligadas a lo que se hizo; propone en vez de preguntar en cadena.
+- [x] Saludo propio al conectar, según la hora («Buenas noches, cuéntame.»; desde el 2026-11-10 no dice su nombre, ver 5g); despedidas variadas y ligadas a lo que se hizo; propone en vez de preguntar en cadena.
 - [x] Cortes corregidos: la sesión de Gemini Live se renueva por dentro con su identificador de reanudación (la llamada sigue, sin perder turno ni tareas); se cuelga al terminar el turno de la despedida y el navegador deja sonar lo que falte; interrumpir a Vera exige voz más clara (eco y ruido no la cortan).
 - [x] Tareas en curso en su propia franja sobre la barra de la llamada, con el nombre de cada una y «listo» al terminar.
 
@@ -375,6 +375,170 @@ Viene de una llamada real con Vera: un correo de PQRD con 8 fotos HEIC salió co
 - [x] Pruebas: `puente/pruebas_estructura.py` (14), `servidor/src/pruebas_estructura.ts` (2) y seis casos nuevos en `scripts/evaluar_vera.py` (costo del HEIC, editar la copia de PQRD, borrar la copia, «se radicó», y por la ruta de la voz —su sistema, sus herramientas y su turno, con el modelo de texto— borrar la copia y «se radicó»).
 - [x] `agregar_nodo` agrega varios nodos y quita aristas en un solo guardado: un tramo con ramas ya no falla a medio armar (Vera se quedaba sin vueltas).
 - [ ] Tutelas: la estructura se probó con sus pruebas, no con un hilo real (la carpeta del job estaba vacía).
+
+## 5h. Motor al día con producción, 6ecdf40 (2026-11-10)
+
+`mcp-fix` pasó de `7540e18` a `6ecdf40`: `1d11744` cambia Supabase por el registro de radicados en Cloud SQL (base `gcpprolinktic`, tabla `iapqrd_radicados_pqrd`, `services/registro_radicados.py`, pg8000, `CLOUDSQL_*`), que también responde la capa 6; `6ecdf40` hace que la capa 6 (remitente y asunto) no aplique a buzones de Positiva, porque la app manda todas las PQRD con el mismo remitente y asunto.
+
+- [x] `motor/` con los dos commits. No se corrió `catalogo/sincronizar_motor.sh 6ecdf40`: deja `motor/` idéntico al commit y habría borrado las divergencias de 5e y 5f. Se aplicó el diff `7540e18..6ecdf40` encima (`git apply`, sin conflictos) y `ORIGEN` dice `6ecdf40`. Comprobado contra el `git archive` de `6ecdf40`: solo difieren los archivos de `motor/DIVERGENCIAS.md`. La próxima sincronización se hace igual.
+- [x] Catálogo regenerado (`extraer.py`, `build.py`, `enlazar.py`): 33 nodos, 566 parámetros, 10 sistemas. El proveedor «Supabase» pasa a «Registro de radicados (Cloud SQL, iapqrd_radicados_pqrd)», con sus SELECT e INSERT y sus variables. Hay reglas nuevas: `dedup_auditoria_no_positiva` y `cie_registro` (guardar el radicado al cerrar). El catálogo anterior no se había regenerado desde 5e, así que también entran los parámetros de esa tanda.
+- [x] Trabajador de PQRD, que vale también para las copias (`pqrd-revision-adjuntos`, `pqrd-test-heic`):
+  - sin `CLOUDSQL_HOST`, `CLOUDSQL_USER` o `CLOUDSQL_PASSWORD` corre «sin auditoría», como el job, y «fuentes» lo dice como un hecho («sin auditoría», no «doble» ni error);
+  - con esas variables y la compuerta apagada, el `RegistroDeRadicados` del motor va sobre `solo_lectura.conectar_registro_solo_lectura`: sesión `READ ONLY`, solo SELECT y una prueba de alcance de 3 s, una vez por proceso, porque la instancia solo tiene IP privada. Si no se alcanza, la capa 6 queda degradada con el motivo, como en el job con la base caída;
+  - el INSERT del radicado lo retiene el grabador (`REGISTRO_RADICADO`) y sale como escritura `registro_radicados`;
+  - con la compuerta encendida, el registro real.
+- [x] Quitado lo que quedaba de Supabase en PQRD: rellenos `SUPABASE_*` del puente; `produccion.ts` (lecturas en simulación, entorno con `PQRD_CLOUDSQL_*`, conexiones y escrituras); consecuencias de la compuerta en `Entorno.tsx`; README; `docs/PRODUCCION.md`; textos de eventos y de la vista Sistemas (`eventos.ts`, `Vistas.tsx`). En `entornos.ts`, `CLOUDSQL_*` queda entre los nombres del job de PQRD y entre las variables protegidas; `SUPABASE_*` se sigue aceptando para no romper los entornos ya copiados.
+- [x] `puente/requirements.txt` fija `pg8000==1.31.6`, la versión del motor. Con 1.31.5 la imagen no se construía.
+- [x] Tutelas no usa Supabase (ni `motores/tutelas` ni su trabajador) y su repo fuente sigue en `4d51bc6`, igual que `motores/tutelas/ORIGEN`: no se tocó.
+- [x] Pruebas, todas en verde:
+
+  | Suite | Resultado |
+  |---|---|
+  | `pruebas_compuerta.py` | 9 de 9 (nuevas: solo lectura del registro, INSERT retenido, inalcanzable al instante, sin auditoría) |
+  | `pruebas_estructura.py` | 15 |
+  | `pruebas_declarativo.py` | 193 (1 omitida) |
+  | `pruebas_externos.py` | 21 |
+  | `pruebas_integraciones.py` | 28 |
+  | `pruebas_salidas.py` | 18 |
+  | `pruebas_trabajo.py` | 17 |
+  | `pruebas_voz.py` | 9 |
+  | Pruebas del motor (`pytest tests`, en el contenedor) | 3140 pasan, 22 omitidas |
+  | Servidor (`node --test`) | 22 + 4 + 5 + 2 + 7 |
+  | `tsc --noEmit` (servidor y web) | limpio |
+
+- [x] Corridas reales en el contenedor (Vertex real, modo prueba):
+  - c0070 (4 adjuntos con OCR y visión) y c0071: «radicado» `DRY-RUN-ENT`, con «sin auditoría» en fuentes;
+  - c0055 (remitente `@positiva.gov.co`): ya no trae el aviso de la capa 6, porque la capa no aplica.
+- [x] Capa 6 con correos reales de la bandeja y un registro falso que tiene su mismo par remitente y asunto: c0055, c0067 y c0068 (buzones de Positiva) no consultan y no son duplicados; c0070 y c0071 (externos) sí lo son. En la bandeja no hay correos de `appconexionpositiva@`: ese caso lo cubre la prueba del motor `test_la_app_de_positiva_no_junta_a_personas_distintas`.
+- [ ] Verificar en el job (solo lectura, `gcloud run jobs describe`) que ya monta `PQRD_CLOUDSQL_*` y si todavía trae `SUPABASE_*`. Si los trae, quitarlos en el PR de producción. Después, copiar `CLOUDSQL_*` al entorno de PQRD con `scripts/copiar_entorno_de_job.py` (lo hace Jonathan). Aun así, desde el visor no se alcanza la IP privada: la capa 6 quedará degradada con el motivo.
+- [ ] El generador del catálogo marca como ajustables constantes que no lo son: cerrojos y semáforos (`_CERROJO_DEL_CUPO_IA`, `_CUPO_TESSERACT`, `_CANDADO_DEL_CLIENTE`) y `_IDENTIFICADOR`. Excluirlos en `build.py`.
+- [ ] El aviso del motor «deduplicacion degradada: la auditoria no esta configurada» sale tal cual en los avisos del resultado. Si se quiere suavizar en pantalla, va en las vistas que muestran los avisos.
+
+## 5g. Vera y operaciones entre flujos (pedido 2026-11-10)
+
+Jonathan pidió que Vera haga todo en la plataforma, por texto y por voz (borrar, clonar, editar, renombrar, «cruzar flujos»), sin los fallos de las conversaciones `095d3d20-dd70-4b2b`, `776e0c45-b45c-4096` y `9a25aae8-e92f-4faf`.
+
+### Fallos de las conversaciones reales
+
+- [x] **Chat escrito cortado.** Un pedido de varias ediciones (21 herramientas) terminaba con «Me detuve tras varios pasos sin terminar» porque el tope era de 14 vueltas.
+  - El tope ahora es de 30 vueltas (`VERA_MAX_VUELTAS`).
+  - Si igual se agota, la respuesta la arma `resumen_al_agotarse` con lo que devolvieron las herramientas: lo guardado con su versión, lo que faltó con su motivo, lo que alcanzó a revisar y «si me dices sigue, continúo».
+  - El modelo ya no redacta ese cierre. En la prueba, obligado a contestar sin herramientas, dijo que había guardado cambios que no guardó.
+  - Lo mismo aplica con otros proveedores (`_conversar_con_proveedor`).
+  - La regla de qué flujos cambió y qué propuestas dejó una herramienta es una sola (`anotar_resultado`), compartida por el chat, los otros proveedores y la voz.
+- [x] **Voz cortada y con palabras pegadas.** La causa: cada cambio de pantalla (el que manda el navegador al quedar en llamada y el que llega tras `enfocar_flujo`) se mandaba a Gemini Live como contenido apenas llegaba, y eso interrumpe lo que Vera está diciendo. De ahí salían «Buenas tardes, habla», «Listo, ya» + «Tienes…» y «Me pediste que te».
+  - El aviso de pantalla ahora espera una pausa (ni Vera ni la persona hablando) y solo se manda si cambió de verdad.
+  - Los fragmentos de transcripción se pegan con `unir_transcripcion`, que pone el espacio que falta entre frases sin partir palabras.
+  - El turno se guarda 0,9 s después del fin del turno, para que la transcripción que llega tarde quede en el mismo turno. Si la persona vuelve a hablar, se guarda antes.
+  - El recordatorio «di el resultado» ya no se manda mientras suena su voz.
+- [x] **Saludo.** Ya no se presenta: «Buenas tardes, cuéntame qué hacemos hoy.» No dice su nombre ni el de la plataforma.
+- [x] **Capacidades.** El SISTEMA trae la lista concreta y agrupada: crear, editar (también PQRD y copias), operar la plataforma (clonar, comparar, traer pasos, encadenar, borrar con botón, programar, recursos), correr, revisar y diagnosticar, y moverse por la pantalla. También dice lo que no hace. Por voz lo dice en dos o tres frases y deja la lista en el chat.
+- [x] **Diagnóstico de verdad.** La herramienta nueva es `diagnosticar_flujo`. Revisa:
+  - las últimas corridas: desenlaces, motivos de revisión manual con ejemplos, errores, avisos frecuentes y campos sin resolver;
+  - la validación de la definición o de la estructura;
+  - las etapas y pasos apagados;
+  - el entorno sin valor;
+  - las notificaciones y la programación.
+
+  A cada hallazgo le sugiere el arreglo que Vera puede aplicar. Ante «¿qué puedes solucionar?» la usa, responde con cifras y arreglos y ofrece aplicarlos (en una copia si es PQRD o tutelas).
+
+### Cruzar flujos
+
+- [x] **Comparar.** `GET /api/flujos/:id/comparar?con=` (`servidor/src/cruzar.ts`) compara declarativos, flujos de código o uno de cada. Devuelve:
+  - los pasos que solo están en uno;
+  - los pasos con distinta configuración, campo por campo;
+  - las conexiones distintas;
+  - los datos del flujo (nombre, descripción, IA);
+  - los «parecidos» (mismo tipo y nombre con otro id).
+
+  Vera lo hace con `comparar_flujos`.
+- [x] **Traer pasos.** `POST /api/flujos/:id/traer {desde, nodos, entre?, aristas?, quitar?, renombrar?, simular?}` copia los pasos con sus conexiones internas:
+  - renombra los ids que chocan (`limpiar` → `limpiar_2`);
+  - con `entre` los inserta en esa conexión: el único comienzo recibe la conexión, y cada paso sin salida por defecto sigue hacia el destino;
+  - ubica lo traído en el lienzo a la derecha;
+  - avisa si usan variables de entorno que el destino no tiene o conexiones;
+  - valida y guarda una versión nueva; el origen no se toca.
+
+  En PQRD, tutelas y sus copias va por `estructuras.guardar`, así que solo entra dentro de un punto de inserción y con las variables de ese punto. No se copian las etapas del motor ni un disparador si el destino ya tiene uno. `simular=true` lo revisa sin guardar. Vera lo hace con `traer_nodos`.
+- [x] **Encadenar.** Ya existían `subflujo` y `llamar_flujo` en `nodos_declarativos.py`: corren otro flujo declarativo que empiece con `entrada_manual`, hasta 3 niveles y nunca a sí mismo. Lo que faltaba:
+  - Vera los conoce y los explica (SISTEMA).
+  - `encadenar_flujos` agrega el paso «subflujo». Revisa que el llamado se pueda llamar y arma la entrada con los campos del llamado (si el que llama tiene campos con el mismo nombre). Si falta un campo, dice cuáles pide. Evita ciclos y guarda.
+  - Un paso «subflujo» insertado en una copia de PQRD o tutelas ahora sí corre: la orden de sus pasos lleva `subflujos` (`flujos.ts`) y `estructura_codigo.correr_segmento` se los pasa a la ejecución. Antes fallaba con «no existe».
+- [x] **Borrar varios.** `proponer_borrado` y `borrar_flujo` aceptan `ids=[…]` y dejan una sola propuesta `borrar_flujos` con un botón («Sí, borrar los 2»). Los originales y los que no existen quedan fuera, con su motivo. Nunca se borra sin el botón. El chat los borra uno por uno y dice cuál falló.
+- [x] **Lo que la pantalla tenía y Vera no:**
+  - `ver_programacion` / `programar_flujo`: la programación como el job de los flujos de código;
+  - `ver_recursos` / `ajustar_recursos`;
+  - `archivos_del_flujo`;
+  - `reiniciar_trabajador`.
+
+  Son 94 herramientas en el chat y 96 en la voz (las mismas más `responder_por_escrito`, `escribir_en_chat` y `terminar_llamada`, menos `cargar_herramientas`).
+- [x] **Pantalla.** La cabecera del flujo trae «Comparar» y «Traer pasos» (`AccionesFlujo.tsx`). Abren `CruzarFlujos.tsx` (con su `cruzar.css`), que usa `Selector` y casillas propias. Tiene:
+  - pestañas Comparar / Traer pasos;
+  - las diferencias en rojo y verde;
+  - «Traer» directo desde un paso que solo está en el otro flujo;
+  - «Dónde» con los puntos de inserción en los flujos de código;
+  - «Revisar sin guardar» y «Traer N pasos».
+
+  En el teléfono el diálogo sale como hoja inferior.
+
+### Pruebas (corridas el 2026-11-10)
+
+- [x] Pruebas automáticas, todas en verde:
+
+  | Suite | Resultado | Qué cubre |
+  |---|---|---|
+  | `servidor/src/pruebas_cruzar.ts` (nueva) | 5 de 5 | Comparar; traer a un declarativo con renombre y versión; rechazos; de una copia de PQRD a otra en «antes de validar»; la orden lleva `subflujos` |
+  | `puente/pruebas_voz.py` | 9 de 9 (6 nuevas) | Paridad de las herramientas nuevas; saludo; aviso de pantalla en pausa; espacios; borrar varios; resumen al agotarse |
+  | `puente/pruebas_estructura.py` | 15 de 15 (+1) | Un paso de PQRD llama a otro flujo y sigue según su desenlace |
+  | `pruebas_declarativo.py` | 193 (1 omitida) | |
+  | `pruebas_plataforma.ts` | 22 | |
+  | `pruebas_estructura.ts` | 2 | |
+  | `pruebas_aprobaciones.ts` | 4 | |
+  | `pruebas_oauth.ts` | 7 | |
+
+  `tsc` está limpio en el servidor y en la web.
+- [x] `scripts/evaluar_vera.py` tiene 10 casos nuevos y una opción `--nombre`. Contra el contenedor: 10 de 10, más 3 de 3 de los casos anteriores de copias de PQRD. Los casos nuevos:
+  - capacidades, por escrito y por voz;
+  - diagnóstico, por escrito y por voz;
+  - comparar;
+  - traer pasos;
+  - encadenar y correr;
+  - borrar dos, por escrito y por voz;
+  - el pedido real de varias ediciones (ahora 7 herramientas en 29 s, sin cortarse).
+- [x] Tope forzado (`VERA_MAX_VUELTAS=4`): la respuesta dice «Quedó hecho: agregué … en `ev-tope`: guardado, versión 1» en vez del texto genérico.
+- [x] Llamada de voz real por `/api/voz` con Gemini Live (texto en vez de micrófono). El script reporta la pantalla al conectar y al abrir un flujo, como el navegador. Resultados:
+  - Saludo completo sin nombre; ninguna interrupción.
+  - Capacidades, abrir PQRD, diagnóstico («De 30 corridas, seis fueron a revisión manual…»), comparar, traer (versión 2) y un botón para borrar dos copias, que siguen existiendo.
+  - Lo guardado no tiene frases cortadas ni palabras pegadas.
+  - El script está en el scratchpad: `prueba_voz_cruzar.py`.
+- [x] Navegador real (Playwright):
+  - Comparar muestra las diferencias.
+  - «Traer» desde la comparación y «Revisar sin guardar» dicen «Se puede traer así».
+  - Al traer, se guarda la versión 2 y el origen queda intacto.
+  - En 390 px el diálogo cabe sin desbordar.
+
+### Pendiente
+
+- [ ] En el teléfono la barra del flujo esconde Renombrar, Clonar, Comparar y Traer pasos: es el estilo de la barra (`archivos.css`, del rediseño), así que hoy esas acciones solo están en pantallas anchas o por Vera.
+- [ ] Probar la voz con micrófono real en el navegador (la prueba fue por la ruta de voz con texto).
+- [ ] Faltan operaciones que la pantalla tiene y Vera no:
+  - borrar archivos del flujo, correos de la bandeja de prueba, perfiles, conversaciones y plantillas de documentos; hoy solo los lista o no los toca, y si se agregan deben ir con botón como el borrado de flujos;
+  - editar una plantilla de documento existente.
+- [ ] La comparación de flujos de código mira la estructura (etapas, pasos insertados y conexiones), no los parámetros del motor de cada copia (`ajustar_parametro_pqrd` es global de PQRD).
+
+## 5i. Espacio, desbordes y el escáner que no se veía (pedido 2026-11-10)
+
+Jonathan vio textos desbordados, espacio mal usado y que la animación del escáner mostraba imágenes rotas. Los arreglos de diseño van en `web/src/espacio.css`, cargado al final.
+
+- [x] Hojas de los adjuntos en 404: `/api/corridas/:id/archivos/:archivo` (archivos que salen) tapaba la ruta de las imágenes de cada hoja. `historial.hojaDelVisor` las sirve desde las dos rutas. Probado en vivo: escaneo visible en «Adjuntos» y en el nodo de conversión.
+- [x] Adjuntos que salen de la caché de conversión no pasaban por el visor (el motor no llama a `conversion.convertir`): ahora se anuncian con cada hoja renderizada y método `cache` («Leída antes»). c0070: 37 de 37 hojas con imagen.
+- [x] Registro: el texto de cada evento caía en una columna de 20 px (la fila tenía una columna de más).
+- [x] Barra superior: nombre del flujo sin cortar; acciones en iconos por debajo de 1600 px; «Simulación» en vez de «Radicación real: apagada (simulación)».
+- [x] Flujo: la correspondencia cede su espacio al abrir un paso o una ejecución (entre 1100 y 1720 px) y vuelve al cerrarlo; con el buzón al día muestra los últimos descargados para correrlos; minimapa junto a los controles y cerrado por defecto bajo 1680 px; sin banda de reglas vacía; la banda de la corrida baja bajo la barra en lienzos angostos; etiquetas de cables de ida y vuelta separadas.
+- [x] Inspector: «Se radicaría · simulación» en vez de DRY-RUN-ENT; nombres de campo enteros y valores que bajan de línea; en celular, campo en dos renglones.
+- [x] Tablero con tokens compactos; Adjuntos con más ancho para la hoja; Inicio sin el texto apretado por el sello.
+- [ ] En el celular la barra del flujo esconde Renombrar, Clonar, Comparar y Traer pasos (solo por Vera).
+- [ ] En vivo, algunas líneas de hoja salen repetidas en el panel de proceso (fusión de eventos del canal con los ya cargados).
 
 ## 6. Paso a producción (cuando aprueben)
 

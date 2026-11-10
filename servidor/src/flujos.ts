@@ -1164,7 +1164,9 @@ function ordenBase(id: string, f: Flujo, corrida: Corrida): Record<string, unkno
       entorno: { ...(pqrd ? corrida.configuracion.entorno : {}), ...propias },
       estructura: { definicion: e.definicion, version: e.version },
       pasos: { flujo: id, entorno: ent.valores, entorno_secretos: ent.secretos, ia_global: ia.obtenerGlobal(), enlaces: descargas.paraOrden(),
-        credenciales: credenciales.paraCorrida(id, credencialesUsadas({ id, nombre: id, descripcion: "", modelo: "gemini-2.5-flash", nodos: insertados, aristas: [] } as unknown as Definicion)) },
+        credenciales: credenciales.paraCorrida(id, credencialesUsadas({ id, nombre: id, descripcion: "", modelo: "gemini-2.5-flash", nodos: insertados, aristas: [] } as unknown as Definicion)),
+        // los flujos declarativos que llaman sus pasos «subflujo» (encadenar un flujo de código con otro)
+        subflujos: subflujosDe({ nodos: insertados } as unknown as Definicion, [id]) },
     };
   }
   if (!f.definicion) return {};

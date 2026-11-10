@@ -64,7 +64,7 @@ class AuditoriaFalsa:
 
     async def email_exists(self, correo, asunto, recibido=""):
         if self.revienta:
-            raise RuntimeError("PGRST204")
+            raise RuntimeError("la base de radicados no responde")
         return (correo, asunto) in self.registros
 
 
@@ -254,7 +254,7 @@ def test_los_tres_servicios_usan_el_mismo_criterio():
     from pathlib import Path
 
     raiz = Path(__file__).resolve().parent.parent / "services"
-    for archivo in ("outlook.py", "redis_client.py", "supabase_client.py"):
+    for archivo in ("outlook.py", "redis_client.py", "registro_radicados.py"):
         fuente = (raiz / archivo).read_text(encoding="utf-8")
         assert "from config.settings import dedup_desactivada" in fuente, archivo
 
@@ -378,6 +378,27 @@ async def test_un_registro_previo_en_la_auditoria_es_duplicado():
     v = await d.comprobar_contenido(_email())
     assert v.es_duplicado
     assert "remitente y asunto" in v.motivo
+
+
+@pytest.mark.asyncio
+async def test_la_app_de_positiva_no_junta_a_personas_distintas():
+    """
+    Todas las PQRD de la app llegan de appconexionpositiva@ con el asunto
+    "PQRD - Positiva App". Que haya un radicado con ese par no dice nada de la
+    siguiente, que puede ser de otra persona.
+    """
+    app = "appconexionpositiva@positiva.gov.co"
+    d = Detector(auditoria=AuditoriaFalsa(registros=[(app, "PQRD - Positiva App")]))
+    v = await d.comprobar_contenido(_email(asunto="PQRD - Positiva App", remitente=app))
+    assert not v.es_duplicado
+
+
+@pytest.mark.asyncio
+async def test_un_area_de_positiva_que_reenvia_tampoco_cuenta_como_remitente():
+    area = "notificacionesjudiciales@positiva.gov.co"
+    d = Detector(auditoria=AuditoriaFalsa(registros=[(area, "Derecho de peticion")]))
+    v = await d.comprobar_contenido(_email(asunto="Derecho de peticion", remitente=area))
+    assert not v.es_duplicado
 
 
 @pytest.mark.asyncio
@@ -525,7 +546,7 @@ def test_los_clientes_reales_dejan_rastro_del_fallo():
 
     raiz = Path(__file__).resolve().parent.parent / "services"
     for archivo, metodo in (("redis_client.py", "email_hash_exists"),
-                            ("supabase_client.py", "email_exists"),
+                            ("registro_radicados.py", "email_exists"),
                             ("outlook.py", "buscar_etiqueta_ent_por_asunto")):
         cuerpo = (raiz / archivo).read_text(encoding="utf-8") \
             .split(f"async def {metodo}(")[1][:1200]

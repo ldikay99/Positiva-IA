@@ -1,0 +1,101 @@
+/*
+ * Espacio y desbordes. Se carga al final: corrige lo que las capas anteriores
+ * dejaban cortado (textos con «…» donde había lugar) y reparte mejor el ancho
+ * entre la correspondencia, el lienzo y el inspector.
+ */
+
+/* ---------------------------------------------------------------- barra de arriba */
+.etq-corta { display: none; }
+.barra { min-width: 0; }
+.barra .selector-flujo { flex: 0 1 auto; min-width: 150px; max-width: min(440px, 36vw); }
+.barra .selector-flujo .flujo-nombre { min-width: 0; max-width: 100%; }
+.barra .estado-barra { display: flex; align-items: center; gap: 6px; min-width: 0; flex: 0 1 auto; overflow: hidden; }
+.barra .estado-barra .pastilla { flex: none; white-space: nowrap; }
+.barra .estado-barra .boton-pastilla.solo-ancho { flex: 0 1 auto; min-width: 0; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+.barra .af, .barra .af-botones { flex: none; }
+
+/* hasta 1600 px: las acciones del flujo quedan como iconos (el nombre sale en el globo) */
+@media (max-width: 1600px) {
+  .barra .af .etq, .barra .boton-entorno .etq { display: none; }
+  .barra .af .boton.chico, .barra .boton-entorno { padding-left: 9px; padding-right: 9px; }
+  .barra .etq-larga { display: none; }
+  .barra .etq-corta { display: inline; }
+}
+@media (max-width: 1280px) {
+  .barra .selector-flujo { max-width: 30vw; }
+}
+
+/* ---------------------------------------------------------------- inspector */
+.kpis { grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); }
+.kpis > .kpi-desenlace { grid-column: 1 / -1; flex-direction: row; align-items: baseline; gap: 10px; }
+.kpis b { overflow-wrap: normal; word-break: normal; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.kpis > .kpi-desenlace span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* los campos de la solicitud: el nombre se lee entero y el valor baja de línea si es largo */
+.campo-fila { grid-template-columns: 20px minmax(120px, 0.95fr) minmax(0, 1.35fr) auto; align-items: start; }
+.campo-fila > * { align-self: center; }
+.campo-nombre { white-space: normal; overflow: visible; text-overflow: clip; line-height: 1.3; overflow-wrap: anywhere; }
+.campo-valor { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; line-height: 1.4; }
+.solicitud.compacta .campo-valor { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---------------------------------------------------------------- lienzo */
+/* el minimapa va junto a los controles, lejos del botón de Vera y del inspector */
+.react-flow__minimap.minimapa-izq { margin: 0 0 52px 62px; }
+.centro.dock-plegado .react-flow__minimap.minimapa-izq { margin-bottom: 16px; }
+
+/* ---------------------------------------------------------------- tablero */
+.tab-cifras dd { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tab-cifras dl > div { min-width: 0; }
+
+/* ---------------------------------------------------------------- adjuntos sin correo elegido */
+.estado-vacio .elegir-corrida { width: min(760px, 100%); }
+.estado-vacio .elegir-corrida button { min-width: 0; }
+.estado-vacio .elegir-corrida button .crece { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------------------------------------------------------------- el botón de Vera no tapa lo último de una página */
+.vista, .contenido-vista > div[class*="vista"] { scroll-padding-bottom: 96px; }
+.vista::after { content: ""; display: block; flex: none; height: 56px; }
+
+/* ---------------------------------------------------------------- buzón al día: últimos descargados */
+.recientes-desc { display: flex; flex-direction: column; gap: 4px; margin: 4px 12px 14px; padding-top: 12px; box-shadow: inset 0 1px 0 var(--linea); }
+.recientes-desc h4 { margin: 0 4px 4px; font-size: 12.5px; font-weight: 650; color: var(--texto-3); }
+.reciente-fila { display: flex; align-items: center; gap: 4px; border-radius: 12px; transition: background 0.15s; }
+.reciente-fila:hover { background: var(--superficie-2); }
+.reciente-abrir { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 8px 10px; text-align: left; background: none; border: 0; border-radius: 12px; cursor: pointer; color: inherit; font: inherit; }
+.reciente-abrir b { max-width: 100%; font-size: 13px; font-weight: 640; color: var(--tinta); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reciente-abrir small { max-width: 100%; font-size: 11.5px; color: var(--texto-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reciente-fila .boton { flex: none; margin-right: 6px; opacity: 0.55; }
+.reciente-fila:hover .boton, .reciente-fila .boton:focus-visible { opacity: 1; }
+
+/* ---------------------------------------------------------------- lienzo angosto: la banda de la corrida baja bajo la barra */
+.lienzo { container-type: inline-size; container-name: lienzo; }
+@container lienzo (max-width: 1080px) {
+  .react-flow__panel.lienzo-centro { top: 50px; }
+}
+@container lienzo (max-width: 640px) {
+  .lienzo-arriba-izq .leyenda, .lienzo-barra .etq { display: none; }
+}
+
+/* celular: cada campo en dos renglones (nombre y fuente arriba, valor entero abajo) */
+@media (max-width: 760px) {
+  .solicitud:not(.compacta) .campo-fila { grid-template-columns: 20px minmax(0, 1fr) auto; grid-template-areas: "e n m" "e v v"; row-gap: 3px; }
+  .solicitud:not(.compacta) .campo-estado { grid-area: e; align-self: start; margin-top: 2px; }
+  .solicitud:not(.compacta) .campo-nombre { grid-area: n; }
+  .solicitud:not(.compacta) .campo-valor { grid-area: v; font-size: 12.5px; overflow-wrap: normal; word-break: normal; }
+  .solicitud:not(.compacta) .campo-meta { grid-area: m; }
+  .barra .selector-flujo { max-width: 52vw; min-width: 0; }
+}
+
+/* registro: la hora va fuera de la fila, así que la fila tiene tres columnas (no cuatro con la primera vacía) */
+.fila-log .paso { grid-template-columns: 20px minmax(0, 1fr) 14px; }
+
+/* inicio: el sello del tercer paso va abajo, como los iconos de los otros dos, y el texto usa todo el ancho */
+.in-rec-sello > span:nth-of-type(2) { padding-right: 0; }
+.in-rec-sello .in-sello { position: relative; right: auto; bottom: auto; margin-top: auto; align-self: flex-end; }
+
+/* adjuntos: más ancho para la hoja; la lista y el panel de campos ceden un poco */
+.adj-cuerpo { --docs: 264px; --lado: 372px; }
+.adj-visor-cuerpo { --imagen: 58%; }
+@media (min-width: 1680px) { .adj-cuerpo { --docs: 300px; --lado: 420px; } }
+.miniatura.m-cache .miniatura-metodo { color: var(--texto-3); }
+.nodo-hoja.m-cache { box-shadow: 0 0 0 1.5px var(--linea-2); }

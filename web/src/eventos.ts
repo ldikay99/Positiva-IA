@@ -155,9 +155,13 @@ export function describir(e: Evento, _catalogo?: Catalogo | null): Omit<Paso, "i
         ? { tono: "error", icono: "alerta", titulo: "Radicación real: encendida", extra: "escribe como el job" }
         : { tono: "tenue", icono: "candado", titulo: "Radicación real: apagada (simulación)", extra: "toda escritura queda retenida" };
     case "fuentes": {
-      const l = (e.lecturas as { sistema: string; real: boolean; detalle: string }[] | undefined) ?? [];
+      const l = (e.lecturas as { sistema: string; real: boolean; detalle: string; sin_auditoria?: boolean }[] | undefined) ?? [];
       const reales = l.filter((x) => x.real).map((x) => x.sistema);
-      return { tono: "info", icono: "proveedores", titulo: `Lee de verdad: ${reales.join(", ") || "nada"}`, extra: `${l.length - reales.length} con doble`, detalle: l.map((x) => `${x.real ? "real " : "doble"} · ${x.sistema}: ${x.detalle}`).join("\n") };
+      // «Sin auditoría» no es un doble ni un fallo: el job corre así cuando no tiene la configuración del registro.
+      const sinAuditoria = l.filter((x) => x.sin_auditoria).length;
+      const dobles = l.length - reales.length - sinAuditoria;
+      const extra = [`${dobles} con doble`, sinAuditoria ? "sin auditoría" : ""].filter(Boolean).join(" · ");
+      return { tono: "info", icono: "proveedores", titulo: `Lee de verdad: ${reales.join(", ") || "nada"}`, extra, detalle: l.map((x) => `${x.real ? "real " : x.sin_auditoria ? "sin auditoría" : "doble"} · ${x.sistema}: ${x.detalle}`).join("\n") };
     }
     case "lectura_real":
       return e.ok === false
@@ -169,6 +173,10 @@ export function describir(e: Evento, _catalogo?: Catalogo | null): Omit<Paso, "i
       if (e.bloqueada === false)
         return { tono: e.ok === false ? "error" : "escritura", icono: "alerta", titulo: `ESCRIBE DE VERDAD · ${String(e.sistema)} · ${String(e.operacion).replace(/_/g, " ")}`, extra: "compuerta de radicación encendida", detalle: e.detalle || e.error ? json(e.detalle ?? e.error) : undefined };
       if (e.sistema === "sgdea" && e.operacion === "radicar") return { tono: "escritura", icono: "enviar", titulo: "Envía la radicación a SGDEA (simulado, no se escribe)", extra: `${String(e.n_adjuntos ?? 0)} adjuntos`, detalle: json(e.payload) };
+      if (e.sistema === "registro_radicados") {
+        const d = (e.detalle ?? {}) as { numero_radicado?: string };
+        return { tono: "escritura", icono: "base", titulo: "Guarda el radicado en el registro de radicados de Cloud SQL (simulado, no se escribe)", extra: [String(e.destino ?? ""), d.numero_radicado ? String(d.numero_radicado) : ""].filter(Boolean).join(" · "), detalle: e.detalle ? json(e.detalle) : undefined };
+      }
       if (e.sistema === "buzon") return { tono: "escritura", icono: "correo", titulo: `El job ${loQueHaria(e)}`, extra: "bloqueado: el visor no escribe en el buzón", detalle: e.detalle ? json(e.detalle) : undefined };
       return { tono: "tenue", icono: "enviar", titulo: `SGDEA · ${String(e.operacion).replace(/_/g, " ")} (simulado)`, detalle: e.payload || e.detalle ? json(e.payload ?? e.detalle) : undefined };
     case "buzon":
@@ -185,7 +193,7 @@ export function describir(e: Evento, _catalogo?: Catalogo | null): Omit<Paso, "i
       const m = String(e.metodo);
       const como = m === "texto" ? "texto propio" : m === "vision" ? "transcrita por visión" : m === "ilegible" ? "sin texto" : `OCR ${e.confianza ? pct(e.confianza) : ""}`;
       const extra = [como, Number(e.girada) ? `girada ${String(e.girada)}°` : "", e.relectura_200 ? "releída a 200 ppp" : "", segundos(Number(e.ms ?? 0))].filter(Boolean).join(" · ");
-      return { tono: m === "ilegible" ? "aviso" : m === "vision" ? "ia" : "tenue", icono: m === "vision" ? "ojo" : m === "texto" ? "documento" : "escaner", titulo: `Hoja ${String(e.pagina)}${Number(e.total) ? ` de ${String(e.total)}` : ""}`, extra, confianza: typeof e.confianza === "number" ? e.confianza : undefined };
+      return { tono: m === "ilegible" ? "aviso" : m === "vision" ? "ia" : "tenue", icono: m === "vision" ? "ojo" : m === "texto" ? "documento" : m === "cache" ? "reloj" : "escaner", titulo: `Hoja ${String(e.pagina)}${Number(e.total) ? ` de ${String(e.total)}` : ""}${m === "cache" ? " · leída antes" : ""}`, extra, confianza: typeof e.confianza === "number" ? e.confianza : undefined };
     }
     case "vision":
       return { tono: e.ok ? "ia" : "error", icono: "ojo", titulo: e.ok ? `Gemini transcribe con visión la hoja ${String(e.pagina ?? "")}` : "La transcripción por visión falló", extra: e.ok ? `${String(e.caracteres ?? 0)} caracteres · ${segundos(Number(e.ms ?? 0))}` : undefined, detalle: e.error ? String(e.error) : undefined };

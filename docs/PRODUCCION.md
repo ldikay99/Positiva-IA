@@ -26,7 +26,7 @@ Los nombres de variables y secretos de PQRD y tutelas se verificaron el 2026-11-
 **Qué escribe en producción:**
 - radica en SGDEA (token OIDC con su cliente y usuario);
 - mueve, etiqueta o reenvía el correo en el buzón según el desenlace (radicado, revisión manual, duplicado, reenviado a otra área);
-- deja trazas en Supabase y Redis para la deduplicación.
+- guarda cada radicado en el registro de radicados de Cloud SQL (base `gcpprolinktic`, tabla `iapqrd_radicados_pqrd`), que es también la capa 6 de la deduplicación (remitente y asunto; no aplica a buzones de Positiva). Desde el motor `1d11744` ya no usa Supabase.
 
 **Entorno (nombres; los valores van en Secret Manager o en el job):**
 
@@ -38,8 +38,9 @@ Los nombres de variables y secretos de PQRD y tutelas se verificaron el 2026-11-
 | `OUTLOOK_USER_EMAIL`, `OUTLOOK_FOLDER_ID`, `OUTLOOK_FOLDER_*` | no | Buzón y carpetas de entrada y de destino |
 | `SGDEA_TOKEN_URL`, `SGDEA_CLIENT_ID`, `SGDEA_USERNAME` | no | Autenticación con SGDEA |
 | `SGDEA_CLIENT_SECRET`, `SGDEA_PASSWORD` | sí | Credenciales de SGDEA |
-| `SUPABASE_URL` | no | Base de trazas |
-| `SUPABASE_SERVICE_ROLE_KEY` | sí | Llave de servicio |
+| `CLOUDSQL_HOST`, `CLOUDSQL_USER` | no | Registro de radicados en Cloud SQL (IP privada, TLS). Sin ellos y sin la clave, el job corre «sin auditoría» |
+| `CLOUDSQL_PASSWORD` | sí | Clave del registro de radicados |
+| `CLOUDSQL_INSTANCE`, `CLOUDSQL_PORT`, `CLOUDSQL_DB`, `CLOUDSQL_SSL`, `CLOUDSQL_TABLE_RADICADOS_IAPQRD` | no | Por defecto 5432, `gcpprolinktic`, TLS y `iapqrd_radicados_pqrd` |
 | `REDIS_HOST`, `REDIS_PORT` | no | Deduplicación |
 | `REDIS_PASSWORD` | sí | Clave de Redis |
 | `GCP_PROJECT`, `GCP_LOCATION` | no | Vertex AI (Gemini) con la identidad del servicio |
@@ -50,7 +51,7 @@ Los nombres de variables y secretos de PQRD y tutelas se verificaron el 2026-11-
 - `MICROSOFT_TENANT_ID`, `MICROSOFT_CLIENT_ID`, `MICROSOFT_CLIENT_SECRET`
 - `OUTLOOK_FOLDER_ID`, `OUTLOOK_REFRESH_TOKEN`
 - `SGDEA_CLIENT_SECRET`, `SGDEA_PASSWORD`
-- `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` (verificado el 2026-11-07; el motor `1d11744` ya no los lee. Según `mcp-fix`, infra monta ahora `PQRD_CLOUDSQL_*`: sin verificar en el job desde aquí)
 - `REDIS_PASSWORD`
 
 El resto rige con el valor por defecto del código. El visor usa los secretos de Graph solo para **leer** el buzón (GET).
@@ -156,7 +157,7 @@ Sin las credenciales de un sistema, el trabajador usa el doble de siempre. Cada 
 | Sistema | Con credenciales en el entorno | Escrituras |
 |---|---|---|
 | Graph (buzón) | Lee la carpeta, el hilo, los radicados con el mismo asunto y los adjuntos. Solo GET y el token: `MICROSOFT_*` y `OUTLOOK_FOLDER_ID` del entorno, o Secret Manager con el ADC si faltan. | Marcar, mover, reenviar y responder quedan retenidas. |
-| Supabase | La capa de remitente y asunto consulta `radicados_pqrd` con GET de PostgREST (`solo_lectura.ConsultaSupabase`). `insert`, `update`, `upsert`, `delete` y `rpc` lanzan `PermissionError`. | Las trazas van al grabador de MODO_TEST. |
+| Registro de radicados (Cloud SQL) | Con `CLOUDSQL_HOST`, `CLOUDSQL_USER` y `CLOUDSQL_PASSWORD`, la capa de remitente y asunto consulta `iapqrd_radicados_pqrd` en una sesión de solo lectura que solo deja SELECT (`solo_lectura.conectar_registro_solo_lectura`). La instancia solo tiene IP privada: si el visor no la alcanza (prueba de 3 s, una vez por proceso), la capa queda degradada con el motivo, como en el job con la base caída. Sin esas variables, «sin auditoría», como el job. | El INSERT de cada radicado va al grabador de MODO_TEST (`REGISTRO_RADICADO`). |
 | Redis | No se lee: el job (`correr.py`) no le pasa caché de hashes al orquestador. | Ninguna. |
 | SGDEA | El registro de personas (GET) se consulta de verdad, como siempre. | Radicar, asignar y trazabilidad quedan retenidas (MODO_TEST: sin token y sin red). |
 | Vertex | Real, con el ADC. | — |
@@ -183,7 +184,7 @@ Lo mismo sale en el manifiesto (`lecturas_con_la_compuerta_apagada`).
 - Apagarla nunca pide nada.
 - El estado vive en `/datos/estado/compuertas.json`. Si el archivo dice «encendida» pero falta la segunda llave, no escribe nada (`radicacion_real_efectiva: false`).
 - Al cambiar la compuerta, los trabajadores del flujo se reemplazan al quedar libres. Un trabajador que arrancó con la otra compuerta no recibe más trabajo. Además, cada orden lleva `radicacion_real` y el trabajador no la corre si no coincide con la suya.
-- **Encendida**, el trabajador corre como el job: `MODO_TEST=false`, con `OutlookService`, `RadicacionService` y `SupabaseService` reales (PQRD), o con `OutlookService`, `RedisService` (con el cerrojo del buzón del job), `JuzgadosService` y `SGDEAService` reales (tutelas). Cada escritura se anuncia con `bloqueada: false`.
+- **Encendida**, el trabajador corre como el job: `MODO_TEST=false`, con `OutlookService`, `RadicacionService` y `RegistroDeRadicados` reales (PQRD), o con `OutlookService`, `RedisService` (con el cerrojo del buzón del job), `JuzgadosService` y `SGDEAService` reales (tutelas). Cada escritura se anuncia con `bloqueada: false`.
   - Si falta un secreto del job, el trabajador no arranca.
   - Solo atiende correos e hilos traídos del buzón real, nunca copias de la carpeta local.
 

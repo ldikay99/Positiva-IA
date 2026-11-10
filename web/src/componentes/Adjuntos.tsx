@@ -25,13 +25,15 @@ import "./adjuntos.css";
 type Seleccion = { clave: string; pagina: number };
 type Marca = { id: string; pagina: number | null; spans: [number, number][]; tramo?: [number, number] | null; etiqueta: string; n: number };
 
-const CLAVE_MEDIDAS = "positiva-ia:adjuntos:v1";
-const MEDIDAS = { docs: 300, lado: 400, imagen: 52 };
+const CLAVE_MEDIDAS = "positiva-ia:adjuntos:v2";
+// En pantallas medianas la lista y los campos ceden ancho a la hoja.
+const ANCHA = typeof window !== "undefined" && window.innerWidth >= 1680;
+const MEDIDAS = { docs: ANCHA ? 300 : 264, lado: ANCHA ? 420 : 372, imagen: 58 };
 
 const pct = (x: number | null | undefined) => (x === null || x === undefined ? "" : `${Math.round(x * 100)} %`);
 
-const NOMBRE_METODO: Record<string, string> = { texto: "Texto del PDF", ocr: "OCR", vision: "Visión IA", ilegible: "Sin texto" };
-const ICONO_METODO: Record<string, NombreIcono> = { texto: "documento", ocr: "escaner", vision: "ojo", ilegible: "alerta" };
+const NOMBRE_METODO: Record<string, string> = { texto: "Texto del PDF", ocr: "OCR", vision: "Visión IA", ilegible: "Sin texto", cache: "Leída antes" };
+const ICONO_METODO: Record<string, NombreIcono> = { texto: "documento", ocr: "escaner", vision: "ojo", ilegible: "alerta", cache: "reloj" };
 
 function iconoDeTipo(tipo: string, esCuerpo: boolean): NombreIcono {
   if (esCuerpo) return "correo";
@@ -544,7 +546,7 @@ export function VistaAdjuntos() {
           {orden.length > 0 ? (
             <div className="elegir-corrida">
               <small>Últimos correos corridos</small>
-              {orden.slice(0, 5).map((id) => {
+              {orden.slice(0, 8).map((id) => {
                 const c = corridas[id];
                 if (!c) return null;
                 const a = c.resultado ? String(c.resultado.accion) : "";
@@ -569,7 +571,7 @@ export function VistaAdjuntos() {
             {doc && elegido ? (
               <VisorHoja corrida={corrida.id} d={doc} numero={elegido.pagina} enCurso={lect.enCurso?.clave === doc.clave && lect.enCurso.pagina === elegido.pagina} imagenEnCurso={lect.enCurso?.clave === doc.clave && lect.enCurso.pagina === elegido.pagina ? lect.enCurso.img : undefined} marcas={marcas} mover={(n) => elegir({ clave: doc.clave, pagina: n })} recorridos={campos} />
             ) : (
-              <div className="vacio grande"><span className="girando" /><p>{corrida.resultado ? "Este correo no llegó a abrir sus adjuntos." : "Esperando a que el motor abra los adjuntos…"}</p></div>
+              <div className="vacio grande">{!corrida.resultado && <span className="girando" />}<p>{corrida.resultado ? "Este correo no llegó a abrir sus adjuntos." : "Esperando a que el motor abra los adjuntos…"}</p></div>
             )}
           </div>
           <Divisor contenedor={espacio} variable="--lado" min={300} max={() => 640} calcular={(e, caja) => caja.right - e.clientX} alSoltar={(v) => fijar("lado", v)} />

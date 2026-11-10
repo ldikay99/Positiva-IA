@@ -13,6 +13,13 @@ export function pedirAlAsistente(texto: string): void {
   window.dispatchEvent(new CustomEvent("positiva:asistente", { detail: { texto } }));
 }
 
+const COMPACTO = new Intl.NumberFormat("es-CO", { notation: "compact", maximumFractionDigits: 1 });
+/** 1.844.762 tokens se lee «1,8 M»: la cifra entera queda en el globo. */
+function tokensCompactos(c: { tokens_entrada?: number; tokens_salida?: number }): string {
+  const t = Number(c.tokens_entrada ?? 0) + Number(c.tokens_salida ?? 0);
+  return t ? COMPACTO.format(t) : "—";
+}
+
 function hace(t: number): string {
   const s = (Date.now() - t) / 1000;
   if (s < 60) return "hace un momento";
@@ -117,7 +124,7 @@ function TarjetaFlujo({ f, i }: { f: TableroFlujo; i: number }) {
           <div><dt>Tiempo típico</dt><dd>{f.segundosMediana ? `${Math.round(f.segundosMediana)} s` : "—"}</dd></div>
           {f.tipo === "codigo" && <div title="El 5 % más lento de las ejecuciones tarda al menos esto"><dt>Las más lentas</dt><dd>{f.segundosP95 ? `${Math.round(f.segundosP95)} s` : "—"}</dd></div>}
           {f.tipo === "codigo" && <div title="Consultas del agente a la IA por correo, en promedio"><dt>Consultas a la IA</dt><dd>{f.vueltasMedia ? f.vueltasMedia.toLocaleString("es-CO", { maximumFractionDigits: 1 }) : "—"}</dd></div>}
-          <div title="Costo estimado con precios publicados aproximados"><dt>IA</dt><dd>{textoConsumo(f.consumo ?? { tokens_entrada: f.tokens, tokens_salida: 0 }) || "—"}</dd></div>
+          <div title={textoConsumo(f.consumo ?? { tokens_entrada: f.tokens, tokens_salida: 0 }) || "Sin consumo de IA"}><dt>Tokens de IA</dt><dd>{tokensCompactos(f.consumo ?? { tokens_entrada: f.tokens, tokens_salida: 0 })}</dd></div>
         </dl>
       </div>
       <SaludDelFlujo f={f} recargar={() => void recargar()} />

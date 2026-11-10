@@ -7,6 +7,7 @@ import "./diseno.css";
 import "./plataforma.css";
 import "./editor.css";
 import "./producto.css";
+import "./espacio.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>

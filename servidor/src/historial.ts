@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { createReadStream } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import { resolve } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { config } from "./config.ts";
@@ -417,6 +417,17 @@ async function reintentar(deps: Dependencias, c: Corrida): Promise<{ ok: true; c
 
 const DIA = 86_400_000;
 
+const TIPOS_DE_HOJA: Record<string, string> = { jpg: "image/jpeg", json: "application/json; charset=utf-8" };
+
+/** Una hoja renderizada (o su texto) que el trabajador dejó para el visor de esta ejecución. */
+export function hojaDelVisor(id: string, archivo: string): { ruta: string; tipo: string } | null {
+  if (!/^[\w-]+$/.test(id) || !/^(textos\/)?[\w.-]+\.(jpg|json)$/.test(archivo) || archivo.includes("..")) return null;
+  const base = resolve(config.datos, "trabajo", "visor", id);
+  const ruta = resolve(base, archivo);
+  if (!ruta.startsWith(base) || !existsSync(ruta)) return null;
+  return { ruta, tipo: TIPOS_DE_HOJA[archivo.split(".").pop()!]! };
+}
+
 export async function registrar(app: FastifyInstance, deps: Dependencias): Promise<void> {
   delFlujo = (flujo) => [...(deps.motorDe(flujo, false)?.corridas.values() ?? [])];
   app.get<{ Querystring: Record<string, string | undefined> }>("/api/historial", async (req, res) => {
@@ -463,6 +474,10 @@ export async function registrar(app: FastifyInstance, deps: Dependencias): Promi
   };
 
   app.get<{ Params: { id: string; archivo: string }; Querystring: { descargar?: string } }>("/api/corridas/:id/archivos/:archivo", async (req, res) => {
+    // Esta ruta comparte dirección con las hojas que el trabajador renderiza (a3-p19.jpg):
+    // si el nombre no es un archivo entregado por la ejecución, se busca entre esas hojas.
+    const hoja = hojaDelVisor(req.params.id, req.params.archivo);
+    if (hoja) return res.header("Content-Type", hoja.tipo).header("Cache-Control", "private, max-age=3600").send(createReadStream(hoja.ruta));
     const a = archivoDeCorrida(req.params.id, req.params.archivo);
     if (!a) return res.code(404).send({ error: "ese archivo no es de esta ejecución o ya no está" });
     // un HTML (o SVG/XML) generado se ve aislado: sin scripts ni acceso a la plataforma

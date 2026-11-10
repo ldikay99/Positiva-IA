@@ -338,7 +338,11 @@ class Detector:
                 el_contenido_responde = True
 
         remitente = email.from_address.address if email.from_address else ""
-        if remitente and not el_contenido_responde:
+        # Un buzon de Positiva no identifica a quien pide: la app
+        # (appconexionpositiva@) manda todas las PQRD con el mismo remitente y
+        # el mismo asunto, y las areas reenvian con el suyo. Ahi el par
+        # remitente+asunto junta a personas distintas en un solo radicado.
+        if remitente and not el_contenido_responde and not es_buzon_de_positiva(remitente):
             # El asunto va limpio: un reenvio le antepone "RV:" y cambia el
             # texto sin cambiar el caso, y con el prefijo la consulta no
             # encuentra el radicado que si existe.
@@ -371,7 +375,7 @@ class Detector:
             respuesta = await fn(*args)
         except Exception as e:
             return None, f"{nombre} fallo: {type(e).__name__}: {e}"
-        # Redis y Supabase no propagan: devuelven False tanto si no hay
+        # Redis y la base de radicados no propagan: devuelven False tanto si no hay
         # duplicado como si la consulta se cayo. Sin mirar `ultimo_error`, una
         # capa muerta se ve exactamente igual que una capa que dijo "todo
         # limpio", y una caida prolongada podria pasar sin aparecer en ningun
@@ -401,6 +405,33 @@ class Detector:
             await guardar(hash_del_correo(email, nombres_adjuntos))
         except Exception as e:
             return f"no se guardo el hash: {type(e).__name__}: {e}"
+        return ""
+
+    async def guardar_en_auditoria(
+        self, email: EmailMessage, radicado: str, documento_afectado: str = ""
+    ) -> str:
+        """
+        Guarda el radicado en la tabla de radicados, la que consulta la capa 6.
+
+        Sin esto esa capa nunca encuentra nada de lo que radica este pipeline.
+        Nunca bloquea: la radicacion ya ocurrio. Devuelve el motivo si no se
+        pudo guardar, o cadena vacia.
+        """
+        if self.auditoria is None or not radicado or radicado == "DRY-RUN":
+            return ""
+        guardar = getattr(self.auditoria, "guardar_radicado", None)
+        if guardar is None:
+            return ""
+        try:
+            await guardar(
+                numero_radicado=radicado,
+                asunto=email.subject or "",
+                # Tal cual lo consulta la capa 6, que compara por igualdad.
+                correo_remitente=(email.from_address.address if email.from_address else "") or "",
+                numero_documento_afectado=documento_afectado or "",
+            )
+        except Exception as e:
+            return f"no se guardo en la tabla de radicados: {type(e).__name__}: {e}"
         return ""
 
     def registrar(self, email: EmailMessage) -> None:

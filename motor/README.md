@@ -170,12 +170,22 @@ llamar al modelo.
 | `RUTA_WORKSPACE` | Espacio de trabajo por correo | `workspace/` |
 | `CORREO_DE_AVISOS` | Buzón interno al que remitir el resultado | vacío: no envía |
 | `DEDUP_EN_PRUEBAS` | Ejecuta la deduplicación durante `MODO_TEST` | `false` |
+| `CLOUDSQL_HOST`, `CLOUDSQL_USER`, `CLOUDSQL_PASSWORD` | Conexión al registro de radicados (secretos `PQRD_CLOUDSQL_*`) | vacío: sin registro |
+| `CLOUDSQL_DB` | Base del registro de radicados | `gcpprolinktic` |
+| `CLOUDSQL_TABLE_RADICADOS_IAPQRD` | Tabla donde se guarda cada radicado | `iapqrd_radicados_pqrd` |
 
 Los secretos van en `.env`, que no se versiona, o en Secret Manager. Faltando alguno, el arranque
 falla nombrando cuál.
 
-El merge a `prod` no despliega por sí solo: el job se actualiza lanzando el pipeline
-`release-ms-radicacion-ia-pqrd`, que pide aprobación en el entorno `sgdea-prd`.
+Cada radicado se guarda en el registro de radicados (Cloud SQL, instancia `sql-sgdea-prod`, IP
+privada, conexión cifrada) con su remitente, asunto y documento del afectado. La capa 6 de la
+deduplicación consulta esa misma tabla. Si la base no responde, la radicación sigue y el informe del
+correo lo anota.
+
+El merge a `prod` dispara el pipeline `release-ms-radicacion-ia-pqrd`, que construye la imagen y
+actualiza el job después de la aprobación en el entorno `data-prod`. Cada rama despliega a su
+entorno: `dev` a `data-dev`, `uat` a `data-uat` y `prod` a `data-prod`. También se puede lanzar a
+mano eligiendo `adoEnvironment`.
 
 ## Medición
 

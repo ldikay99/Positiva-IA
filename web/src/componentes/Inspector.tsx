@@ -781,7 +781,7 @@ function InspectorCorrida({ id }: { id: string }) {
     <div className="inspector">
       <Cabeza icono="corridas" tono={r ? (accion === "radicado" ? "verde" : "ambar") : "azul"} etiqueta="Resultado de la corrida" titulo={`${corrida.caso} · ${r ? (NOMBRES_DESENLACE[accion] ?? accion) : corrida.estado === "en_cola" ? "En cola" : "Procesando"}`} subtitulo={corrida.id}>
         <div className="kpis">
-          <div className={TONO_DESENLACE[accion] ?? ""}><b>{r ? (accion === "radicado" ? String(r.radicado ?? "Radicado") : NOMBRES_DESENLACE[accion] ?? accion) : "…"}</b><span title={r?.motivo ? String(r.motivo) : undefined}>{r?.motivo ? motivoLegible(String(r.motivo)) : "desenlace"}</span></div>
+          <div className={`kpi-desenlace ${TONO_DESENLACE[accion] ?? ""}`}><b>{r ? (accion === "radicado" ? (String(r.radicado ?? "").startsWith("DRY-RUN") ? "Se radicaría" : String(r.radicado ?? "Radicado")) : NOMBRES_DESENLACE[accion] ?? accion) : "…"}</b><span title={r?.motivo ? String(r.motivo) : undefined}>{r?.motivo ? motivoLegible(String(r.motivo)) : accion === "radicado" && String(r?.radicado ?? "").startsWith("DRY-RUN") ? "simulación, sin enviar" : "desenlace"}</span></div>
           <div><b>{p.vueltas}</b><span>consultas a la IA</span></div>
           <div><b>{(p.tokensEntrada + p.tokensSalida).toLocaleString("es-CO")}</b><span>tokens</span></div>
           <div><b>{r?.segundos !== undefined ? `${String(r.segundos).replace(".", ",")} s` : "—"}</b><span>tiempo</span></div>

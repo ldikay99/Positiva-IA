@@ -2,7 +2,7 @@
 Servicios externos del pipeline.
 
 Los nombres se resuelven al USARLOS, no al importar el paquete. Cada servicio
-lee `config.settings`, que exige los diez secretos de produccion, y un modulo
+lee `config.settings`, que exige los secretos de produccion, y un modulo
 hermano sin esa dependencia —los prompts, por ejemplo— tiene que poder
 importarse sin ellos.
 """
@@ -16,7 +16,7 @@ _SERVICIOS = {
     "GeminiService": "gemini",
     "LangChainAgents": "gemini_agents",
     "RadicacionService": "radicacion",
-    "SupabaseService": "supabase_client",
+    "RegistroDeRadicados": "registro_radicados",
 }
 
 __all__ = list(_SERVICIOS)

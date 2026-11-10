@@ -10,7 +10,7 @@ enrutamiento, descarga de adjuntos, materializacion con OCR, extraccion, agente
 con su revisor, correccion (si la version la tiene), compuerta y radicacion.
 
 Nada sale a un sistema real:
-  - MODO_TEST=true y credenciales ficticias para Graph, SGDEA, Redis y Supabase.
+  - MODO_TEST=true y credenciales ficticias para Graph, SGDEA y Redis; sin base de radicados.
   - El buzon es de disco (lee el mensaje y los adjuntos; toda escritura se anota).
   - Registro de personas apagado (`sgdea=None`): no se consulta SGDEA.
   - El radicador usa un servicio simulado que solo guarda el payload en memoria.
@@ -40,10 +40,8 @@ from typing import Any, Dict, List, Optional
 
 for _clave in ("MICROSOFT_CLIENT_ID", "MICROSOFT_CLIENT_SECRET",
                "MICROSOFT_TENANT_ID", "OUTLOOK_REFRESH_TOKEN", "OUTLOOK_FOLDER_ID",
-               "REDIS_PASSWORD", "SGDEA_CLIENT_SECRET", "SGDEA_PASSWORD",
-               "SUPABASE_SERVICE_ROLE_KEY"):
+               "REDIS_PASSWORD", "SGDEA_CLIENT_SECRET", "SGDEA_PASSWORD"):
     os.environ[_clave] = "e2e-ficticio"
-os.environ["SUPABASE_URL"] = "http://127.0.0.1:9"
 os.environ["MODO_TEST"] = "true"
 os.environ["DEDUP_EN_PRUEBAS"] = "false"
 
