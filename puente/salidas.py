@@ -830,12 +830,15 @@ def _caja(slide: Any, izq: int, arriba: int, ancho: int, alto: int) -> Any:
     return tf
 
 
-def pptx_de_presentacion(pres: Dict[str, Any], imagen: Optional[Callable[[Any], Optional[bytes]]] = None) -> bytes:
+def pptx_de_presentacion(pres: Dict[str, Any], imagen: Optional[Callable[[Any], Optional[bytes]]] = None,
+                         marca: Optional[Dict[str, Any]] = None) -> bytes:
     """Una presentación 16:9 desde cero: portada con título y subtítulo, y una diapositiva por punto (título, viñetas,
-    tabla, imagen a la derecha y notas del orador), con los azules de Linktic sobre blanco."""
+    tabla, imagen a la derecha y notas del orador), con los azules de Linktic sobre blanco. Con `marca` (marca.cargar)
+    lleva sus colores y fuente, y el logo, los banners y la marca de agua sin tapar el título ni el contenido."""
     from pptx import Presentation
     from pptx.enum.shapes import MSO_SHAPE
     from pptx.util import Emu, Inches, Pt
+    import marca as m_marca
 
     pres = presentacion_limpia(pres)
     prs = Presentation()
@@ -843,11 +846,26 @@ def pptx_de_presentacion(pres: Dict[str, Any], imagen: Optional[Callable[[Any], 
     W, H = prs.slide_width, prs.slide_height
     blanco = prs.slide_layouts[6]
     margen = Inches(0.7)
+    marca = marca or {}
+    colores = marca.get("colores") or {}
+    hexa = lambda k, defecto: tuple(int(colores[k][i:i + 2], 16) for i in (0, 2, 4)) if colores.get(k) else defecto  # noqa: E731
+    c_titulo, c_acento, c_texto = hexa("titulos", AZUL), hexa("acento", hexa("titulos", AZUL)), hexa("texto", GRIS)
+    fuente = marca.get("fuente")
+    g = m_marca.diseno_pptx(int(W), int(H), marca) if marca else {"arriba": 0, "abajo": 0, "titulo_izq": 0, "titulo_der": 0}
+    dy = int(g["arriba"])  # lo que ocupan arriba el banner (y el logo si va al centro)
+    t_izq = max(int(margen), int(g["titulo_izq"]) + int(Inches(0.2)) if g["titulo_izq"] else 0)
+    t_ancho = int(W) - t_izq - max(int(margen), int(g["titulo_der"]) + int(Inches(0.2)) if g["titulo_der"] else 0)
+
+    def letra(r: Any) -> None:
+        if fuente:
+            r.font.name = fuente
 
     def barra(slide: Any, alto: int = Inches(0.12)) -> None:
+        if g.get("banner_arriba"):
+            return  # el banner hace de barra
         b = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, W, alto)
         b.fill.solid()
-        b.fill.fore_color.rgb = _rgb(AZUL)
+        b.fill.fore_color.rgb = _rgb(c_acento)
         b.line.fill.background()
 
     # portada
@@ -857,29 +875,32 @@ def pptx_de_presentacion(pres: Dict[str, Any], imagen: Optional[Callable[[Any], 
     fondo.fill.fore_color.rgb = _rgb(AZUL_CLARO)
     fondo.line.fill.background()
     barra(s, Inches(0.25))
-    tf = _caja(s, margen, Inches(2.4), W - 2 * margen, Inches(1.6))
+    tf = _caja(s, margen, Inches(2.4) + dy // 2, W - 2 * margen, Inches(1.6))
     tf.text = pres["titulo"] or "Presentación"
     r = tf.paragraphs[0].runs[0]
-    r.font.size, r.font.bold, r.font.color.rgb = Pt(40), True, _rgb(AZUL)
+    r.font.size, r.font.bold, r.font.color.rgb = Pt(40), True, _rgb(c_titulo)
+    letra(r)
     if pres["subtitulo"]:
-        tf2 = _caja(s, margen, Inches(4.1), W - 2 * margen, Inches(1.2))
+        tf2 = _caja(s, margen, Inches(4.1) + dy // 2, W - 2 * margen, Inches(1.2))
         tf2.text = pres["subtitulo"]
         r = tf2.paragraphs[0].runs[0]
-        r.font.size, r.font.color.rgb = Pt(22), _rgb(GRIS)
+        r.font.size, r.font.color.rgb = Pt(22), _rgb(c_texto)
+        letra(r)
 
     for d in pres["diapositivas"]:
         s = prs.slides.add_slide(blanco)
         barra(s)
-        tf = _caja(s, margen, Inches(0.4), W - 2 * margen, Inches(1.0))
+        tf = _caja(s, t_izq, Inches(0.4) + dy, t_ancho, Inches(1.0))
         tf.text = d["titulo"] or pres["titulo"]
         if tf.paragraphs[0].runs:
             r = tf.paragraphs[0].runs[0]
-            r.font.size, r.font.bold, r.font.color.rgb = Pt(30), True, _rgb(AZUL)
-        linea = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, margen, Inches(1.35), Inches(1.2), Inches(0.06))
+            r.font.size, r.font.bold, r.font.color.rgb = Pt(30), True, _rgb(c_titulo)
+            letra(r)
+        linea = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, t_izq, Inches(1.35) + dy, Inches(1.2), Inches(0.06))
         linea.fill.solid()
-        linea.fill.fore_color.rgb = _rgb(AZUL)
+        linea.fill.fore_color.rgb = _rgb(c_acento)
         linea.line.fill.background()
-        arriba, alto = Inches(1.7), H - Inches(2.3)
+        arriba, alto = Inches(1.7) + dy, H - Inches(2.3) - dy - int(g["abajo"])
         datos_img = imagen(d["imagen"]) if (imagen and d.get("imagen")) else None
         ancho_texto = (W - 2 * margen) * (0.58 if datos_img else 1.0)
         if d["puntos"]:
@@ -892,7 +913,8 @@ def pptx_de_presentacion(pres: Dict[str, Any], imagen: Optional[Callable[[Any], 
                 _vineta(p)
                 p.space_after = Pt(8)
                 for r in p.runs:
-                    r.font.size, r.font.color.rgb = Pt(tam), _rgb(GRIS)
+                    r.font.size, r.font.color.rgb = Pt(tam), _rgb(c_texto)
+                    letra(r)
             if d["tabla"]:
                 arriba = arriba + int(alto * 0.45)
                 alto = int(alto * 0.55)
@@ -901,12 +923,16 @@ def pptx_de_presentacion(pres: Dict[str, Any], imagen: Optional[Callable[[Any], 
         if datos_img:
             datos_img = _png_o_jpeg(datos_img)
             w, h = _medidas_imagen(datos_img)
-            caja_w, caja_h = int((W - 2 * margen) * 0.38), int(H - Inches(2.3))
+            caja_w, caja_h = int((W - 2 * margen) * 0.38), int(alto)
             escala = min(caja_w / max(1, w), caja_h / max(1, h))
             iw, ih = int(w * escala), int(h * escala)
-            s.shapes.add_picture(io.BytesIO(datos_img), W - margen - iw, Inches(1.7) + (caja_h - ih) // 2, Emu(iw), Emu(ih))
+            s.shapes.add_picture(io.BytesIO(datos_img), W - margen - iw, Inches(1.7) + dy + (caja_h - ih) // 2, Emu(iw), Emu(ih))
         if d["notas"]:
             s.notes_slide.notes_text_frame.text = d["notas"]
+    if marca:
+        # los colores de las tablas (y la fuente en ellas); las piezas de imagen, en cada diapositiva
+        m_marca.colores_pptx(prs, {k: v for k, v in marca.items() if k in ("fuente",)} | ({"colores": {k: v for k, v in colores.items() if k.startswith("tabla")}} if colores else {}))
+        m_marca.piezas_pptx(prs, marca)
     out = io.BytesIO()
     prs.save(out)
     return out.getvalue()

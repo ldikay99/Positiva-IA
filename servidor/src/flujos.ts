@@ -527,7 +527,7 @@ export const CONFIG_DE: Record<TipoDeNodo, z.ZodType> = {
   documento_generar: conf({
     formato: z.enum(["pdf", "docx", "pptx", "html"], { error: "formato: pdf, docx, pptx o html" }), plantilla: z.string().optional(),
     plantilla_archivo: z.string().regex(ID_ARCHIVO, "plantilla_archivo: el id de un .docx o .pptx subido al flujo").optional(), nombre: z.string().optional(), titulo: z.string().optional(),
-    desde_ia: desdeIa.optional(),
+    desde_ia: desdeIa.optional(), marca: salidasMedida.marcaZod.optional(),
   }).refine((c) => Number(Boolean(c.plantilla?.trim())) + Number(Boolean(c.plantilla_archivo)) + Number(c.desde_ia !== undefined) === 1,
     { message: "documento_generar necesita plantilla, plantilla_archivo o desde_ia (una de las tres)", path: ["plantilla"] }),
   pdf_unir: conf({ archivos: textoOLista("archivos"), nombre: z.string().optional() }),

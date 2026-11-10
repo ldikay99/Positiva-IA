@@ -14,10 +14,12 @@ import json
 import re
 import os
 import sys
+import threading
 import time
 import urllib.error
+from concurrent.futures import ThreadPoolExecutor
 import urllib.request
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 API = os.environ.get("API_INTERNA", f"http://127.0.0.1:{os.environ.get('PUERTO', '8080')}")
 PROYECTO = os.environ.get("GCP_PROJECT", "positiva-sgda-prd-416417")
@@ -25,9 +27,14 @@ PROYECTO = os.environ.get("GCP_PROJECT", "positiva-sgda-prd-416417")
 MAX_VUELTAS = int(os.environ.get("VERA_MAX_VUELTAS", "30"))
 
 
+_SALIDA = threading.Lock()
+
+
 def emitir(tipo: str, **datos: Any) -> None:
-    sys.stdout.write(json.dumps({"tipo": tipo, **datos}, ensure_ascii=False, default=str) + "\n")
-    sys.stdout.flush()
+    linea = json.dumps({"tipo": tipo, **datos}, ensure_ascii=False, default=str) + "\n"
+    with _SALIDA:  # las herramientas que corren a la vez no mezclan sus líneas
+        sys.stdout.write(linea)
+        sys.stdout.flush()
 
 
 def api(metodo: str, ruta: str, cuerpo: Any = None) -> Any:
@@ -135,6 +142,7 @@ Cómo trabajas:
 13. Capacidades: si preguntan qué puedes hacer, responde con esto, concreto y agrupado (por voz, en dos o tres frases con los grupos y un ejemplo):
    - Crear flujos y automatizaciones con nodos (IA, correo, Drive, bases de datos, APIs, documentos Word/Excel/PowerPoint/PDF, aprobaciones, programaciones, webhooks), desde cero o desde una plantilla, y probarlos paso a paso.
    - Generar documentos aquí mismo en el chat con generar_documento: Word, PDF, PowerPoint, Excel, CSV, HTML o Markdown, o llenando una plantilla de la biblioteca (informes del día, actas, resúmenes de corridas, respuestas al ciudadano, presentaciones). Salen como cápsula para abrir o descargar. Si el pedido es que un FLUJO genere el documento cada vez, eso es un nodo documento_generar, hoja_escribir o documento_plantilla.
+   - Ponerles marca a los documentos (logo, banner, marca de agua con opacidad, colores y fuente) con las imágenes que te adjunten o las de Documentos: al generarlos, a los que te manden (aplicar_marca) o en un flujo para muchos (documento_marca). Sus opciones están en ayuda_documentos: consúltala antes de usarlas.
    - Editar cualquier flujo, también PQRD, tutelas y sus copias: agregar, quitar, renombrar y reconfigurar pasos, apagar etapas, cambiar cómo se lee cada tipo de archivo, conexiones; versiones y restaurar.
    - Operar la plataforma: clonar, renombrar, comparar flujos, traer pasos de uno a otro, encadenarlos, proponer borrar uno o varios (con tu botón), programarlos, ajustar sus recursos.
    - Correr: correos de la correspondencia, el buzón real en solo lectura, flujos con una entrada o con archivos que adjuntes, reintentar, cancelar la cola.
@@ -143,11 +151,22 @@ Cómo trabajas:
    Lo que NO haces: radicar de verdad en SGDEA, escribir en sistemas de Positiva, ver o escribir claves, aprobar por la persona ni borrar sin su botón.
 14. Renombra esta conversación con renombrar_chat cuando el tema quede claro o la persona lo pida.
 15. Respuestas cortas (una a cinco líneas) salvo que pidan detalle; usa markdown (listas, tablas, **negritas**, `ids`) cuando ayude a leer. Si listas muchas cosas, usa una tabla corta.
+16. Si necesitas varias herramientas que no dependen una de otra (leer dos flujos, revisar corridas y tablero, generar varios documentos), pídelas juntas en la misma vuelta: corren a la vez. Lo que mueve la pantalla o cambia un flujo corre de a una, en el orden en que lo pidas.
 
 {INDICE_NODOS}"""
 
+_TXT = {"type": "string"}
+_NUM = {"type": "number"}
+# La marca de un documento (puente/marca.py): la forma va en la herramienta; las opciones, valores por defecto y ejemplos, en ayuda_documentos.
+ESQUEMA_MARCA = {"type": "object", "description": "logo, banner, marca de agua, colores y fuente; las imágenes son nombres de adjuntos del chat, «ultimo» o «plantilla/recurso» de Documentos (detalles: ayuda_documentos)", "properties": {
+    "logo": {"type": "object", "properties": {"imagen": _TXT, "posicion": {"type": "string", "enum": ["izquierda", "centro", "derecha"]}, "ancho_cm": _NUM}},
+    "banner": {"type": "object", "properties": {"imagen": _TXT, "posicion": {"type": "string", "enum": ["arriba", "abajo", "ambos"]}, "alto_cm": _NUM}},
+    "marca_agua": {"type": "object", "properties": {"imagen": _TXT, "texto": _TXT, "opacidad": _NUM, "tamano": _NUM, "rotacion": _NUM, "color": _TXT}},
+    "colores": {"type": "object", "properties": {"titulos": _TXT, "acento": _TXT, "tabla_encabezado": _TXT, "tabla_texto": _TXT, "texto": _TXT}},
+    "fuente": _TXT}}
+
 HERRAMIENTAS = [
-    {"name": "cargar_herramientas", "description": "Carga más grupos de herramientas para esta tarea. Grupos: construir (crear/editar/validar/guardar/clonar flujos, plantillas de flujos y de documentos), correr (correr y probar, adjuntos, logs), correo (correspondencia y buzones), conexiones (credenciales, variables, secretos, manifiesto), ia (proveedores y modelos), producto (notificaciones, aprobaciones, tablero), pqrd (configuración y parámetros de PQRD/tutelas). Úsala apenas veas que te falta una herramienta.", "parameters": {"type": "object", "properties": {"grupos": {"type": "array", "items": {"type": "string"}}}, "required": ["grupos"]}},
+    {"name": "cargar_herramientas", "description": "Carga más grupos de herramientas para esta tarea. Grupos: construir (crear/editar/validar/guardar/clonar flujos, plantillas de flujos y de documentos), correr (correr y probar, adjuntos, logs), correo (correspondencia y buzones), conexiones (credenciales, variables, secretos, manifiesto), ia (proveedores y modelos), producto (notificaciones, aprobaciones, tablero), pqrd (configuración y parámetros de PQRD/tutelas), documentos (poner marca a documentos del chat, plantillas y recursos de Documentos). Úsala apenas veas que te falta una herramienta.", "parameters": {"type": "object", "properties": {"grupos": {"type": "array", "items": {"type": "string"}}}, "required": ["grupos"]}},
     {"name": "listar_flujos", "description": "Los flujos que existen, con su tipo (codigo o declarativo).", "parameters": {"type": "object", "properties": {}}},
     {"name": "leer_flujo", "description": "La definición completa de un flujo declarativo, o el resumen de nodos de uno de código.", "parameters": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}},
     {"name": "validar_flujo", "description": "Valida una definición de flujo declarativo sin guardarla. Devuelve los problemas.", "parameters": {"type": "object", "properties": {"definicion": {"type": "object"}}, "required": ["definicion"]}},
@@ -201,7 +220,9 @@ HERRAMIENTAS = [
     {"name": "configurar_ia_global", "description": "Cambia la IA global de la plataforma (la que usan los flujos que dicen «usar la global»). Solo si la persona lo pide.", "parameters": {"type": "object", "properties": {"proveedor": {"type": "string"}, "modelo": {"type": "string"}, "credencial": {"type": "string"}, "temperatura": {"type": "number"}}, "required": ["proveedor", "modelo"]}},
     {"name": "probar_paso", "description": "Prueba UN paso de un flujo (o el flujo hasta ese paso con hasta=true) sin correr todo y sin escribir nada afuera: con archivos que la persona adjuntó en el chat (usar_adjuntos_chat=true), una entrada, un correo (caso) o la salida de una ejecución anterior (desde_corrida). Devuelve lo que produce el paso y los archivos generados. Con fijar=true deja ese resultado como datos de prueba del paso.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "nodo": {"type": "string"}, "hasta": {"type": "boolean"}, "usar_adjuntos_chat": {"type": "boolean"}, "adjuntos": {"type": "array", "items": {"type": "string"}}, "entrada": {"type": "object"}, "caso": {"type": "string"}, "desde_corrida": {"type": "string"}, "fijar": {"type": "boolean"}}, "required": ["flujo", "nodo"]}},
     {"name": "archivos_de_corrida", "description": "Los archivos que generó una ejecución (Word, Excel, PDF, imágenes…). Los muestra a la persona como cápsulas en el chat para abrirlos o descargarlos.", "parameters": {"type": "object", "properties": {"corrida": {"type": "string"}}, "required": ["corrida"]}},
-    {"name": "generar_documento", "description": "Crea un documento AQUÍ en el chat y se lo entrega a la persona como cápsula para abrir o descargar: Word (docx), PDF, PowerPoint (pptx), Excel (xlsx), CSV, HTML o Markdown (md). Úsala cuando pidan «hazme un Word/PDF/PowerPoint/Excel con…», un informe, un acta, un resumen, una respuesta al ciudadano o una presentación, sin montar un flujo. Para docx, pdf, pptx, html y md escribe tú el contenido completo en «contenido» con «# » título, «## » sección (en pptx el «# » es la portada y cada «## » es una diapositiva: si piden N diapositivas, escribe exactamente N «## », con 3 a 5 viñetas cortas cada una), «- » viñetas y tablas con «|». Para xlsx o csv pasa «hojas»: [{nombre, columnas, filas}] (o una tabla con «|» en contenido). Con «plantilla» (id de plantillas_documento) y «datos» llena esa plantilla de la biblioteca. Si el documento usa datos de la plataforma (tablero, historial, corridas, correos), consúltalos ANTES con sus herramientas y pon las cifras reales, nunca inventadas.", "parameters": {"type": "object", "properties": {"formato": {"type": "string", "enum": ["docx", "pdf", "pptx", "xlsx", "csv", "html", "md"]}, "titulo": {"type": "string"}, "contenido": {"type": "string"}, "hojas": {"type": "array", "items": {"type": "object", "properties": {"nombre": {"type": "string"}, "columnas": {"type": "array", "items": {"type": "string"}}, "filas": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}}}}}, "plantilla": {"type": "string"}, "datos": {"type": "object"}, "nombre_archivo": {"type": "string"}}, "required": ["titulo"]}},
+    {"name": "generar_documento", "description": "Crea un documento AQUÍ en el chat y se lo entrega a la persona como cápsula para abrir o descargar: Word (docx), PDF, PowerPoint (pptx), Excel (xlsx), CSV, HTML o Markdown (md). Úsala cuando pidan «hazme un Word/PDF/PowerPoint/Excel con…», un informe, un acta, un resumen, una respuesta al ciudadano o una presentación, sin montar un flujo. Para docx, pdf, pptx, html y md escribe tú el contenido completo en «contenido» con «# » título, «## » sección (en pptx el «# » es la portada y cada «## » es una diapositiva: si piden N diapositivas, escribe exactamente N «## », con 3 a 5 viñetas cortas cada una), «- » viñetas y tablas con «|». Para xlsx o csv pasa «hojas»: [{nombre, columnas, filas}] (o una tabla con «|» en contenido). Con «plantilla» (id de plantillas_documento) y «datos» llena esa plantilla de la biblioteca. Si el documento usa datos de la plataforma (tablero, historial, corridas, correos), consúltalos ANTES con sus herramientas y pon las cifras reales, nunca inventadas. Con «marca» (docx, pdf, pptx, html) lleva logo, banner, marca de agua, colores y fuente con las imágenes que adjuntó la persona: mira antes ayuda_documentos.", "parameters": {"type": "object", "properties": {"formato": {"type": "string", "enum": ["docx", "pdf", "pptx", "xlsx", "csv", "html", "md"]}, "titulo": {"type": "string"}, "contenido": {"type": "string"}, "hojas": {"type": "array", "items": {"type": "object", "properties": {"nombre": {"type": "string"}, "columnas": {"type": "array", "items": {"type": "string"}}, "filas": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}}}}}, "plantilla": {"type": "string"}, "datos": {"type": "object"}, "nombre_archivo": {"type": "string"}, "marca": ESQUEMA_MARCA}, "required": ["titulo"]}},
+    {"name": "aplicar_marca", "description": "Pone la marca (logo, banner, marca de agua, colores y fuente) a documentos que YA existen en este chat: los que adjuntó la persona o los que generaste tú (PDF, Word, PowerPoint, HTML, PNG, JPG). archivos: sus nombres, o vacío para los del último mensaje con adjuntos (sin contar las imágenes que usa la marca). Cada uno sale como cápsula nueva. Las opciones, con ayuda_documentos.", "parameters": {"type": "object", "properties": {"archivos": {"type": "array", "items": {"type": "string"}}, "marca": ESQUEMA_MARCA, "sufijo": {"type": "string", "description": "lo que se agrega al nombre (por defecto «-con-marca»)"}}, "required": ["marca"]}},
+    {"name": "ayuda_documentos", "description": "Cómo ponerle marca a un documento: opciones de logo (posición, tamaño), banner (arriba/abajo), marca de agua (imagen o texto, opacidad, tamaño, rotación), colores y fuente, de dónde salen las imágenes (adjuntos del chat, archivos del flujo, recursos de Documentos), qué admite cada formato y ejemplos para el chat y para los flujos (documento_generar, documento_plantilla, documento_marca). Llámala antes de usar «marca».", "parameters": {"type": "object", "properties": {"tema": {"type": "string", "description": "marca (por defecto), imagenes, formatos, ejemplos o flujos"}}}},
     {"name": "plantillas", "description": "La galería de plantillas de flujos listas para usar (extraer datos de documentos, clasificar correos, responder con IA, revisar tablas, informes programados, webhooks, aprobaciones…), con lo que necesita cada una. Con id, el detalle de una.", "parameters": {"type": "object", "properties": {"id": {"type": "string"}}}},
     {"name": "instalar_plantilla", "description": "Instala una plantilla como flujo propio (queda editable) y lo abre en pantalla.", "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "nombre": {"type": "string"}, "id_nuevo": {"type": "string"}}, "required": ["id"]}},
     {"name": "historial", "description": "El historial de ejecuciones con filtros: flujo, estado (en_curso | bien | revisar | fallo), desenlace, desde/hasta (AAAA-MM-DD) y texto. Con corrida, el detalle legible de una (qué entró, qué hizo cada paso, qué salió y por qué terminó así).", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "estado": {"type": "string"}, "desenlace": {"type": "string"}, "desde": {"type": "string"}, "hasta": {"type": "string"}, "texto": {"type": "string"}, "n": {"type": "integer"}, "corrida": {"type": "string"}}}},
@@ -807,6 +828,10 @@ def _mover_pantalla(nombre: str, a: Dict[str, Any]) -> Any:
         return r
     if nombre == "generar_documento":
         return _generar_documento(a)
+    if nombre == "aplicar_marca":
+        return _aplicar_marca(a)
+    if nombre == "ayuda_documentos":
+        return _ayuda_documentos(a)
     if nombre == "archivos_de_corrida":
         r = api("GET", f"/api/corridas/{a['corrida']}/archivos")
         lista = r if isinstance(r, list) else (r or {}).get("archivos") if isinstance(r, dict) else None
@@ -1208,11 +1233,155 @@ def _bytes_crudos(metodo: str, ruta: str, cuerpo: Any) -> bytes:
             raise ValueError(f"HTTP {e.code}")
 
 
+def _archivos_del_chat() -> List[Dict[str, Any]]:
+    """Los archivos de esta conversación, del más reciente al más viejo: los que adjuntó la persona y los que generó Vera.
+    Cada uno {id, nombre, tipo, de: persona|vera, mensaje}."""
+    if not CONVERSACION.get("id"):
+        return []
+    conv = api("GET", f"/api/chats/{CONVERSACION['id']}") or {}
+    r: List[Dict[str, Any]] = []
+    for i, m in enumerate(conv.get("mensajes") or [] if isinstance(conv, dict) else []):
+        for adj in m.get("adjuntos") or []:
+            r.append({"id": adj.get("id"), "nombre": adj.get("nombre") or "", "tipo": adj.get("tipo") or "", "de": "persona", "mensaje": i})
+        for x in m.get("archivos") or []:
+            if str(x.get("corrida") or "") == f"chat:{CONVERSACION['id']}":
+                r.append({"id": x.get("id"), "nombre": x.get("nombre") or "", "tipo": x.get("tipo") or "", "de": "vera", "mensaje": i})
+    return [x for x in reversed(r) if x.get("id")]
+
+
+def _bytes_del_chat(adj_id: str) -> bytes:
+    q = urllib.request.Request(API + f"/api/chats/{CONVERSACION['id']}/adjuntos/{adj_id}")
+    with urllib.request.urlopen(q, timeout=60) as r:
+        return r.read()
+
+
+def _buscar_en_chat(ref: str, archivos: List[Dict[str, Any]], solo_imagenes: bool = False) -> Optional[Dict[str, Any]]:
+    """Un archivo del chat por su nombre (con o sin extensión, sin mayúsculas), su id o «ultimo» (la primera imagen del último mensaje con imágenes)."""
+    ref = str(ref or "").strip()
+    candidatos = [x for x in archivos if not solo_imagenes or str(x["tipo"]).startswith("image/") or re.search(r"\.(png|jpe?g|webp|gif|bmp)$", x["nombre"], re.I)]
+    if ref.lower() in ("ultimo", "último", "ultima", "última", "ultimo_adjunto", ""):
+        personas = [x for x in candidatos if x["de"] == "persona"]
+        if not personas:
+            return None
+        ultimo = personas[0]["mensaje"]
+        del_ultimo = [x for x in personas if x["mensaje"] == ultimo]
+        return del_ultimo[-1]  # la primera que adjuntó en ese mensaje (la lista va al revés)
+    bajo = ref.lower()
+    for x in candidatos:
+        n = x["nombre"].lower()
+        if bajo in (n, str(x["id"]).lower()) or bajo == n.rsplit(".", 1)[0]:
+            return x
+    return None
+
+
+def _marca_del_chat(cfg: Any) -> Tuple[Optional[Dict[str, Any]], Optional[Dict[str, Any]]]:
+    """(marca cargada, error) con las imágenes de la conversación o de la biblioteca de Documentos."""
+    import marca as m_marca
+    import salidas as m_sal
+    import nodos_salidas as m_ns
+
+    problemas: List[str] = []
+    m_marca.problemas(cfg, problemas.append)
+    if problemas:
+        return None, {"error": "la marca tiene problemas: " + "; ".join(problemas), "ayuda": "pide ayuda_documentos"}
+    archivos = _archivos_del_chat()
+
+    def imagen(ref: str) -> Optional[bytes]:
+        m = m_ns.RECURSO_BIBLIOTECA.fullmatch(ref.strip())
+        if m:
+            return m_sal.recurso_de(m.group(1), m.group(2))
+        x = _buscar_en_chat(ref, archivos, solo_imagenes=True)
+        return _bytes_del_chat(x["id"]) if x else None
+
+    lista, faltan = m_marca.cargar(cfg, imagen)
+    if faltan:
+        imgs = [x["nombre"] for x in archivos if str(x["tipo"]).startswith("image/")]
+        return None, {"error": f"no encontré la imagen {', '.join(f'«{f}»' for f in faltan)} para la marca",
+                      "imagenes_del_chat": imgs[:20],
+                      "nota": "usa el nombre exacto de una imagen adjunta, «ultimo» o «plantilla/recurso» de Documentos (plantillas_documento lista sus recursos); "
+                              "si no hay imagen, pídele a la persona que la adjunte con el clip"}
+    return lista, None
+
+
+def _ayuda_documentos(a: Dict[str, Any]) -> Dict[str, Any]:
+    import marca as m_marca
+    ayuda = m_marca.AYUDA
+    tema = str(a.get("tema") or "marca").lower()
+    if tema.startswith("imagen"):
+        return {"imagenes": ayuda["imagenes"]}
+    if tema.startswith("formato"):
+        return {"formatos": ayuda["formatos"]}
+    if tema.startswith("ejemplo"):
+        return {"ejemplos_chat": ayuda["ejemplos_chat"], "en_flujos": ayuda["en_flujos"]}
+    if tema.startswith("flujo"):
+        return {"en_flujos": ayuda["en_flujos"], "imagenes": ayuda["imagenes"]["flujo"]}
+    return ayuda
+
+
+def _guardar_en_chat(nombre: str, tipo: str, datos: bytes) -> Dict[str, Any]:
+    import base64
+    r = api("POST", f"/api/chats/{CONVERSACION['id']}/adjuntos", {"nombre": nombre, "tipo": tipo, "datos": base64.b64encode(datos).decode()})
+    if not isinstance(r, dict) or r.get("error") or not r.get("id"):
+        raise ValueError(f"no se pudo guardar «{nombre}»: {(r or {}).get('error') if isinstance(r, dict) else r}")
+    return {"corrida": f"chat:{CONVERSACION['id']}", "id": r["id"], "nombre": r.get("nombre") or nombre, "tipo": r.get("tipo") or tipo, "tamano": r.get("tamano") or len(datos)}
+
+
+def _aplicar_marca(a: Dict[str, Any]) -> Dict[str, Any]:
+    """La marca sobre documentos que ya están en el chat; cada uno sale como cápsula nueva."""
+    import marca as m_marca
+
+    if not CONVERSACION["id"]:
+        return {"error": "no hay conversación"}
+    marca, error = _marca_del_chat(a.get("marca"))
+    if error:
+        return error
+    archivos = _archivos_del_chat()
+    pedidos = [str(x) for x in a.get("archivos") or [] if str(x).strip()]
+    usados = {str(v).lower() for v in m_marca.imagenes(a.get("marca"))}
+    if pedidos:
+        elegidos, no_estan = [], []
+        for p in pedidos:
+            x = _buscar_en_chat(p, archivos)
+            (elegidos.append(x) if x else no_estan.append(p))
+        if no_estan:
+            return {"error": f"no encontré en el chat: {', '.join(no_estan)}", "disponibles": [x["nombre"] for x in archivos][:30]}
+    else:
+        personas = [x for x in archivos if x["de"] == "persona"]
+        if not personas:
+            return {"error": "en esta conversación no hay documentos adjuntos; pídele a la persona que los adjunte o di cuáles (archivos)"}
+        ultimo = personas[0]["mensaje"]
+        elegidos = [x for x in reversed(personas) if x["mensaje"] == ultimo and x["nombre"].lower() not in usados
+                    and x["nombre"].lower().rsplit(".", 1)[0] not in usados]
+        if len(elegidos) > 1 or "ultimo" in usados or "último" in usados:
+            # la imagen que hace de logo («ultimo») no se marca a sí misma
+            elegidos = [x for x in elegidos if not str(x["tipo"]).startswith("image/")] or elegidos
+    sufijo = re.sub(r'[\x00-\x1f\x7f<>:"|?*/\\]', "", str(a.get("sufijo") if a.get("sufijo") is not None else "-con-marca"))[:40]
+    hechos, saltados, capsulas = [], [], []
+    for x in elegidos[:30]:
+        try:
+            datos = _bytes_del_chat(x["id"])
+            fmt = m_marca.formato_de(x["nombre"], datos)
+            nuevo = m_marca.aplicar(fmt, datos, marca)
+            base, _, ext = x["nombre"].rpartition(".")
+            nombre = f"{base}{sufijo}.{ext}" if base else f"{x['nombre']}{sufijo}"
+            cap = _guardar_en_chat(nombre, x["tipo"] or MIME_DOC.get(fmt, "application/octet-stream"), nuevo)
+            capsulas.append(cap)
+            hechos.append(nombre)
+        except Exception as e:  # noqa: BLE001
+            saltados.append(f"{x['nombre']}: {str(e)[:160]}")
+    if capsulas:
+        emitir("archivos", archivos=capsulas)
+    if not hechos:
+        return {"error": "no pude marcar ninguno", "saltados": saltados}
+    return {"ok": True, "marcados": hechos, "saltados": saltados, "marca": m_marca.resumen(marca),
+            "nota": "Ya están en el chat como cápsulas; no pegues su contenido."}
+
+
 def _generar_documento(a: Dict[str, Any]) -> Dict[str, Any]:
     """Arma el documento con las mismas piezas que los nodos documento_generar y hoja_escribir, lo guarda
-    como archivo de la conversación y lo muestra como cápsula."""
-    import base64
+    como archivo de la conversación y lo muestra como cápsula. Con «marca», lleva logo, banner, marca de agua y colores."""
     import documentos as m_doc
+    import marca as m_marca
     import nodos_salidas as m_ns
 
     if not CONVERSACION["id"]:
@@ -1220,6 +1389,11 @@ def _generar_documento(a: Dict[str, Any]) -> Dict[str, Any]:
     titulo = str(a.get("titulo") or "Documento").strip()[:160]
     contenido = str(a.get("contenido") or "")
     fmt = str(a.get("formato") or "docx").lower().lstrip(".")
+    marca, nota_marca = None, ""
+    if a.get("marca"):
+        marca, error = _marca_del_chat(a["marca"])
+        if error:
+            return error
     try:
         if a.get("plantilla"):
             meta = api("GET", f"/api/documentos/{a['plantilla']}")
@@ -1227,6 +1401,10 @@ def _generar_documento(a: Dict[str, Any]) -> Dict[str, Any]:
                 return {"error": f"no existe la plantilla de documentos «{a['plantilla']}»; míralas con plantillas_documento"}
             fmt = str(meta.get("formato") or "docx")
             datos = _bytes_crudos("POST", f"/api/documentos/{a['plantilla']}/probar", {"datos": a.get("datos") or {}})
+            if marca and fmt in ("docx", "pptx", "html", "pdf"):
+                datos = m_marca.aplicar(fmt, datos, marca)
+            elif marca:
+                nota_marca = f"la marca no se pone en {fmt}"
         elif fmt not in MIME_DOC:
             return {"error": f"formato «{fmt}» (válidos: {', '.join(MIME_DOC)})"}
         elif fmt in ("xlsx", "csv"):
@@ -1238,20 +1416,30 @@ def _generar_documento(a: Dict[str, Any]) -> Dict[str, Any]:
             if not hojas:
                 return {"error": "para Excel o CSV pasa hojas [{nombre, columnas, filas}] o una tabla con «|» en contenido"}
             datos = m_doc.xlsx_de_hojas(hojas) if fmt == "xlsx" else m_doc.csv_de_hoja(hojas[0])
+            if marca:
+                nota_marca = f"la marca no se pone en {fmt} (sí en Word, PDF, PowerPoint y HTML)"
         elif not contenido.strip():
             return {"error": "falta el contenido: escribe el documento completo en «contenido» (# título, ## secciones, - viñetas, tablas con |)"}
         elif fmt == "md":
             datos = contenido.encode("utf-8")
+            if marca:
+                nota_marca = "la marca no se pone en Markdown (sí en Word, PDF, PowerPoint y HTML)"
         else:
-            datos = m_ns.bytes_de_bloques(fmt, m_doc.bloques_de_texto(contenido), titulo)
+            datos = m_ns.bytes_de_bloques(fmt, m_doc.bloques_de_texto(contenido), titulo, marca)
     except Exception as e:  # noqa: BLE001
         return {"error": f"no se pudo armar el documento: {e}"}
     nombre = _nombre_de_archivo(str(a.get("nombre_archivo") or titulo), fmt)
-    r = api("POST", f"/api/chats/{CONVERSACION['id']}/adjuntos", {"nombre": nombre, "tipo": MIME_DOC.get(fmt, "application/octet-stream"), "datos": base64.b64encode(datos).decode()})
-    if not isinstance(r, dict) or r.get("error") or not r.get("id"):
-        return {"error": f"no se pudo guardar el documento: {(r or {}).get('error') if isinstance(r, dict) else r}"}
-    emitir("archivos", archivos=[{"corrida": f"chat:{CONVERSACION['id']}", "id": r["id"], "nombre": r.get("nombre") or nombre, "tipo": r.get("tipo") or MIME_DOC.get(fmt), "tamano": r.get("tamano") or len(datos)}])
-    return {"ok": True, "archivo": nombre, "formato": fmt, "tamano": len(datos), "nota": "Ya está en el chat como cápsula para abrirlo o descargarlo; no pegues su contenido en la respuesta."}
+    try:
+        cap = _guardar_en_chat(nombre, MIME_DOC.get(fmt, "application/octet-stream"), datos)
+    except ValueError as e:
+        return {"error": str(e)}
+    emitir("archivos", archivos=[cap])
+    r: Dict[str, Any] = {"ok": True, "archivo": nombre, "formato": fmt, "tamano": len(datos), "nota": "Ya está en el chat como cápsula para abrirlo o descargarlo; no pegues su contenido en la respuesta."}
+    if marca and not nota_marca:
+        r["marca"] = m_marca.resumen(marca)
+    if nota_marca:
+        r["nota_marca"] = nota_marca
+    return r
 
 # ------------------------------------------------------------------ herramientas por grupos
 # Para no mandarle al modelo todas las herramientas en cada mensaje: un núcleo siempre,
@@ -1260,7 +1448,7 @@ def _generar_documento(a: Dict[str, Any]) -> Dict[str, Any]:
 GRUPOS: Dict[str, List[str]] = {
     "nucleo": ["cargar_herramientas", "ver_pantalla", "listar_flujos", "leer_flujo", "navegar", "abrir_vista", "tipos_de_nodo", "ayuda_nodo", "reglas_de_flujos",
                "enfocar_flujo", "controlar_editor", "ajustar_lienzo", "centrar_nodo", "historial", "ver_corrida", "ultimas_corridas", "renombrar_chat",
-               "diagnosticar_flujo", "generar_documento"],
+               "diagnosticar_flujo", "generar_documento", "ayuda_documentos"],
     "construir": ["validar_flujo", "guardar_flujo", "editar_nodo", "agregar_nodo", "eliminar_nodo", "editar_aristas", "proponer_borrado", "borrar_flujo",
                   "ver_estructura", "restablecer_estructura", "comparar_flujos", "traer_nodos", "encadenar_flujos",
                   "renombrar_flujo", "clonar_flujo", "versiones_flujo", "restaurar_version", "plantillas", "instalar_plantilla",
@@ -1276,6 +1464,7 @@ GRUPOS: Dict[str, List[str]] = {
     "producto": ["notificaciones", "aprobaciones", "resumen_tablero", "listar_chats"],
     "pqrd": ["ver_configuracion", "historial_configuracion", "listar_perfiles", "aplicar_perfil", "guardar_perfil", "ajustar_parametro_pqrd",
              "listar_nodos", "ver_nodo"],
+    "documentos": ["aplicar_marca", "plantillas_documento", "archivos_de_corrida", "archivos_del_flujo"],
 }
 DESCRIPCION_GRUPOS = {
     "construir": "crear, editar, validar, guardar, clonar, renombrar, comparar, traer pasos entre flujos, encadenarlos, versiones y plantillas de flujos; plantillas de documentos (Word, Excel, PowerPoint, correo HTML)",
@@ -1285,6 +1474,7 @@ DESCRIPCION_GRUPOS = {
     "ia": "proveedores y modelos de IA de los flujos y la global",
     "producto": "notificaciones, aprobaciones, tablero y conversaciones",
     "pqrd": "configuración, perfiles, parámetros y nodos del motor de PQRD y tutelas",
+    "documentos": "poner marca (logo, banner, marca de agua, colores) a documentos del chat, plantillas y recursos de Documentos, archivos de corridas y flujos",
 }
 PISTAS = {
     "construir": r"crea|arma|haz un flujo|automatiz|nodo|paso|etapa|compar|cruz|diferenc|trae|traer|copia|encaden|llam|subflujo|soluciona|mejora|diagn|capacidad|puedes hacer|apaga|enciende|desactiv|reordena|insert|formato|heic|lector|edita|cambia|agrega|quita|elimina|borra|renombr|clon|copia|duplic|plantilla|versi|valida|guarda|arregla|corrige|genera|powerpoint|presentaci|diapositiv|pptx|zip|xml|json|csv|html",
@@ -1294,6 +1484,7 @@ PISTAS = {
     "ia": r"\bia\b|modelo|proveedor|gemini|openai|claude|gpt|deepseek|vertex|anthropic|mistral|groq|ollama|openrouter|costo|cuesta|gasto|precio|tarifa|token|visión|vision",
     "producto": r"notificaci|aprobaci|aprueba|pendiente|tablero|resumen|conversaci",
     "pqrd": r"pqrd|tutela|parámetro|parametro|perfil|configuraci|compuerta|umbral",
+    "documentos": r"logo|marca de agua|marca|membrete|banner|franja|encabezado|pie de p|opacidad|transparen|colores|fuente|tipograf|estamp|sello|imagen corporativa",
 }
 
 
@@ -1587,6 +1778,95 @@ def resumen_al_agotarse(registro: List[tuple], propuestas: List[Dict[str, Any]],
 
 _NOMBRES_HERRAMIENTAS = {h["name"] for h in HERRAMIENTAS}
 
+# ------------------------------------------------------------------ varias herramientas a la vez
+# Cuando el modelo pide varias herramientas en una misma vuelta, las que solo leen (o arman un archivo nuevo en el chat)
+# corren a la vez en un grupo acotado de hilos; las que mueven la pantalla, cambian un flujo, corren algo o cargan
+# herramientas son una barrera: corren solas y en su orden. Las respuestas vuelven al modelo en el orden en que las pidió.
+PARALELAS = {
+    "listar_flujos", "leer_flujo", "validar_flujo", "listar_correos", "ver_correo", "ver_buzon", "resumen_tablero", "ver_logs", "estado_motor",
+    "listar_nodos", "ver_nodo", "ver_configuracion", "historial_configuracion", "listar_perfiles", "tipos_de_nodo", "ayuda_nodo", "reglas_de_flujos",
+    "versiones_flujo", "listar_credenciales", "tipos_de_credencial", "ver_entorno", "ver_manifiesto", "proveedores_ia", "modelos_ia", "ver_ia_flujo",
+    "historial", "aprobaciones", "plantillas", "plantillas_documento", "ultimas_corridas", "ver_corrida", "ver_estructura", "comparar_flujos",
+    "diagnosticar_flujo", "ver_programacion", "ver_recursos", "archivos_del_flujo", "listar_chats", "ver_pantalla",
+    "generar_documento", "aplicar_marca", "ayuda_documentos", "archivos_de_corrida",
+}
+MAX_PARALELO = max(1, int(os.environ.get("VERA_PARALELO", "4")))
+
+
+def tandas(nombres: List[str]) -> List[List[int]]:
+    """Los índices de las llamadas agrupados en tandas: las paralelas seguidas van juntas; cada una de las demás, sola."""
+    r: List[List[int]] = []
+    actual: List[int] = []
+    for i, n in enumerate(nombres):
+        if n in PARALELAS:
+            actual.append(i)
+            continue
+        if actual:
+            r.append(actual)
+            actual = []
+        r.append([i])
+    if actual:
+        r.append(actual)
+    return r
+
+
+def correr_llamadas(llamadas: List[Tuple[str, Dict[str, Any]]], correr: Callable[[int, str, Dict[str, Any]], Any],
+                    al_empezar: Optional[Callable[[List[int]], None]] = None) -> List[Any]:
+    """Corre las llamadas por tandas y devuelve sus resultados en el orden pedido. `correr(i, nombre, args)` no debe lanzar."""
+    resultados: List[Any] = [None] * len(llamadas)
+    for tanda in tandas([n for n, _ in llamadas]):
+        if al_empezar:
+            al_empezar(tanda)
+        if len(tanda) == 1 or MAX_PARALELO == 1:
+            for i in tanda:
+                resultados[i] = correr(i, *llamadas[i])
+            continue
+        with ThreadPoolExecutor(max_workers=min(MAX_PARALELO, len(tanda)), thread_name_prefix="vera") as grupo:
+            futuros = {i: grupo.submit(correr, i, *llamadas[i]) for i in tanda}
+            for i, f in futuros.items():
+                resultados[i] = f.result()
+    return resultados
+
+
+def _resumen_args(args: Dict[str, Any]) -> Dict[str, Any]:
+    return {k: (v if k != "definicion" else {"id": (v or {}).get("id"), "nodos": len((v or {}).get("nodos", []))}) for k, v in (args or {}).items()}
+
+
+def _con_candado(avisar: Callable[..., None]) -> Callable[..., None]:
+    candado = threading.Lock()
+
+    def seguro(tipo: str, **d: Any) -> None:
+        with candado:
+            avisar(tipo, **d)
+    return seguro
+
+
+def correr_vuelta(llamadas: List[Tuple[str, Dict[str, Any]]], avisar: Callable[..., None], pasos: List[Dict[str, Any]], registro: List[tuple],
+                  cambiados: set, propuestas: List[Dict[str, Any]]) -> List[Any]:
+    """Una vuelta de herramientas (las independientes a la vez), con sus avisos al navegador y lo que queda anotado.
+    Cada aviso lleva su «indice» (su lugar entre los pasos de la respuesta) para que el chat empareje cada resultado con su paso."""
+    base = len(pasos)
+    resumenes = [_resumen_args(a) for _, a in llamadas]
+
+    def anunciar(tanda: List[int]) -> None:
+        for i in tanda:
+            avisar("herramienta", nombre=llamadas[i][0], argumentos=resumenes[i], indice=base + i, **({"paralelo": len(tanda)} if len(tanda) > 1 else {}))
+
+    def correr(i: int, nombre: str, args: Dict[str, Any]) -> Any:
+        try:
+            res = ejecutar(nombre, args)
+        except Exception as e:  # noqa: BLE001 - el modelo se entera del fallo
+            res = {"error": f"{type(e).__name__}: {e}"}
+        avisar("resultado_herramienta", nombre=nombre, resultado=json.dumps(res, ensure_ascii=False, default=str)[:1500], indice=base + i)
+        return res
+
+    resultados = correr_llamadas(llamadas, correr, anunciar)
+    for i, ((nombre, args), res) in enumerate(zip(llamadas, resultados)):
+        anotar_resultado(nombre, args, res, cambiados, propuestas)
+        registro.append((nombre, args, res))
+        pasos.append({"nombre": nombre, "argumentos": resumenes[i], "resultado": json.dumps(res, ensure_ascii=False, default=str)[:600]})
+    return resultados
+
 
 def _imita_herramienta(texto: str) -> bool:
     """¿La respuesta trae una llamada escrita («generar_documento({…})» o el registro «[Lo que hice en ese turno:») en vez de hecha?"""
@@ -1615,7 +1895,7 @@ def conversar(entrada: Dict[str, Any], aviso: Any = None) -> Dict[str, Any]:
     from google import genai
     from google.genai import types
 
-    avisar = aviso or (lambda tipo, **d: emitir(tipo, **d))
+    avisar = _con_candado(aviso) if aviso else (lambda tipo, **d: emitir(tipo, **d))
     ia = entrada.get("ia_vera") or {}
     if ia.get("proveedor") and ia.get("proveedor") != "vertex":
         return _conversar_con_proveedor(entrada, ia, avisar)
@@ -1684,24 +1964,14 @@ def conversar(entrada: Dict[str, Any], aviso: Any = None) -> Dict[str, Any]:
         if texto.strip():
             avisar("pensando", texto=texto)
         contenidos.append(cand)
+        pedidas = [(ll.name, dict(ll.args or {})) for ll in llamadas]
+        resultados = correr_vuelta(pedidas, avisar, pasos, registro, cambiados, propuestas)
         respuestas = []
-        for ll in llamadas:
-            args = dict(ll.args or {})
-            resumen = {k: (v if k != "definicion" else {"id": (v or {}).get("id"), "nodos": len((v or {}).get("nodos", []))}) for k, v in args.items()}
-            avisar("herramienta", nombre=ll.name, argumentos=resumen)
-            try:
-                res = ejecutar(ll.name, args)
-            except Exception as e:
-                res = {"error": f"{type(e).__name__}: {e}"}
-            if ll.name == "cargar_herramientas" and isinstance(res, dict) and res.get("cargados"):
+        for (nombre, _), res in zip(pedidas, resultados):
+            if nombre == "cargar_herramientas" and isinstance(res, dict) and res.get("cargados"):
                 activos.extend(g for g in res["cargados"] if g not in activos)
                 config.tools = [_herramientas()]
-            anotar_resultado(ll.name, args, res, cambiados, propuestas)
-            registro.append((ll.name, args, res))
-            texto_res = json.dumps(res, ensure_ascii=False, default=str)
-            pasos.append({"nombre": ll.name, "argumentos": resumen, "resultado": texto_res[:600]})
-            avisar("resultado_herramienta", nombre=ll.name, resultado=texto_res[:1500])
-            respuestas.append(types.Part.from_function_response(name=ll.name, response={"resultado": res}))
+            respuestas.append(types.Part.from_function_response(name=nombre, response={"resultado": res}))
         contenidos.append(types.Content(role="user", parts=respuestas))
     texto = resumen_al_agotarse(registro, propuestas, MAX_VUELTAS)
     avisar("texto", texto=texto)
@@ -1747,18 +2017,13 @@ def _conversar_con_proveedor(entrada: Dict[str, Any], ia: Dict[str, Any], avisar
     registro: List[tuple] = []
 
     def ejecutar_y_anotar(nombre: str, args: Dict[str, Any]) -> Any:
-        resumen = {k: (v if k != "definicion" else {"id": (v or {}).get("id"), "nodos": len((v or {}).get("nodos", []))}) for k, v in args.items()}
-        avisar("herramienta", nombre=nombre, argumentos=resumen)
-        res = ejecutar(nombre, args)
-        anotar_resultado(nombre, args, res, cambiados, propuestas)
-        registro.append((nombre, args, res))
-        texto_res = json.dumps(res, ensure_ascii=False, default=str)
-        pasos.append({"nombre": nombre, "argumentos": resumen, "resultado": texto_res[:600]})
-        avisar("resultado_herramienta", nombre=nombre, resultado=texto_res[:1500])
-        return res
+        return correr_vuelta([(nombre, args)], avisar, pasos, registro, cambiados, propuestas)[0]
+
+    def ejecutar_lote(llamadas: List[Tuple[str, Dict[str, Any]]]) -> List[Any]:
+        return correr_vuelta(llamadas, avisar, pasos, registro, cambiados, propuestas)
 
     r = conversar_con_herramientas(ia["proveedor"], ia["modelo"], entrada.get("credencial_ia") or {}, sistema, mensajes, herramientas,
-                                   ejecutar_y_anotar, max_vueltas=MAX_VUELTAS, temperatura=ia.get("temperatura"), flujo="vera")
+                                   ejecutar_y_anotar, max_vueltas=MAX_VUELTAS, temperatura=ia.get("temperatura"), flujo="vera", ejecutar_lote=ejecutar_lote)
     texto = r.get("texto") or "(sin respuesta)"
     historial = r.get("historial") or []
     if r.get("vueltas", 0) >= MAX_VUELTAS and historial and historial[-1].get("rol") == "herramienta":

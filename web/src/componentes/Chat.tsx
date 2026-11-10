@@ -8,7 +8,7 @@ import { Markdown } from "./Markdown.tsx";
 import { Selector } from "./Selector.tsx";
 
 type Adjunto = { id: string; nombre: string; tipo: string; tamano: number };
-type Paso = { nombre: string; argumentos?: unknown; resultado?: string };
+type Paso = { nombre: string; argumentos?: unknown; resultado?: string; paralelo?: number };
 type Propuesta = { accion: string; id: string; estado?: "hecha" | "descartada" };
 type ArchivoSalida = { corrida: string; id: string; nombre: string; tipo: string; tamano?: number };
 type Mensaje = { rol: "usuario" | "asistente"; texto: string; t: number; adjuntos?: Adjunto[]; pasos?: Paso[]; cambiados?: string[]; error?: boolean; voz?: boolean; propuestas?: Propuesta[]; archivos?: ArchivoSalida[] };
@@ -64,7 +64,115 @@ const NOMBRE_HERRAMIENTA: Record<string, string> = {
   ajustar_parametro_pqrd: "Ajusta un parámetro de PQRD",
   escribir_en_chat: "Escribe el detalle en el chat",
   terminar_llamada: "Cuelga la llamada",
+  ver_pantalla: "Mira tu pantalla",
+  abrir_vista: "Abre una pantalla",
+  tipos_de_nodo: "Revisa los tipos de nodo",
+  ayuda_nodo: "Lee la ficha de un nodo",
+  reglas_de_flujos: "Repasa las reglas de los flujos",
+  historial: "Revisa el historial",
+  cargar_herramientas: "Prepara sus herramientas",
+  controlar_editor: "Mueve el editor",
+  ajustar_lienzo: "Ajusta el lienzo",
+  generar_documento: "Arma el documento",
+  aplicar_marca: "Pone la marca",
+  ayuda_documentos: "Revisa las opciones de marca",
+  plantillas_documento: "Revisa las plantillas de documentos",
+  archivos_de_corrida: "Trae los archivos de la ejecución",
+  probar_paso: "Prueba un paso",
+  correr_flujo: "Corre el flujo",
+  resumen_tablero: "Revisa el tablero",
+  ver_estructura: "Lee la estructura del flujo",
+  clonar_flujo: "Clona el flujo",
+  renombrar_flujo: "Renombra el flujo",
+  listar_correos: "Revisa la correspondencia",
+  ver_correo: "Lee un correo",
+  subir_adjuntos_a_flujo: "Sube tus adjuntos al flujo",
+  ver_logs: "Lee los registros",
 };
+
+/** El nombre de un paso para la persona (los que no están en la lista salen del nombre de la herramienta). */
+function etiquetaPaso(n: string): string {
+  const t = NOMBRE_HERRAMIENTA[n];
+  if (t) return t;
+  const s = n.replace(/_/g, " ");
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+/** Lo esencial de los argumentos de un paso, en una línea corta («pqrd · nodo validar»). */
+function detallePaso(a: unknown): string {
+  if (!a || typeof a !== "object") return "";
+  const x = a as Record<string, unknown>;
+  const partes: string[] = [];
+  for (const k of ["flujo", "id", "nodo", "corrida", "caso", "titulo", "formato", "tipo", "vista", "texto"]) {
+    const v = x[k];
+    if (typeof v === "string" && v.trim()) partes.push(k === "nodo" ? `paso ${v}` : v);
+    else if (v && typeof v === "object" && k === "definicion") partes.push(String((v as { id?: string }).id ?? ""));
+  }
+  if (Array.isArray(x.nodos)) partes.push(`${x.nodos.length} paso(s)`);
+  if (Array.isArray(x.archivos) && x.archivos.length) partes.push(`${x.archivos.length} archivo(s)`);
+  return [...new Set(partes)].join(" · ").slice(0, 120);
+}
+
+const esError = (r?: string) => !!r && /^\{"error"/.test(r);
+
+/** El resultado de un paso, legible y dentro de su caja (nunca estira el chat). */
+function ResultadoPaso({ texto }: { texto: string }) {
+  const [ver, setVer] = useState(false);
+  let bonito = texto;
+  try {
+    bonito = JSON.stringify(JSON.parse(texto), null, 2);
+  } catch {
+    /* recortado: va tal cual */
+  }
+  return (
+    <>
+      <button type="button" className="chat-paso-ver" aria-expanded={ver} onClick={() => setVer((v) => !v)}>{ver ? "Ocultar resultado" : "Ver resultado"}</button>
+      {ver && <pre className="chat-paso-resultado">{bonito}</pre>}
+    </>
+  );
+}
+
+/**
+ * Lo que hizo Vera para responder, en una línea: «Hizo 6 pasos» (o, mientras trabaja, el paso de ahora).
+ * Al abrirla, la línea de tiempo con cada paso; los resultados largos quedan plegados dentro.
+ */
+function Pasos({ pasos, vivo, ahora }: { pasos: Paso[]; vivo: boolean; ahora: string }) {
+  const [abierto, setAbierto] = useState(false);
+  const enCurso = vivo;
+  const fallos = pasos.filter((p) => esError(p.resultado)).length;
+  const aLaVez = pasos.some((p) => (p.paralelo ?? 0) > 1);
+  const n = pasos.length;
+  const pendientes = pasos.filter((p) => p.resultado === undefined);
+  // en vivo, una sola línea que cambia: lo que corre ahora (o lo que está pensando entre pasos)
+  const resumen = enCurso
+    ? pendientes.length > 1 ? `${pendientes.length} pasos a la vez…` : pendientes.length ? `${etiquetaPaso(pendientes[0]!.nombre)}…` : ahora || "Pensando…"
+    : `Hizo ${n} paso${n === 1 ? "" : "s"}${fallos ? ` · ${fallos} con error` : ""}${aLaVez ? " · algunos a la vez" : ""}`;
+  return (
+    <div className={`chat-pasos ${abierto ? "abierto" : ""}`}>
+      <button type="button" className="chat-pasos-resumen" aria-expanded={abierto} onClick={() => setAbierto((v) => !v)} title={abierto ? "Ocultar los pasos" : "Ver los pasos"}>
+        <span className={`chat-pasos-icono ${enCurso ? "vivo" : fallos ? "con-error" : ""}`}>{enCurso ? <span className="girando" /> : <Icono n={fallos ? "alerta" : "check"} tam={11} />}</span>
+        <span className="chat-pasos-texto" aria-live={vivo ? "polite" : undefined}>{resumen}</span>
+        {enCurso && <span className="chat-pasos-cuenta">{n}</span>}
+        <Icono n="abajo" tam={12} className="chat-pasos-flecha" />
+      </button>
+      {abierto && (
+        <ol className="chat-linea">
+          {pasos.map((p, k) => {
+            const estado = p.resultado === undefined ? (vivo ? "curso" : "") : esError(p.resultado) ? "error" : "";
+            const det = detallePaso(p.argumentos);
+            return (
+              <li key={k} className={estado}>
+                <span className="chat-linea-titulo"><b>{etiquetaPaso(p.nombre)}</b>{(p.paralelo ?? 0) > 1 && <span className="chat-paso-a-la-vez">a la vez</span>}</span>
+                {det && <small>{det}</small>}
+                {p.resultado && <ResultadoPaso texto={p.resultado} />}
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </div>
+  );
+}
 
 const SUGERENCIAS = [
   "Crea un flujo para derechos de petición: que detecte si lo es, saque peticionario, cédula y lo que pide, redacte un acuse y lo mande a radicar o a manual.",
@@ -293,6 +401,9 @@ export function Chat() {
   const irA = usar((s) => s.irA);
   const avisar = usar((s) => s.avisar);
   const [abierto, setAbierto] = useState(false);
+  // El MISMO panel, más grande (en el celular ya ocupa toda la pantalla); se recuerda.
+  const [amplio, setAmplio] = useState(() => leerLocal(`${CLAVE}:amplio`, false));
+  const alternarAmplio = () => setAmplio((v) => { guardarLocal(`${CLAVE}:amplio`, !v); return !v; });
   const [lista, setLista] = useState<Resumen[]>([]);
   const [verLista, setVerLista] = useState(false);
   const [actual, setActual] = useState<Conversacion | null>(null);
@@ -506,10 +617,14 @@ export function Chat() {
           if (!l.trim()) continue;
           const d = JSON.parse(l) as { tipo: string; texto?: string; nombre?: string; argumentos?: unknown; resultado?: string; flujos_cambiados?: string[]; propuesta?: Propuesta; [k: string]: unknown };
           if (d.tipo === "herramienta") {
-            setPensando(`${NOMBRE_HERRAMIENTA[d.nombre ?? ""] ?? d.nombre}…`);
-            actualizar((m) => ({ ...m, pasos: [...(m.pasos ?? []), { nombre: d.nombre ?? "", argumentos: d.argumentos }] }));
+            const varias = typeof d.paralelo === "number" && d.paralelo > 1 ? d.paralelo : 0;
+            setPensando(varias ? `${varias} pasos a la vez…` : `${etiquetaPaso(d.nombre ?? "")}…`);
+            actualizar((m) => ({ ...m, pasos: [...(m.pasos ?? []), { nombre: d.nombre ?? "", argumentos: d.argumentos, ...(varias ? { paralelo: varias } : {}) }] }));
           } else if (d.tipo === "resultado_herramienta") {
-            actualizar((m) => ({ ...m, pasos: (m.pasos ?? []).map((p, i, todos) => (i === todos.length - 1 ? { ...p, resultado: d.resultado } : p)) }));
+            // con varias a la vez, cada resultado trae su lugar (indice); si no, es el del último paso
+            const indice = typeof d.indice === "number" ? d.indice : -1;
+            setPensando("Pensando…");
+            actualizar((m) => ({ ...m, pasos: (m.pasos ?? []).map((p, i, todos) => (i === (indice >= 0 ? indice : todos.length - 1) ? { ...p, resultado: d.resultado } : p)) }));
           } else if (d.tipo === "progreso" || d.tipo === "pensando") {
             setPensando(d.texto ?? "…");
           } else if (d.tipo === "texto") {
@@ -600,7 +715,7 @@ export function Chat() {
         {abierto && (
           <motion.section
             key="panel"
-            className={`chat-panel ${enLlamada ? "en-llamada" : ""}`}
+            className={`chat-panel ${enLlamada ? "en-llamada" : ""} ${amplio ? "amplio" : ""}`}
             role="dialog"
             aria-label={`${NOMBRE}, la asistente`}
             initial={{ opacity: 0, y: 24, scale: 0.95 }}
@@ -628,6 +743,7 @@ export function Chat() {
                   <Icono n={enLlamada ? "colgar" : "telefono"} tam={16} />
                 </button>
                 <button className="chat-icono" aria-label="Nueva conversación" title="Nueva conversación" onClick={() => void nueva()} disabled={enLlamada}><Icono n="mas" tam={16} /></button>
+                <button className="chat-icono chat-ampliar" aria-label={amplio ? "Reducir el panel" : "Ampliar el panel"} title={amplio ? "Reducir el panel" : "Ampliar el panel"} aria-pressed={amplio} onClick={alternarAmplio}><Icono n={amplio ? "contraer" : "expandir"} tam={14} /></button>
                 <button className="chat-icono" aria-label="Cerrar el panel" onClick={() => setAbierto(false)}><Icono n="cerrar" tam={15} /></button>
               </header>
 
@@ -665,16 +781,20 @@ export function Chat() {
                     {!mensajes.length && !enLlamada && (
                       <div className="chat-vacio">
                         <span className="chat-sello grande"><Icono n="chispa" tam={20} /></span>
-                        <h3>Hola, soy {NOMBRE}.</h3>
-                        <p>Creo, corrijo y pruebo flujos contigo, con correos reales y sin escribir en sistemas reales. Escríbeme, adjunta un ejemplo o toca el teléfono para hablar.</p>
+                        <h3>¿En qué trabajamos?</h3>
+                        <p>Crear, corregir y probar flujos con correos reales (sin escribir en sistemas reales), revisar lo que pasó en cada corrida y armar documentos con tu logo. Escribe, adjunta un ejemplo o toca el teléfono para hablar.</p>
                         <div className="chat-sugerencias">
                           {SUGERENCIAS.map((s) => <button key={s} onClick={() => void enviar(s)}>{s}</button>)}
                         </div>
                       </div>
                     )}
-                    {mensajes.map((m, i) => (
+                    {mensajes.map((m, i) => {
+                      const vivo = ocupado && !enLlamada && i === mensajes.length - 1 && m.rol === "asistente";
+                      return (
                       <div key={i} className={`chat-msj ${m.rol} ${m.error ? "error" : ""}`}>
                         {m.voz && <span className="chat-de-voz"><Icono n="mic" tam={11} />{m.rol === "usuario" ? "Dicho en la llamada" : `${NOMBRE} en la llamada`}</span>}
+                        {m.rol === "asistente" && !!m.pasos?.length && <Pasos pasos={m.pasos} vivo={vivo} ahora={pensando} />}
+                        {vivo && !m.pasos?.length && !m.texto && <div className="chat-pensando"><span className="chat-puntos"><i /><i /><i /></span>{pensando || "Pensando…"}</div>}
                         {!!m.adjuntos?.length && actual && (
                           <div className="chat-adjuntos">{m.adjuntos.map((a) => <Capsula key={a.id} chat={actual.id} a={a} alAbrir={() => { setVisorUrl(undefined); setVisor(a); }} />)}</div>
                         )}
@@ -721,7 +841,8 @@ export function Chat() {
                           </div>
                         )}
                       </div>
-                    ))}
+                      );
+                    })}
                     {enLlamada && (llamada.escuchado || llamada.dicho || escritoEnLlamada.length > 0) && (
                       <>
                         {llamada.escuchado && <div className="chat-msj usuario en-vivo"><div className="chat-texto"><p>{llamada.escuchado}</p></div></div>}
@@ -735,20 +856,20 @@ export function Chat() {
                         )}
                       </>
                     )}
-                    {pensando && !enLlamada && <div className="chat-pensando"><span className="chat-puntos"><i /><i /><i /></span>{pensando}</div>}
                   </div>
 
-                  {enLlamada && tareas.length > 0 && (
-                    <ul className="llamada-tareas" aria-live="polite" aria-label="Tareas en segundo plano">
-                      {tareas.map((t) => (
-                        <li key={t.n} className={t.lista ? "lista" : ""}>
-                          {t.lista ? <Icono n="check" tam={12} /> : <span className="girando" />}
-                          <span>{NOMBRE_HERRAMIENTA[t.nombre] ?? t.nombre}</span>
-                          <small>{t.lista ? "listo" : "en curso"}</small>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
+                  {enLlamada && tareas.length > 0 && (() => {
+                    // una sola línea, aunque haya varias tareas: la que corre ahora y cuántas más
+                    const activas = tareas.filter((t) => !t.lista);
+                    const t = activas[0] ?? tareas[tareas.length - 1]!;
+                    return (
+                      <div className={`llamada-tareas ${activas.length ? "" : "lista"}`} aria-live="polite" aria-label="Tareas en segundo plano">
+                        {activas.length ? <span className="girando" /> : <Icono n="check" tam={12} />}
+                        <span>{etiquetaPaso(t.nombre)}{activas.length > 1 ? ` y ${activas.length - 1} más` : ""}</span>
+                        <small>{activas.length ? "en curso" : "listo"}</small>
+                      </div>
+                    );
+                  })()}
                   {enLlamada && (
                     <div className="llamada" role="group" aria-label="Llamada con Vera">
                       <Indicador analizadores={llamada.analizadores} />

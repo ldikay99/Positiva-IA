@@ -7,13 +7,13 @@ import { z } from "zod";
  * comprueban que este zod acepte sus ejemplos y rechace lo mismo que el motor. flujos.ts pasa sus piezas.
  */
 
-export const TIPOS_SALIDAS = ["archivo_exportar", "archivo_comprimir", "documento_plantilla"] as const;
+export const TIPOS_SALIDAS = ["archivo_exportar", "archivo_comprimir", "documento_plantilla", "documento_marca"] as const;
 export type TipoSalidas = (typeof TIPOS_SALIDAS)[number];
 
 export const NOMBRE_SALIDAS: Record<TipoSalidas, string> = {
-  archivo_exportar: "Exportar a archivo", archivo_comprimir: "Comprimir en ZIP", documento_plantilla: "Llenar plantilla de documento",
+  archivo_exportar: "Exportar a archivo", archivo_comprimir: "Comprimir en ZIP", documento_plantilla: "Llenar plantilla de documento", documento_marca: "Aplicar marca",
 };
-export const CATEGORIA_SALIDAS: Record<TipoSalidas, string> = { archivo_exportar: "documentos", archivo_comprimir: "documentos", documento_plantilla: "documentos" };
+export const CATEGORIA_SALIDAS: Record<TipoSalidas, string> = { archivo_exportar: "documentos", archivo_comprimir: "documentos", documento_plantilla: "documentos", documento_marca: "documentos" };
 
 export const FORMATOS_EXPORTAR = ["json", "xml", "csv", "html", "txt", "md"] as const;
 export const ID_PLANTILLA_DOCUMENTO = /^[a-z0-9][a-z0-9-]{1,59}$/;
@@ -28,6 +28,38 @@ export interface PiezasSalidas {
 }
 
 type C = Record<string, unknown>;
+
+/**
+ * La config «marca» (logo, banner, marca de agua, colores y fuente) de documento_generar, documento_plantilla y documento_marca.
+ * La misma regla que `puente/marca.py` (problemas): las pruebas de pruebas_salidas.py comprueban que rechacen lo mismo.
+ */
+const plantillaOMas = (r: RegExp, m: string) => z.string({ error: m }).refine((x) => x.includes("{{") || r.test(x.trim()), m);
+const hex = (que: string) => plantillaOMas(/^#?[0-9A-Fa-f]{6}$/, `${que}: un color en hexadecimal, p. ej. «#0B4F8A»`);
+const num = (que: string, min: number, max: number) => z.union([z.number().min(min).max(max), z.string().regex(/\{\{/)], { error: `${que}: un número entre ${min} y ${max}` });
+const imagenRef = (que: string) => z.string({ error: `${que}: la imagen («{{logo}}», un id «a-…» o «plantilla/recurso»)` }).trim().min(1, `${que}: falta la imagen`);
+export const marcaZod = z.strictObject({
+  logo: z.union([imagenRef("marca.logo"), z.strictObject({
+    imagen: imagenRef("marca.logo.imagen"), posicion: z.enum(["izquierda", "centro", "derecha"], { error: "marca.logo.posicion: izquierda, centro o derecha" }).optional(),
+    ancho_cm: num("marca.logo.ancho_cm", 0.5, 25).optional(),
+  })]).optional(),
+  banner: z.union([imagenRef("marca.banner"), z.strictObject({
+    imagen: imagenRef("marca.banner.imagen"), posicion: z.enum(["arriba", "abajo", "ambos"], { error: "marca.banner.posicion: arriba, abajo o ambos" }).optional(),
+    alto_cm: num("marca.banner.alto_cm", 0.3, 15).optional(),
+  })]).optional(),
+  marca_agua: z.union([z.string().trim().min(1, "marca.marca_agua está vacío"), z.strictObject({
+    imagen: z.string().optional(), texto: z.string().optional(), opacidad: num("marca.marca_agua.opacidad", 0.01, 100).optional(),
+    tamano: num("marca.marca_agua.tamano", 0.05, 100).optional(), rotacion: num("marca.marca_agua.rotacion", -360, 360).optional(),
+    color: hex("marca.marca_agua.color").optional(),
+  }).refine((a) => Boolean(a.imagen?.trim()) !== Boolean(a.texto?.trim()), "marca.marca_agua necesita imagen o texto (uno de los dos)")]).optional(),
+  colores: z.strictObject({
+    titulos: hex("marca.colores.titulos").optional(), acento: hex("marca.colores.acento").optional(), tabla_encabezado: hex("marca.colores.tabla_encabezado").optional(),
+    tabla_texto: hex("marca.colores.tabla_texto").optional(), texto: hex("marca.colores.texto").optional(),
+  }, { error: "marca.colores: titulos, acento, tabla_encabezado, tabla_texto o texto" }).optional(),
+  fuente: z.string().trim().min(1).max(60, "marca.fuente: el nombre de una fuente").optional(),
+}, { error: "marca: logo, banner, marca_agua, colores o fuente" }).refine((m) => ["logo", "banner", "marca_agua", "colores", "fuente"].some((k) => {
+  const v = (m as C)[k];
+  return v !== undefined && v !== null && v !== "" && !(typeof v === "object" && !Object.keys(v as object).length);
+}), "marca está vacía: pon al menos logo, banner, marca_agua, colores o fuente");
 const lleno = (x: unknown) => x !== undefined && x !== null && !(typeof x === "string" && !x.trim()) && !(Array.isArray(x) && !x.length);
 
 export function configSalidas(p: PiezasSalidas): Record<TipoSalidas, z.ZodType> {
@@ -54,8 +86,9 @@ export function configSalidas(p: PiezasSalidas): Record<TipoSalidas, z.ZodType> 
       plantilla: z.string({ error: "falta plantilla: el id de una plantilla de Documentos" }).trim().min(1, "falta plantilla")
         .refine((x) => x.includes("{{") || ID_PLANTILLA_DOCUMENTO.test(x), "plantilla: el id de una plantilla de Documentos (minúsculas, números y guiones)"),
       datos: mapaPlantillas("datos").optional(), formato: z.enum(["original", "pdf"], { error: "formato: original o pdf" }).optional(),
-      desde_ia: desdeIaPlantilla.optional(), nombre: txt,
+      desde_ia: desdeIaPlantilla.optional(), marca: marcaZod.optional(), nombre: txt,
     }),
+    documento_marca: conf({ archivos: archivosRef("archivos"), marca: marcaZod, sufijo: txt }),
   };
 }
 
@@ -63,7 +96,11 @@ export function configSalidas(p: PiezasSalidas): Record<TipoSalidas, z.ZodType> 
 export function describirSalidas(tipo: string, c: Record<string, unknown>, add: (d: string) => void): boolean {
   if (!(TIPOS_SALIDAS as readonly string[]).includes(tipo)) return false;
   if (tipo === "archivo_exportar") add(`Exporta ${c.de ? `«${String(c.de)}»` : "un texto"} a ${String(c.formato ?? "json").toUpperCase()}${c.nombre ? ` · ${String(c.nombre)}` : ""}`);
-  else if (tipo === "archivo_comprimir") add(`Junta ${Array.isArray(c.archivos) ? `${c.archivos.length} referencia(s) de archivos` : `«${String(c.archivos ?? "")}»`} en un ZIP`);
+  else if (tipo === "documento_marca") {
+    const m = (c.marca ?? {}) as Record<string, unknown>;
+    const piezas = [m.logo && "logo", m.banner && "banner", m.marca_agua && "marca de agua", m.colores && "colores", m.fuente && "fuente"].filter(Boolean);
+    add(`Pone ${piezas.join(", ") || "la marca"} a ${Array.isArray(c.archivos) ? `${c.archivos.length} referencia(s) de documentos` : `«${String(c.archivos ?? "")}»`}`);
+  } else if (tipo === "archivo_comprimir") add(`Junta ${Array.isArray(c.archivos) ? `${c.archivos.length} referencia(s) de archivos` : `«${String(c.archivos ?? "")}»`} en un ZIP`);
   else {
     const ia = c.desde_ia as { modo?: string } | undefined;
     add(`Llena la plantilla «${String(c.plantilla ?? "")}» de Documentos${c.formato === "pdf" ? " y la pasa a PDF" : ""}${ia ? ` · la IA ${ia.modo === "completo" ? "arma el contenido" : "escribe lo que falta"}` : ""}`);

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import csv
 import io
+import math
 import re
 import zlib
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -36,22 +37,24 @@ A4 = (595.28, 841.89)
 MARGEN = 56
 
 
-def _ancho(texto: str, tam: float, negrita: bool = False) -> float:
+def _ancho(texto: str, tam: float, negrita: bool = False, mono: bool = False) -> float:
+    if mono:
+        return len(texto) * 600 * tam / 1000
     total = sum(_ANCHOS.get(_BASE.get(c, c), 556) for c in texto)
     return total * tam / 1000 * (1.06 if negrita else 1.0)
 
 
-def _partir(texto: str, ancho: float, tam: float, negrita: bool = False) -> List[str]:
+def _partir(texto: str, ancho: float, tam: float, negrita: bool = False, mono: bool = False) -> List[str]:
     """Las líneas de un párrafo que caben en `ancho` puntos."""
     lineas: List[str] = []
     for bruto in (texto or "").split("\n"):
         actual = ""
         for palabra in bruto.split(" "):
             prueba = f"{actual} {palabra}" if actual else palabra
-            if _ancho(prueba, tam, negrita) <= ancho or not actual:
+            if _ancho(prueba, tam, negrita, mono) <= ancho or not actual:
                 actual = prueba
-                while _ancho(actual, tam, negrita) > ancho and len(actual) > 1:  # una palabra que no cabe sola se corta
-                    corte = max(1, int(len(actual) * ancho / max(1.0, _ancho(actual, tam, negrita))) - 1)
+                while _ancho(actual, tam, negrita, mono) > ancho and len(actual) > 1:  # una palabra que no cabe sola se corta
+                    corte = max(1, int(len(actual) * ancho / max(1.0, _ancho(actual, tam, negrita, mono))) - 1)
                     lineas.append(actual[:corte])
                     actual = actual[corte:]
             else:
@@ -66,38 +69,142 @@ def _cadena_pdf(texto: str) -> bytes:
     return b"(" + datos.replace(b"\\", b"\\\\").replace(b"(", b"\\(").replace(b")", b"\\)").replace(b"\r", b"") + b")"
 
 
-class _PDF:
-    """Un PDF de texto (Helvetica, WinAnsi) con páginas A4 y, si hace falta, imágenes JPEG."""
+def _rgb_pdf(hexa: Optional[str]) -> Optional[str]:
+    if not hexa:
+        return None
+    return " ".join(f"{int(hexa[i:i + 2], 16) / 255:.3f}" for i in (0, 2, 4))
 
-    def __init__(self, titulo: str = "") -> None:
-        self.paginas: List[Tuple[bytes, List[Tuple[str, bytes, int, int]]]] = []
+
+def _fuentes_pdf(nombre: str) -> Tuple[str, str]:
+    """Las fuentes estándar del PDF que más se parecen a la pedida (sin incrustar fuentes)."""
+    n = (nombre or "").lower()
+    if any(x in n for x in ("courier", "mono", "consol")):
+        return "Courier", "Courier-Bold"
+    if "sans" not in n and any(x in n for x in ("times", "georgia", "garamond", "serif", "cambria", "book", "palatino")):
+        return "Times-Roman", "Times-Bold"
+    return "Helvetica", "Helvetica-Bold"
+
+
+class _PDF:
+    """Un PDF de texto (Helvetica, WinAnsi) con páginas A4 y, si hace falta, imágenes; con `marca` (marca.cargar) lleva
+    logo, banners y marca de agua translúcida (ExtGState /ca) en cada página, y los colores y la fuente pedidos."""
+
+    def __init__(self, titulo: str = "", marca: Optional[Dict[str, Any]] = None, tamano: Tuple[float, float] = A4) -> None:
+        self.W, self.H = float(tamano[0]), float(tamano[1])
+        self.paginas: List[Tuple[bytes, List[str]]] = []
         self.ops: List[bytes] = []
-        self.imagenes: List[Tuple[str, bytes, int, int]] = []
-        self.y = A4[1] - MARGEN
+        self.imagenes: List[str] = []
+        self.recursos: Dict[str, Tuple[Any, ...]] = {}  # nombre → ("jpeg", datos, w, h) o ("rgba", rgb, alfa, w, h)
         self.titulo = titulo
+        self.marca = marca or {}
+        colores = self.marca.get("colores") or {}
+        self.c_titulos, self.c_acento = _rgb_pdf(colores.get("titulos")), _rgb_pdf(colores.get("acento"))
+        self.c_tabla, self.c_tabla_texto = _rgb_pdf(colores.get("tabla_encabezado")), _rgb_pdf(colores.get("tabla_texto") or "FFFFFF")
+        self.c_texto = _rgb_pdf(colores.get("texto")) or "0 0 0"
+        self.fuentes = _fuentes_pdf(self.marca.get("fuente") or "")
+        self.mono = self.fuentes[0] == "Courier"
+        self.arriba, self.abajo = self.H - MARGEN, MARGEN
+        self.fondo, self.frente = b"", b""
+        self._preparar_marca()
+        self.y = self.arriba
+
+    # -------------------------------------------------------- la marca de cada página
+    def _registrar(self, nombre: str, img: Any) -> None:
+        rgb = img.convert("RGB").tobytes()
+        alfa = img.getchannel("A").tobytes() if img.mode == "RGBA" and img.getchannel("A").getextrema() != (255, 255) else None
+        self.recursos[nombre] = ("rgba", zlib.compress(rgb), zlib.compress(alfa) if alfa else None, img.width, img.height)
+
+    def _preparar_marca(self) -> None:
+        m = self.marca
+        fondo: List[str] = []
+        frente: List[str] = []
+        arriba_b = abajo_b = 0.0
+        b = m.get("banner")
+        if b:
+            bw, bh = b["px"]
+            tope = b["alto_cm"] * 28.3465 if b.get("alto_cm") else self.H * 0.15
+            w, h = self.W, self.W * bh / max(1, bw)
+            if h > tope:
+                h, w = tope, tope * bw / max(1, bh)
+            self._registrar("Bn", b["img"])
+            if b["posicion"] in ("arriba", "ambos"):
+                frente.append(f"q {w:.2f} 0 0 {h:.2f} {(self.W - w) / 2:.2f} {self.H - h:.2f} cm /Bn Do Q")
+                arriba_b = h
+            if b["posicion"] in ("abajo", "ambos"):
+                frente.append(f"q {w:.2f} 0 0 {h:.2f} {(self.W - w) / 2:.2f} 0 cm /Bn Do Q")
+                abajo_b = h
+        lg = m.get("logo")
+        arriba_contenido = arriba_b + 18 if arriba_b else MARGEN
+        if lg:
+            lw, lh = lg["px"]
+            w = lg["ancho_cm"] * 28.3465
+            h = w * lh / max(1, lw)
+            if h > self.H * 0.12:
+                h, w = self.H * 0.12, self.H * 0.12 * lw / max(1, lh)
+            y = self.H - (arriba_b + 14 if arriba_b else 30) - h
+            x = {"izquierda": MARGEN, "centro": (self.W - w) / 2, "derecha": self.W - MARGEN - w}[lg["posicion"]]
+            self._registrar("Lg", lg["img"])
+            frente.append(f"q {w:.2f} 0 0 {h:.2f} {x:.2f} {y:.2f} cm /Lg Do Q")
+            arriba_contenido = max(MARGEN, self.H - y + 14)
+        a = m.get("marca_agua")
+        if a:
+            op = a["opacidad"]
+            if a.get("texto"):
+                # texto de verdad (Helvetica-Bold), girado y translúcido; el ancho lo da el tamaño
+                t = a["texto"]
+                ancho1 = _ancho(t, 1, True, self.mono) or 1
+                tam = max(10.0, min(220.0, self.W * a["tamano"] / ancho1))
+                tw, th = ancho1 * tam, tam * 0.72
+                rad = math.radians(a["rotacion"])
+                c, s = math.cos(rad), math.sin(rad)
+                cx, cy = self.W / 2, self.H / 2
+                tx = cx - tw / 2 * c + th / 2 * s
+                ty = cy - tw / 2 * s - th / 2 * c
+                color = _rgb_pdf(a.get("color")) or "0.54 0.58 0.65"
+                fondo.append(f"q /GSa gs {color} rg BT /F2 {tam:.2f} Tf {c:.5f} {s:.5f} {-s:.5f} {c:.5f} {tx:.2f} {ty:.2f} Tm "
+                             + _cadena_pdf(t).decode("latin-1") + " Tj ET Q")
+            else:
+                iw, ih = a["px"]
+                w = self.W * a["tamano"]
+                h = w * ih / max(1, iw)
+                if h > self.H * 0.9:
+                    h, w = self.H * 0.9, self.H * 0.9 * iw / max(1, ih)
+                self._registrar("Wm", a["img"])
+                fondo.append(f"q /GSa gs {w:.2f} 0 0 {h:.2f} {(self.W - w) / 2:.2f} {(self.H - h) / 2:.2f} cm /Wm Do Q")
+            self.opacidad = op
+        self.fondo = "\n".join(fondo).encode("latin-1")
+        self.frente = "\n".join(frente).encode("latin-1")
+        self.arriba = self.H - arriba_contenido
+        self.abajo = max(MARGEN, abajo_b + 18) if abajo_b else MARGEN
 
     def _nueva(self) -> None:
         if self.ops or self.imagenes:
             self.paginas.append((b"\n".join(self.ops), self.imagenes))
         self.ops, self.imagenes = [], []
-        self.y = A4[1] - MARGEN
+        self.y = self.arriba
 
-    def _linea(self, texto: str, tam: float, negrita: bool, x: float = MARGEN) -> None:
+    def _linea(self, texto: str, tam: float, negrita: bool, x: float = MARGEN, color: Optional[str] = None) -> None:
         alto = tam * 1.38
-        if self.y - alto < MARGEN:
+        if self.y - alto < self.abajo:
             self._nueva()
         self.y -= alto
         fuente = b"/F2" if negrita else b"/F1"
-        self.ops.append(b"BT " + fuente + f" {tam:g} Tf {x:.2f} {self.y:.2f} Td ".encode() + _cadena_pdf(texto) + b" Tj ET")
+        self.ops.append(b"BT " + (color or self.c_texto).encode() + b" rg " + fuente + f" {tam:g} Tf {x:.2f} {self.y:.2f} Td ".encode() + _cadena_pdf(texto) + b" Tj ET")
 
-    def parrafo(self, texto: str, tam: float = 11, negrita: bool = False, sangria: float = 0, vineta: str = "") -> None:
-        ancho = A4[0] - 2 * MARGEN - sangria
-        lineas = _partir(texto, ancho - (12 if vineta else 0), tam, negrita)
+    def parrafo(self, texto: str, tam: float = 11, negrita: bool = False, sangria: float = 0, vineta: str = "", color: Optional[str] = None) -> None:
+        ancho = self.W - 2 * MARGEN - sangria
+        lineas = _partir(texto, ancho - (12 if vineta else 0), tam, negrita, self.mono)
         for k, l_ in enumerate(lineas):
             if vineta and k == 0:
-                self._linea(vineta, tam, negrita, MARGEN + sangria)
+                self._linea(vineta, tam, negrita, MARGEN + sangria, self.c_acento or color)
                 self.y += tam * 1.38
-            self._linea(l_, tam, negrita, MARGEN + sangria + (12 if vineta else 0))
+            self._linea(l_, tam, negrita, MARGEN + sangria + (12 if vineta else 0), color)
+
+    def raya(self) -> None:
+        """La línea de acento bajo un título."""
+        if self.c_acento:
+            self.ops.append(f"q {self.c_acento} RG 1.6 w {MARGEN:.2f} {self.y - 4:.2f} m {MARGEN + 90:.2f} {self.y - 4:.2f} l S Q".encode())
+            self.y -= 6
 
     def espacio(self, puntos: float = 6) -> None:
         self.y -= puntos
@@ -106,29 +213,34 @@ class _PDF:
         if not filas:
             return
         cols = max(len(f) for f in filas)
-        ancho = (A4[0] - 2 * MARGEN) / max(1, cols)
+        ancho = (self.W - 2 * MARGEN) / max(1, cols)
         for i, fila in enumerate(filas):
-            celdas = [_partir(str(c if c is not None else ""), ancho - 6, tam, i == 0) for c in list(fila) + [""] * (cols - len(fila))]
+            celdas = [_partir(str(c if c is not None else ""), ancho - 8, tam, i == 0, self.mono) for c in list(fila) + [""] * (cols - len(fila))]
             alto = max(len(c) for c in celdas)
-            if self.y - alto * tam * 1.38 < MARGEN:
+            if self.y - alto * tam * 1.38 < self.abajo:
                 self._nueva()
             base = self.y
+            color = None
+            if i == 0 and self.c_tabla:
+                self.ops.append(f"q {self.c_tabla} rg {MARGEN - 3:.2f} {base - alto * tam * 1.38 - 3:.2f} {self.W - 2 * MARGEN + 6:.2f} {alto * tam * 1.38 + 4:.2f} re f Q".encode())
+                color = self.c_tabla_texto
             for k, c in enumerate(celdas):
                 self.y = base
                 for l_ in c:
-                    self._linea(l_, tam, i == 0, MARGEN + k * ancho)
+                    self._linea(l_, tam, i == 0, MARGEN + k * ancho + (2 if self.c_tabla else 0), color)
             self.y = base - alto * tam * 1.38 - 3
-            self.ops.append(f"0.75 G {MARGEN:.2f} {self.y + 1.5:.2f} m {A4[0] - MARGEN:.2f} {self.y + 1.5:.2f} l S 0 G".encode())
+            self.ops.append(f"0.75 G {MARGEN:.2f} {self.y + 1.5:.2f} m {self.W - MARGEN:.2f} {self.y + 1.5:.2f} l S 0 G".encode())
 
     def imagen(self, jpeg: bytes, ancho_px: int, alto_px: int) -> None:
         """Una imagen en su propia página, ajustada a los márgenes."""
         self._nueva()
-        disp_w, disp_h = A4[0] - 2 * MARGEN, A4[1] - 2 * MARGEN
+        disp_w, disp_h = self.W - 2 * MARGEN, self.arriba - self.abajo
         escala = min(disp_w / ancho_px, disp_h / alto_px)
         w, h = ancho_px * escala, alto_px * escala
-        nombre = f"Im{len(self.imagenes) + 1}"
-        self.imagenes.append((nombre, jpeg, ancho_px, alto_px))
-        x, y = MARGEN + (disp_w - w) / 2, A4[1] - MARGEN - h
+        nombre = f"Im{len(self.recursos) + 1}"
+        self.recursos[nombre] = ("jpeg", jpeg, ancho_px, alto_px)
+        self.imagenes.append(nombre)
+        x, y = MARGEN + (disp_w - w) / 2, self.arriba - h
         self.ops.append(f"q {w:.2f} 0 0 {h:.2f} {x:.2f} {y:.2f} cm /{nombre} Do Q".encode())
         self._nueva()
 
@@ -144,19 +256,36 @@ class _PDF:
 
         cat = agregar(b"")  # se llena al final
         pags = agregar(b"")
-        f1 = agregar(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
-        f2 = agregar(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>")
+        f1 = agregar(f"<< /Type /Font /Subtype /Type1 /BaseFont /{self.fuentes[0]} /Encoding /WinAnsiEncoding >>".encode())
+        f2 = agregar(f"<< /Type /Font /Subtype /Type1 /BaseFont /{self.fuentes[1]} /Encoding /WinAnsiEncoding >>".encode())
+        # cada imagen va una sola vez, aunque salga en todas las páginas (el logo, la marca de agua)
+        num: Dict[str, int] = {}
+        for nombre, r in self.recursos.items():
+            if r[0] == "jpeg":
+                _, jpeg, w, h = r
+                num[nombre] = agregar(f"<< /Type /XObject /Subtype /Image /Width {w} /Height {h} /ColorSpace /DeviceRGB /BitsPerComponent 8 "
+                                      f"/Filter /DCTDecode /Length {len(jpeg)} >>\nstream\n".encode() + jpeg + b"\nendstream")
+            else:
+                _, rgb, alfa, w, h = r
+                smask = ""
+                if alfa:
+                    sm = agregar(f"<< /Type /XObject /Subtype /Image /Width {w} /Height {h} /ColorSpace /DeviceGray /BitsPerComponent 8 "
+                                 f"/Filter /FlateDecode /Length {len(alfa)} >>\nstream\n".encode() + alfa + b"\nendstream")
+                    smask = f" /SMask {sm} 0 R"
+                num[nombre] = agregar(f"<< /Type /XObject /Subtype /Image /Width {w} /Height {h} /ColorSpace /DeviceRGB /BitsPerComponent 8 "
+                                      f"/Filter /FlateDecode{smask} /Length {len(rgb)} >>\nstream\n".encode() + rgb + b"\nendstream")
+        gs = agregar(f"<< /Type /ExtGState /ca {self.opacidad:.3f} /CA {self.opacidad:.3f} >>".encode()) if self.fondo and hasattr(self, "opacidad") else None
+        marca_xobj = [k for k in ("Bn", "Lg", "Wm") if k in num]
         hijos = []
         for contenido, imgs in self.paginas:
-            xobj = []
-            for nombre, jpeg, w, h in imgs:
-                n = agregar(f"<< /Type /XObject /Subtype /Image /Width {w} /Height {h} /ColorSpace /DeviceRGB /BitsPerComponent 8 "
-                            f"/Filter /DCTDecode /Length {len(jpeg)} >>\nstream\n".encode() + jpeg + b"\nendstream")
-                xobj.append(f"/{nombre} {n} 0 R")
+            # la marca de agua va detrás del texto; el logo y los banners, encima
+            contenido = b"\n".join(x for x in (self.fondo, contenido, self.frente) if x)
+            xobj = [f"/{k} {num[k]} 0 R" for k in dict.fromkeys(list(imgs) + marca_xobj)]
             comprimido = zlib.compress(contenido)
             c = agregar(f"<< /Length {len(comprimido)} /Filter /FlateDecode >>\nstream\n".encode() + comprimido + b"\nendstream")
-            recursos = f"<< /Font << /F1 {f1} 0 R /F2 {f2} 0 R >>" + (f" /XObject << {' '.join(xobj)} >>" if xobj else "") + " >>"
-            hijos.append(agregar(f"<< /Type /Page /Parent {pags} 0 R /MediaBox [0 0 {A4[0]} {A4[1]}] /Resources {recursos} /Contents {c} 0 R >>".encode()))
+            recursos = (f"<< /Font << /F1 {f1} 0 R /F2 {f2} 0 R >>" + (f" /XObject << {' '.join(xobj)} >>" if xobj else "")
+                        + (f" /ExtGState << /GSa {gs} 0 R >>" if gs else "") + " >>")
+            hijos.append(agregar(f"<< /Type /Page /Parent {pags} 0 R /MediaBox [0 0 {self.W:.2f} {self.H:.2f}] /Resources {recursos} /Contents {c} 0 R >>".encode()))
         objetos[pags - 1] = f"<< /Type /Pages /Kids [{' '.join(f'{h} 0 R' for h in hijos)}] /Count {len(hijos)} >>".encode()
         objetos[cat - 1] = f"<< /Type /Catalog /Pages {pags} 0 R >>".encode()
         info = agregar(b"<< /Title " + _cadena_pdf(self.titulo or "Documento") + b" /Producer (Positiva IA) >>")
@@ -389,16 +518,23 @@ def _con_negritas(parrafo: Any, texto: str) -> Any:
     return parrafo
 
 
-def pdf_de_bloques(bloques: List[Tuple[str, Any]], titulo: str = "") -> bytes:
-    p = _PDF(titulo)
+def pdf_de_bloques(bloques: List[Tuple[str, Any]], titulo: str = "", marca: Optional[Dict[str, Any]] = None,
+                   tamano: Tuple[float, float] = A4, solo_marca: bool = False) -> bytes:
+    """El PDF de unos bloques; con `marca` (ya cargada con marca.cargar) lleva logo, banners, marca de agua, colores y fuente.
+    solo_marca=True da una hoja transparente con solo la marca (para estamparla sobre otro PDF)."""
+    p = _PDF(titulo, marca, tamano)
+    if solo_marca:
+        p.paginas.append((b"", []))
+        return p.bytes()
     for tipo, v in bloques_sin_marcas(bloques):
         if tipo == "titulo":
             p.espacio(4)
-            p.parrafo(str(v), 16, True)
+            p.parrafo(str(v), 16, True, color=p.c_titulos)
+            p.raya()
             p.espacio(4)
         elif tipo == "subtitulo":
             p.espacio(3)
-            p.parrafo(str(v), 13, True)
+            p.parrafo(str(v), 13, True, color=p.c_titulos)
             p.espacio(2)
         elif tipo == "vineta":
             p.parrafo(str(v), 11, False, 10, "•")

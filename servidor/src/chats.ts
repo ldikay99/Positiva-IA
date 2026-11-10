@@ -22,6 +22,8 @@ export interface PasoChat {
   nombre: string;
   argumentos?: unknown;
   resultado?: string;
+  /** Cuántas herramientas corrieron a la vez con esta (si fue más de una). */
+  paralelo?: number;
 }
 
 export interface MensajeChat {

@@ -118,3 +118,63 @@
 
 /* chat: el cuadro de escribir crece con el texto (la altura la pone Chat.tsx) hasta este tope */
 .chat-fila textarea { max-height: min(260px, 42vh); min-height: 40px; box-sizing: border-box; overflow-wrap: break-word; }
+
+/* ---------------------------------------------------------------- chat: que la conversación respire */
+.chat-mensajes { gap: 14px; padding: 14px 14px 10px; scroll-padding-bottom: 12px; }
+.chat-msj { gap: 7px; }
+.chat-msj.asistente { max-width: 100%; }
+.chat-msj.usuario { max-width: 84%; }
+.chat-texto { line-height: 1.6; padding: 10px 14px; }
+.chat-texto > * + * { margin-top: 7px; }
+
+/* los pasos de Vera: una línea plegable («Hizo 6 pasos»); en vivo, la misma línea cambia; al abrirla, la línea de tiempo */
+.chat-pasos { align-self: flex-start; max-width: 100%; min-width: 0; }
+.chat-pasos.abierto { align-self: stretch; }
+.chat-pasos-resumen { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; min-width: 0; padding: 4px 10px 4px 5px; border-radius: 999px; font-size: 12px; font-weight: 600; line-height: 1.3; color: var(--texto-2); transition: background 0.15s, box-shadow 0.15s; }
+.chat-pasos-resumen:hover, .chat-pasos-resumen[aria-expanded="true"] { background: var(--pliego); box-shadow: var(--sombra-1); }
+.chat-pasos-resumen:focus-visible { outline: 2px solid var(--azul); outline-offset: 2px; }
+.chat-pasos-icono { display: grid; place-items: center; flex: none; width: 18px; height: 18px; border-radius: 50%; background: var(--verde-suave); color: var(--verde); }
+.chat-pasos-icono.vivo { background: var(--azul-suave); color: var(--azul-tinta); }
+.chat-pasos-icono.vivo .girando { width: 9px; height: 9px; }
+.chat-pasos-icono.con-error { background: var(--rojo-suave); color: var(--rojo); }
+.chat-pasos-texto { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-pasos-cuenta { flex: none; min-width: 18px; padding: 0 5px; border-radius: 999px; font-size: 10.5px; font-weight: 700; text-align: center; color: var(--azul-tinta); background: var(--azul-suave); }
+.chat-pasos-flecha { flex: none; opacity: 0.55; transition: transform 0.18s; }
+.chat-pasos-resumen[aria-expanded="true"] .chat-pasos-flecha { transform: rotate(180deg); }
+.chat-linea { list-style: none; margin: 8px 0 4px 13px; padding: 2px 0 2px 16px; display: flex; flex-direction: column; gap: 9px; box-shadow: inset 2px 0 0 var(--linea); min-width: 0; }
+.chat-linea li { position: relative; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; font-size: 12px; line-height: 1.4; }
+.chat-linea li::before { content: ""; position: absolute; left: -21px; top: 3px; width: 10px; height: 10px; border-radius: 50%; background: var(--pliego); box-shadow: inset 0 0 0 2.5px var(--verde); }
+.chat-linea li.curso::before { box-shadow: inset 0 0 0 2.5px var(--azul); animation: pulso-lacre 1s ease-in-out infinite; }
+.chat-linea li.error::before { box-shadow: inset 0 0 0 2.5px var(--rojo); }
+.chat-linea-titulo { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-width: 0; }
+.chat-linea b { font-weight: 620; color: var(--texto); }
+.chat-linea small { max-width: 100%; font-size: 11px; color: var(--texto-3); overflow-wrap: anywhere; }
+.chat-paso-a-la-vez { padding: 0 6px; border-radius: 6px; font-size: 10.5px; font-weight: 650; color: var(--azul-tinta); background: var(--azul-suave); }
+.chat-paso-ver { padding: 1px 0; font-size: 11px; font-weight: 600; color: var(--azul-tinta); border-radius: 4px; }
+.chat-paso-ver:hover { text-decoration: underline; }
+.chat-paso-ver:focus-visible { outline: 2px solid var(--azul); outline-offset: 1px; }
+.chat-paso-resultado { align-self: stretch; width: 100%; box-sizing: border-box; margin: 2px 0 0; max-height: 168px; overflow: auto; overscroll-behavior: contain; padding: 8px 10px; border-radius: 9px; background: var(--pliego); box-shadow: inset 0 0 0 1px var(--linea); font-family: var(--mono); font-size: 10.5px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--texto-2); }
+.chat-msj .chat-pensando { padding: 4px 6px; }
+
+/* las tareas de la llamada: una sola línea, aunque haya varias */
+.llamada-tareas { display: flex; align-items: center; gap: 8px; min-width: 0; margin: 0 10px 6px; padding: 6px 10px; border-radius: 11px; font-size: 12px; color: var(--texto); background: var(--pliego); box-shadow: inset 0 0 0 1px var(--linea); }
+.llamada-tareas > span:not(.girando) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.llamada-tareas small { flex: none; font-size: 11px; font-weight: 650; color: var(--azul-tinta); }
+.llamada-tareas.lista small, .llamada-tareas.lista svg { color: var(--verde); }
+.llamada-tareas .girando { width: 12px; height: 12px; color: var(--azul-tinta); }
+
+/* ampliar el MISMO panel: más alto y ancho; la conversación queda en una columna cómoda */
+.chat-panel { transition: width 0.22s ease, height 0.22s ease; }
+.chat-panel.amplio { width: min(860px, calc(100vw - 48px)); height: calc(100dvh - 116px); }
+.chat-panel.amplio .chat-mensajes { padding: 20px max(18px, calc((100% - 720px) / 2)) 12px; gap: 16px; }
+.chat-panel.amplio .chat-msj.usuario { max-width: min(84%, 600px); }
+.chat-panel.amplio .chat-entrada { padding-left: max(10px, calc((100% - 740px) / 2)); padding-right: max(10px, calc((100% - 740px) / 2)); }
+.chat-panel.amplio .chat-conversaciones { padding: 12px max(8px, calc((100% - 720px) / 2)); }
+@media (max-width: 760px) {
+  .chat-ampliar { display: none; }
+  .chat-panel.amplio { width: 100vw; height: 100dvh; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .chat-panel { transition: none; }
+  .chat-linea li.curso::before { animation: none; }
+}

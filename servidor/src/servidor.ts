@@ -942,9 +942,13 @@ app.post<{ Params: { id: string } }>("/api/chats/:id/mensajes", async (req, res)
     pendiente = lineas.pop() ?? "";
     for (const l of lineas) {
       try {
-        const d = JSON.parse(l) as { tipo: string; texto?: string; nombre?: string; argumentos?: unknown; resultado?: string; flujos_cambiados?: string[]; propuesta?: { accion: string; id: string }; archivos?: unknown[] };
-        if (d.tipo === "herramienta") respuesta.pasos!.push({ nombre: d.nombre ?? "", argumentos: d.argumentos });
-        else if (d.tipo === "resultado_herramienta" && respuesta.pasos!.length) respuesta.pasos![respuesta.pasos!.length - 1]!.resultado = d.resultado;
+        const d = JSON.parse(l) as { tipo: string; texto?: string; nombre?: string; argumentos?: unknown; resultado?: string; indice?: number; paralelo?: number; flujos_cambiados?: string[]; propuesta?: { accion: string; id: string }; archivos?: unknown[] };
+        if (d.tipo === "herramienta") respuesta.pasos!.push({ nombre: d.nombre ?? "", argumentos: d.argumentos, ...(d.paralelo ? { paralelo: d.paralelo } : {}) });
+        else if (d.tipo === "resultado_herramienta" && respuesta.pasos!.length) {
+          // con varias herramientas a la vez, cada resultado dice a qué paso va (indice); si no, es el del último
+          const paso = typeof d.indice === "number" ? respuesta.pasos![d.indice] : respuesta.pasos![respuesta.pasos!.length - 1];
+          if (paso) paso.resultado = d.resultado;
+        }
         else if (d.tipo === "texto") respuesta.texto = (respuesta.texto ? `${respuesta.texto}\n\n` : "") + (d.texto ?? "");
         else if (d.tipo === "error") { respuesta.texto = `No pude terminar: ${d.texto}`; respuesta.error = true; }
         else if (d.tipo === "fin") respuesta.cambiados = d.flujos_cambiados ?? [];

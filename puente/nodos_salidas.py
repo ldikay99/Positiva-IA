@@ -16,13 +16,16 @@ import re
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import documentos as m_doc
+import marca as m_marca
 import salidas as m_sal
 from conectores.base import ErrorDeNegocio
-from especificacion_salidas import FORMATOS_EXPORTAR, FORMATOS_PLANTILLA_SALIDA, MODOS_IA, SEPARADORES, TIPOS  # noqa: F401
+from especificacion_salidas import FORMATOS_EXPORTAR, FORMATOS_PLANTILLA_SALIDA, MAX_MARCAR, MODOS_IA, SEPARADORES, TIPOS  # noqa: F401
 
 fd: Any = None
 np_: Any = None
 NOMBRE_XML = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]{0,60}$")
+# una imagen de la biblioteca de Documentos: «carta-respuesta/logo» (o «documentos:carta-respuesta/logo»)
+RECURSO_BIBLIOTECA = re.compile(r"(?:documentos:)?([a-z0-9][a-z0-9-]{1,59})/([a-z0-9][a-z0-9_-]{0,39})")
 EXT = {"json": "json", "xml": "xml", "csv": "csv", "html": "html", "txt": "txt", "md": "md"}
 MIME_SIMPLE = {"docx": m_sal.MIME["docx"], "xlsx": m_sal.MIME["xlsx"], "pptx": m_sal.MIME["pptx"], "html": "text/html", "xml": "application/xml",
                "json": "application/json", "csv": "text/csv", "txt": "text/plain", "md": "text/markdown", "zip": "application/zip", "pdf": "application/pdf"}
@@ -48,7 +51,7 @@ def produce(t: str, c: dict, nid: str) -> Set[str]:
 
 def referencias(t: str, c: dict, plantillas_en: Callable, ref_de_fuente: Callable) -> List[Tuple[str, Set[str]]]:
     refs: List[Tuple[str, Set[str]]] = [(r, set()) for r in plantillas_en({k: v for k, v in c.items() if k not in ("archivos", "de")})]
-    if t == "archivo_comprimir":
+    if t in ("archivo_comprimir", "documento_marca"):
         refs += [(r, set()) for r in np_.refs_archivos(c.get("archivos"), ref_de_fuente)] + [(r, set()) for r in plantillas_en(c.get("archivos"))]
     if t == "archivo_exportar":
         refs += [(r, set()) for r in ref_de_fuente(c.get("de"))]
@@ -106,19 +109,38 @@ def validar(t: str, c: dict, q: Callable[[str], None]) -> None:
                 q(f"desde_ia.modo «{d['modo']}» (válidos: llenar o completo)")
             if "variables" in d and not (isinstance(d["variables"], list) and all(isinstance(x, str) and x.strip() for x in d["variables"])):
                 q("desde_ia.variables tiene que ser una lista de nombres de variables de la plantilla")
+        m_marca.problemas(c.get("marca"), q)
+    elif t == "documento_marca":
+        if c.get("archivos") in (None, "", []):
+            q("documento_marca necesita archivos: los documentos a marcar («{{documento}}», «archivos», «adjuntos», ids o filtros)")
+        else:
+            np_.problemas_archivos(c, "archivos", q)
+        if c.get("marca") in (None, {}):
+            q("documento_marca necesita marca: {logo, banner, marca_agua, colores, fuente}")
+        else:
+            m_marca.problemas(c.get("marca"), q)
+        texto_si("sufijo")
 
 
-def bytes_de_bloques(formato: str, bloques: List[Tuple[str, Any]], titulo: str) -> bytes:
-    """Bloques (de un texto, de un Word o de la IA) en el formato pedido: pdf, docx, html o pptx."""
+def bytes_de_bloques(formato: str, bloques: List[Tuple[str, Any]], titulo: str, marca: Optional[Dict[str, Any]] = None) -> bytes:
+    """Bloques (de un texto, de un Word o de la IA) en el formato pedido: pdf, docx, html o pptx. Con `marca` (ya cargada
+    con marca.cargar): el PDF y el PowerPoint la llevan desde que se arman; el Word y el HTML se marcan al final."""
+    marca = marca if marca and m_marca.hay_algo(marca) else None
     if formato == "pdf":
-        return m_doc.pdf_de_bloques(bloques, titulo)
+        return m_doc.pdf_de_bloques(bloques, titulo, marca)
     if formato == "html":
-        return m_sal.html_de_bloques(m_doc.bloques_sin_marcas(bloques), titulo)
+        datos = m_sal.html_de_bloques(m_doc.bloques_sin_marcas(bloques), titulo)
+        return m_marca.html(datos, marca) if marca else datos
     if formato == "pptx":
         bloques = m_doc.bloques_sin_marcas(bloques)
         # si el texto ya abre con «# título», ese es la portada (no una portada más con el título del paso)
-        return m_sal.pptx_de_presentacion(m_sal.presentacion_de_bloques(bloques, "" if bloques and bloques[0][0] == "titulo" else titulo))
-    return m_doc.docx_de_bloques(bloques, titulo)
+        return m_sal.pptx_de_presentacion(m_sal.presentacion_de_bloques(bloques, "" if bloques and bloques[0][0] == "titulo" else titulo), marca=marca)
+    datos = m_doc.docx_de_bloques(bloques, titulo)
+    return m_marca.docx(datos, marca) if marca else datos
+
+
+def problemas_marca(c: dict, q: Callable[[str], None]) -> None:
+    m_marca.problemas(c.get("marca"), q)
 
 
 def _con_ext(nombre: str, ext: str) -> str:
@@ -176,6 +198,75 @@ class NodosSalidas:
             return None
         datos = self._bytes(fichas[0])
         return datos if (datos[:8] == b"\x89PNG\r\n\x1a\n" or datos[:3] == b"\xff\xd8\xff" or (fichas[0].get("tipo") or "").startswith("image/")) else None
+
+    def _marca_lista(self, n: dict, marca_cfg: Any, pid: str = "") -> Optional[Dict[str, Any]]:
+        """La config «marca» de un nodo con sus imágenes cargadas: «{{logo}}» o una variable (un archivo de la ejecución), un id
+        «a-…», «plantilla/recurso» de la biblioteca de Documentos o, en documento_plantilla, un recurso suelto de esa plantilla."""
+        if not isinstance(marca_cfg, dict) or not marca_cfg:
+            return None
+
+        def render(v: Any, clave: str = "") -> Any:
+            if isinstance(v, dict):
+                return {k: render(x, k) for k, x in v.items()}
+            return self.render(v) if isinstance(v, str) and clave != "imagen" and "{{" in v else v
+
+        def imagen(ref: str) -> Optional[bytes]:
+            ref = str(ref or "").strip()
+            m = RECURSO_BIBLIOTECA.fullmatch(ref)
+            if m:
+                return m_sal.recurso_de(m.group(1), m.group(2))
+            if pid and m_sal.NOMBRE_RECURSO.match(ref):
+                r = m_sal.recurso_de(pid, ref)
+                if r:
+                    return r
+            if "{{" in ref and not fd.PLANTILLA.fullmatch(ref):
+                ref = self.render(ref)
+            return self._imagen_de_ref(fd._ref_limpia(ref))
+
+        lista, faltan = m_marca.cargar(render(marca_cfg), imagen)
+        if faltan:
+            self.avisos.append(f"{n['id']}: no encontré la imagen de la marca: {', '.join(faltan)[:200]} (usa «{{{{variable}}}}», un id «a-…» o «plantilla/recurso»)")
+        return lista if m_marca.hay_algo(lista) else None
+
+    def documento_marca(self, n: dict) -> str:
+        c = n.get("config") or {}
+        fichas = self._archivos_ref(c.get("archivos"))
+        if not fichas:
+            raise ErrorDeNegocio("documento_marca: las referencias no trajeron ningún documento")
+        if len(fichas) > MAX_MARCAR:
+            raise ErrorDeNegocio(f"documento_marca: son {len(fichas)} documentos y se marcan hasta {MAX_MARCAR} por paso (divídelos con para_cada)")
+        marca = self._marca_lista(n, c.get("marca"))
+        if not marca:
+            raise ErrorDeNegocio("documento_marca: la marca quedó vacía (no se encontró ninguna de sus imágenes y no tiene colores ni texto)")
+        sufijo = re.sub(r'[\x00-\x1f\x7f<>:"|?*/\\]', "", self.render(c.get("sufijo") or ""))[:40]
+        salida: List[Dict[str, Any]] = []
+        saltados: List[str] = []
+        for f in fichas:
+            datos = self._bytes(f)
+            fmt = m_marca.formato_de(f["nombre"], datos)
+            if fmt not in m_marca.FORMATOS:
+                saltados.append(f"{f['nombre']} ({fmt or 'sin formato'})")
+                continue
+            try:
+                nuevo = m_marca.aplicar(fmt, datos, marca)
+            except Exception as e:  # noqa: BLE001 - un documento dañado no frena a los demás
+                saltados.append(f"{f['nombre']} ({str(e)[:80]})")
+                continue
+            base, _, ext = f["nombre"].rpartition(".")
+            nombre = f"{base}{sufijo}.{ext}" if base else f"{f['nombre']}{sufijo}"
+            tipo = f.get("tipo") or MIME_SIMPLE.get(fmt) or ("image/jpeg" if fmt == "jpg" else "image/png" if fmt == "png" else "application/octet-stream")
+            ficha = self._guardar_archivo(nombre, nuevo, tipo)
+            ficha["original"] = f.get("id")
+            salida.append(ficha)
+        if not salida:
+            raise ErrorDeNegocio(f"documento_marca: ningún documento se pudo marcar (se marcan PDF, Word, PowerPoint, HTML, PNG y JPG): {', '.join(saltados)[:300]}")
+        if saltados:
+            self.avisos.append(f"{n['id']}: sin marca (formato que no la admite o dañado): {', '.join(saltados)[:300]}")
+        self.vars[self._np_salida(n)] = salida
+        fd._paso(n["id"], f"Marca puesta en {len(salida)} documento(s)", "aviso" if saltados else "ok",
+                 f"{m_marca.resumen(marca)} · " + ", ".join(x["nombre"] for x in salida)[:600] + (f" · saltados: {len(saltados)}" if saltados else ""),
+                 archivo=salida[0]["id"])
+        return "ok"
 
     def _contexto_salidas(self, pid: str = "", extra: Optional[Dict[str, Any]] = None, contenido: Any = None) -> "m_sal.Contexto":
         def imagen(ref: str) -> Optional[bytes]:
@@ -282,9 +373,14 @@ class NodosSalidas:
             raise ErrorDeNegocio(f"plantilla «{pid}»: {e}") from e
         titulo = str(meta.get("nombre") or pid)
         ext = fmt
+        marca = self._marca_lista(n, c.get("marca"), pid) if c.get("marca") else None
         if salida_fmt == "pdf":
             bloques = m_doc.bloques_docx(lleno) if fmt == "docx" else m_doc.bloques_de_texto(m_sal._texto_de_html(lleno.decode("utf-8")))
-            lleno, ext = m_doc.pdf_de_bloques(bloques, titulo), "pdf"
+            lleno, ext = m_doc.pdf_de_bloques(bloques, titulo, marca), "pdf"
+        elif marca and fmt in ("docx", "pptx", "html"):
+            lleno = m_marca.aplicar(fmt, lleno, marca)
+        elif marca:
+            self.avisos.append(f"{n['id']}: la marca no se pone en {fmt} (sí en Word, PowerPoint, HTML y PDF)")
         nombre = _con_ext(self.render(c.get("nombre") or "") or re.sub(r"[^\w-]+", "-", titulo).strip("-").lower() or pid, ext)
         ficha = self._guardar_archivo(nombre, lleno, MIME_SIMPLE[ext])
         faltantes = sorted(x for x in ctx.faltantes if not x.startswith(("item.", "#")) and x not in ctx.bloqueadas)

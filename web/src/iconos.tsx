@@ -55,6 +55,7 @@ const RUTAS = {
   check: "M5 12.5l4.5 4.5L19 7.5",
   derecha: "M9 6l6 6-6 6",
   expandir: "M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7",
+  contraer: "M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7",
   pausa: "M8 5v14M16 5v14",
   punto: "M12 13a1 1 0 1 0 0-2 1 1 0 0 0 0 2z",
   terminal: "M4 5h16v14H4zM7 9l3 3-3 3M12 15h5",

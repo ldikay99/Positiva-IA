@@ -383,7 +383,16 @@ class ValidacionDeSalidas(unittest.TestCase):
              {"tipo": "documento_plantilla", "config": {"plantilla": "carta", "desde_ia": {"instrucciones": "x", "modo": "todo"}}},
              {"tipo": "documento_plantilla", "config": {"plantilla": "carta", "desde_ia": {"modo": "llenar"}}},
              {"tipo": "documento_plantilla", "config": {"plantilla": "carta", "datos": {"a b": "x"}}},
-             {"tipo": "documento_generar", "config": {"formato": "odp", "plantilla": "x"}}]
+             {"tipo": "documento_generar", "config": {"formato": "odp", "plantilla": "x"}},
+             {"tipo": "documento_generar", "config": {"formato": "pdf", "plantilla": "x", "marca": {"logo": {"imagen": "x", "posicion": "arriba"}}}},
+             {"tipo": "documento_plantilla", "config": {"plantilla": "carta", "marca": {"otra": 1}}},
+             {"tipo": "documento_marca", "config": {"archivos": ["{{a}}"]}},
+             {"tipo": "documento_marca", "config": {"marca": {"logo": "x.png"}}},
+             {"tipo": "documento_marca", "config": {"archivos": ["x"], "marca": {}}},
+             {"tipo": "documento_marca", "config": {"archivos": ["x"], "marca": {"marca_agua": {"texto": "x", "imagen": "y"}}}},
+             {"tipo": "documento_marca", "config": {"archivos": ["x"], "marca": {"marca_agua": {"texto": "x", "opacidad": 0}}}},
+             {"tipo": "documento_marca", "config": {"archivos": ["x"], "marca": {"colores": {"titulos": "azul"}}}},
+             {"tipo": "documento_marca", "config": {"archivos": ["x"], "marca": {"logo": {"imagen": "x", "ancho_cm": 99}}}}]
 
     def test_fichas_completas_y_ejemplos_validos(self):
         for t in ns.TIPOS:
@@ -459,6 +468,236 @@ class VeraConDocumentos(unittest.TestCase):
             self.assertNotIn("texto", r["plantillas"][0])
         finally:
             a.api, a.emitir = api, emitir
+
+
+def logo_png(ancho=200, alto=80):
+    """Un logo con transparencia (lo que suele mandar la gente)."""
+    from PIL import Image, ImageDraw
+    img = Image.new("RGBA", (ancho, alto), (0, 0, 0, 0))
+    ImageDraw.Draw(img).rounded_rectangle((0, 0, ancho - 1, alto - 1), 16, fill=(0, 148, 255, 255))
+    s = io.BytesIO()
+    img.save(s, format="PNG")
+    return s.getvalue()
+
+
+def gris_del_centro(pdf: bytes, pagina: int = 0):
+    """El color del centro de una página: con la marca de agua al 15 % no es blanco ni del todo el color del logo."""
+    import documentos as m_doc
+    from PIL import Image
+    img = Image.open(io.BytesIO(m_doc.pdf_a_png(pdf, [pagina], 0.5)[0])).convert("RGB")
+    return img.getpixel((img.width // 2, img.height // 2))
+
+
+class MarcaDeDocumentos(_BaseSalidas):
+    """La marca (logo, banner, marca de agua, colores, fuente) en documento_generar, documento_plantilla y documento_marca."""
+
+    def test_generar_con_marca_en_cada_formato(self):
+        import docx
+        from pptx import Presentation
+        aid = self.archivo("logo.png", logo_png())
+        marca = {"logo": {"imagen": aid, "posicion": "izquierda", "ancho_cm": 3}, "banner": {"imagen": aid, "posicion": "abajo"},
+                 "marca_agua": {"imagen": aid, "opacidad": 15, "tamano": 0.5},
+                 "colores": {"titulos": "#0B4F8A", "acento": "#0094FF", "tabla_encabezado": "#0B4F8A"}, "fuente": "Arial"}
+        texto = "# Informe\n\nHola {{entrada.nombre}}\n\n| Flujo | Casos |\n| PQRD | 17 |"
+        nodos = [nodo(f"d_{f}", "documento_generar", formato=f, plantilla=texto, nombre=f"informe-{f}", salida=f"d_{f}", marca=marca) for f in ("pdf", "docx", "pptx", "html")]
+        r, _ = self.manual_con(*nodos, nombre="Ana")
+        v = r["variables"]
+        pdf = self.leer(v["d_pdf"])
+        self.assertIn(b"/SMask", pdf)                      # el logo conserva su transparencia
+        self.assertIn(b"/ExtGState << /GSa", pdf)           # la marca de agua es translúcida de verdad
+        self.assertIn(b"/ca 0.150", pdf)
+        self.assertIn(b"/BaseFont /Helvetica-Bold", pdf)
+        r_, g_, b_ = gris_del_centro(pdf)
+        self.assertTrue(200 < r_ < 250 and b_ > 245, (r_, g_, b_))  # azul muy claro: el logo al 15 % sobre blanco
+        d = docx.Document(io.BytesIO(self.leer(v["d_docx"])))
+        cabeza = d.sections[0].header._element.xml
+        self.assertIn('behindDoc="1"', cabeza)             # la marca de agua detrás del texto
+        self.assertIn("<wp:inline", cabeza)                # el logo en el encabezado
+        self.assertIn("<wp:inline", d.sections[0].footer._element.xml)  # el banner en el pie
+        self.assertEqual(str(d.styles["Heading 1"].font.color.rgb), "0B4F8A")
+        self.assertEqual(d.styles["Normal"].font.name, "Arial")
+        self.assertIn('w:fill="0B4F8A"', d.tables[0].rows[0].cells[0]._tc.xml)
+        prs = Presentation(io.BytesIO(self.leer(v["d_pptx"])))
+        for s in prs.slides:
+            nombres = [f.name for f in s.shapes]
+            self.assertEqual(nombres[0], "Marca de agua")   # al fondo
+            self.assertTrue({"Logo", "Banner del pie"} <= set(nombres))
+        self.assertIn('alphaModFix amt="15000"', prs.slides[0].shapes[0]._element.xml)
+        html = self.leer(v["d_html"]).decode("utf-8")
+        self.assertIn('class="marca-agua"', html)
+        self.assertIn("h1,h2,h3,h4{color:#0B4F8A", html)
+        self.assertIn("Hola Ana", html)
+        # una imagen que no está: el documento sale igual, con un aviso claro
+        r, _ = self.manual_con(nodo("d", "documento_generar", formato="pdf", plantilla="# X", salida="d", marca={"logo": "no-esta.png", "colores": {"titulos": "#112233"}}), nombre="x")
+        self.assertTrue(any("no encontré la imagen de la marca" in a for a in r["avisos"]))
+
+    def test_documento_marca_en_muchos_documentos(self):
+        carpeta = self.plantilla("carta-respuesta", "docx", docx_bytes(lambda d: d.add_paragraph("{{nombre}}")))
+        (carpeta / "recursos" / "logo.png").write_bytes(logo_png())
+        r, ev = self.manual_con(
+            nodo("a", "documento_generar", formato="pdf", plantilla="# Carta {{entrada.nombre}}\n\nTexto", nombre="carta", salida="a"),
+            nodo("b", "documento_generar", formato="docx", plantilla="# Anexo\n\nTexto", nombre="anexo", salida="b"),
+            nodo("c", "archivo_exportar", formato="txt", contenido="nota", nombre="nota", salida="c"),
+            nodo("m", "documento_marca", archivos=["{{a}}", "{{b}}", "{{c}}"], sufijo="-marcado", salida="marcados",
+                 marca={"logo": {"imagen": "carta-respuesta/logo", "posicion": "derecha"}, "marca_agua": {"texto": "CONFIDENCIAL", "opacidad": 0.15}}),
+            nombre="Ana")
+        m = r["variables"]["marcados"]
+        self.assertEqual([x["nombre"] for x in m], ["carta-marcado.pdf", "anexo-marcado.docx"])
+        self.assertEqual(m[0]["original"], r["variables"]["a"]["id"])
+        pdf = self.leer(m[0])
+        import documentos as m_doc
+        self.assertEqual(m_doc.cantidad_paginas(pdf), 1)
+        self.assertIn("Carta Ana", m_doc.paginas_pdf(pdf)[0])      # el texto original sigue ahí
+        self.assertIn("CONFIDENCIAL", m_doc.paginas_pdf(pdf)[0])   # y la marca de agua es texto de verdad
+        self.assertTrue(any("nota.txt" in a for a in r["avisos"]))   # el .txt se salta con aviso
+        self.assertTrue(any(a["nombre"] == "anexo-marcado.docx" for a in r["archivos"]))
+        # sin ningún documento que se pueda marcar: un motivo claro
+        r, _ = self.correr_orden(self.con(nodo("c", "archivo_exportar", formato="txt", contenido="x", salida="c"),
+                                          nodo("m", "documento_marca", archivos=["{{c}}"], marca={"marca_agua": {"texto": "X"}})), exigir_ok=False, entrada={})
+        self.assertIn("ningún documento se pudo marcar", r["motivo"])
+
+    def test_plantilla_de_la_biblioteca_con_su_logo(self):
+        import docx
+        carpeta = self.plantilla("oficio", "docx", docx_bytes(lambda d: d.add_paragraph("Señor(a) {{nombre}}")))
+        (carpeta / "recursos" / "logo.png").write_bytes(logo_png())
+        r, _ = self.manual_con(nodo("o", "documento_plantilla", plantilla="oficio", datos={"nombre": "{{entrada.nombre}}"}, salida="o",
+                                    marca={"logo": "logo", "marca_agua": {"texto": "BORRADOR", "opacidad": 10}}), nombre="Ana")
+        d = docx.Document(io.BytesIO(self.leer(r["variables"]["o"])))
+        self.assertEqual(d.paragraphs[0].text, "Señor(a) Ana")
+        self.assertEqual(d.sections[0].header._element.xml.count("<pic:pic"), 2)  # logo y marca de agua
+
+    def test_estampar_y_validar_la_config(self):
+        import marca as m_marca
+        import documentos as m_doc
+        n, faltan = m_marca.cargar({"logo": "x.png", "marca_agua": {"imagen": "x.png", "opacidad": 0.2, "rotacion": 30}}, {"x.png": logo_png()}.get)
+        self.assertEqual(faltan, [])
+        self.assertEqual((n["logo"]["posicion"], n["logo"]["ancho_cm"], n["marca_agua"]["opacidad"]), ("derecha", 3.5, 0.2))
+        base = m_doc.pdf_de_bloques(m_doc.bloques_de_texto("# Hola\n\n" + "texto " * 400), "x")
+        marcado = m_marca.aplicar("pdf", base, n)
+        self.assertEqual(m_doc.cantidad_paginas(marcado), m_doc.cantidad_paginas(base))
+        self.assertNotEqual(gris_del_centro(marcado), gris_del_centro(base))
+        imagen = m_marca.aplicar("png", png(300, 200, (255, 255, 255)), n)
+        self.assertEqual(imagen[:8], b"\x89PNG\r\n\x1a\n")
+        with self.assertRaises(m_marca.ErrorDeMarca):
+            m_marca.aplicar("xlsx", b"x", n)
+        self.assertEqual(m_marca.cargar({"logo": "no-esta.png"}, lambda r: None)[1], ["no-esta.png"])
+        malos = [{}, {"logo": {"posicion": "arriba"}}, {"logo": {"imagen": "x", "posicion": "arriba"}}, {"marca_agua": {"imagen": "x", "texto": "y"}},
+                 {"marca_agua": {"texto": "x", "opacidad": 0}}, {"colores": {"titulos": "azul"}}, {"otra": 1}, {"logo": {"imagen": "x", "ancho_cm": 99}}]
+        for m in malos:
+            p: list = []
+            m_marca.problemas(m, p.append)
+            self.assertTrue(p, m)
+
+
+class VeraEnParalelo(unittest.TestCase):
+    """Varias herramientas en una vuelta: las que solo leen corren a la vez; lo demás, en orden; las respuestas, en el orden pedido."""
+
+    def test_tandas_y_orden(self):
+        import asistente as a
+        self.assertEqual(a.tandas(["leer_flujo", "ver_corrida", "editar_nodo", "listar_flujos", "generar_documento", "enfocar_flujo"]),
+                         [[0, 1], [2], [3, 4], [5]])
+        import threading
+        import time
+        vivos, pico, candado = [0], [0], threading.Lock()
+
+        def correr(i, nombre, args):
+            with candado:
+                vivos[0] += 1
+                pico[0] = max(pico[0], vivos[0])
+            time.sleep(0.15)
+            with candado:
+                vivos[0] -= 1
+            return f"{nombre}:{i}"
+
+        t0 = time.time()
+        r = a.correr_llamadas([("leer_flujo", {}), ("ver_corrida", {}), ("ultimas_corridas", {}), ("editar_nodo", {}), ("leer_flujo", {})], correr)
+        self.assertEqual(r, ["leer_flujo:0", "ver_corrida:1", "ultimas_corridas:2", "editar_nodo:3", "leer_flujo:4"])
+        self.assertEqual(pico[0], 3)
+        self.assertLess(time.time() - t0, 0.15 * 5 - 0.1)  # las tres primeras a la vez
+
+    def test_vuelta_con_avisos_emparejados(self):
+        import asistente as a
+        eventos, ejecutar = [], a.ejecutar
+        a.ejecutar = lambda nombre, args: {"ok": nombre, **args}
+        try:
+            pasos, registro = [{"nombre": "previo"}], []
+            r = a.correr_vuelta([("leer_flujo", {"id": "x"}), ("ver_corrida", {"id": "c"}), ("guardar_flujo", {"definicion": {"id": "x", "nodos": [1]}})],
+                                lambda tipo, **d: eventos.append((tipo, d)), pasos, registro, set(), [])
+        finally:
+            a.ejecutar = ejecutar
+        self.assertEqual([x["ok"] for x in r], ["leer_flujo", "ver_corrida", "guardar_flujo"])
+        anuncios = [d for t, d in eventos if t == "herramienta"]
+        self.assertEqual([(d["nombre"], d["indice"], d.get("paralelo")) for d in anuncios], [("leer_flujo", 1, 2), ("ver_corrida", 2, 2), ("guardar_flujo", 3, None)])
+        self.assertEqual(sorted(d["indice"] for t, d in eventos if t == "resultado_herramienta"), [1, 2, 3])
+        self.assertEqual([p["nombre"] for p in pasos], ["previo", "leer_flujo", "ver_corrida", "guardar_flujo"])
+        self.assertEqual(pasos[3]["argumentos"]["definicion"], {"id": "x", "nodos": 1})
+
+    def test_proveedores_corren_el_lote(self):
+        from proveedores import nucleo
+        self.assertIn("ejecutar_lote", nucleo.conversar_con_herramientas.__code__.co_varnames)
+
+
+class VeraConMarca(unittest.TestCase):
+    def setUp(self):
+        import asistente as a
+        self.a = a
+        self.guardados, self.emitidos = [], []
+        self.respaldo = (a.api, a.emitir, a._bytes_del_chat, a.CONVERSACION.get("id"))
+        imagenes = {"adj-logo": logo_png(), "adj-doc": None}
+        import documentos as m_doc
+        imagenes["adj-doc"] = m_doc.pdf_de_bloques(m_doc.bloques_de_texto("# Informe\n\nTexto"), "x")
+
+        def api(metodo, ruta, cuerpo=None):
+            if metodo == "GET" and ruta == "/api/chats/c1":
+                return {"mensajes": [{"rol": "usuario", "texto": "ponle el logo", "adjuntos": [{"id": "adj-logo", "nombre": "Logo Linktic.png", "tipo": "image/png"},
+                                                                                            {"id": "adj-doc", "nombre": "informe.pdf", "tipo": "application/pdf"}]}]}
+            if metodo == "POST" and ruta == "/api/chats/c1/adjuntos":
+                self.guardados.append(cuerpo)
+                return {"id": f"nuevo{len(self.guardados)}", "nombre": cuerpo["nombre"], "tipo": cuerpo["tipo"], "tamano": 10}
+            return {"error": "no"}
+        a.api = api
+        a.emitir = lambda tipo, **d: self.emitidos.append((tipo, d))
+        a._bytes_del_chat = lambda adj: imagenes[adj]
+        a.CONVERSACION["id"] = "c1"
+
+    def tearDown(self):
+        a = self.a
+        a.api, a.emitir, a._bytes_del_chat, a.CONVERSACION["id"] = self.respaldo
+
+    def test_generar_documento_con_el_logo_adjunto(self):
+        import base64
+        r = self.a.ejecutar("generar_documento", {"formato": "pdf", "titulo": "Acta", "contenido": "# Acta\n\nTexto",
+                                                  "marca": {"logo": {"imagen": "logo linktic", "posicion": "izquierda"}, "marca_agua": {"imagen": "ultimo", "opacidad": 15}}})
+        self.assertTrue(r["ok"], r)
+        self.assertIn("logo a la izquierda", r["marca"])
+        pdf = base64.b64decode(self.guardados[-1]["datos"])
+        self.assertIn(b"/ca 0.150", pdf)
+        self.assertEqual(self.emitidos[-1][0], "archivos")
+        # una imagen que no está: no arma nada y dice cuáles hay
+        r = self.a.ejecutar("generar_documento", {"formato": "pdf", "titulo": "Acta", "contenido": "# Acta", "marca": {"logo": "otro.png"}})
+        self.assertIn("no encontré la imagen", r["error"])
+        self.assertEqual(r["imagenes_del_chat"], ["Logo Linktic.png"])
+        r = self.a.ejecutar("generar_documento", {"formato": "pdf", "titulo": "Acta", "contenido": "# Acta", "marca": {"marca_agua": {"texto": "x", "opacidad": 500}}})
+        self.assertIn("opacidad", r["error"])
+
+    def test_aplicar_marca_a_lo_adjunto_y_ayuda(self):
+        r = self.a.ejecutar("aplicar_marca", {"marca": {"logo": "Logo Linktic.png", "marca_agua": {"texto": "CONFIDENCIAL"}}})
+        self.assertEqual(r["marcados"], ["informe-con-marca.pdf"])  # el logo no se marca a sí mismo
+        self.assertEqual(len(self.guardados), 1)
+        ayuda = self.a.ejecutar("ayuda_documentos", {})
+        self.assertIn("marca_agua", ayuda["opciones"])
+        self.assertIn("documento_marca", ayuda["en_flujos"])
+        self.assertIn("flujo", self.a.ejecutar("ayuda_documentos", {"tema": "imagenes"})["imagenes"])
+
+    def test_grupos_y_prompt_corto(self):
+        a = self.a
+        self.assertIn("ayuda_documentos", a.GRUPOS["nucleo"])
+        self.assertIn("aplicar_marca", a.GRUPOS["documentos"])
+        self.assertIn("documentos", a._grupos_para("ponle este logo arriba y una marca de agua al 15 %", {"vista": "inicio"}))
+        # el prompt solo nombra la capacidad: los detalles están en ayuda_documentos
+        for detalle in ("alphaModFix", "ancho_cm", "rotacion", "tabla_encabezado", "posicion"):
+            self.assertNotIn(detalle, a.SISTEMA)
+        self.assertEqual(sum(1 for linea in a.SISTEMA.split(a.INDICE_NODOS)[0].splitlines() if "ayuda_documentos" in linea), 1)
 
 
 if __name__ == "__main__":

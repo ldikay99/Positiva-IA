@@ -12,16 +12,40 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-TIPOS = {"archivo_exportar", "archivo_comprimir", "documento_plantilla"}
+TIPOS = {"archivo_exportar", "archivo_comprimir", "documento_plantilla", "documento_marca"}
 FORMATOS_EXPORTAR = ("json", "xml", "csv", "html", "txt", "md")
 SEPARADORES = (",", ";", "tab")
 MODOS_IA = ("llenar", "completo")
 FORMATOS_PLANTILLA_SALIDA = ("original", "pdf")
+MAX_MARCAR = 100
+
+
+def esquema_marca(h: Any) -> Dict[str, Any]:
+    """La config «marca» (logo, banner, marca de agua, colores y fuente) para el editor; la valida marca.problemas."""
+    plantilla, opcion, numero, objeto = h.plantilla, h.opcion, h.numero, h.objeto
+    imagen = plantilla("la imagen: «{{logo}}» (un archivo de la ejecución), un id «a-…» del flujo o un recurso de Documentos «plantilla/logo»")
+    return objeto({
+        "logo": objeto({"imagen": imagen, "posicion": opcion(["izquierda", "centro", "derecha"], "dónde va en el encabezado", "derecha"),
+                        "ancho_cm": numero("ancho del logo en cm", 0.5, 25, 3.5)}, ["imagen"], "el logo en el encabezado de cada página o diapositiva"),
+        "banner": objeto({"imagen": imagen, "posicion": opcion(["arriba", "abajo", "ambos"], "franja arriba, en el pie o en los dos", "arriba"),
+                          "alto_cm": numero("alto máximo en cm", 0.3, 15)}, ["imagen"], "una franja de imagen arriba y/o abajo"),
+        "marca_agua": objeto({"imagen": imagen, "texto": plantilla("o un texto, p. ej. «CONFIDENCIAL»"),
+                              "opacidad": numero("0.01 a 1, o en % (15 = 15 %)", 0.01, 100, 0.15),
+                              "tamano": numero("fracción del ancho de la página (0.05 a 1, o en %)", 0.05, 100, 0.6),
+                              "rotacion": numero("grados, contra las manecillas (45 con texto)", -360, 360, 0),
+                              "color": plantilla("color del texto en hexadecimal, p. ej. «#8A94A6»")}, [],
+                             "centrada en cada página o diapositiva, translúcida (imagen o texto, uno de los dos)"),
+        "colores": objeto({"titulos": plantilla("títulos y subtítulos, p. ej. «#0B4F8A»"), "acento": plantilla("línea bajo el título y detalles"),
+                           "tabla_encabezado": plantilla("fondo del encabezado de las tablas"), "tabla_texto": plantilla("letra del encabezado de las tablas"),
+                           "texto": plantilla("letra del cuerpo")}, [], "colores en hexadecimal"),
+        "fuente": plantilla("fuente del texto, p. ej. «Arial» (el PDF usa Helvetica, Times o Courier según se parezca)"),
+    }, [], "logo, banner, marca de agua, colores y fuente del documento (Word, PDF, PowerPoint, HTML o imagen)")
 
 
 def tipos(h: Any) -> Dict[str, Dict[str, Any]]:
     conf, plantilla, texto, opcion, lista, mapa, objeto = h.conf, h.plantilla, h.texto, h.opcion, h.lista, h.mapa, h.objeto
     SALIDA, ARCHIVOS = h.SALIDA, h.ARCHIVOS
+    MARCA = esquema_marca(h)
     desde_ia = dict(h.DESDE_IA)
     desde_ia["properties"] = {
         **h.DESDE_IA["properties"],
@@ -80,7 +104,7 @@ def tipos(h: Any) -> Dict[str, Dict[str, Any]]:
                                           "title": "Plantilla"},
                             "datos": mapa(plantilla(), "valores para sus variables {variable: plantilla o valor}; lo que no des se toma de las variables del flujo"),
                             "formato": opcion(list(FORMATOS_PLANTILLA_SALIDA), "original (el de la plantilla) o pdf (Word o HTML: conserva texto, títulos y tablas, no el diseño exacto)", "original"),
-                            "desde_ia": desde_ia,
+                            "desde_ia": desde_ia, "marca": MARCA,
                             "nombre": plantilla("nombre del archivo (sin extensión); si no, el de la plantilla"), "salida": SALIDA()}, ["plantilla"]),
             "salidas": ["ok"], "produce": "salida {id, nombre, tipo, tamano, plantilla, formato, faltantes, html?, asunto?}",
             "ejemplo": {"id": "carta", "tipo": "documento_plantilla", "nombre": "Carta de respuesta", "config": {
@@ -96,6 +120,33 @@ def tipos(h: Any) -> Dict[str, Dict[str, Any]]:
                          "Con desde_ia modo llenar la IA escribe solo las variables que el flujo no tiene; modo completo además redacta el contenido en "
                          "{{contenido}} (o al final) con el diseño de la plantilla. {{salida.faltantes}} dice qué quedó vacío. Las variables de "
                          "entorno nunca se leen desde una plantilla.",
-                         "Para un correo HTML: correo_enviar o responder_correo con html «{{correo_html.html}}» y asunto «{{correo_html.asunto}}»."],
+                         "Para un correo HTML: correo_enviar o responder_correo con html «{{correo_html.html}}» y asunto «{{correo_html.asunto}}». La marca pone logo, banner, marca de agua, colores y fuente encima del diseño de la plantilla; un nombre suelto («logo») es un "
+                         "recurso de esa misma plantilla."],
+        },
+        "documento_marca": {
+            "nombre": "Aplicar marca", "categoria": "documentos",
+            "descripcion": "Pone la marca a muchos documentos de una vez: logo en el encabezado (izquierda, centro o derecha, con su tamaño), banner "
+                           "(franja arriba y/o abajo), marca de agua (imagen o texto, con opacidad, tamaño y rotación, centrada en cada página o "
+                           "diapositiva) y colores y fuente. Sirve con PDF, Word, PowerPoint, HTML e imágenes PNG/JPG: los generados en la corrida, "
+                           "los subidos, los adjuntos del correo o un filtro (hasta 100). Cada uno sale como un archivo nuevo con el mismo nombre (o "
+                           "con sufijo); los de otros formatos se saltan con un aviso. Las imágenes: un archivo de la ejecución («{{logo}}»), un id "
+                           "«a-…» del flujo o un recurso de la biblioteca de Documentos («plantilla/logo»).",
+            "config": conf({"archivos": ARCHIVOS("los documentos a marcar: «{{documento}}», «{{partes}}», «archivos», «adjuntos», ids «a-…» o filtros {de, nombre, tipo}"),
+                            "marca": MARCA, "sufijo": plantilla("lo que se agrega al nombre de cada archivo, p. ej. «-marcado» (por defecto, el mismo nombre)"),
+                            "salida": SALIDA()}, ["archivos", "marca"]),
+            "salidas": ["ok"], "produce": "salida: lista de fichas [{id, nombre, tipo, tamano, original}] (los documentos marcados, en orden)",
+            "ejemplo": {"id": "marcar", "tipo": "documento_marca", "nombre": "Logo y marca de agua", "config": {
+                "archivos": [{"de": "archivos", "tipo": "pdf"}], "sufijo": "-marcado", "salida": "marcados",
+                "marca": {"logo": {"imagen": "carta-respuesta/logo", "posicion": "derecha", "ancho_cm": 3},
+                          "marca_agua": {"imagen": "carta-respuesta/logo", "opacidad": 0.12, "tamano": 0.5}}}},
+            "ejemplos": [{"archivos": ["{{certificado}}", "{{anexo}}"], "marca": {"marca_agua": {"texto": "BORRADOR", "opacidad": 15}}},
+                         {"archivos": "adjuntos", "marca": {"banner": {"imagen": "{{entrada.banner}}", "posicion": "ambos"},
+                                                            "colores": {"titulos": "#0B4F8A", "tabla_encabezado": "#0B4F8A"}, "fuente": "Arial"}}],
+            "consejos": ["Para muchos documentos: genéralos antes (documento_generar dentro de para_cada, pdf_dividir…) y pásalos todos en archivos; "
+                         "{{salida}} es la lista de los marcados, lista para correo_enviar, archivo_comprimir o drive_subir.",
+                         "La opacidad va de 0.01 a 1 (o en %: 15 = 15 %); tamano es la fracción del ancho de la página; rotacion en grados (45 es "
+                         "la diagonal clásica de un texto). Una marca de agua de texto usa color (por defecto gris).",
+                         "En un PDF que ya existe la marca se estampa encima de cada página (la marca de agua translúcida); para que el texto "
+                         "no quede debajo del logo, pon la marca al generarlo (config marca de documento_generar)."],
         },
     }

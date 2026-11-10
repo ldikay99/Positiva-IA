@@ -6,7 +6,7 @@ function calling). Igual para todos los proveedores.
 from __future__ import annotations
 
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from proveedores import catalogo
 from proveedores.base import (ErrorDeNegocio, ErrorTransitorio, Parte, Peticion, Resultado, balde, con_reintentos, enmascarar,
@@ -139,12 +139,15 @@ def probar(proveedor: str, modelo: str, credencial: Optional[dict] = None, timeo
 def conversar_con_herramientas(proveedor: str, modelo: str, credencial_valores: Optional[dict], sistema: str, mensajes: List[dict],
                                herramientas: List[dict], ejecutar: Callable[[str, dict], Any], max_vueltas: int = 8, aviso: Aviso = None, *,
                                temperatura: Optional[float] = None, timeout: float = 120.0, flujo: str = "vera",
-                               max_tokens: Optional[int] = None) -> Dict[str, Any]:
+                               max_tokens: Optional[int] = None,
+                               ejecutar_lote: Optional[Callable[[List[Tuple[str, dict]]], List[Any]]] = None) -> Dict[str, Any]:
     """Una conversación con herramientas (function calling), igual para Gemini/Vertex, los estilo OpenAI y Claude.
 
     - mensajes: [{rol: "usuario"|"asistente", texto?, partes?: [texto | {tipo: "imagen"|"pdf", datos, mime}]}]
     - herramientas: [{nombre, descripcion, parametros (JSON Schema)}]
     - ejecutar(nombre, args) -> resultado (lo que sea serializable); si lanza, el modelo recibe {"error": ...}
+    - ejecutar_lote([(nombre, args)]) -> [resultado] (opcional): todas las llamadas de una vuelta de una vez (quien llama
+      decide cuáles corren a la vez); los resultados vuelven en el mismo orden
     - aviso(tipo, **datos): «modelo_inicio», «modelo_fin», «herramienta_inicio», «herramienta_fin», «reintento»
 
     Devuelve {texto, pasos: [{herramienta, args, resultado, ms, error?}], vueltas, tokens_entrada, tokens_salida,
@@ -177,6 +180,21 @@ def conversar_con_herramientas(proveedor: str, modelo: str, credencial_valores: 
         if not r.llamadas:
             break
         resultados = []
+        if ejecutar_lote is not None:
+            th = time.time()
+            for c in r.llamadas:
+                avisar("herramienta_inicio", nombre=c["nombre"], args=c.get("args") or {})
+            salidas = ejecutar_lote([(c["nombre"], c.get("args") or {}) for c in r.llamadas])
+            ms = int((time.time() - th) * 1000)
+            for c, res in zip(r.llamadas, salidas):
+                paso_l: Dict[str, Any] = {"herramienta": c["nombre"], "args": c.get("args") or {}, "resultado": res, "ms": ms}
+                if isinstance(res, dict) and res.get("error"):
+                    paso_l["error"] = str(res["error"])[:500]
+                pasos.append(paso_l)
+                avisar("herramienta_fin", nombre=c["nombre"], ms=ms, error=paso_l.get("error"))
+                resultados.append({"id": c["id"], "nombre": c["nombre"], "resultado": res})
+            turnos = turnos + [{"rol": "herramienta", "resultados": resultados}]
+            continue
         for c in r.llamadas:
             avisar("herramienta_inicio", nombre=c["nombre"], args=c.get("args") or {})
             th = time.time()

@@ -1560,7 +1560,9 @@ AYUDA: Dict[str, Dict[str, Any]] = {
                      "línea en blanco separa párrafos; con plantilla_archivo (un .docx o .pptx del flujo) se llena cada párrafo que tenga {{…}}. "
                      "PowerPoint sale en 16:9, con portada y notas del orador; HTML, como página con estilo.",
                      "Con desde_ia la IA redacta el documento (título, secciones, párrafos, viñetas y tablas) y no inventa datos: dale entradas con lo que sabe.",
-                     "El archivo queda en el flujo y como resultado de la ejecución: adjúntalo con «{{salida}}» (correo, respuesta, Drive, Teams) o pásalo a pdf_unir."],
+                     "El archivo queda en el flujo y como resultado de la ejecución: adjúntalo con «{{salida}}» (correo, respuesta, Drive, Teams) o pásalo a pdf_unir. Con marca {logo, banner, marca_agua, colores, fuente} lleva la imagen de la entidad: logo en el encabezado, franja arriba/abajo, "
+                     "marca de agua translúcida (imagen o texto) y colores de títulos y tablas; las imágenes son «{{logo}}», un id «a-…» o "
+                     "«plantilla/recurso» de Documentos. Para marcar documentos que ya existen (muchos a la vez) usa documento_marca."],
     },
     "pdf_unir": {
         "ejemplos": [{"archivos": ["{{carta.id}}", "{{anexo.id}}"], "nombre": "expediente-{{radicado}}"}, {"archivos": "adjuntos", "nombre": "adjuntos-unidos"}],
@@ -1729,6 +1731,8 @@ CON_REINTENTOS |= _integ.CON_REINTENTOS
 import especificacion_salidas as _salidas  # noqa: E402
 
 TIPOS.update(_salidas.tipos(sys.modules[__name__]))
+# la marca (logo, banner, marca de agua, colores y fuente) también va al generar un documento
+TIPOS["documento_generar"]["config"]["properties"]["marca"] = _salidas.esquema_marca(sys.modules[__name__])
 
 for _t, _a in AYUDA.items():
     TIPOS[_t]["ejemplos"] = _a["ejemplos"]
@@ -1836,6 +1840,8 @@ REGLAS = """Un flujo declarativo es {id, nombre, descripcion, ia, nodos: [{id, t
   ejecución) y documento_plantilla: llena una plantilla de la biblioteca de Documentos (Word, Excel, PowerPoint o correo HTML, con logo y estilos) con
   {{variables}}, filas o párrafos con {{#lista}}…{{item.campo}}, {{imagen:logo}} y {{contenido}}; con desde_ia la IA escribe lo que falta (modo llenar)
   o el documento completo con el diseño de la plantilla (modo completo). Las plantillas se ven y suben en Documentos (/documentos).
+  Marca: documento_generar y documento_plantilla aceptan marca {logo, banner, marca_agua, colores, fuente}; documento_marca la estampa en
+  muchos documentos de una vez (PDF, Word, PowerPoint, HTML, imágenes).
 - Probar un paso: en el editor (o con POST /api/flujos/<id>/probar-paso) se corre SOLO un paso, o el flujo hasta ese paso, con un archivo, un correo
   de su correspondencia, un archivo del flujo o los datos de una ejecución anterior; nunca escribe (todo queda retenido) ni llama a otros flujos, y lo
   que produce se puede fijar como datos de prueba para los pasos siguientes.
