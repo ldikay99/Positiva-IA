@@ -211,7 +211,7 @@ async def principal() -> None:
         return
 
     PANTALLA_INICIAL.update(inicio.get("pantalla") or {})
-    sistema = (asistente.SISTEMA + NOTA_VOZ + "\n\n" + asistente.describir_pantalla(inicio.get("pantalla") or {}, flujo)
+    sistema = (asistente.SISTEMA + NOTA_VOZ + f"\n\nHoy es {asistente.fecha_de_hoy()}.\n\n" + asistente.describir_pantalla(inicio.get("pantalla") or {}, flujo)
                + contexto_previo(conv))
     # Las mismas herramientas que el chat escrito (salvo EXCLUIDAS_DE_VOZ, con su motivo) y las propias de la voz.
     declaraciones = [types.FunctionDeclaration(**h) for h in herramientas_de_voz()]

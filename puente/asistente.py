@@ -134,6 +134,7 @@ Cómo trabajas:
 12. Diagnóstico: ante «¿qué puedes solucionar / mejorar / qué falla en este flujo?» llama a diagnosticar_flujo (revisa sus últimas corridas, los motivos de revisión manual, los errores, los avisos, la validación, el entorno y la programación) y responde con lo que encontró, con cifras (p. ej. «3 de 20 a manual por SIN_DOCUMENTO»), y para cada hallazgo el arreglo concreto que TÚ puedes aplicar con tus herramientas (qué nodo, qué cambio); ofrece aplicarlos y, si la persona dice que sí, hazlo y pruébalo. Nunca respondas con un solo dato suelto sin revisar.
 13. Capacidades: si preguntan qué puedes hacer, responde con esto, concreto y agrupado (por voz, en dos o tres frases con los grupos y un ejemplo):
    - Crear flujos y automatizaciones con nodos (IA, correo, Drive, bases de datos, APIs, documentos Word/Excel/PowerPoint/PDF, aprobaciones, programaciones, webhooks), desde cero o desde una plantilla, y probarlos paso a paso.
+   - Generar documentos aquí mismo en el chat con generar_documento: Word, PDF, PowerPoint, Excel, CSV, HTML o Markdown, o llenando una plantilla de la biblioteca (informes del día, actas, resúmenes de corridas, respuestas al ciudadano, presentaciones). Salen como cápsula para abrir o descargar. Si el pedido es que un FLUJO genere el documento cada vez, eso es un nodo documento_generar, hoja_escribir o documento_plantilla.
    - Editar cualquier flujo, también PQRD, tutelas y sus copias: agregar, quitar, renombrar y reconfigurar pasos, apagar etapas, cambiar cómo se lee cada tipo de archivo, conexiones; versiones y restaurar.
    - Operar la plataforma: clonar, renombrar, comparar flujos, traer pasos de uno a otro, encadenarlos, proponer borrar uno o varios (con tu botón), programarlos, ajustar sus recursos.
    - Correr: correos de la correspondencia, el buzón real en solo lectura, flujos con una entrada o con archivos que adjuntes, reintentar, cancelar la cola.
@@ -200,6 +201,7 @@ HERRAMIENTAS = [
     {"name": "configurar_ia_global", "description": "Cambia la IA global de la plataforma (la que usan los flujos que dicen «usar la global»). Solo si la persona lo pide.", "parameters": {"type": "object", "properties": {"proveedor": {"type": "string"}, "modelo": {"type": "string"}, "credencial": {"type": "string"}, "temperatura": {"type": "number"}}, "required": ["proveedor", "modelo"]}},
     {"name": "probar_paso", "description": "Prueba UN paso de un flujo (o el flujo hasta ese paso con hasta=true) sin correr todo y sin escribir nada afuera: con archivos que la persona adjuntó en el chat (usar_adjuntos_chat=true), una entrada, un correo (caso) o la salida de una ejecución anterior (desde_corrida). Devuelve lo que produce el paso y los archivos generados. Con fijar=true deja ese resultado como datos de prueba del paso.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "nodo": {"type": "string"}, "hasta": {"type": "boolean"}, "usar_adjuntos_chat": {"type": "boolean"}, "adjuntos": {"type": "array", "items": {"type": "string"}}, "entrada": {"type": "object"}, "caso": {"type": "string"}, "desde_corrida": {"type": "string"}, "fijar": {"type": "boolean"}}, "required": ["flujo", "nodo"]}},
     {"name": "archivos_de_corrida", "description": "Los archivos que generó una ejecución (Word, Excel, PDF, imágenes…). Los muestra a la persona como cápsulas en el chat para abrirlos o descargarlos.", "parameters": {"type": "object", "properties": {"corrida": {"type": "string"}}, "required": ["corrida"]}},
+    {"name": "generar_documento", "description": "Crea un documento AQUÍ en el chat y se lo entrega a la persona como cápsula para abrir o descargar: Word (docx), PDF, PowerPoint (pptx), Excel (xlsx), CSV, HTML o Markdown (md). Úsala cuando pidan «hazme un Word/PDF/PowerPoint/Excel con…», un informe, un acta, un resumen, una respuesta al ciudadano o una presentación, sin montar un flujo. Para docx, pdf, pptx, html y md escribe tú el contenido completo en «contenido» con «# » título, «## » sección (en pptx el «# » es la portada y cada «## » es una diapositiva: si piden N diapositivas, escribe exactamente N «## », con 3 a 5 viñetas cortas cada una), «- » viñetas y tablas con «|». Para xlsx o csv pasa «hojas»: [{nombre, columnas, filas}] (o una tabla con «|» en contenido). Con «plantilla» (id de plantillas_documento) y «datos» llena esa plantilla de la biblioteca. Si el documento usa datos de la plataforma (tablero, historial, corridas, correos), consúltalos ANTES con sus herramientas y pon las cifras reales, nunca inventadas.", "parameters": {"type": "object", "properties": {"formato": {"type": "string", "enum": ["docx", "pdf", "pptx", "xlsx", "csv", "html", "md"]}, "titulo": {"type": "string"}, "contenido": {"type": "string"}, "hojas": {"type": "array", "items": {"type": "object", "properties": {"nombre": {"type": "string"}, "columnas": {"type": "array", "items": {"type": "string"}}, "filas": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}}}}}, "plantilla": {"type": "string"}, "datos": {"type": "object"}, "nombre_archivo": {"type": "string"}}, "required": ["titulo"]}},
     {"name": "plantillas", "description": "La galería de plantillas de flujos listas para usar (extraer datos de documentos, clasificar correos, responder con IA, revisar tablas, informes programados, webhooks, aprobaciones…), con lo que necesita cada una. Con id, el detalle de una.", "parameters": {"type": "object", "properties": {"id": {"type": "string"}}}},
     {"name": "instalar_plantilla", "description": "Instala una plantilla como flujo propio (queda editable) y lo abre en pantalla.", "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "nombre": {"type": "string"}, "id_nuevo": {"type": "string"}}, "required": ["id"]}},
     {"name": "historial", "description": "El historial de ejecuciones con filtros: flujo, estado (en_curso | bien | revisar | fallo), desenlace, desde/hasta (AAAA-MM-DD) y texto. Con corrida, el detalle legible de una (qué entró, qué hizo cada paso, qué salió y por qué terminó así).", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "estado": {"type": "string"}, "desenlace": {"type": "string"}, "desde": {"type": "string"}, "hasta": {"type": "string"}, "texto": {"type": "string"}, "n": {"type": "integer"}, "corrida": {"type": "string"}}}},
@@ -803,6 +805,8 @@ def _mover_pantalla(nombre: str, a: Dict[str, Any]) -> Any:
             r.pop("todas", None)
             r["eventos"] = len(r.get("eventos") or [])
         return r
+    if nombre == "generar_documento":
+        return _generar_documento(a)
     if nombre == "archivos_de_corrida":
         r = api("GET", f"/api/corridas/{a['corrida']}/archivos")
         lista = r if isinstance(r, list) else (r or {}).get("archivos") if isinstance(r, dict) else None
@@ -1180,6 +1184,75 @@ def _diagnosticar(flujo: str, n: int) -> Dict[str, Any]:
 
 CONVERSACION: Dict[str, Any] = {"id": None}
 
+# ------------------------------------------------------------------ documentos en el chat
+MIME_DOC = {"docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "pdf": "application/pdf",
+            "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "csv": "text/csv",
+            "html": "text/html", "md": "text/markdown"}
+
+
+def _nombre_de_archivo(base: str, ext: str) -> str:
+    limpio = re.sub(r'[\x00-\x1f\x7f<>:"|?*/\\]', "", base or "").strip().rstrip(".")[:100] or "documento"
+    return limpio if limpio.lower().endswith(f".{ext}") else f"{limpio}.{ext}"
+
+
+def _bytes_crudos(metodo: str, ruta: str, cuerpo: Any) -> bytes:
+    req = urllib.request.Request(API + ruta, data=json.dumps(cuerpo).encode(), method=metodo, headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=120) as r:
+            return r.read()
+    except urllib.error.HTTPError as e:
+        try:
+            raise ValueError(json.loads(e.read() or b"{}").get("error") or f"HTTP {e.code}")
+        except json.JSONDecodeError:
+            raise ValueError(f"HTTP {e.code}")
+
+
+def _generar_documento(a: Dict[str, Any]) -> Dict[str, Any]:
+    """Arma el documento con las mismas piezas que los nodos documento_generar y hoja_escribir, lo guarda
+    como archivo de la conversación y lo muestra como cápsula."""
+    import base64
+    import documentos as m_doc
+    import nodos_salidas as m_ns
+
+    if not CONVERSACION["id"]:
+        return {"error": "no hay conversación donde dejar el documento"}
+    titulo = str(a.get("titulo") or "Documento").strip()[:160]
+    contenido = str(a.get("contenido") or "")
+    fmt = str(a.get("formato") or "docx").lower().lstrip(".")
+    try:
+        if a.get("plantilla"):
+            meta = api("GET", f"/api/documentos/{a['plantilla']}")
+            if not isinstance(meta, dict) or meta.get("error"):
+                return {"error": f"no existe la plantilla de documentos «{a['plantilla']}»; míralas con plantillas_documento"}
+            fmt = str(meta.get("formato") or "docx")
+            datos = _bytes_crudos("POST", f"/api/documentos/{a['plantilla']}/probar", {"datos": a.get("datos") or {}})
+        elif fmt not in MIME_DOC:
+            return {"error": f"formato «{fmt}» (válidos: {', '.join(MIME_DOC)})"}
+        elif fmt in ("xlsx", "csv"):
+            hojas = m_doc.hojas_limpias(a.get("hojas") or [])
+            if not hojas:
+                tablas = [v for t, v in m_doc.bloques_de_texto(contenido) if t == "tabla" and v]
+                hojas = [{"nombre": titulo[:31] if i == 0 else f"Tabla {i + 1}", "columnas": [str(c) for c in t[0]], "filas": t[1:]} for i, t in enumerate(tablas)]
+                hojas = m_doc.hojas_limpias(hojas)
+            if not hojas:
+                return {"error": "para Excel o CSV pasa hojas [{nombre, columnas, filas}] o una tabla con «|» en contenido"}
+            datos = m_doc.xlsx_de_hojas(hojas) if fmt == "xlsx" else m_doc.csv_de_hoja(hojas[0])
+        elif not contenido.strip():
+            return {"error": "falta el contenido: escribe el documento completo en «contenido» (# título, ## secciones, - viñetas, tablas con |)"}
+        elif fmt == "md":
+            datos = contenido.encode("utf-8")
+        else:
+            datos = m_ns.bytes_de_bloques(fmt, m_doc.bloques_de_texto(contenido), titulo)
+    except Exception as e:  # noqa: BLE001
+        return {"error": f"no se pudo armar el documento: {e}"}
+    nombre = _nombre_de_archivo(str(a.get("nombre_archivo") or titulo), fmt)
+    r = api("POST", f"/api/chats/{CONVERSACION['id']}/adjuntos", {"nombre": nombre, "tipo": MIME_DOC.get(fmt, "application/octet-stream"), "datos": base64.b64encode(datos).decode()})
+    if not isinstance(r, dict) or r.get("error") or not r.get("id"):
+        return {"error": f"no se pudo guardar el documento: {(r or {}).get('error') if isinstance(r, dict) else r}"}
+    emitir("archivos", archivos=[{"corrida": f"chat:{CONVERSACION['id']}", "id": r["id"], "nombre": r.get("nombre") or nombre, "tipo": r.get("tipo") or MIME_DOC.get(fmt), "tamano": r.get("tamano") or len(datos)}])
+    return {"ok": True, "archivo": nombre, "formato": fmt, "tamano": len(datos), "nota": "Ya está en el chat como cápsula para abrirlo o descargarlo; no pegues su contenido en la respuesta."}
+
 # ------------------------------------------------------------------ herramientas por grupos
 # Para no mandarle al modelo todas las herramientas en cada mensaje: un núcleo siempre,
 # y los grupos que pide la tarea (por la pantalla y las palabras del pedido) o que Vera
@@ -1187,7 +1260,7 @@ CONVERSACION: Dict[str, Any] = {"id": None}
 GRUPOS: Dict[str, List[str]] = {
     "nucleo": ["cargar_herramientas", "ver_pantalla", "listar_flujos", "leer_flujo", "navegar", "abrir_vista", "tipos_de_nodo", "ayuda_nodo", "reglas_de_flujos",
                "enfocar_flujo", "controlar_editor", "ajustar_lienzo", "centrar_nodo", "historial", "ver_corrida", "ultimas_corridas", "renombrar_chat",
-               "diagnosticar_flujo"],
+               "diagnosticar_flujo", "generar_documento"],
     "construir": ["validar_flujo", "guardar_flujo", "editar_nodo", "agregar_nodo", "eliminar_nodo", "editar_aristas", "proponer_borrado", "borrar_flujo",
                   "ver_estructura", "restablecer_estructura", "comparar_flujos", "traer_nodos", "encadenar_flujos",
                   "renombrar_flujo", "clonar_flujo", "versiones_flujo", "restaurar_version", "plantillas", "instalar_plantilla",
@@ -1512,6 +1585,29 @@ def resumen_al_agotarse(registro: List[tuple], propuestas: List[Dict[str, Any]],
     return "\n".join(lineas)
 
 
+_NOMBRES_HERRAMIENTAS = {h["name"] for h in HERRAMIENTAS}
+
+
+def _imita_herramienta(texto: str) -> bool:
+    """¿La respuesta trae una llamada escrita («generar_documento({…})» o el registro «[Lo que hice en ese turno:») en vez de hecha?"""
+    if "[Lo que hice en ese turno" in (texto or ""):
+        return True
+    return any(m.group(1) in _NOMBRES_HERRAMIENTAS for m in re.finditer(r"\b([a-z_]{4,40})\(\s*\{", texto or ""))
+
+
+def fecha_de_hoy() -> str:
+    """La fecha de hoy en Colombia, en palabras, para que los documentos y respuestas no la inventen."""
+    import datetime
+    try:
+        from zoneinfo import ZoneInfo
+        ahora = datetime.datetime.now(ZoneInfo("America/Bogota"))
+    except Exception:  # noqa: BLE001
+        ahora = datetime.datetime.utcnow() - datetime.timedelta(hours=5)
+    dias = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+    meses = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+    return f"{dias[ahora.weekday()]} {ahora.day} de {meses[ahora.month - 1]} de {ahora.year}, {ahora:%H:%M} (hora de Colombia)"
+
+
 def conversar(entrada: Dict[str, Any], aviso: Any = None) -> Dict[str, Any]:
     """El chat escrito: responde a la conversación con herramientas. `aviso(tipo, **datos)`
     recibe cada paso (por defecto, la salida estándar). Devuelve texto, pasos, cambios y propuestas."""
@@ -1537,7 +1633,7 @@ def conversar(entrada: Dict[str, Any], aviso: Any = None) -> Dict[str, Any]:
     def _herramientas() -> Any:
         return types.Tool(function_declarations=[types.FunctionDeclaration(**h) for h in herramientas_de(activos)])
 
-    config = types.GenerateContentConfig(system_instruction=SISTEMA + "\n\n" + describir_pantalla(entrada.get("pantalla") or {}, flujo)
+    config = types.GenerateContentConfig(system_instruction=SISTEMA + f"\n\nHoy es {fecha_de_hoy()}. Usa esa fecha en documentos, actas e informes; nunca otra.\n\n" + describir_pantalla(entrada.get("pantalla") or {}, flujo)
                                          + f"\n\nHerramientas cargadas ahora: {', '.join(activos)}. Si te falta alguna, usa cargar_herramientas.",
                                          tools=[_herramientas()], temperature=0.2,
                                          automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True))
@@ -1555,7 +1651,7 @@ def conversar(entrada: Dict[str, Any], aviso: Any = None) -> Dict[str, Any]:
             contenidos.append(types.Content(role="user", parts=partes))
         else:
             hechos = "\n".join(f"- {p.get('nombre')}({json.dumps(p.get('argumentos'), ensure_ascii=False)[:200]}) → {(p.get('resultado') or '')[:300]}" for p in m.get("pasos") or [])
-            texto = (m.get("texto") or "") + (f"\n\n[Lo que hice en ese turno:\n{hechos}]" if hechos else "")
+            texto = (m.get("texto") or "") + (f"\n\n[Lo que hice en ese turno (registro interno, no lo escribas; para repetir algo llama la herramienta de verdad):\n{hechos}]" if hechos else "")
             contenidos.append(types.Content(role="model", parts=[types.Part(text=texto or "(sin texto)")]))
     cambiados: set = set()
     propuestas: List[Dict[str, Any]] = []
@@ -1575,6 +1671,11 @@ def conversar(entrada: Dict[str, Any], aviso: Any = None) -> Dict[str, Any]:
         partes = list(cand.parts or []) if cand else []
         llamadas = [p.function_call for p in partes if getattr(p, "function_call", None)]
         texto = "".join(p.text for p in partes if getattr(p, "text", None))
+        if not llamadas and _imita_herramienta(texto) and vuelta < MAX_VUELTAS - 1:
+            # escribió la llamada como texto (imitando el registro del historial) en vez de hacerla: se le pide hacerla de verdad
+            contenidos.append(types.Content(role="model", parts=[types.Part(text=texto)]))
+            contenidos.append(types.Content(role="user", parts=[types.Part(text="(Sistema) Escribiste la herramienta como texto y no se ejecutó nada. Llámala de verdad ahora, sin escribirla.")]))
+            continue
         if not llamadas:
             texto = texto or "(sin respuesta)"
             avisar("texto", texto=texto)
@@ -1616,7 +1717,7 @@ def _conversar_con_proveedor(entrada: Dict[str, Any], ia: Dict[str, Any], avisar
     if entrada.get("conversacion"):
         CONVERSACION["id"] = entrada.get("conversacion")
     PANTALLA["flujo"] = flujo
-    sistema = SISTEMA + "\n\n" + describir_pantalla(entrada.get("pantalla") or {}, flujo)
+    sistema = SISTEMA + f"\n\nHoy es {fecha_de_hoy()}. Usa esa fecha en documentos, actas e informes; nunca otra.\n\n" + describir_pantalla(entrada.get("pantalla") or {}, flujo)
     mensajes: List[Dict[str, Any]] = []
     todos = compactar(entrada.get("mensajes") or [])
     recientes = set(sorted(i for i, m in enumerate(todos) if m.get("rol") == "usuario")[-3:])

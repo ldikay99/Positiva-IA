@@ -113,9 +113,11 @@ def bytes_de_bloques(formato: str, bloques: List[Tuple[str, Any]], titulo: str) 
     if formato == "pdf":
         return m_doc.pdf_de_bloques(bloques, titulo)
     if formato == "html":
-        return m_sal.html_de_bloques(bloques, titulo)
+        return m_sal.html_de_bloques(m_doc.bloques_sin_marcas(bloques), titulo)
     if formato == "pptx":
-        return m_sal.pptx_de_presentacion(m_sal.presentacion_de_bloques(bloques, titulo))
+        bloques = m_doc.bloques_sin_marcas(bloques)
+        # si el texto ya abre con «# título», ese es la portada (no una portada más con el título del paso)
+        return m_sal.pptx_de_presentacion(m_sal.presentacion_de_bloques(bloques, "" if bloques and bloques[0][0] == "titulo" else titulo))
     return m_doc.docx_de_bloques(bloques, titulo)
 
 

@@ -204,17 +204,21 @@ def bloques_de_texto(texto: str) -> List[Tuple[str, Any]]:
         if tabla:
             r.append(("tabla", [list(f) for f in tabla]))
             tabla.clear()
-        if not s:
+        if not s or re.fullmatch(r"(-{3,}|\*{3,}|_{3,})", s):  # renglón vacío o separador «---» de Markdown
             cerrar()
-        elif s.startswith("## "):
+        elif re.match(r"^#{2,4}\s", s):
             cerrar()
-            r.append(("subtitulo", s[3:].strip()))
+            r.append(("subtitulo", re.sub(r"^#{2,4}\s+", "", s)))
         elif s.startswith("# "):
             cerrar()
             r.append(("titulo", s[2:].strip()))
         elif re.match(r"^[-*•]\s+", s):
             cerrar()
             r.append(("vineta", re.sub(r"^[-*•]\s+", "", s)))
+        elif re.match(r"^(\d{1,3}[.)]\s|\*\*[^*]+\*\*|__[^_]+__)", s):
+            # un punto numerado o un renglón que abre con «**Rótulo:**» (Fecha:, Asistentes:…) va en su propio párrafo
+            cerrar()
+            parrafo.append(s)
         else:
             parrafo.append(s)
     cerrar()
@@ -351,9 +355,43 @@ def csv_de_hoja(h: Dict[str, Any]) -> bytes:
     return ("﻿" + s.getvalue()).encode("utf-8")  # con BOM: Excel lo abre con tildes
 
 
+MARCA_NEGRITA = re.compile(r"\*\*(.+?)\*\*|__(.+?)__")
+
+
+def sin_marcas(texto: str) -> str:
+    """Quita las marcas de Markdown en línea (**negrita**, __negrita__, `código`) que la IA deja en los textos."""
+    return re.sub(r"`([^`]+)`", r"\1", MARCA_NEGRITA.sub(lambda m: m.group(1) or m.group(2), str(texto)))
+
+
+def bloques_sin_marcas(bloques: List[Tuple[str, Any]]) -> List[Tuple[str, Any]]:
+    r: List[Tuple[str, Any]] = []
+    for tipo, v in bloques:
+        if tipo == "tabla":
+            r.append((tipo, [[sin_marcas(c) if isinstance(c, str) else c for c in f] for f in v]))
+        elif tipo == "imagen":
+            r.append((tipo, v))
+        else:
+            r.append((tipo, sin_marcas(v)))
+    return r
+
+
+def _con_negritas(parrafo: Any, texto: str) -> Any:
+    """Un párrafo de Word con las **negritas** de Markdown como negritas de verdad."""
+    texto = re.sub(r"`([^`]+)`", r"\1", str(texto))
+    pos = 0
+    for m in MARCA_NEGRITA.finditer(texto):
+        if m.start() > pos:
+            parrafo.add_run(texto[pos:m.start()])
+        parrafo.add_run(m.group(1) or m.group(2)).bold = True
+        pos = m.end()
+    if pos < len(texto):
+        parrafo.add_run(texto[pos:])
+    return parrafo
+
+
 def pdf_de_bloques(bloques: List[Tuple[str, Any]], titulo: str = "") -> bytes:
     p = _PDF(titulo)
-    for tipo, v in bloques:
+    for tipo, v in bloques_sin_marcas(bloques):
         if tipo == "titulo":
             p.espacio(4)
             p.parrafo(str(v), 16, True)
@@ -385,11 +423,11 @@ def docx_de_bloques(bloques: List[Tuple[str, Any]], titulo: str = "") -> bytes:
         d.core_properties.title = titulo
     for tipo, v in bloques:
         if tipo == "titulo":
-            d.add_heading(str(v), level=1)
+            d.add_heading(sin_marcas(v), level=1)
         elif tipo == "subtitulo":
-            d.add_heading(str(v), level=2)
+            d.add_heading(sin_marcas(v), level=2)
         elif tipo == "vineta":
-            d.add_paragraph(str(v), style="List Bullet")
+            _con_negritas(d.add_paragraph(style="List Bullet"), str(v))
         elif tipo == "tabla":
             cols = max(len(f) for f in v) if v else 0
             if cols:
@@ -398,7 +436,7 @@ def docx_de_bloques(bloques: List[Tuple[str, Any]], titulo: str = "") -> bytes:
                 for i, fila in enumerate(v):
                     celdas = t.add_row().cells
                     for k in range(cols):
-                        celdas[k].text = str(fila[k]) if k < len(fila) and fila[k] is not None else ""
+                        celdas[k].text = sin_marcas(fila[k]) if k < len(fila) and fila[k] is not None else ""
                         if i == 0:
                             for run in celdas[k].paragraphs[0].runs:
                                 run.bold = True
@@ -406,7 +444,7 @@ def docx_de_bloques(bloques: List[Tuple[str, Any]], titulo: str = "") -> bytes:
             jpeg, _, _ = v
             d.add_picture(io.BytesIO(jpeg), width=docx.shared.Cm(15))
         else:
-            d.add_paragraph(str(v))
+            _con_negritas(d.add_paragraph(), str(v))
     s = io.BytesIO()
     d.save(s)
     return s.getvalue()
@@ -711,7 +749,10 @@ def _bloques_a_texto(bloques: List[Tuple[str, Any]], md: bool) -> str:
     partes = []
     for tipo, v in bloques:
         if tipo == "tabla":
-            partes.append("\n".join(("| " + " | ".join(str(c) for c in f) + " |") if md else "\t".join(str(c) for c in f) for f in v))
+            filas = [("| " + " | ".join(str(c).replace("|", "/") for c in f) + " |") if md else "\t".join(str(c) for c in f) for f in v]
+            if md and filas:  # la fila «|---|» hace que se vea como tabla en Markdown
+                filas.insert(1, "|" + "---|" * max(len(f) for f in v))
+            partes.append("\n".join(filas))
         elif tipo == "titulo":
             partes.append(f"# {v}" if md else str(v).upper())
         elif tipo == "subtitulo":

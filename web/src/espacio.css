@@ -99,3 +99,22 @@
 @media (min-width: 1680px) { .adj-cuerpo { --docs: 300px; --lado: 420px; } }
 .miniatura.m-cache .miniatura-metodo { color: var(--texto-3); }
 .nodo-hoja.m-cache { box-shadow: 0 0 0 1.5px var(--linea-2); }
+
+/* chat: la cápsula de un archivo generado (antes «.salida», que chocaba con la barra de salida de la bandeja) */
+.capsula.generado { max-width: min(280px, 100%); }
+.capsula.generado .capsula-cuerpo { flex: 1 1 auto; }
+
+/* visor del chat: un Word/PowerPoint/Excel se lee como hoja, con títulos y tablas */
+.visor-documento { align-self: start; justify-self: stretch; margin: 12px; padding: 22px 24px; border-radius: 12px; background: var(--pliego); box-shadow: var(--sombra-1); font-size: 13px; line-height: 1.55; color: var(--texto); min-width: 0; overflow-wrap: break-word; }
+.visor-documento .md-tabla { overflow-x: auto; max-width: 100%; margin: 10px 0; }
+.visor-documento.chat-texto { padding: 22px 24px; overflow-wrap: break-word; word-break: normal; }
+.visor-documento > * + * { margin-top: 8px; }
+.visor-documento .md-titulo.n1 { font-size: 19px; line-height: 1.25; margin-bottom: 4px; }
+.visor-documento .md-titulo.n2 { font-size: 15.5px; margin-top: 18px; }
+.visor-documento .md-titulo.n3, .visor-documento .md-titulo.n4 { font-size: 14px; margin-top: 14px; }
+.visor-documento table { width: 100%; font-size: 12.5px; }
+.visor-documento th { background: var(--superficie-2); }
+@media (max-width: 520px) { .visor-documento.chat-texto { margin: 8px; padding: 16px 14px; } }
+
+/* chat: el cuadro de escribir crece con el texto (la altura la pone Chat.tsx) hasta este tope */
+.chat-fila textarea { max-height: min(260px, 42vh); min-height: 40px; box-sizing: border-box; overflow-wrap: break-word; }

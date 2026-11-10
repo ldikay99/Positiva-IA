@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import { guardarLocal, leerLocal, pedir, usar } from "../estado.ts";
@@ -15,6 +15,7 @@ type Mensaje = { rol: "usuario" | "asistente"; texto: string; t: number; adjunto
 
 /** Dónde vive un archivo que generó un flujo: en su ejecución, o en los archivos del flujo si salió de una prueba. */
 function urlDeSalida(x: ArchivoSalida): string {
+  if (x.corrida.startsWith("chat:")) return `/api/chats/${encodeURIComponent(x.corrida.slice(5))}/adjuntos/${encodeURIComponent(x.id)}`;
   return x.corrida.startsWith("prueba:") ? `/api/flujos/${encodeURIComponent(x.corrida.slice(7))}/archivos/${encodeURIComponent(x.id)}` : `/api/corridas/${encodeURIComponent(x.corrida)}/archivos/${encodeURIComponent(x.id)}`;
 }
 type Conversacion = { id: string; titulo: string; flujo: string; creada: number; actualizada: number; mensajes: Mensaje[] };
@@ -107,6 +108,8 @@ function Visor({ chat, a, cerrar, url: urlDada }: { chat: string; a: Adjunto; ce
   const [texto, setTexto] = useState<string | null>(null);
   const html = a.tipo.startsWith("text/html") || /\.html?$/i.test(a.nombre);  // se ve como página, aislada (sin scripts)
   const comoTexto = !a.tipo.startsWith("image/") && !a.tipo.startsWith("video/") && !a.tipo.startsWith("audio/") && a.tipo !== "application/pdf" && !html;
+  // Word, PowerPoint, Excel y Markdown llegan como Markdown: se ven con títulos, viñetas y tablas, no como código
+  const conFormato = /\.(docx?|pptx?|xlsx?|md|odt)$/i.test(a.nombre);
   useEffect(() => {
     if (!comoTexto) return;
     void pedir<{ texto: string }>(`${url}/texto`).then((r) => setTexto(r.texto)).catch((e: Error) => setTexto(`No se pudo leer: ${e.message}`));
@@ -126,7 +129,9 @@ function Visor({ chat, a, cerrar, url: urlDada }: { chat: string; a: Adjunto; ce
           {html && <iframe src={url} title={a.nombre} sandbox="" style={{ background: "#fff" }} />}
           {a.tipo.startsWith("video/") && <video src={url} controls />}
           {a.tipo.startsWith("audio/") && <audio src={url} controls />}
-          {comoTexto && (texto === null ? <div className="vacio"><span className="girando" /> Leyendo el documento…</div> : <pre>{texto || "(el documento no tiene texto)"}</pre>)}
+          {comoTexto && (texto === null ? <div className="vacio"><span className="girando" /> Leyendo el documento…</div>
+            : conFormato && texto ? <div className="visor-documento chat-texto"><Markdown texto={texto} /></div>
+            : <pre>{texto || "(el documento no tiene texto)"}</pre>)}
         </div>
       </motion.div>
     </motion.div>
@@ -317,6 +322,15 @@ export function Chat() {
   const [tareas, setTareas] = useState<{ n: number; nombre: string; desde: number; lista?: boolean }[]>([]);
   const caja = useRef<HTMLDivElement>(null);
   const entrada = useRef<HTMLTextAreaElement>(null);
+  // El cuadro crece con lo escrito (también con renglones largos que se parten), hasta su tope en CSS; de ahí en adelante tiene scroll.
+  useLayoutEffect(() => {
+    const el = entrada.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const tope = parseFloat(getComputedStyle(el).maxHeight) || 240;
+    el.style.height = `${Math.min(el.scrollHeight + 2, tope)}px`;
+    el.style.overflowY = el.scrollHeight + 2 > tope ? "auto" : "hidden";
+  });
   const archivo = useRef<HTMLInputElement>(null);
   const cancelar = useRef<AbortController | null>(null);
   const actualRef = useRef<Conversacion | null>(null);
@@ -668,7 +682,7 @@ export function Chat() {
                         {!!m.archivos?.length && (
                           <div className="chat-adjuntos chat-salidas" aria-label="Archivos generados">
                             {m.archivos.map((x) => (
-                              <span key={`${x.corrida}-${x.id}`} className="capsula salida">
+                              <span key={`${x.corrida}-${x.id}`} className="capsula generado">
                                 <button type="button" className="capsula-cuerpo" onClick={() => abrirSalida(x)} title={`Abrir ${x.nombre}`}>
                                   {x.tipo.startsWith("image/") ? <img src={urlDeSalida(x)} alt="" /> : <span className="capsula-icono"><Icono n={iconoDe(x.tipo, x.nombre)} tam={14} /></span>}
                                   <span className="capsula-texto"><b>{x.nombre}</b><small>{x.tamano ? peso(x.tamano) : "generado"}</small></span>
@@ -765,7 +779,7 @@ export function Chat() {
                       <textarea
                         ref={entrada}
                         value={texto}
-                        rows={Math.min(6, Math.max(1, texto.split("\n").length))}
+                        rows={1}
                         placeholder={enLlamada ? `Escríbele a ${NOMBRE} sin colgar…` : "Escribe lo que necesitas…"}
                         onChange={(e) => setTexto(e.target.value)}
                         onPaste={(e) => {

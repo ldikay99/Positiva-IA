@@ -27,6 +27,17 @@ def texto(ruta: str, nombre: str) -> str:
         import salidas  # PowerPoint diapositiva por diapositiva y la lista de un ZIP (el motor no los lee)
 
         return salidas.texto_pptx(datos) if n.endswith(".pptx") else "Archivos en el ZIP:\n" + salidas.texto_zip(datos)
+    if n.endswith(".docx") and datos[:4] == b"PK\x03\x04":
+        # el Word en su orden (las tablas donde van, no todas al final como las deja el conversor del motor)
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        import documentos
+
+        try:
+            md = documentos._bloques_a_texto(documentos.bloques_docx(datos), True)
+            if md.strip():
+                return md
+        except Exception:  # noqa: BLE001 - si no se puede, que lo lea el motor
+            pass
     if nombre.lower().endswith((".txt", ".csv", ".json", ".md", ".xml", ".html", ".htm", ".log", ".yaml", ".yml", ".tsv")):
         for codificacion in ("utf-8", "latin-1"):
             try:
