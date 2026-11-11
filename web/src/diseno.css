@@ -108,6 +108,8 @@ body { background: var(--papel); color: var(--texto); }
 :focus-visible { outline: 2px solid var(--azul); outline-offset: 2px; }
 
 h1, h2 { font-family: var(--titulos); font-optical-sizing: auto; }
+/* Bricolage Grotesque en su ancho 88: conserva el carácter y gana un octavo de renglón en cada título. */
+h1, h2, .nodo-titulo, .fase-cabeza, .flujo-nombre b, .in-flujo-texto b, .resumen-cifras b, .tab-anillo b, .tab-cifras dd, .extremo-titulo, .sobre-avatar .cara, .sello, .riel-marca b { font-stretch: 88%; }
 h1 { font-size: var(--t-2xl); font-weight: 720; letter-spacing: -0.02em; }
 h2 { font-size: var(--t-xl); font-weight: 700; letter-spacing: -0.015em; }
 /* Las etiquetas de sección no van en mayúsculas sostenidas: se leen como texto. */

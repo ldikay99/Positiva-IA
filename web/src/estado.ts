@@ -248,6 +248,12 @@ export const usar = create<Estado>((set, get) => ({
       pedir<Evento[]>(q("/api/eventos/recientes", flujo)),
     ]);
     const { modelos, ...configuracion } = conf;
+    // Si mientras tanto la URL pidió otro flujo (cambiarFlujo), lo de este ya no va: pisaba el lienzo con los pasos del flujo anterior.
+    if (get().flujo !== flujo) {
+      set({ configuracion, modelos });
+      void get().cargarPerfiles();
+      return;
+    }
     const corridas: Record<string, Corrida> = {};
     for (const c of lista) corridas[c.id] = { ...c, eventos: [] };
     for (const e of recientes) if (e.corrida && corridas[e.corrida]) corridas[e.corrida]!.eventos.push(e);
@@ -514,7 +520,7 @@ function recibir(e: Evento): void {
     if (e.tipo === "flujo_guardado") window.dispatchEvent(new CustomEvent("positiva:flujo-guardado", { detail: { flujo: e.flujo, version: e.version, entorno: e.entorno } }));
     if (e.flujo === s0.flujo) {
       if (e.tipo === "flujo_borrado") void s0.cambiarFlujo("pqrd");
-      else void pedir<Catalogo>(q("/api/catalogo", s0.flujo)).then((catalogo) => usar.setState({ catalogo }));
+      else void pedir<Catalogo>(q("/api/catalogo", s0.flujo)).then((catalogo) => { if (usar.getState().flujo === s0.flujo) usar.setState({ catalogo }); });
     }
     return;
   }
