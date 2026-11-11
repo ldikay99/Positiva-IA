@@ -21,6 +21,11 @@ from concurrent.futures import ThreadPoolExecutor
 import urllib.request
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
+# Cuando corre como proceso propio (el chat escrito) este módulo es __main__: vera_herramientas y vera_versiones
+# importan «asistente» y tienen que recibir ESTE mismo módulo (con la conversación y la pantalla), no una copia nueva.
+if __name__ == "__main__":
+    sys.modules.setdefault("asistente", sys.modules[__name__])
+
 API = os.environ.get("API_INTERNA", f"http://127.0.0.1:{os.environ.get('PUERTO', '8080')}")
 PROYECTO = os.environ.get("GCP_PROJECT", "positiva-sgda-prd-416417")
 # Un pedido de varias ediciones encadenadas (ver, ayuda de nodos, agregar, corregir, volver a ver) usa ~20 vueltas.
@@ -181,6 +186,8 @@ Cómo trabajas:
 14. Renombra esta conversación con renombrar_chat cuando el tema quede claro o la persona lo pida.
 15. Respuestas cortas (una a cinco líneas) salvo que pidan detalle; usa markdown (listas, tablas, **negritas**, `ids`) cuando ayude a leer. Si listas muchas cosas, usa una tabla corta.
 16. Si necesitas varias herramientas que no dependen una de otra (leer dos flujos, revisar corridas y tablero, generar varios documentos), pídelas juntas en la misma vuelta: corren a la vez. Lo que mueve la pantalla o cambia un flujo corre de a una, en el orden en que lo pidas.
+17. Tareas largas (correr y esperar un flujo, el buzón, probar, diagnosticar, documentos pesados, las corridas que lanzas): corren como tarea. Si una herramienta devuelve situacion «en_curso», di que está en curso y qué es, sin resultado ni «ya terminó»; la persona puede seguir hablando contigo y el resultado te llega después como «[Resultado de la tarea N]»: ahí lo reportas, corto y con sus cifras. Si preguntan cómo va algo, estado_tareas. Lo que ya está en curso no se vuelve a lanzar.
+18. Cada resultado trae «situacion»: confirmado (se hizo, puedes decirlo), en_curso (sigue corriendo), propuesto (solo quedó un botón), no_confirmado o fallo (no se hizo: dilo así y por qué). Tu respuesta se revisa contra eso antes de llegar a la persona: «guardé», «corrí», «abrí», «listo», «ya quedó» o «se radicó» sin una herramienta confirmada se te devuelven para corregir.
 
 {INDICE_NODOS}"""
 
@@ -309,10 +316,25 @@ def _resumen_corrida(c: dict) -> dict:
                "vision": {"imagenes": len(vision), "formatos": sorted({str(e.get("formato") or "image/jpeg") for e in vision}),
                           "tokens_entrada": sum(int(e.get("tokens_entrada") or 0) for e in vision),
                           "tokens_salida": sum(int(e.get("tokens_salida") or 0) for e in vision), "modelo": next((e.get("modelo") for e in vision if e.get("modelo")), None)}}
+    desenlace = r.get("accion")
+    # En un flujo declarativo, «completar» se guarda como «radicado» y en pantalla se ve «Completado»: no es una radicación.
+    declarativo = desenlace == "radicado" and _tipo_de_flujo(c.get("flujo")) == "declarativo"
     return {"id": c.get("id"), "flujo": c.get("flujo"), "caso": c.get("caso"), "estado": c.get("estado"),
-            "desenlace": r.get("accion"), "motivo": r.get("motivo"), "campos": hall, "sin_resolver": r.get("sin_resolver"),
+            "desenlace": "completado" if declarativo else desenlace, "motivo": r.get("motivo"), "campos": hall, "sin_resolver": r.get("sin_resolver"),
             "avisos": (r.get("avisos") or [])[:12], "pasos": pasos, "segundos": r.get("segundos"), "consumo": consumo,
-            **({"modo_prueba": "radicado = quedaría radicado: la compuerta está apagada y nada se envió al SGDEA"} if r.get("accion") == "radicado" else {})}
+            **({"modo_prueba": "radicado = quedaría radicado: la compuerta está apagada y nada se envió al SGDEA"} if desenlace == "radicado" and not declarativo else {})}
+
+
+_TIPOS_DE_FLUJO: Dict[str, Optional[str]] = {}
+
+
+def _tipo_de_flujo(fid: Any) -> Optional[str]:
+    if not isinstance(fid, str) or not fid:
+        return None
+    if fid not in _TIPOS_DE_FLUJO:
+        f = api("GET", f"/api/flujos/{fid}")
+        _TIPOS_DE_FLUJO[fid] = f.get("tipo") if isinstance(f, dict) else None
+    return _TIPOS_DE_FLUJO[fid]
 
 
 def _esperar_corrida(cid: str, tope_s: int) -> Optional[Dict[str, Any]]:
@@ -1476,7 +1498,7 @@ def _generar_documento(a: Dict[str, Any]) -> Dict[str, Any]:
 GRUPOS: Dict[str, List[str]] = {
     "nucleo": ["cargar_herramientas", "ver_pantalla", "listar_flujos", "leer_flujo", "navegar", "abrir_vista", "tipos_de_nodo", "ayuda_nodo", "reglas_de_flujos",
                "enfocar_flujo", "controlar_editor", "ajustar_lienzo", "centrar_nodo", "historial", "ver_corrida", "ultimas_corridas", "renombrar_chat",
-               "diagnosticar_flujo", "generar_documento", "ayuda_documentos"],
+               "diagnosticar_flujo", "generar_documento", "ayuda_documentos", "estado_tareas"],
     "construir": ["validar_flujo", "guardar_flujo", "editar_nodo", "agregar_nodo", "eliminar_nodo", "editar_aristas", "proponer_borrado", "borrar_flujo",
                   "ver_estructura", "restablecer_estructura", "comparar_flujos", "traer_nodos", "encadenar_flujos",
                   "renombrar_flujo", "clonar_flujo", "versiones_flujo", "restaurar_version", "comparar_versiones", "deshacer_cambio",
@@ -1531,8 +1553,10 @@ def _grupos_para(texto: str, pantalla: Dict[str, Any]) -> List[str]:
 
 
 def herramientas_de(grupos: List[str]) -> List[Dict[str, Any]]:
+    """Las del chat escrito de esos grupos, sacadas del registro único (vera_herramientas), el mismo de la voz."""
+    import vera_herramientas
     nombres = {n for g in grupos for n in GRUPOS.get(g, [])}
-    return [h for h in HERRAMIENTAS if h["name"] in nombres]
+    return [h for h in vera_herramientas.de_modo("chat") if h["name"] in nombres]
 PANTALLA: Dict[str, Any] = {"flujo": None}
 
 
@@ -1877,28 +1901,15 @@ def _con_candado(avisar: Callable[..., None]) -> Callable[..., None]:
 def correr_vuelta(llamadas: List[Tuple[str, Dict[str, Any]]], avisar: Callable[..., None], pasos: List[Dict[str, Any]], registro: List[tuple],
                   cambiados: set, propuestas: List[Dict[str, Any]]) -> List[Any]:
     """Una vuelta de herramientas (las independientes a la vez), con sus avisos al navegador y lo que queda anotado.
-    Cada aviso lleva su «indice» (su lugar entre los pasos de la respuesta) para que el chat empareje cada resultado con su paso."""
-    base = len(pasos)
-    resumenes = [_resumen_args(a) for _, a in llamadas]
-
-    def anunciar(tanda: List[int]) -> None:
-        for i in tanda:
-            avisar("herramienta", nombre=llamadas[i][0], argumentos=resumenes[i], indice=base + i, **({"paralelo": len(tanda)} if len(tanda) > 1 else {}))
-
-    def correr(i: int, nombre: str, args: Dict[str, Any]) -> Any:
-        try:
-            res = ejecutar(nombre, args)
-        except Exception as e:  # noqa: BLE001 - el modelo se entera del fallo
-            res = {"error": f"{type(e).__name__}: {e}"}
-        avisar("resultado_herramienta", nombre=nombre, resultado=json.dumps(res, ensure_ascii=False, default=str)[:1500], indice=base + i)
-        return res
-
-    resultados = correr_llamadas(llamadas, correr, anunciar)
-    for i, ((nombre, args), res) in enumerate(zip(llamadas, resultados)):
-        anotar_resultado(nombre, args, res, cambiados, propuestas)
-        registro.append((nombre, args, res))
-        pasos.append({"nombre": nombre, "argumentos": resumenes[i], "resultado": json.dumps(res, ensure_ascii=False, default=str)[:600]})
-    return resultados
+    Cada aviso lleva su «indice» (su lugar entre los pasos de la respuesta) para que el chat empareje cada resultado con su paso.
+    La hace el ejecutor común de vera_herramientas (el mismo de la voz), sobre estas listas."""
+    import vera_herramientas
+    ej = vera_herramientas.Ejecutor("chat", avisar)
+    ej.pasos, ej.registro, ej.cambiados, ej.propuestas = pasos, registro, cambiados, propuestas
+    try:
+        return ej.vuelta(llamadas)
+    finally:
+        ej.cerrar()
 
 
 def _imita_herramienta(texto: str) -> bool:
@@ -1921,17 +1932,83 @@ def fecha_de_hoy() -> str:
     return f"{dias[ahora.weekday()]} {ahora.day} de {meses[ahora.month - 1]} de {ahora.year}, {ahora:%H:%M} (hora de Colombia)"
 
 
-def conversar(entrada: Dict[str, Any], aviso: Any = None) -> Dict[str, Any]:
+def _ejecutor_de(entrada: Dict[str, Any], avisar: Callable[..., None], seguir: bool) -> Any:
+    """El ejecutor común (vera_herramientas) de este turno. Con seguir (el chat escrito como proceso propio), lo largo
+    espera unos segundos en línea y, si no termina, sigue como tarea y se reporta después en un mensaje nuevo.
+    Sin seguir (p. ej. dentro de responder_por_escrito de la voz), todo corre en línea hasta su tope."""
+    import vera_herramientas
+    ej = vera_herramientas.Ejecutor("chat", avisar, espera_en_linea=vera_herramientas.ESPERA_CHAT if seguir else None,
+                                    conversacion=CONVERSACION.get("id"))
+    for x in entrada.get("registro_previo") or []:
+        ej.registro.append(tuple(x))  # el resultado de la tarea que se reporta respalda lo que se diga de ella
+    ej.pasos.extend(entrada.get("pasos_previos") or [])
+    return ej
+
+
+def _tareas_en_curso_de_la_conversacion() -> str:
+    """Lo que ya corre en esta conversación (de un mensaje anterior o de la llamada), para no lanzarlo otra vez."""
+    import vera_herramientas
+    vivas = [t for t in vera_herramientas.tareas_del_servidor(CONVERSACION.get("id")) if t.get("estado") == "en_curso"]
+    if not vivas:
+        return ""
+    return ("\n\nTareas tuyas que siguen en curso en esta conversación (no las lances otra vez; su resultado llega solo, o consúltalo con estado_tareas): "
+            + "; ".join(f"tarea {t.get('n')} «{t.get('etiqueta')}»" for t in vivas[:8]) + ".")
+
+
+def _texto_de_tarea(t: Any) -> str:
+    return (f"[Resultado de la tarea {t.n} ({t.etiqueta}), que lanzaste antes en esta conversación]: "
+            f"{json.dumps(t.resultado, ensure_ascii=False, default=str)[:12000]}")
+
+
+def _seguir_tareas(entrada: Dict[str, Any], ej: Any, aviso: Any) -> None:
+    """Después de responder, cada tarea que quedó en curso se reporta al terminar, en un mensaje nuevo de Vera
+    (el servidor lo guarda en la conversación y lo empuja al chat por el canal de eventos)."""
+    import vera_herramientas
+    fin = time.time() + vera_herramientas.TOPE_LARGA + 30
+    while time.time() < fin:
+        t = ej.esperar_siguiente(max(1.0, fin - time.time()))
+        if t is None:
+            return
+        try:
+            _reportar_tarea(entrada, t, aviso)
+        except Exception as e:  # noqa: BLE001 - si el modelo falla, el resultado igual llega, sin adornos
+            (aviso or emitir)("texto", texto=f"Terminó «{t.etiqueta}». No pude redactar el resumen ({type(e).__name__}); el resultado está en el paso de arriba.")
+            (aviso or emitir)("fin", flujos_cambiados=[])
+
+
+def _reportar_tarea(entrada: Dict[str, Any], t: Any, aviso: Any) -> None:
+    import vera_herramientas
+    avisar = aviso or emitir
+    conv = api("GET", f"/api/chats/{CONVERSACION['id']}") or {}
+    mensajes = [{"rol": m.get("rol"), "texto": m.get("texto"), "pasos": m.get("pasos")} for m in (conv.get("mensajes") or [])[-30:]] if isinstance(conv, dict) else []
+    mensajes.append({"rol": "usuario", "texto": _texto_de_tarea(t) + "\n[Aviso del sistema: la persona no escribió esto. Escríbele un mensaje corto con lo esencial "
+                     "de este resultado y sus cifras (salen de aquí, no de memoria). No repitas lo que ya le dijiste, no vuelvas a lanzar la tarea y no "
+                     "digas que terminó algo que este resultado no muestra terminado.]"})
+    pantalla = (api("GET", f"/api/chats/{CONVERSACION['id']}/pantalla") or {}).get("pantalla") or entrada.get("pantalla") or {}
+    resumen = _resumen_args(t.args)
+    texto_res = json.dumps(t.resultado, ensure_ascii=False, default=str)
+    paso = {"nombre": t.nombre, "argumentos": resumen, "resultado": texto_res[:600], "cifras": vera_herramientas.cifras_de(t.resultado)}
+    avisar("seguimiento", tarea=t.n, id=t.id, etiqueta=t.etiqueta)
+    avisar("herramienta", nombre=t.nombre, argumentos=resumen, indice=0)
+    avisar("resultado_herramienta", nombre=t.nombre, resultado=texto_res[:1500], indice=0,
+           situacion=vera_herramientas.situacion(t.nombre, t.resultado), cifras=paso["cifras"])
+    conversar({**entrada, "mensajes": mensajes, "pantalla": pantalla, "registro_previo": [(t.nombre, t.args, t.resultado)], "pasos_previos": [paso]},
+              aviso, seguir=False)
+
+
+def conversar(entrada: Dict[str, Any], aviso: Any = None, seguir: bool = False) -> Dict[str, Any]:
     """El chat escrito: responde a la conversación con herramientas. `aviso(tipo, **datos)`
-    recibe cada paso (por defecto, la salida estándar). Devuelve texto, pasos, cambios y propuestas."""
+    recibe cada paso (por defecto, la salida estándar). Devuelve texto, pasos, cambios y propuestas.
+    Con seguir=True (el proceso del chat escrito), lo que quedó corriendo se reporta al terminar en mensajes nuevos."""
     import google.auth
     from google import genai
     from google.genai import types
+    import vera_herramientas
 
     avisar = _con_candado(aviso) if aviso else (lambda tipo, **d: emitir(tipo, **d))
     ia = entrada.get("ia_vera") or {}
     if ia.get("proveedor") and ia.get("proveedor") != "vertex":
-        return _conversar_con_proveedor(entrada, ia, avisar)
+        return _conversar_con_proveedor(entrada, ia, avisar, seguir, aviso)
     modelo = entrada.get("modelo") or ia.get("modelo") or "gemini-3-flash-preview"
     flujo = entrada.get("flujo") or "pqrd"
     if entrada.get("conversacion"):
@@ -1948,7 +2025,8 @@ def conversar(entrada: Dict[str, Any], aviso: Any = None) -> Dict[str, Any]:
         return types.Tool(function_declarations=[types.FunctionDeclaration(**h) for h in herramientas_de(activos)])
 
     config = types.GenerateContentConfig(system_instruction=SISTEMA + f"\n\nHoy es {fecha_de_hoy()}. Usa esa fecha en documentos, actas e informes; nunca otra.\n\n" + describir_pantalla(entrada.get("pantalla") or {}, flujo)
-                                         + f"\n\nHerramientas cargadas ahora: {', '.join(activos)}. Si te falta alguna, usa cargar_herramientas.",
+                                         + f"\n\nHerramientas cargadas ahora: {', '.join(activos)}. Si te falta alguna, usa cargar_herramientas."
+                                         + _tareas_en_curso_de_la_conversacion(),
                                          tools=[_herramientas()], temperature=0.2,
                                          automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True))
     contenidos: List[Any] = []
@@ -1967,10 +2045,20 @@ def conversar(entrada: Dict[str, Any], aviso: Any = None) -> Dict[str, Any]:
             hechos = "\n".join(f"- {p.get('nombre')}({json.dumps(p.get('argumentos'), ensure_ascii=False)[:200]}) → {(p.get('resultado') or '')[:300]}" for p in m.get("pasos") or [])
             texto = (m.get("texto") or "") + (f"\n\n[Lo que hice en ese turno (registro interno, no lo escribas; para repetir algo llama la herramienta de verdad):\n{hechos}]" if hechos else "")
             contenidos.append(types.Content(role="model", parts=[types.Part(text=texto or "(sin texto)")]))
-    cambiados: set = set()
-    propuestas: List[Dict[str, Any]] = []
-    pasos: List[Dict[str, Any]] = []
-    registro: List[tuple] = []
+    # Un solo ejecutor (el mismo de la voz): pasos, registro, flujos cambiados, propuestas y tareas en segundo plano.
+    ej = _ejecutor_de(entrada, avisar, seguir)
+    pasos, registro, cambiados, propuestas = ej.pasos, ej.registro, ej.cambiados, ej.propuestas
+    correcciones = 0
+
+    def cerrar(texto: str) -> Dict[str, Any]:
+        avisar("texto", texto=texto)
+        avisar("fin", flujos_cambiados=sorted(cambiados), tareas_en_curso=len(ej.en_curso()))
+        salida = {"texto": texto, "pasos": list(pasos), "cambiados": sorted(cambiados), "propuestas": list(propuestas)}
+        if seguir:
+            _seguir_tareas(entrada, ej, aviso)
+        ej.cerrar()
+        return salida
+
     # Si se acaban las vueltas con herramientas pendientes, la respuesta sale de lo que devolvieron las herramientas
     # (resumen_al_agotarse), no del modelo: obligado a contestar sin herramientas llegó a decir que guardó lo que no guardó.
     for vuelta in range(MAX_VUELTAS):
@@ -1992,37 +2080,48 @@ def conversar(entrada: Dict[str, Any], aviso: Any = None) -> Dict[str, Any]:
             continue
         if not llamadas:
             texto = texto or "(sin respuesta)"
-            avisar("texto", texto=texto)
-            avisar("fin", flujos_cambiados=sorted(cambiados))
-            return {"texto": texto, "pasos": pasos, "cambiados": sorted(cambiados), "propuestas": propuestas}
+            # Nunca «de dientes para afuera»: lo que afirma se revisa contra lo que confirmaron las herramientas del turno.
+            problemas = vera_herramientas.verificar_respuesta(texto, registro, len(ej.en_curso()))
+            if problemas and correcciones < 2 and vuelta < MAX_VUELTAS - 1:
+                correcciones += 1
+                avisar("revision_veracidad", problemas=problemas)
+                contenidos.append(types.Content(role="model", parts=[types.Part(text=texto)]))
+                contenidos.append(types.Content(role="user", parts=[types.Part(text=vera_herramientas.pedido_de_correccion(problemas))]))
+                continue
+            if problemas:
+                texto += vera_herramientas.nota_de_veracidad(problemas)
+            return cerrar(texto)
         if texto.strip():
             avisar("pensando", texto=texto)
         contenidos.append(cand)
         pedidas = [(ll.name, dict(ll.args or {})) for ll in llamadas]
-        resultados = correr_vuelta(pedidas, avisar, pasos, registro, cambiados, propuestas)
+        resultados = ej.vuelta(pedidas)
         respuestas = []
         for (nombre, _), res in zip(pedidas, resultados):
             if nombre == "cargar_herramientas" and isinstance(res, dict) and res.get("cargados"):
                 activos.extend(g for g in res["cargados"] if g not in activos)
                 config.tools = [_herramientas()]
             respuestas.append(types.Part.from_function_response(name=nombre, response={"resultado": res}))
+        # Lo que se lanzó antes en este turno y ya terminó: su resultado entra ya (no hace falta un mensaje aparte).
+        for t in [t for t in ej.pendientes_de_reporte() if t.listo.is_set()]:
+            t.entregada = True
+            respuestas.append(types.Part(text=_texto_de_tarea(t)))
         contenidos.append(types.Content(role="user", parts=respuestas))
-    texto = resumen_al_agotarse(registro, propuestas, MAX_VUELTAS)
-    avisar("texto", texto=texto)
-    avisar("fin", flujos_cambiados=sorted(cambiados))
-    return {"texto": texto, "pasos": pasos, "cambiados": sorted(cambiados), "propuestas": propuestas}
+    return cerrar(resumen_al_agotarse(registro, propuestas, MAX_VUELTAS))
 
 
-def _conversar_con_proveedor(entrada: Dict[str, Any], ia: Dict[str, Any], avisar: Any) -> Dict[str, Any]:
+def _conversar_con_proveedor(entrada: Dict[str, Any], ia: Dict[str, Any], avisar: Any, seguir: bool = False, aviso: Any = None) -> Dict[str, Any]:
     """Vera con un proveedor que no es Vertex (OpenAI, Claude, Gemini directo…), por la capa de proveedores."""
     from proveedores import conversar_con_herramientas
+    import vera_herramientas
 
     flujo = entrada.get("flujo") or "pqrd"
     if entrada.get("conversacion"):
         CONVERSACION["id"] = entrada.get("conversacion")
     PANTALLA["flujo"] = flujo
     fijar_pedido_de(entrada)
-    sistema = SISTEMA + f"\n\nHoy es {fecha_de_hoy()}. Usa esa fecha en documentos, actas e informes; nunca otra.\n\n" + describir_pantalla(entrada.get("pantalla") or {}, flujo)
+    sistema = (SISTEMA + f"\n\nHoy es {fecha_de_hoy()}. Usa esa fecha en documentos, actas e informes; nunca otra.\n\n" + describir_pantalla(entrada.get("pantalla") or {}, flujo)
+               + _tareas_en_curso_de_la_conversacion())
     mensajes: List[Dict[str, Any]] = []
     todos = compactar(entrada.get("mensajes") or [])
     recientes = set(sorted(i for i, m in enumerate(todos) if m.get("rol") == "usuario")[-3:])
@@ -2045,32 +2144,48 @@ def _conversar_con_proveedor(entrada: Dict[str, Any], ia: Dict[str, Any], avisar
         else:
             hechos = "\n".join(f"- {p.get('nombre')} → {(p.get('resultado') or '')[:300]}" for p in m.get("pasos") or [])
             mensajes.append({"rol": "asistente", "texto": (m.get("texto") or "") + (f"\n\n[Lo que hice en ese turno:\n{hechos}]" if hechos else "")})
-    herramientas = [{"nombre": h["name"], "descripcion": h["description"], "parametros": h["parameters"]} for h in HERRAMIENTAS]
-    cambiados: set = set()
-    propuestas: List[Dict[str, Any]] = []
-    pasos: List[Dict[str, Any]] = []
-    registro: List[tuple] = []
+    herramientas = [{"nombre": h["name"], "descripcion": h["description"], "parametros": h["parameters"]} for h in vera_herramientas.de_modo("chat")]
+    # El mismo ejecutor que con Vertex y que en la voz.
+    ej = _ejecutor_de(entrada, avisar, seguir)
+    pasos, registro, cambiados, propuestas = ej.pasos, ej.registro, ej.cambiados, ej.propuestas
 
     def ejecutar_y_anotar(nombre: str, args: Dict[str, Any]) -> Any:
-        return correr_vuelta([(nombre, args)], avisar, pasos, registro, cambiados, propuestas)[0]
+        return ej.vuelta([(nombre, args)])[0]
 
     def ejecutar_lote(llamadas: List[Tuple[str, Dict[str, Any]]]) -> List[Any]:
-        return correr_vuelta(llamadas, avisar, pasos, registro, cambiados, propuestas)
+        return ej.vuelta(llamadas)
 
-    r = conversar_con_herramientas(ia["proveedor"], ia["modelo"], entrada.get("credencial_ia") or {}, sistema, mensajes, herramientas,
-                                   ejecutar_y_anotar, max_vueltas=MAX_VUELTAS, temperatura=ia.get("temperatura"), flujo="vera", ejecutar_lote=ejecutar_lote)
-    texto = r.get("texto") or "(sin respuesta)"
-    historial = r.get("historial") or []
-    if r.get("vueltas", 0) >= MAX_VUELTAS and historial and historial[-1].get("rol") == "herramienta":
-        # se acabaron las vueltas con herramientas pendientes: lo hecho y lo que faltó, de las herramientas
-        texto = resumen_al_agotarse(registro, propuestas, MAX_VUELTAS)
+    texto = ""
+    for intento in range(3):
+        r = conversar_con_herramientas(ia["proveedor"], ia["modelo"], entrada.get("credencial_ia") or {}, sistema, mensajes, herramientas,
+                                       ejecutar_y_anotar, max_vueltas=MAX_VUELTAS, temperatura=ia.get("temperatura"), flujo="vera", ejecutar_lote=ejecutar_lote)
+        texto = r.get("texto") or "(sin respuesta)"
+        historial = r.get("historial") or []
+        if r.get("vueltas", 0) >= MAX_VUELTAS and historial and historial[-1].get("rol") == "herramienta":
+            # se acabaron las vueltas con herramientas pendientes: lo hecho y lo que faltó, de las herramientas
+            texto = resumen_al_agotarse(registro, propuestas, MAX_VUELTAS)
+            break
+        # nunca «de dientes para afuera»: si afirma lo que ninguna herramienta confirmó, se le devuelve para corregir
+        problemas = vera_herramientas.verificar_respuesta(texto, registro, len(ej.en_curso()))
+        if not problemas:
+            break
+        if intento == 2:
+            texto += vera_herramientas.nota_de_veracidad(problemas)
+            break
+        avisar("revision_veracidad", problemas=problemas)
+        mensajes = mensajes + [{"rol": "asistente", "texto": texto}, {"rol": "usuario", "texto": vera_herramientas.pedido_de_correccion(problemas)}]
     avisar("texto", texto=texto)
-    avisar("fin", flujos_cambiados=sorted(cambiados))
-    return {"texto": texto, "pasos": pasos, "cambiados": sorted(cambiados), "propuestas": propuestas}
+    avisar("fin", flujos_cambiados=sorted(cambiados), tareas_en_curso=len(ej.en_curso()))
+    salida = {"texto": texto, "pasos": list(pasos), "cambiados": sorted(cambiados), "propuestas": list(propuestas)}
+    if seguir:
+        _seguir_tareas(entrada, ej, aviso)
+    ej.cerrar()
+    return salida
 
 
 def principal() -> None:
-    conversar(json.loads(sys.stdin.read() or "{}"))
+    # Este proceso es el chat escrito: lo que quede corriendo se sigue y se reporta al terminar (mensajes de seguimiento).
+    conversar(json.loads(sys.stdin.read() or "{}"), seguir=True)
 
 
 if __name__ == "__main__":

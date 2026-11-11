@@ -17,16 +17,41 @@ import voz  # noqa: E402
 
 
 def prueba_la_voz_tiene_todas_las_herramientas_del_chat() -> None:
+    """Un solo registro (vera_herramientas): lo que está en un modo y no en el otro está declarado, con su motivo."""
+    import vera_herramientas as vh
+    en_chat = {h["name"] for h in vh.de_modo("chat")}
     en_voz = {h["name"] for h in voz.herramientas_de_voz()}
-    faltan = [h["name"] for h in asistente.HERRAMIENTAS if h["name"] not in en_voz and h["name"] not in voz.EXCLUIDAS_DE_VOZ]
+    assert voz.herramientas_de_voz() == vh.de_modo("voz"), "la voz declara las del registro único"
+    assert {h["name"] for h in asistente.HERRAMIENTAS} <= en_chat, "todas las de asistente.HERRAMIENTAS (también las que se agreguen) están en el registro"
+    faltan = sorted(en_chat - en_voz - set(vh.SOLO_CHAT))
     assert not faltan, f"herramientas del chat que la voz no tiene y no están excluidas con motivo: {faltan}"
-    for nombre, motivo in voz.EXCLUIDAS_DE_VOZ.items():
-        assert nombre in {h["name"] for h in asistente.HERRAMIENTAS}, f"{nombre} está excluida pero no existe en el chat"
+    sobran = sorted(en_voz - en_chat - set(vh.SOLO_VOZ))
+    assert not sobran, f"herramientas de la voz que el chat no tiene y no están declaradas como solo de voz: {sobran}"
+    for nombre, motivo in {**vh.SOLO_CHAT, **vh.SOLO_VOZ}.items():
+        assert nombre in {h["name"] for h in vh.registro()}, f"{nombre} está excluida pero no existe"
         assert isinstance(motivo, str) and len(motivo) > 15, f"{nombre}: la exclusión necesita su motivo"
-    assert {"proponer_borrado", "borrar_flujo", "editar_nodo", "agregar_nodo", "eliminar_nodo", "editar_aristas", "ver_estructura"} <= en_voz
+    assert voz.EXCLUIDAS_DE_VOZ is vh.SOLO_CHAT and voz.LARGAS is vh.LARGAS
+    assert {"proponer_borrado", "borrar_flujo", "editar_nodo", "agregar_nodo", "eliminar_nodo", "editar_aristas", "ver_estructura", "estado_tareas"} <= en_voz
+    assert "estado_tareas" in en_chat and "estado_tareas" in asistente.GRUPOS["nucleo"]
     assert {"escribir_en_chat", "responder_por_escrito", "terminar_llamada"} <= en_voz
-    nombres = [h["name"] for h in voz.herramientas_de_voz()]
-    assert len(nombres) == len(set(nombres)), "una herramienta declarada dos veces"
+    for modo in ("chat", "voz"):
+        nombres = [h["name"] for h in vh.de_modo(modo)]
+        assert len(nombres) == len(set(nombres)), f"una herramienta declarada dos veces en {modo}"
+    # el chat escrito carga por grupos (para no saturar), pero del mismo registro: con todos los grupos, todas
+    sin_grupo = sorted(en_chat - {n for g in asistente.GRUPOS.values() for n in g})
+    assert not sin_grupo, f"herramientas del chat sin grupo (el chat escrito nunca las cargaría): {sin_grupo}"
+    assert {h["name"] for h in asistente.herramientas_de(list(asistente.GRUPOS))} == en_chat
+
+
+def prueba_chat_y_voz_usan_el_mismo_ejecutor() -> None:
+    """Una sola forma de ejecutar: el chat escrito (Vertex y otros proveedores) y la voz pasan por vera_herramientas.Ejecutor."""
+    llamada = inspect.getsource(voz.llamada)
+    assert "vh.Ejecutor(\"voz\"" in llamada and "ejecutor.vuelta" in llamada
+    assert "asistente.ejecutar(" not in llamada, "la voz no ejecuta herramientas por su cuenta"
+    assert "asyncio.gather(*(herramienta" not in llamada
+    conversar = inspect.getsource(asistente.conversar) + inspect.getsource(asistente._conversar_con_proveedor)
+    assert conversar.count("_ejecutor_de(") == 2 and "ej.vuelta(" in conversar
+    assert "verificar_respuesta" in conversar and "verificar_respuesta" in llamada, "la veracidad se revisa en los dos modos"
 
 
 def prueba_la_voz_usa_las_reglas_del_escrito() -> None:
@@ -101,7 +126,7 @@ def prueba_la_deteccion_de_voz_de_gemini() -> None:
 def prueba_la_pantalla_no_corta_lo_que_dice_vera() -> None:
     """El aviso de cambio de pantalla no se manda en cuanto llega (interrumpía la respuesta): espera una pausa en el reloj."""
     fuente = inspect.getsource(voz.llamada)
-    subida = fuente[fuente.index("async def subida"):fuente.index("async def correr_herramienta")]
+    subida = fuente[fuente.index("async def subida"):fuente.index("def _a_la_llamada")]
     reloj = fuente[fuente.index("async def reloj"):]
     assert "cambió de pantalla" not in subida, "la subida no debe mandar el aviso de pantalla en caliente"
     assert "cambió de pantalla" in reloj and "en_pausa" in reloj
