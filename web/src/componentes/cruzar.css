@@ -1,63 +1,63 @@
 /* «Cruzar flujos»: comparar y traer pasos (CruzarFlujos.tsx). Usa los colores de diseno.css. */
 
-.cz-modos { display: inline-flex; gap: 2px; padding: 3px; border-radius: 11px; background: var(--superficie-3); align-self: flex-start; }
-.cz-modos button { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 0; border-radius: 8px; background: transparent; color: var(--texto-2); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.cz-modos { display: inline-flex; gap: var(--e-1); padding: var(--e-1); border-radius: 8px; background: var(--superficie-3); align-self: flex-start; }
+.cz-modos button { display: inline-flex; align-items: center; gap: var(--e-2); padding: var(--e-2) var(--e-4); border: 0; border-radius: 6px; background: transparent; color: var(--texto-2); font: inherit; font-size: var(--t-s); font-weight: 600; cursor: pointer; }
 .cz-modos button:hover { color: var(--tinta); }
 .cz-modos button.activo { background: var(--pliego); color: var(--tinta); box-shadow: var(--sombra-1); }
 .cz-modos button:focus-visible { outline: 2px solid var(--foco); outline-offset: 1px; }
 
-.cz-fila { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.cz-etq { flex: none; width: 46px; font-size: 12px; font-weight: 600; color: var(--texto-2); }
+.cz-fila { display: flex; align-items: center; gap: var(--e-4); min-width: 0; }
+.cz-etq { flex: none; width: 37px; font-size: var(--t-s); font-weight: 600; color: var(--texto-2); }
 .cz-selector { flex: 1; min-width: 0; }
-.cz-nota { margin: 0; display: flex; align-items: center; gap: 8px; font-size: 12px; line-height: 1.45; color: var(--texto-2); }
+.cz-nota { margin: 0; display: flex; align-items: center; gap: var(--e-3); font-size: var(--t-s); line-height: 1.45; color: var(--texto-2); }
 
-.cz-comparacion { display: flex; flex-direction: column; gap: 14px; }
-.cz-comparacion section, .cz-seccion { display: flex; flex-direction: column; gap: 6px; }
-.cz-comparacion h3, .cz-seccion h3 { margin: 0; font-size: 12.5px; font-weight: 650; color: var(--tinta); }
-.cz-resumen { margin: 0; display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 10px; background: var(--azul-suave); color: var(--azul-tinta); font-size: 13px; font-weight: 600; }
+.cz-comparacion { display: flex; flex-direction: column; gap: var(--e-5); }
+.cz-comparacion section, .cz-seccion { display: flex; flex-direction: column; gap: var(--e-2); }
+.cz-comparacion h3, .cz-seccion h3 { margin: 0; font-size: var(--t-s); font-weight: 650; color: var(--tinta); }
+.cz-resumen { margin: 0; display: flex; align-items: center; gap: var(--e-3); padding: var(--e-4) var(--e-4); border-radius: 8px; background: var(--azul-suave); color: var(--azul-tinta); font-size: var(--t-m); font-weight: 600; }
 .cz-resumen.igual { background: var(--verde-suave); color: var(--verde); }
 
-.cz-fichas { display: flex; flex-wrap: wrap; gap: 6px; }
-.cz-ficha { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 5px 8px; border-radius: 9px; background: var(--superficie-2); box-shadow: inset 0 0 0 1px var(--linea); font-size: 12px; }
+.cz-fichas { display: flex; flex-wrap: wrap; gap: var(--e-2); }
+.cz-ficha { display: inline-flex; align-items: center; gap: var(--e-2); max-width: 100%; padding: var(--e-2) var(--e-3); border-radius: 7px; background: var(--superficie-2); box-shadow: inset 0 0 0 1px var(--linea); font-size: var(--t-s); }
 .cz-ficha b { font-weight: 600; color: var(--texto); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cz-ficha small { color: var(--texto-3); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: 10.5px; }
-.cz-mini { display: inline-flex; align-items: center; gap: 3px; padding: 2px 7px; border: 0; border-radius: 6px; background: var(--azul-suave); color: var(--azul-tinta); font: inherit; font-size: 11px; font-weight: 600; cursor: pointer; }
+.cz-ficha small { color: var(--texto-3); font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: var(--t-2xs); }
+.cz-mini { display: inline-flex; align-items: center; gap: var(--e-1); padding: var(--e-1) var(--e-3); border: 0; border-radius: 4px; background: var(--azul-suave); color: var(--azul-tinta); font: inherit; font-size: var(--t-xs); font-weight: 600; cursor: pointer; }
 .cz-mini:hover { background: var(--azul-medio); }
 
-.cz-distinto { display: flex; flex-direction: column; gap: 4px; padding: 8px 10px; border-radius: 10px; background: var(--superficie-2); }
-.cz-distinto > b { font-size: 12.5px; color: var(--texto); }
-.cz-cambios { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
-.cz-cambios li { display: grid; grid-template-columns: minmax(90px, 150px) minmax(0, 1fr) auto minmax(0, 1fr); align-items: baseline; gap: 6px; font-size: 11.5px; }
+.cz-distinto { display: flex; flex-direction: column; gap: var(--e-1); padding: var(--e-3) var(--e-4); border-radius: 8px; background: var(--superficie-2); }
+.cz-distinto > b { font-size: var(--t-s); color: var(--texto); }
+.cz-cambios { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--e-1); }
+.cz-cambios li { display: grid; grid-template-columns: minmax(90px, 150px) minmax(0, 1fr) auto minmax(0, 1fr); align-items: baseline; gap: var(--e-2); font-size: var(--t-xs); }
 .cz-cambios li > b { font-family: "IBM Plex Mono", ui-monospace, monospace; font-weight: 500; color: var(--texto-2); overflow-wrap: anywhere; }
-.cz-cambios .a, .cz-cambios .b { padding: 1px 6px; border-radius: 5px; font-family: "IBM Plex Mono", ui-monospace, monospace; overflow-wrap: anywhere; }
+.cz-cambios .a, .cz-cambios .b { padding: 1px var(--e-2); border-radius: 4px; font-family: "IBM Plex Mono", ui-monospace, monospace; overflow-wrap: anywhere; }
 .cz-cambios .a { background: var(--rojo-suave); color: var(--rojo); }
 .cz-cambios .b { background: var(--verde-suave); color: var(--verde); }
 
-.cz-aristas { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; font-size: 12px; font-family: "IBM Plex Mono", ui-monospace, monospace; color: var(--texto); }
-.cz-aristas li { display: flex; align-items: center; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
-.cz-lado { flex: none; padding: 1px 6px; border-radius: 5px; background: var(--azul-suave); color: var(--azul-tinta); font-family: "Schibsted Grotesk", system-ui, sans-serif; font-size: 10.5px; font-weight: 600; }
+.cz-aristas { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--e-1); font-size: var(--t-s); font-family: "IBM Plex Mono", ui-monospace, monospace; color: var(--texto); }
+.cz-aristas li { display: flex; align-items: center; gap: var(--e-3); min-width: 0; overflow-wrap: anywhere; }
+.cz-lado { flex: none; padding: 1px var(--e-2); border-radius: 4px; background: var(--azul-suave); color: var(--azul-tinta); font-family: "Schibsted Grotesk", system-ui, sans-serif; font-size: var(--t-2xs); font-weight: 600; }
 .cz-lado.otro { background: var(--ambar-suave); color: var(--ambar); }
 
-.cz-lista { list-style: none; margin: 0; padding: 4px; max-height: 38vh; overflow: auto; border-radius: 12px; background: var(--superficie-2); display: flex; flex-direction: column; gap: 2px; }
-.cz-opcion { width: 100%; display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 0; border-radius: 9px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.cz-lista { list-style: none; margin: 0; padding: var(--e-1); max-height: 38vh; overflow: auto; border-radius: 9px; background: var(--superficie-2); display: flex; flex-direction: column; gap: var(--e-1); }
+.cz-opcion { width: 100%; display: flex; align-items: center; gap: var(--e-4); padding: var(--e-3) var(--e-4); border: 0; border-radius: 7px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .cz-opcion:hover { background: var(--pliego); }
 .cz-opcion.sel { background: var(--azul-suave); }
 .cz-opcion:focus-visible { outline: 2px solid var(--foco); outline-offset: -2px; }
 .cz-opcion .crece { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
-.cz-opcion b { font-size: 13px; font-weight: 600; color: var(--tinta); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cz-opcion small { font-size: 11px; color: var(--texto-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.cz-caja { flex: none; width: 16px; height: 16px; display: grid; place-items: center; border-radius: 5px; background: var(--pliego); box-shadow: inset 0 0 0 1.5px var(--linea-2); color: #fff; transition: background 0.12s, box-shadow 0.12s; }
+.cz-opcion b { font-size: var(--t-m); font-weight: 600; color: var(--tinta); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cz-opcion small { font-size: var(--t-xs); color: var(--texto-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cz-caja { flex: none; width: 13px; height: 13px; display: grid; place-items: center; border-radius: 4px; background: var(--pliego); box-shadow: inset 0 0 0 1.5px var(--linea-2); color: #fff; transition: background 0.12s, box-shadow 0.12s; }
 .cz-opcion.sel .cz-caja { background: var(--azul); box-shadow: none; }
 
-.cz-revision { display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; border-radius: 10px; font-size: 12px; line-height: 1.45; }
+.cz-revision { display: flex; flex-direction: column; gap: var(--e-1); padding: var(--e-4) var(--e-4); border-radius: 8px; font-size: var(--t-s); line-height: 1.45; }
 .cz-revision.bien { background: var(--verde-suave); color: var(--verde); }
 .cz-revision.mal { background: var(--rojo-suave); color: var(--rojo); }
-.cz-revision ul { margin: 0; padding-left: 18px; color: var(--texto); }
+.cz-revision ul { margin: 0; padding-left: var(--e-6); color: var(--texto); }
 .cz-revision p { margin: 0; color: var(--texto); }
-.cz-revision .aviso { display: flex; align-items: center; gap: 6px; color: var(--ambar); }
+.cz-revision .aviso { display: flex; align-items: center; gap: var(--e-2); color: var(--ambar); }
 
 @media (max-width: 560px) {
-  .cz-cambios li { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .cz-cambios li { grid-template-columns: minmax(0, 1fr); gap: var(--e-1); }
   .cz-cambios li > svg { display: none; }
   .cz-etq { width: auto; }
   .cz-fila { flex-wrap: wrap; }

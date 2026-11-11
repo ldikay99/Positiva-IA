@@ -93,56 +93,8 @@ export function VistaInicio() {
             <button className="boton in-vera" onClick={() => pedirAlAsistente("Quiero crear un flujo nuevo. Pregúntame lo necesario y ármalo.")}><Icono n="chispa" tam={15} />Pedírselo a Vera</button>
           </div>
         </div>
-        {!cerrada && (
-          <aside className="in-guia" aria-label="Primeros pasos">
-            <header>
-              <h2>Primeros pasos</h2>
-              <button className="boton-mini" aria-label="Cerrar la guía" title="Cerrar la guía (vuelve con el botón de ayuda de arriba)" onClick={cerrarGuia}><Icono n="cerrar" tam={14} /></button>
-            </header>
-            <ContenidoGuia />
-          </aside>
-        )}
       </section>
 
-      <section className="in-bloque in-hoy" aria-labelledby="in-hoy">
-        <header>
-          <h2 id="in-hoy">Hoy</h2>
-          {(sinLeer > 0 || (pendientes ?? 0) > 0) && (
-            <div className="in-atencion">
-              {(pendientes ?? 0) > 0 && <button className="pastilla azul boton-pastilla" onClick={() => irA("aprobaciones")}><Icono n="persona" tam={12} />{pendientes} esperan tu aprobación</button>}
-              {sinLeer > 0 && <button className="pastilla ambar boton-pastilla" onClick={() => irA("notificaciones")}><Icono n="campana" tam={12} />{sinLeer} notificación{sinLeer === 1 ? "" : "es"} sin leer</button>}
-            </div>
-          )}
-        </header>
-        {!hoy ? (
-          <p className="texto-3">Contando lo de hoy…</p>
-        ) : !totalHoy ? (
-          <p className="in-hoy-frase">Hoy todavía no ha corrido nada. Elige un flujo de abajo y pulsa «Correr», o deja uno programado.</p>
-        ) : (
-          <>
-            <p className="in-hoy-frase">
-              Hoy corrieron <b>{totalHoy.toLocaleString("es-CO")}</b> ejecución{totalHoy === 1 ? "" : "es"}
-              {(Object.keys(ESTADOS) as EstadoLegible[]).filter((k) => e[k]).map((k, i, xs) => (
-                <span key={k}>{i === 0 ? ": " : i === xs.length - 1 ? " y " : ", "}<span className={`in-cifra tono-${ESTADOS[k].tono}`}>{e[k]} {(k === "en_curso" ? "en curso" : k === "bien" ? (e[k] === 1 ? "terminó bien" : "terminaron bien") : k === "revisar" ? (e[k] === 1 ? "quedó para revisar" : "quedaron para revisar") : e[k] === 1 ? "falló" : "fallaron")}</span></span>
-              ))}.
-            </p>
-            <ul className="in-recientes">
-              {hoy.corridas.map((c) => {
-                const f = flujos.find((x) => x.id === c.flujo);
-                return (
-                  <li key={c.id}>
-                    <button onClick={() => void usar.getState().abrirEnHistorial(c.id, c.flujo)}>
-                      <MarcaEstado estado={c.estado} />
-                      <span className="crece"><b>{c.titulo}</b><small>{f?.nombre ?? c.flujo}, {c.estado === "en_curso" ? "en curso" : c.continuada_en ? "aprobación decidida" : nombreResultado(c.desenlace, f?.tipo === "codigo").toLowerCase()}</small></span>
-                      <span className="texto-3 diminuto">{hace(c.creada)}</span>
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </>
-        )}
-      </section>
 
       <section className="in-bloque" aria-labelledby="in-flujos">
         <header>
@@ -169,6 +121,56 @@ export function VistaInicio() {
           </ul>
         </section>
       )}
+      <aside className="in-lado">
+        <section className="in-bloque in-hoy" aria-labelledby="in-hoy">
+          <header>
+            <h2 id="in-hoy">Hoy</h2>
+            {(sinLeer > 0 || (pendientes ?? 0) > 0) && (
+              <div className="in-atencion">
+                {(pendientes ?? 0) > 0 && <button className="pastilla azul boton-pastilla" onClick={() => irA("aprobaciones")}><Icono n="persona" tam={12} />{pendientes} esperan tu aprobación</button>}
+                {sinLeer > 0 && <button className="pastilla ambar boton-pastilla" onClick={() => irA("notificaciones")}><Icono n="campana" tam={12} />{sinLeer} notificación{sinLeer === 1 ? "" : "es"} sin leer</button>}
+              </div>
+            )}
+          </header>
+          {!hoy ? (
+            <p className="texto-3">Contando lo de hoy…</p>
+          ) : !totalHoy ? (
+            <p className="in-hoy-frase">Hoy todavía no ha corrido nada. Elige un flujo de abajo y pulsa «Correr», o deja uno programado.</p>
+          ) : (
+            <>
+              <p className="in-hoy-frase">
+                Hoy corrieron <b>{totalHoy.toLocaleString("es-CO")}</b> ejecución{totalHoy === 1 ? "" : "es"}
+                {(Object.keys(ESTADOS) as EstadoLegible[]).filter((k) => e[k]).map((k, i, xs) => (
+                  <span key={k}>{i === 0 ? ": " : i === xs.length - 1 ? " y " : ", "}<span className={`in-cifra tono-${ESTADOS[k].tono}`}>{e[k]} {(k === "en_curso" ? "en curso" : k === "bien" ? (e[k] === 1 ? "terminó bien" : "terminaron bien") : k === "revisar" ? (e[k] === 1 ? "quedó para revisar" : "quedaron para revisar") : e[k] === 1 ? "falló" : "fallaron")}</span></span>
+                ))}.
+              </p>
+              <ul className="in-recientes">
+                {hoy.corridas.map((c) => {
+                  const f = flujos.find((x) => x.id === c.flujo);
+                  return (
+                    <li key={c.id}>
+                      <button onClick={() => void usar.getState().abrirEnHistorial(c.id, c.flujo)}>
+                        <MarcaEstado estado={c.estado} />
+                        <span className="crece"><b>{c.titulo}</b><small>{f?.nombre ?? c.flujo}, {c.estado === "en_curso" ? "en curso" : c.continuada_en ? "aprobación decidida" : nombreResultado(c.desenlace, f?.tipo === "codigo").toLowerCase()}</small></span>
+                        <span className="texto-3 diminuto">{hace(c.creada)}</span>
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
+          )}
+        </section>
+          {!cerrada && (
+            <section className="in-guia" aria-label="Primeros pasos">
+              <header>
+                <h2>Primeros pasos</h2>
+                <button className="boton-mini" aria-label="Cerrar la guía" title="Cerrar la guía (vuelve con el botón de ayuda de arriba)" onClick={cerrarGuia}><Icono n="cerrar" tam={14} /></button>
+              </header>
+              <ContenidoGuia />
+            </section>
+          )}
+      </aside>
       <DialogoPlantilla p={plantilla} cerrar={() => setPlantilla(null)} />
     </div>
   );

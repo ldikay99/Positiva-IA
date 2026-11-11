@@ -94,9 +94,9 @@ function nombreModelo(m: string | undefined): string {
     .join(" ");
 }
 
-const CLAVE_MEDIDAS = "positiva-ia:medidas:v1";
+const CLAVE_MEDIDAS = "positiva-ia:medidas:v2";
 type Medidas = { bandeja: number; dock: number; inspector: number };
-const MEDIDAS: Medidas = { bandeja: 340, dock: Math.round(Math.max(200, Math.min(300, window.innerHeight * 0.3))), inspector: 470 };
+const MEDIDAS: Medidas = { bandeja: 288, dock: Math.round(Math.max(170, Math.min(250, window.innerHeight * 0.27))), inspector: 380 };
 
 function useAncho(): number {
   const [ancho, setAncho] = useState(window.innerWidth);
@@ -490,7 +490,7 @@ function EspacioFlujo({ ancho, bandejaVisible, cerrarBandeja }: { ancho: number;
       {!compacto && bandejaVisible && (
         <>
           <div className="columna-bandeja"><Izquierda /></div>
-          <Divisor contenedor={espacio} medida="bandeja" eje="x" min={260} max={() => Math.min(620, window.innerWidth * 0.45)} calcular={(e, caja) => e.clientX - caja.left} alSoltar={(v) => fijar("bandeja", v)} titulo="Arrastra para cambiar el ancho de la bandeja" />
+          <Divisor contenedor={espacio} medida="bandeja" eje="x" min={232} max={() => Math.min(620, window.innerWidth * 0.45)} calcular={(e, caja) => e.clientX - caja.left} alSoltar={(v) => fijar("bandeja", v)} titulo="Arrastra para cambiar el ancho de la bandeja" />
         </>
       )}
       <div ref={centro} className={`centro ${plegado ? "dock-plegado" : ""}`}>
@@ -499,12 +499,12 @@ function EspacioFlujo({ ancho, bandejaVisible, cerrarBandeja }: { ancho: number;
             <Lienzo />
           </ReactFlowProvider>
         </div>
-        {!plegado && <Divisor contenedor={centro} medida="dock" eje="y" min={140} max={() => (centro.current?.clientHeight ?? 800) - 160} calcular={(e, caja) => caja.bottom - e.clientY} alSoltar={(v) => fijar("dock", v)} titulo="Arrastra para cambiar el alto del panel" />}
+        {!plegado && <Divisor contenedor={centro} medida="dock" eje="y" min={120} max={() => (centro.current?.clientHeight ?? 800) - 160} calcular={(e, caja) => caja.bottom - e.clientY} alSoltar={(v) => fijar("dock", v)} titulo="Arrastra para cambiar el alto del panel" />}
         <Dock plegado={plegado} alternar={alternarDock} />
         <AnimatePresence>
           {foco && (
             <motion.aside key="hoja" className="hoja" initial={{ opacity: 0, x: 28 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: 28, transition: { duration: 0.16 } }} transition={{ type: "spring", stiffness: 420, damping: 38 }}>
-              {!compacto && <Divisor contenedor={centro} medida="inspector" eje="x" min={360} max={() => Math.min(900, (centro.current?.clientWidth ?? 1200) - 240)} calcular={(e, caja) => caja.right - e.clientX - 10} alSoltar={(v) => fijar("inspector", v)} titulo="Arrastra para cambiar el ancho del inspector" />}
+              {!compacto && <Divisor contenedor={centro} medida="inspector" eje="x" min={320} max={() => Math.min(900, (centro.current?.clientWidth ?? 1200) - 240)} calcular={(e, caja) => caja.right - e.clientX - 10} alSoltar={(v) => fijar("inspector", v)} titulo="Arrastra para cambiar el ancho del inspector" />}
               <Inspector />
             </motion.aside>
           )}

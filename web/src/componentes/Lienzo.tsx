@@ -37,11 +37,11 @@ export function Lienzo() {
   return declarativo ? <EditorFlujo /> : <LienzoDeCodigo />;
 }
 
-const ANCHO = 248;
-const ANCHO_FIN = 204;
-const COLUMNA = 330;
-const FILA = 150;
-const CABEZA_FASE = 58;
+const ANCHO = 216;
+const ANCHO_FIN = 180;
+const COLUMNA = 272;
+const FILA = 124;
+const CABEZA_FASE = 46;
 
 type Posicion = { x: number; y: number };
 
@@ -401,7 +401,7 @@ interface Disposicion {
 }
 
 /** Espacio libre entre dos nodos de la misma fase. */
-const SEPARACION = 36;
+const SEPARACION = 28;
 
 /**
  * Apila cada fase con el alto que cada nodo tiene en pantalla, que crece con
@@ -980,7 +980,7 @@ function LienzoDeCodigo() {
     const centro = document.querySelector(".centro") as HTMLElement | null;
     const w = lienzo?.clientWidth ?? 1200;
     if (w < 760) return 0;
-    const v = centro ? parseFloat(getComputedStyle(centro).getPropertyValue("--inspector")) : 470;
+    const v = centro ? parseFloat(getComputedStyle(centro).getPropertyValue("--inspector")) : 380;
     return Math.min(v || 470, w - 20) + 10;
   }, []);
 

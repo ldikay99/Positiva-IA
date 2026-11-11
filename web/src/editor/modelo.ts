@@ -379,9 +379,9 @@ export function configInicial(t: TipoNodo): Record<string, unknown> {
 
 // ------------------------------------------------------------------ disposición
 
-export const ANCHO_NODO = 264;
-const COLUMNA = 340;
-const FILA = 214;
+export const ANCHO_NODO = 232;
+const COLUMNA = 300;
+const FILA = 184;
 
 /** Capas de izquierda a derecha por el camino más largo; dentro de cada capa, por el orden de sus padres. */
 export function autoOrdenar(def: Definicion, tipos: Map<string, TipoNodo>): Record<string, Posicion> {

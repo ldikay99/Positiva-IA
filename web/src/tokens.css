@@ -1,0 +1,56 @@
+/*
+ * Positiva IA · escala
+ *
+ * Una sola fuente para los tamaños de toda la plataforma. Las hojas de estilo
+ * (index, diseno, plataforma, editor, producto, espacio y las de cada componente)
+ * ya no escriben píxeles de letra ni de espacio: usan estos tokens.
+ *
+ * Pensada para una herramienta de trabajo en portátil (1366×768 a 1920×1080) al
+ * 100 %: letra base de 12,5 px, controles de 28 px y un armazón que deja el lienzo
+ * y las listas como protagonistas. Se carga primero.
+ */
+:root {
+  /* letra: base 12,5 px; los saltos crecen hacia los títulos */
+  --t-2xs: 10px;    /* contadores, horas en listas densas */
+  --t-xs: 10.5px;   /* fichas, metadatos, rótulos de nodo */
+  --t-s: 11.5px;    /* texto secundario, ayudas, celdas */
+  --t-m: 12.5px;    /* texto base, botones, campos */
+  --t-l: 13.5px;    /* nombres de elemento, títulos de tarjeta */
+  --t-xl: 15px;     /* títulos de panel (h2) */
+  --t-2xl: 17px;    /* título de la vista en la barra (h1) */
+  --t-3xl: 20px;    /* cifras de resumen */
+  --t-4xl: 24px;    /* cifras grandes del tablero */
+  --t-5xl: 30px;    /* la portada del inicio */
+
+  /* espacio: pasos de 2 px abajo y de 4 px arriba */
+  --e-1: 2px;
+  --e-2: 4px;
+  --e-3: 6px;
+  --e-4: 8px;
+  --e-5: 10px;
+  --e-6: 12px;
+  --e-7: 16px;
+  --e-8: 20px;
+  --e-9: 24px;
+  --e-10: 32px;
+
+  /* alto de controles */
+  --alto-xs: 22px;  /* botón mini, ficha con acción */
+  --alto-s: 24px;   /* botón chico, chips de filtro */
+  --alto-m: 28px;   /* botón, campo, selector (por defecto) */
+  --alto-l: 32px;   /* acción principal de un panel */
+
+  /* armazón */
+  --barra-alto: 44px;
+  --riel-angosto: 62px;
+  --riel-amplio: 184px;
+  --bandeja-ancho: 288px;
+  --inspector-ancho: 380px;
+  --dock-plegado: 34px;
+  --panel-cabeza: 36px; /* cabeceras de dock, inspector y listas */
+
+  /* forma */
+  --radio: 12px;    /* tarjetas, paneles */
+  --radio-2: 7px;   /* controles */
+  --radio-3: 5px;   /* fichas */
+}

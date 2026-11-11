@@ -25,7 +25,7 @@ function pendiente(accion: string): Control | null {
 }
 
 /** Alto de cada sobre en la lista larga (se dibujan solo los visibles). */
-const ALTO_SOBRE = 112;
+const ALTO_SOBRE = 70;
 
 function fecha(iso: string): string {
   if (!iso) return "";
@@ -126,7 +126,7 @@ const SobreDeCorreo = memo(function SobreDeCorreo(p: Sobre) {
     >
       <span className={`sobre-avatar tono-${tonoDe(p.remitente)}`} aria-hidden>
         <span className="cara frente">{iniciales(p.remitente)}</span>
-        <span className="cara dorso"><Icono n="ok" tam={15} strokeWidth={2.6} /></span>
+        <span className="cara dorso"><Icono n="ok" tam={13} strokeWidth={2.6} /></span>
       </span>
       <div className="sobre-cuerpo">
         <div className="sobre-linea">
@@ -143,7 +143,7 @@ const SobreDeCorreo = memo(function SobreDeCorreo(p: Sobre) {
       </div>
       {p.alAbrir && (
         <button className="sobre-abrir" aria-label="Abrir el correo" title="Abrir el correo" onClick={(e) => { e.stopPropagation(); p.alAbrir?.(); }}>
-          <Icono n="ojo" tam={15} />
+          <Icono n="ojo" tam={14} />
         </button>
       )}
       {p.corrida?.resultado && <Sello corrida={p.corrida} />}
@@ -748,8 +748,7 @@ function BandejaDeclarativa() {
     <section className="bandeja" aria-label="Correspondencia del flujo">
       <header className="bandeja-titulo">
         <div>
-          <h2>Correspondencia</h2>
-          <p className="bandeja-ayuda">{recibe ? "Los correos que trajo su revisión del buzón. Elige uno o varios y pulsa «Correr»." : "Solo los correos de este flujo. Elige uno o varios y pulsa «Correr»."}</p>
+          <h2 title={recibe ? "Los correos que trajo su revisión del buzón. Elige uno o varios y pulsa «Correr»." : "Solo los correos de este flujo. Elige uno o varios y pulsa «Correr»."}>Correspondencia</h2>
         </div>
         {!recibe && (
           <div className="fuentes" role="tablist" aria-label="De dónde salen los correos">
@@ -796,8 +795,7 @@ function BandejaDeCodigo() {
     <section className="bandeja" aria-label="Correos por radicar">
       <header className="bandeja-titulo">
         <div>
-          <h2>Correspondencia</h2>
-          <p className="bandeja-ayuda">Elige uno o varios correos y pulsa «Correr» para ver cómo los procesa el motor.</p>
+          <h2 title="Elige uno o varios correos y pulsa «Correr» para ver cómo los procesa el motor.">Correspondencia</h2>
         </div>
         {conBuzon && <div className="fuentes" role="tablist" aria-label="De dónde salen los correos">
           {([["buzon", "Buzón real", "correo"], ["local", "Descargados", "bandeja"]] as const).map(([id, nombre, icono]) => (
