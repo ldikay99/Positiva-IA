@@ -605,6 +605,35 @@ Jonathan pidió tres cosas de la llamada: que Vera no hable al conectar, que el 
 - [ ] Probar con micrófono y parlantes reales (eco de verdad, ruido de oficina, Bluetooth). La prueba fue con micrófono falso y sin salida de audio real.
 - [ ] Si en equipos lentos el chat bloquea el hilo principal más de 250 ms seguidos, recibir el WebSocket en un Worker que entregue el audio directo al worklet (un MessagePort), para que la voz no dependa del hilo principal.
 
+## 5k. Versiones de los flujos y deshacer (pedido 2026-11-11)
+
+Jonathan pidió control de versiones interno: Ctrl+Z / Ctrl+Y en el editor, historial de versiones con volver a cualquiera, y que Vera pueda deshacer lo que hizo.
+
+- [x] **Historial de todos los flujos** (`servidor/src/versiones.ts`, `servidor/src/rutas_versiones.ts`): cada versión con autor (persona o Vera), fecha, etiqueta, resumen en palabras («Agregó «¿Urgente?»; apagó «Revisor»; conexiones: +3 −1»), de cuál viene (restaurar, deshacer, rehacer) y las corridas que terminaron bien, a revisar o con fallo mientras estuvo en uso. Lo que acompaña a cada versión va en `<estado>/flujos_historial/<id>.json`; las definiciones siguen donde estaban.
+  - `GET /api/flujos/:id/versiones`, `GET …/versiones/:n`, `GET …/versiones/comparar?a=&b=` (pasos agregados y quitados, config campo por campo antes → después, conexiones, datos del flujo), `GET …/versiones/funcionaba`, `PATCH …/versiones/:n {etiqueta}`, `POST …/restaurar`, `POST …/deshacer {pedido?}`, `POST …/rehacer`.
+  - Volver atrás siempre crea una versión nueva; nada borra el historial. Deshacer dos veces seguidas retrocede dos cambios y rehacer vuelve hacia adelante.
+- [x] **Flujos de código** (PQRD, tutelas y sus copias): la estructura también tiene versiones. La 0 es la del código; volver a ella (restablecer, deshacer o restaurar) es una versión nueva. Se corrigió que restablecer y volver a guardar pisaba la v1 anterior. Guardar la misma estructura no crea versión.
+- [x] **Quién guarda**: Vera manda `x-autor: vera`, `x-pedido` (lo último que pidió la persona, recortado) y `x-pedido-id` en cada pedido (`asistente.api`, `fijar_pedido`; en la voz, con lo que va oyendo del turno). Un gancho `preHandler` lo pone en un `AsyncLocalStorage` y el guardado lo anota. La primera vez que Vera cambia un flujo por un pedido, la versión de antes queda como punto «antes de: <pedido>».
+- [x] **Vera** (`puente/vera_versiones.py`, también en la voz): `versiones_flujo` y `restaurar_version` (ahora para todos los flujos), y nuevas `comparar_versiones`, `deshacer_cambio` (deshace todo su último pedido, o solo el último guardado) y `restaurar_version_que_funcionaba` (cruza versiones con corridas). Devuelven `confirmado` y la versión real; el SISTEMA le prohíbe decir que restauró sin `confirmado=true`.
+- [x] **Web**: vista `/flujos/<flujo>/versiones[/<n>|/<a>-<b>]` (`Versiones.tsx`, `versiones.css`) con lista, comparación de dos con `Selector`, «Volver a esta versión» con confirmación, etiqueta, deshacer y rehacer; en el riel («Versiones») y en la cabecera del flujo. Editor declarativo: renombrar se deshace, sin cambios locales Ctrl+Z deshace lo último guardado (también lo de Vera) y Ctrl+Y lo rehace; botones con su atajo en el tooltip. Copias de PQRD y tutelas: botones Deshacer y Rehacer en la cabecera y Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z sobre el lienzo.
+- [x] Pruebas (2026-11-11), todas en verde:
+
+  | Suite | Resultado |
+  |---|---|
+  | `servidor/src/pruebas_versiones.ts` (nueva) | 6 de 6 |
+  | Servidor completo (`node --test`, 6 archivos) | 46 de 46 |
+  | `puente/pruebas_versiones.py` (nueva) | 6 de 6 |
+  | `pruebas_voz.py` | 11 de 11 |
+  | `pruebas_estructura.py` | 15 de 15 |
+  | `pruebas_declarativo.py` | 193 (1 omitida) |
+  | `tsc --noEmit` (servidor y web) | limpio |
+
+- [x] Conversación real con Vera por la API del chat (scratchpad `conversacion_versiones.py`): 11 de 11. Editó el flujo (v2 de Vera; v1 con «antes de: En ev-conv-versiones agrega…»), listó y comparó, «déjalo como estaba» → `deshacer_cambio` y el flujo quedó con sus 3 pasos originales (v3), «vuelve a poner la versión 2» → v4; en una copia de PQRD apagó el revisor (v1, punto en la v0) y «devuélvela a como estaba» la dejó en la del código (v2). El original no se tocó.
+- [x] `scripts/evaluar_vera.py`: 5 casos nuevos, 5 de 5 (editar deja el punto, listar y comparar, déjalo como estaba, la que funcionaba, y por la ruta de la voz «deshaz lo que hiciste»).
+- [x] Navegador (Playwright, scratchpad `navegador_versiones.cjs`): 20 de 20. Ctrl+Z, Ctrl+Y y Ctrl+Shift+Z sobre un paso borrado; botones; renombrar deshecho; deshacer lo guardado; la vista lista, compara, vuelve a una versión y lleva la URL; `/versiones/1-2`; 390 px sin desborde; copia de PQRD con Ctrl+Z, Ctrl+Y y botón.
+- [ ] Las versiones de antes de este historial no tienen autor ni resumen. En el PQRD original, la vuelta a la del código anterior a este cambio no quedó registrada: sus corridas posteriores se cuentan en la v3.
+- [ ] Chat.tsx no tiene rótulo propio para las herramientas nuevas (se ven con su nombre); es del agente del chat.
+
 ## 6. Paso a producción (cuando aprueben)
 
 - [x] Documento de despliegue (`docs/PRODUCCION.md`): principios, entorno y secretos de PQRD y tutelas con sus nombres reales, conexiones, cómo jala la información cada flujo, qué escribe y los pasos para salir a producción.
