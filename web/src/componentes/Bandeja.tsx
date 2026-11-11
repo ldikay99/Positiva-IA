@@ -752,8 +752,8 @@ function BandejaDeclarativa() {
         </div>
         {!recibe && (
           <div className="fuentes" role="tablist" aria-label="De dónde salen los correos">
-            {([["prueba", "Bandeja de prueba", "bandeja"], ["buzon", "Buzón del flujo", "correo"]] as const).map(([id, nombre, icono]) => (
-              <button key={id} role="tab" aria-selected={fuente === id} className={fuente === id ? "activo" : ""} onClick={() => setFuente(id)}>
+            {([["prueba", "De prueba", "bandeja"], ["buzon", "Buzón", "correo"]] as const).map(([id, nombre, icono]) => (
+              <button key={id} title={id === "prueba" ? "Bandeja de prueba del flujo" : "Buzón propio del flujo"} role="tab" aria-selected={fuente === id} className={fuente === id ? "activo" : ""} onClick={() => setFuente(id)}>
                 {fuente === id && <motion.span layoutId="fuente-activa" className="fuente-fondo" transition={{ type: "spring", stiffness: 520, damping: 38 }} />}
                 <Icono n={icono} tam={13} />
                 <span>{nombre}</span>

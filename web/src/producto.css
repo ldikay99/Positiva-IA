@@ -216,7 +216,7 @@
 .pr-cuenta { font-size: var(--t-s); }
 .pr-hist-lista { container-type: inline-size; }
 /* la lista es una sola superficie con filas, no una pila de tarjetas */
-.pr-filas { display: flex; flex-direction: column; gap: 0; margin: 0; padding: 0; list-style: none; border-radius: var(--radio); background: var(--pliego); box-shadow: var(--sombra-1); overflow: hidden; }
+.pr-filas { flex: none; display: flex; flex-direction: column; gap: 0; margin: 0; padding: 0; list-style: none; border-radius: var(--radio); background: var(--pliego); box-shadow: var(--sombra-1); overflow: hidden; }
 .pr-filas > li + li { box-shadow: inset 0 1px 0 var(--linea); }
 .pr-filas .pr-fila { border-radius: 0; box-shadow: none; padding: var(--e-3) var(--e-5); }
 .pr-filas .pr-fila:hover { background: var(--superficie-2); box-shadow: none; }
@@ -225,7 +225,8 @@
   .pr-filas .pr-fila-cuerpo { flex-direction: row; align-items: baseline; gap: var(--e-6); }
   .pr-filas .pr-fila-cuerpo b { flex: 1 1 0; }
   .pr-filas .pr-fila-meta { flex: 0 0 42%; }
-  .pr-filas .pr-fila-cuando { flex-direction: row-reverse; align-items: baseline; gap: var(--e-5); min-width: 220px; justify-content: flex-start; }
+  .pr-filas .pr-fila-cuando { flex-direction: row-reverse; align-items: baseline; gap: var(--e-5); width: 270px; justify-content: flex-start; }
+  .pr-filas .pr-fila-cuando small { overflow: hidden; text-overflow: ellipsis; }
 }
 .pr-fila { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--e-4); width: 100%; padding: var(--e-4) var(--e-5); border-radius: 10px; background: var(--pliego); box-shadow: var(--sombra-1); text-align: left; transition: box-shadow 0.15s, background 0.15s; }
 .pr-fila:hover { box-shadow: var(--sombra-2); }
@@ -418,5 +419,7 @@
   .pr-inicio > [aria-labelledby="in-plantillas"] { grid-area: plantillas; }
 }
 @media (max-width: 900px) {
-  .in-hero { grid-template-columns: minmax(0, 1fr); grid-template-areas: "titulo" "bajada" "recorrido" "crear"; }
+  .in-hero { grid-template-columns: minmax(0, 1fr); grid-template-areas: "titulo" "bajada" "recorrido" "crear"; padding: var(--e-6); }
+  .in-rec-sello .in-sello { display: none; }
+  .in-rec-sello > span:nth-of-type(2) { padding-right: 0; }
 }
