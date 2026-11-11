@@ -138,6 +138,8 @@ export async function guardar(id: string, base: string, definicion: unknown, not
   const v = await validar(base, definicion, entorno);
   if (!v.ok) return v;
   const previa = guardadas.get(id);
+  // Guardar lo mismo que ya está no es una versión nueva (el historial no se llena de «sin cambios»).
+  if (previa && JSON.stringify(previa.definicion) === JSON.stringify(definicion)) return { ...v, guardada: previa };
   const antes = previa ? previa.definicion : await porDefecto(base).catch(() => null);
   const versionPrevia = await versionActual(id);
   await mkdir(carpeta(), { recursive: true });

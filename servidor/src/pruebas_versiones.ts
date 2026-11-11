@@ -163,6 +163,8 @@ test("la estructura de una copia de PQRD tiene versiones: la del código es la 0
   d.nodos.find((n) => n.id === "revisor")!.config = { deshabilitado: true };
   const g = await app.inject({ method: "PUT", url: "/api/flujos/pqrd-versiones/estructura", payload: { definicion: d }, headers: VERA("apaga el revisor") });
   assert.equal(g.json().version, 1, g.body);
+  // guardar otra vez lo mismo no es una versión nueva
+  assert.equal((await app.inject({ method: "PUT", url: "/api/flujos/pqrd-versiones/estructura", payload: { definicion: d }, headers: VERA("apaga el revisor") })).json().version, 1);
   l = await lista("pqrd-versiones");
   assert.equal(l.find((v) => v.version === 0)!.punto, "antes de: apaga el revisor");
   assert.equal(l.find((v) => v.version === 1)!.autor, "vera");
