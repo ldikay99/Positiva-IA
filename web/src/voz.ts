@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * La llamada con Vera. El micrófono sale como PCM de 16 bits a 16 kHz (con una
  * puerta de ruido para que el ruido de fondo no cuente como voz) y la voz de Vera
  * llega como PCM de 16 bits a 24 kHz, por un WebSocket al servidor, que la conecta
- * con Gemini Live. Adaptado del asistente Bizz.
+ * con Gemini Live; suena en un AudioWorklet con cola y colchón (/reproductor.js), sin
+ * huecos entre fragmentos. Adaptado del asistente Bizz.
  */
 
 export const VOCES: { id: string; nombre: string; tono: string }[] = [
@@ -32,29 +33,67 @@ export const VOCES: { id: string; nombre: string; tono: string }[] = [
 
 const TASA_MIC = 16_000;
 const TASA_VOZ = 24_000;
+/** Colchón de la vía de respaldo (sin worklet); el worklet arranca con 120 ms y crece si se vacía. */
+const COLCHON_S = 0.12;
+
+function nuevoEstado() {
+  return { sonando: new Set<AudioBufferSourceNode>(), tocarEn: 0, listo: false, micMudo: false, puerta: crearPuerta(), previos: [] as ArrayBuffer[], veraSuena: false, colaMs: 0, colaEn: 0 };
+}
 
 // ------------------------------------------------------------ puerta de ruido
-// Mide cada tramo en dBFS contra un suelo de ruido adaptativo; lo que no pasa
-// sale como silencio (el flujo no se corta, para que el servidor vea el final de
-// cada turno). Mientras Vera habla exige más nivel y más tiempo para interrumpirla.
+// Cada tramo (~43 ms) trae su energía total y la de la banda de la voz (200-3800 Hz, calculada en
+// /microfono.js). Es habla si la banda supera el suelo de ruido por un margen Y concentra buena parte
+// de la energía (el ventilador es grave; el siseo y los clics, agudos). El turno abre solo con habla
+// sostenida (ATAQUE_MS acumulados; los tramos sin voz descuentan más rápido), y lo que no pasa sale como
+// silencio (el flujo no se corta, para que Gemini vea el final de cada turno).
+// - Calibración: el primer segundo mide el ruido de fondo (percentil 30, robusto si alguien ya habla).
+// - Suelo adaptativo: sube despacio (3 s) y baja rápido (0,6 s) mientras no hay habla; no sube con Vera sonando.
+// - Ruido estable: si la puerta lleva 1,5 s abierta con un nivel casi constante (desviación < 2 dB), no es
+//   habla (la voz varía 6-10 dB entre tramos): se cierra y el suelo se pone en ese nivel.
+// - Mientras Vera habla, interrumpirla exige más nivel y más tiempo (el eco y el ruido no la cortan).
 
-const CALIBRACION_MS = 500, TECHO_SUELO = -45, SUELO_MIN = -80, SILENCIO = -100;
-const SUBE_MS = 4000, BAJA_MS = 800, MARGEN = 12, MIN_ABRE = -48, ATAQUE_MS = 200;
-const MARGEN_HABLANDO = 28, MIN_HABLANDO = -30, ATAQUE_HABLANDO_MS = 650, COLA_MS = 350, PREVIO_MS = 150;
+const CALIBRACION_MS = 1000, PERCENTIL_SUELO = 0.3, TECHO_SUELO = -42, TECHO_ADAPTADO = -38, SUELO_MIN = -85, SILENCIO = -100;
+const SUBE_MS = 3000, BAJA_MS = 600, MARGEN = 10, MIN_ABRE = -52, RAZON_VOZ = 0.35, ATAQUE_MS = 200, DESCUENTO = 1.5;
+const MARGEN_HABLANDO = 26, MIN_HABLANDO = -32, ATAQUE_HABLANDO_MS = 600, COLA_MS = 400, PREVIO_MS = 150;
+const HISTERESIS_DB = 3, ESTABLE_MS = 1500, ESTABLE_DB = 2;
 
-function nivelDb(t: Float32Array): number {
-  let s = 0;
-  for (let i = 0; i < t.length; i++) s += t[i]! * t[i]!;
-  const rms = Math.sqrt(s / Math.max(1, t.length));
-  return rms > 0 ? Math.max(SILENCIO, 20 * Math.log10(rms)) : SILENCIO;
+type Tramo = { pcm: Float32Array; total: number; banda: number };
+
+const aDb = (e: number) => (e > 0 ? Math.max(SILENCIO, 10 * Math.log10(e)) : SILENCIO);
+
+/** Lo mismo que /microfono.js, para la vía de respaldo (ScriptProcessor). */
+function crearMedidor(tasa: number) {
+  const biquad = (pb: boolean, f: number) => {
+    const w = (2 * Math.PI * f) / tasa, c = Math.cos(w), al = Math.sin(w) / (2 * Math.SQRT1_2), a0 = 1 + al;
+    const b0 = (pb ? (1 - c) / 2 : (1 + c) / 2) / a0, b1 = (pb ? 1 - c : -(1 + c)) / a0;
+    let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    return (x: number) => {
+      const y = b0 * x + b1 * x1 + b0 * x2 - ((-2 * c) / a0) * y1 - ((1 - al) / a0) * y2;
+      x2 = x1; x1 = x; y2 = y1; y1 = y;
+      return y;
+    };
+  };
+  const pa = biquad(false, 200), pb = biquad(true, Math.min(3800, tasa * 0.45));
+  return (pcm: Float32Array): Tramo => {
+    let total = 0, banda = 0;
+    for (let i = 0; i < pcm.length; i++) {
+      const x = pcm[i]!, y = pb(pa(x));
+      total += x * x;
+      banda += y * y;
+    }
+    return { pcm, total: total / Math.max(1, pcm.length), banda: banda / Math.max(1, pcm.length) };
+  };
 }
 
 function crearPuerta() {
-  let reloj = 0, calib = 0, calibSuma = 0, suelo = SUELO_MIN, abierta = false, encima = 0, ultimaVoz = -Infinity;
+  let reloj = 0, calibMs = 0, suelo = SUELO_MIN, calibrada = false, abierta = false, encima = 0, ultimaVoz = -Infinity, desde = 0;
+  const calib: number[] = [];
   const recientes: { t: Float32Array; ms: number }[] = [];
   let recientesMs = 0;
+  let niveles: { r: number; db: number }[] = [];
+  const diag = { calibrado_db: null as number | null, suelo_db: SUELO_MIN, aperturas: 0, habla_ms: 0, cierres_por_ruido_estable: 0 };
   const adaptar = (db: number, ms: number, puedeSubir: boolean) => {
-    const meta = Math.max(SUELO_MIN, db);
+    const meta = Math.max(SUELO_MIN, Math.min(TECHO_ADAPTADO, db));
     if (meta > suelo && !puedeSubir) return;
     suelo += (meta - suelo) * (1 - Math.exp(-ms / (meta > suelo ? SUBE_MS : BAJA_MS)));
   };
@@ -65,45 +104,72 @@ function crearPuerta() {
       out.unshift(recientes[i]!.t);
       acc += recientes[i]!.ms;
     }
+    diag.habla_ms += acc;
     return out;
   };
   return {
     abierta: () => abierta,
-    procesar(t: Float32Array, tasa: number, veraHabla: boolean): Float32Array[] {
+    diag: () => ({ ...diag, suelo_db: Math.round(suelo * 10) / 10, habla_ms: Math.round(diag.habla_ms) }),
+    procesar(x: Tramo, tasa: number, veraHabla: boolean): Float32Array[] {
+      const t = x.pcm;
       const ms = (t.length / tasa) * 1000;
-      const db = nivelDb(t);
+      const db = aDb(x.banda);
+      const razon = x.total > 0 ? x.banda / x.total : 0;
       reloj += ms;
       const mudo = () => [new Float32Array(t.length)];
-      if (calib < CALIBRACION_MS) {
-        calib += ms;
-        calibSuma += db * ms;
-        if (calib >= CALIBRACION_MS) suelo = Math.min(TECHO_SUELO, Math.max(SUELO_MIN, calibSuma / calib));
+      recientes.push({ t, ms });
+      recientesMs += ms;
+      while (recientes.length > 1 && recientesMs - recientes[0]!.ms >= ATAQUE_HABLANDO_MS + PREVIO_MS) recientesMs -= recientes.shift()!.ms;
+      if (!calibrada) {
+        calib.push(db);
+        calibMs += ms;
+        if (calibMs < CALIBRACION_MS) return mudo();
+        const orden = [...calib].sort((a, b) => a - b);
+        suelo = Math.min(TECHO_SUELO, Math.max(SUELO_MIN, orden[Math.floor(orden.length * PERCENTIL_SUELO)]!));
+        diag.calibrado_db = Math.round(suelo * 10) / 10;
+        calibrada = true;
         return mudo();
       }
       const umbral = veraHabla ? Math.max(suelo + MARGEN_HABLANDO, MIN_HABLANDO) : Math.max(suelo + MARGEN, MIN_ABRE);
-      const ataque = veraHabla ? ATAQUE_HABLANDO_MS : ATAQUE_MS;
-      const sobre = db >= umbral;
-      recientes.push({ t: t.slice(), ms });
-      recientesMs += ms;
-      while (recientes.length > 1 && recientesMs - recientes[0]!.ms >= ATAQUE_HABLANDO_MS + PREVIO_MS) recientesMs -= recientes.shift()!.ms;
       if (!abierta) {
-        encima = sobre ? encima + ms : Math.max(0, encima - ms);
-        if (!sobre) adaptar(db, ms, !veraHabla);
-        if (encima < ataque) return mudo();
+        const voz = db >= umbral && razon >= RAZON_VOZ;
+        encima = voz ? encima + ms : Math.max(0, encima - ms * DESCUENTO);
+        if (!voz) adaptar(db, ms, !veraHabla);
+        if (encima < (veraHabla ? ATAQUE_HABLANDO_MS : ATAQUE_MS)) return mudo();
         abierta = true;
-        ultimaVoz = reloj;
+        desde = ultimaVoz = reloj;
         encima = 0;
-        return cola(ataque + PREVIO_MS);
+        niveles = [];
+        diag.aperturas++;
+        return cola((veraHabla ? ATAQUE_HABLANDO_MS : ATAQUE_MS) + PREVIO_MS);
       }
-      if (sobre) ultimaVoz = reloj;
+      niveles.push({ r: reloj, db });
+      while (niveles.length && reloj - niveles[0]!.r > ESTABLE_MS) niveles.shift();
+      if (reloj - desde >= ESTABLE_MS && niveles.length > 8) {
+        const media = niveles.reduce((a, n) => a + n.db, 0) / niveles.length;
+        const desv = Math.sqrt(niveles.reduce((a, n) => a + (n.db - media) ** 2, 0) / niveles.length);
+        if (desv < ESTABLE_DB) {
+          abierta = false;
+          suelo = Math.min(TECHO_ADAPTADO, Math.max(suelo, media));
+          diag.cierres_por_ruido_estable++;
+          return mudo();
+        }
+      }
+      if (db >= umbral - HISTERESIS_DB && razon >= RAZON_VOZ * 0.8) ultimaVoz = reloj;
       if (reloj - ultimaVoz > COLA_MS) {
         abierta = false;
         return mudo();
       }
-      return [t.slice()];
+      diag.habla_ms += ms;
+      return [t];
     },
   };
 }
+
+// Lo que mide la llamada (para las pruebas y para diagnosticar cortes): reproducción, puerta, contexto.
+const DIAG: { salida?: unknown; puerta?: unknown; contexto_hz?: number; reproduccion?: "worklet" | "fuentes" } = {};
+let puertaViva: ReturnType<typeof crearPuerta> | null = null;
+(globalThis as { __vozDiag?: () => unknown }).__vozDiag = () => ({ ...DIAG, puerta: puertaViva?.diag() ?? DIAG.puerta });
 
 function bajar(t: Float32Array, de: number, a = TASA_MIC): Float32Array {
   if (a >= de) return t;
@@ -174,14 +240,18 @@ export function useVoz(alEvento: (e: EventoVoz) => void) {
   const [error, setError] = useState("");
   const r = useRef<{
     ws?: WebSocket; entrada?: AudioContext; salida?: AudioContext; mic?: MediaStream; nodo?: AudioWorkletNode; respaldo?: ScriptProcessorNode;
-    ganancia?: GainNode; analizadorVera?: AnalyserNode; analizadorMic?: AnalyserNode;
+    ganancia?: GainNode; analizadorVera?: AnalyserNode; analizadorMic?: AnalyserNode; reproductor?: AudioWorkletNode;
     sonando: Set<AudioBufferSourceNode>; tocarEn: number; listo: boolean; micMudo: boolean; puerta: ReturnType<typeof crearPuerta>; previos: ArrayBuffer[];
-  }>({ sonando: new Set(), tocarEn: 0, listo: false, micMudo: false, puerta: crearPuerta(), previos: [] });
+    veraSuena: boolean; colaMs: number; colaEn: number;
+  }>(nuevoEstado());
   const evento = useRef(alEvento);
   evento.current = alEvento;
 
   const callar = () => {
     const s = r.current;
+    s.reproductor?.port.postMessage({ tipo: "callar" });
+    s.veraSuena = false;
+    s.colaMs = 0;
     for (const x of s.sonando) {
       try {
         x.stop();
@@ -210,7 +280,10 @@ export function useVoz(alEvento: (e: EventoVoz) => void) {
       setTimeout(() => void salida.close().catch(() => undefined), 500);
     }
     void s.entrada?.close().catch(() => undefined);
-    r.current = { sonando: new Set(), tocarEn: 0, listo: false, micMudo: false, puerta: crearPuerta(), previos: [] };
+    s.reproductor?.disconnect();
+    DIAG.puerta = s.puerta.diag();
+    if (puertaViva === s.puerta) puertaViva = null;
+    r.current = nuevoEstado();
     setEstado("inactiva");
     setMicMudo(false);
     setEscuchado("");
@@ -219,6 +292,12 @@ export function useVoz(alEvento: (e: EventoVoz) => void) {
 
   const tocar = (datos: ArrayBuffer) => {
     const s = r.current;
+    if (s.reproductor) {
+      // al hilo de audio, transferido (sin copia ni trabajo en el hilo principal)
+      s.reproductor.port.postMessage({ tipo: "pcm", datos }, [datos]);
+      return;
+    }
+    // Respaldo sin worklet: fuentes encadenadas, cada una donde termina la anterior.
     if (!s.salida || !s.ganancia) return;
     const muestras = dePcm16(datos);
     if (!muestras.length) return;
@@ -228,7 +307,7 @@ export function useVoz(alEvento: (e: EventoVoz) => void) {
     src.buffer = b;
     src.connect(s.ganancia);
     const ahora = s.salida.currentTime;
-    const en = s.tocarEn > ahora ? s.tocarEn : ahora + 0.15;
+    const en = s.tocarEn > ahora ? s.tocarEn : ahora + COLCHON_S;
     src.start(en);
     s.tocarEn = en + b.duration;
     s.sonando.add(src);
@@ -243,22 +322,50 @@ export function useVoz(alEvento: (e: EventoVoz) => void) {
     try {
       // Los contextos de audio se crean dentro del clic, para que el navegador deje sonar.
       s.entrada = new AudioContext();
-      s.salida = new AudioContext();
+      // La salida va a 24 kHz, la tasa de Gemini: el navegador remuestrea al dispositivo con su propio
+      // remuestreador, continuo entre fragmentos. Si no lo acepta, el worklet remuestrea.
+      try {
+        s.salida = new AudioContext({ sampleRate: TASA_VOZ, latencyHint: "interactive" });
+      } catch {
+        s.salida = new AudioContext({ latencyHint: "interactive" });
+      }
       s.ganancia = s.salida.createGain();
       s.ganancia.gain.value = vozMuda ? 0 : 1;
       s.analizadorVera = s.salida.createAnalyser();
       s.analizadorVera.fftSize = 512;
       s.ganancia.connect(s.analizadorVera).connect(s.salida.destination);
+      DIAG.contexto_hz = s.salida.sampleRate;
+      DIAG.salida = undefined;
+      // La voz de Vera suena en un AudioWorklet con cola y colchón (/reproductor.js); sin él, fuentes encadenadas.
+      try {
+        await s.salida.audioWorklet.addModule(`/reproductor.js?v=2`);
+        const rep = new AudioWorkletNode(s.salida, "reproductor", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [1], processorOptions: { tasaFuente: TASA_VOZ } });
+        rep.port.onmessage = (ev: MessageEvent<{ tipo: string; sonando: boolean; colaMs: number; diag: unknown }>) => {
+          if (ev.data.tipo !== "estado" || r.current.reproductor !== rep) return;
+          s.veraSuena = ev.data.sonando;
+          s.colaMs = ev.data.colaMs;
+          s.colaEn = performance.now();
+          DIAG.salida = ev.data.diag;
+        };
+        rep.connect(s.ganancia);
+        s.reproductor = rep;
+        DIAG.reproduccion = "worklet";
+      } catch {
+        DIAG.reproduccion = "fuentes";
+      }
       s.mic = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
       const fuente = s.entrada.createMediaStreamSource(s.mic);
       s.analizadorMic = s.entrada.createAnalyser();
       s.analizadorMic.fftSize = 512;
       fuente.connect(s.analizadorMic);
       const tasa = s.entrada.sampleRate;
-      const alTramo = (tramo: Float32Array) => {
+      DIAG.puerta = undefined;
+      puertaViva = s.puerta;
+      const alTramo = (tramo: Tramo) => {
         const ws = s.ws;
         if (s.micMudo) return;
-        const tramos = s.puerta.procesar(tramo, tasa, s.sonando.size > 0).map((t) => aPcm16(bajar(t, tasa)));
+        const veraHabla = s.reproductor ? s.veraSuena : s.sonando.size > 0;
+        const tramos = s.puerta.procesar(tramo, tasa, veraHabla).map((t) => aPcm16(bajar(t, tasa)));
         // Lo que se dice mientras conecta (hasta ~4 s) se guarda y sale al conectar.
         if (!s.listo || !ws || ws.readyState !== WebSocket.OPEN) {
           s.previos.push(...tramos);
@@ -272,7 +379,7 @@ export function useVoz(alEvento: (e: EventoVoz) => void) {
       let conWorklet = false;
       for (let intento = 0; intento < 3 && !conWorklet; intento++) {
         try {
-          await s.entrada.audioWorklet.addModule(`/microfono.js?v=2`);
+          await s.entrada.audioWorklet.addModule(`/microfono.js?v=3`);
           conWorklet = true;
         } catch {
           await new Promise((r) => setTimeout(r, 400 * (intento + 1)));
@@ -280,11 +387,12 @@ export function useVoz(alEvento: (e: EventoVoz) => void) {
       }
       if (conWorklet) {
         s.nodo = new AudioWorkletNode(s.entrada, "microfono");
-        s.nodo.port.onmessage = (ev: MessageEvent<Float32Array>) => alTramo(ev.data);
+        s.nodo.port.onmessage = (ev: MessageEvent<Tramo>) => alTramo(ev.data);
         fuente.connect(s.nodo);
       } else {
         const proc = s.entrada.createScriptProcessor(2048, 1, 1);
-        proc.onaudioprocess = (ev) => alTramo(new Float32Array(ev.inputBuffer.getChannelData(0)));
+        const medir = crearMedidor(tasa);
+        proc.onaudioprocess = (ev) => alTramo(medir(new Float32Array(ev.inputBuffer.getChannelData(0))));
         const mudo = s.entrada.createGain();
         mudo.gain.value = 0;
         fuente.connect(proc);
@@ -316,6 +424,8 @@ export function useVoz(alEvento: (e: EventoVoz) => void) {
       else if (e.tipo === "dicho") setDicho(String(e.total ?? ""));
       else if (e.tipo === "interrumpido") callar();
       else if (e.tipo === "turno") {
+        // lo que quede en la cola es el final del turno: cuando se acabe no es un corte
+        s.reproductor?.port.postMessage({ tipo: "fin_turno" });
         setEscuchado("");
         setDicho("");
       } else if (e.tipo === "error") setError(String(e.texto ?? "La llamada falló."));
@@ -328,7 +438,9 @@ export function useVoz(alEvento: (e: EventoVoz) => void) {
       if (ev.code === 4429) setError("Hay demasiadas llamadas abiertas; cierra alguna e intenta otra vez.");
       else if (ev.code === 4404) setError("Esa conversación ya no existe.");
       const salida = s.salida;
-      const falta = salida && s.sonando.size ? Math.max(0, s.tocarEn - salida.currentTime) : 0;
+      const falta = s.reproductor
+        ? (s.veraSuena ? Math.max(0, s.colaMs - (performance.now() - s.colaEn)) / 1000 + 0.15 : 0)
+        : salida && s.sonando.size ? Math.max(0, s.tocarEn - salida.currentTime) : 0;
       // El micrófono se apaga ya; la voz de Vera termina su frase y después suena el tono de fin.
       s.listo = false;
       s.mic?.getTracks().forEach((t) => t.stop());
