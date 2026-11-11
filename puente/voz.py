@@ -532,7 +532,10 @@ async def llamada(primera: Any, abrir: Any, types: Any, cid: str, flujo: str, pr
                                 enviar_audio(p.inline_data.data)
                     if sc.input_transcription and sc.input_transcription.text:
                         await guardar_pendiente()  # la persona empezó otro turno: el anterior se guarda ya
+                        nuevo_pedido = not turno.escuchado
                         turno.escuchado = unir_transcripcion(turno.escuchado, sc.input_transcription.text)
+                        # lo que pide la persona: el punto «antes de: …» de las versiones de lo que Vera cambie en este turno
+                        asistente.fijar_pedido(turno.escuchado, f"voz:{cid}:{time.time_ns()}" if nuevo_pedido else None)
                         actividad["entrada"] = time.monotonic()
                         actividad["turno_abierto"] = True
                         enviar("escuchado", texto=sc.input_transcription.text, total=turno.escuchado)

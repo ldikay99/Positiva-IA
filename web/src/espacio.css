@@ -76,13 +76,19 @@
   .lienzo-arriba-izq .leyenda, .lienzo-barra .etq { display: none; }
 }
 
-/* celular: cada campo en dos renglones (nombre y fuente arriba, valor entero abajo) */
+/* Donde la solicitud tiene poco ancho (inspector, panel de abajo, celular), cada campo va en dos renglones:
+   nombre y fuente arriba, valor entero abajo. Antes, a 380 px el valor quedaba en una columna de una letra. */
+.solicitud { container-type: inline-size; }
+@container (max-width: 560px) {
+  .solicitud .campo-fila { grid-template-columns: 18px minmax(0, 1fr) auto; grid-template-areas: "e n m" "e v v"; row-gap: var(--e-1); }
+  .solicitud .campo-estado { grid-area: e; align-self: start; margin-top: var(--e-1); }
+  .solicitud .campo-nombre { grid-area: n; }
+  .solicitud .campo-valor { grid-area: v; font-size: var(--t-s); white-space: normal; overflow-wrap: normal; word-break: normal; }
+  .solicitud .campo-meta { grid-area: m; justify-content: flex-end; flex-wrap: wrap; max-width: 190px; row-gap: var(--e-1); }
+  .solicitud .campo-meta .ficha { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+  .solicitud .campo-nombre { min-width: 90px; }
+}
 @media (max-width: 760px) {
-  .solicitud:not(.compacta) .campo-fila { grid-template-columns: 20px minmax(0, 1fr) auto; grid-template-areas: "e n m" "e v v"; row-gap: var(--e-1); }
-  .solicitud:not(.compacta) .campo-estado { grid-area: e; align-self: start; margin-top: var(--e-1); }
-  .solicitud:not(.compacta) .campo-nombre { grid-area: n; }
-  .solicitud:not(.compacta) .campo-valor { grid-area: v; font-size: var(--t-s); overflow-wrap: normal; word-break: normal; }
-  .solicitud:not(.compacta) .campo-meta { grid-area: m; }
   .barra .selector-flujo { max-width: 52vw; min-width: 0; }
 }
 

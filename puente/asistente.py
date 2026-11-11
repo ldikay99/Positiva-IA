@@ -37,9 +37,37 @@ def emitir(tipo: str, **datos: Any) -> None:
         sys.stdout.flush()
 
 
+# Lo último que pidió la persona (por escrito o en la llamada). Va en cada pedido a la API con «x-autor: vera»:
+# el historial de versiones anota que el cambio es de Vera y deja la versión de antes como «antes de: <pedido>».
+PEDIDO: Dict[str, str] = {"texto": "", "id": ""}
+
+
+def fijar_pedido(texto: str, clave: Optional[str] = None) -> None:
+    """El pedido en curso: su texto (recortado) y una clave que no cambia mientras dure ese pedido."""
+    PEDIDO["texto"] = " ".join(str(texto or "").split())[:200]
+    if clave is not None:
+        PEDIDO["id"] = str(clave)[:120]
+
+
+def fijar_pedido_de(entrada: Dict[str, Any]) -> None:
+    """El pedido de un turno del chat escrito: el último mensaje de la persona (su clave: conversación y número de mensaje)."""
+    usuario = [m for m in entrada.get("mensajes") or [] if m.get("rol") == "usuario"]
+    if usuario:
+        fijar_pedido(usuario[-1].get("texto") or "", f"{entrada.get('conversacion') or 'chat'}:{len(usuario)}")
+
+
+def _encabezados_de_vera() -> Dict[str, str]:
+    from urllib.parse import quote
+    h = {"Content-Type": "application/json", "x-autor": "vera"}
+    if PEDIDO["texto"]:
+        h["x-pedido"] = quote(PEDIDO["texto"], safe="")
+        h["x-pedido-id"] = quote(PEDIDO["id"] or PEDIDO["texto"][:80], safe="")
+    return h
+
+
 def api(metodo: str, ruta: str, cuerpo: Any = None) -> Any:
     datos = json.dumps(cuerpo).encode() if cuerpo is not None else None
-    req = urllib.request.Request(API + ruta, data=datos, method=metodo, headers={"Content-Type": "application/json"})
+    req = urllib.request.Request(API + ruta, data=datos, method=metodo, headers=_encabezados_de_vera())
     try:
         with urllib.request.urlopen(req, timeout=60) as r:
             return json.loads(r.read() or b"null")
@@ -132,6 +160,7 @@ Cómo trabajas:
    Cada flujo es independiente: su correspondencia (si arranca con correo), sus archivos, su entorno, sus conexiones, su compuerta y sus corridas. Nunca mezcles: los correos de PQRD son de PQRD. Un flujo nuevo que arranca con correo usa su bandeja de prueba (sube .eml con subir_adjuntos_a_flujo destino=bandeja_prueba) o su buzón propio (configura la conexión y carpeta del disparador con editar_nodo y léelo con leer_buzon_flujo). Para procesar documentos o imágenes que te adjunten en el chat, usa un flujo con disparador entrada_archivos (o un campo de tipo archivo en entrada_manual) y subir_adjuntos_a_flujo con correr=true; nunca pidas rutas. Un flujo que procesa un documento NUNCA tiene un campo de texto «ruta»: la persona no conoce rutas del servidor; pide el documento con un campo de tipo «archivo» (se sube al correr) y léelo con archivo_leer archivo: «{{{{entrada.<campo>}}}}». La salida de un flujo que hizo su trabajo usa desenlace «completar» (se ve «Completado»); «manual» es SOLO cuando una persona tiene que revisar algo, porque se muestra como «Para revisión de una persona». Para editar un flujo sin tocar el original, clonar_flujo; renombrar_flujo y proponer_borrado sirven para cualquier flujo salvo borrar los originales PQRD y tutelas.
    Cada flujo tiene su propio entorno (variables y secretos, no globales): en los nodos se usan como {{entorno.NOMBRE}}. Revisa con ver_entorno; define o quita las que NO son secretas con definir_variable / quitar_variable; los secretos los escribe la persona (pedir_secreto). Para la revisión antes de producción, ver_manifiesto.
    En el editor del flujo abierto usa controlar_editor (seleccionar o centrar un nodo, abrir su panel, zoom, ordenar, resaltar, abrir la paleta o el diálogo de correr). Renombra, duplica, versiona y corre flujos con renombrar_flujo, duplicar_flujo, versiones_flujo, restaurar_version y correr_flujo.
+   Versiones (también en pqrd, tutelas y sus copias): cada cambio que haces queda con tu nombre y, al empezar un pedido, la versión de antes queda como punto «antes de: <lo que pidió la persona>». Si algo sale mal o te piden «deshazlo», «déjalo como estaba» o «vuelve atrás», usa deshacer_cambio (deshace todo lo que hiciste en tu último pedido); «vuelve a la versión N», restaurar_version; «déjalo como cuando funcionaba», restaurar_version_que_funcionaba; «qué cambió», comparar_versiones (dilo en palabras: pasos, configuración y conexiones); el historial, versiones_flujo. Volver atrás crea una versión nueva y nunca borra el historial. Solo di que restauraste o deshiciste si la herramienta devolvió confirmado=true, y di la versión que quedó en uso (version).
    Moverte por la plataforma: navegar (vistas), abrir_correspondencia, filtrar_correos, abrir_correo, seleccionar_correos, abrir_corrida, abrir_adjuntos, abrir_proceso, ajustar_lienzo (ver todo, acercar, alejar), centrar_nodo, enfocar_flujo. Si piden «muéstrame», «ábreme», «llévame», «aléjalo», hazlo con estas.
 7. Consultar: resumen_tablero, listar_flujos, leer_flujo, listar_correos, ver_correo, ver_buzon, ultimas_corridas, ver_corrida, ver_logs, estado_motor, listar_nodos, ver_nodo, ver_configuracion, historial_configuracion, listar_perfiles, listar_chats.
 8. Actuar (en modo prueba): correr_correos (correos descargados), correr_buzon (los próximos del buzón real, en el orden del job, solo lectura), cancelar_cola, probar_flujo, ajustar_parametro_pqrd, aplicar_perfil, guardar_perfil. Antes de correr muchos correos (más de 10), confirma cuántos.
@@ -200,8 +229,8 @@ HERRAMIENTAS = [
     {"name": "reglas_de_flujos", "description": "Las reglas generales de los flujos: estructura, aristas, plantillas {{...}}, opciones comunes de todos los nodos (deshabilitado, continuar_si_falla, reintentos, rama de error, entradas/salida) y desenlaces.", "parameters": {"type": "object", "properties": {}}},
     {"name": "renombrar_flujo", "description": "Cambia el nombre y/o la descripción de un flujo declarativo.", "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "nombre": {"type": "string"}, "descripcion": {"type": "string"}}, "required": ["id"]}},
     {"name": "clonar_flujo", "description": "Clona cualquier flujo (también PQRD y tutelas): la copia es independiente, con su propio entorno (los secretos de un flujo declarativo quedan sin valor), conexiones, compuerta y programación apagadas y sus propias corridas. Luego se puede editar sin tocar el original.", "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "nombre": {"type": "string"}, "id_nuevo": {"type": "string"}}, "required": ["id"]}},
-    {"name": "versiones_flujo", "description": "Las versiones guardadas de un flujo declarativo.", "parameters": {"type": "object", "properties": {"id": {"type": "string"}}, "required": ["id"]}},
-    {"name": "restaurar_version", "description": "Vuelve un flujo declarativo a una versión anterior (queda como versión nueva).", "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "version": {"type": "integer"}}, "required": ["id", "version"]}},
+    {"name": "versiones_flujo", "description": "El historial de versiones de un flujo (declarativo o de código: pqrd, tutelas y sus copias), la más nueva primero: número, autor (persona o vera), fecha, etiqueta, punto de restauración «antes de: <pedido>», resumen de qué cambió, de cuál se restauró y cómo terminaron las corridas con cada una. En los de código la versión 0 es la estructura del código.", "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "n": {"type": "integer", "description": "cuántas (por defecto 15)"}}, "required": ["id"]}},
+    {"name": "restaurar_version", "description": "Vuelve un flujo (declarativo o de código) a una versión anterior: queda como versión nueva y la historia no se borra. Devuelve confirmado y la versión real que quedó en uso.", "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "version": {"type": "integer"}}, "required": ["id", "version"]}},
     {"name": "correr_flujo", "description": "Corre un flujo con datos de entrada (disparador manual, webhook o programado) o sobre un correo (caso). Devuelve la corrida creada; con esperar=true espera el resultado (hasta 3 minutos).", "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "entrada": {"type": "object"}, "caso": {"type": "string"}, "esperar": {"type": "boolean"}}, "required": ["id"]}},
     {"name": "listar_credenciales", "description": "Las conexiones (credenciales) guardadas: nombre, tipo, campos y si pueden escribir. Nunca muestra valores.", "parameters": {"type": "object", "properties": {}}},
     {"name": "tipos_de_credencial", "description": "Los tipos de conexión que se pueden crear (correo IMAP/SMTP, Microsoft Graph, Google, Postgres, MySQL, SQLite, HTTP…) y qué campos piden.", "parameters": {"type": "object", "properties": {}}},
@@ -264,6 +293,9 @@ HERRAMIENTAS = [
     {"name": "reiniciar_trabajador", "description": "Reinicia un trabajador trabado de un flujo (su número sale en estado_motor); si estaba ocupado, su corrida queda en error con el motivo.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "trabajador": {"type": "integer"}}, "required": ["flujo", "trabajador"]}},
     {"name": "ajustar_parametro_pqrd", "description": "Cambia un parámetro del motor de PQRD (clave del catálogo, ej. pipeline.compuerta.CONFIANZA_PARA_RADICAR). Rige desde el próximo correo.", "parameters": {"type": "object", "properties": {"clave": {"type": "string"}, "valor": {}, "nota": {"type": "string"}}, "required": ["clave", "valor"]}},
 ]
+# Versiones de los flujos: comparar, deshacer el último cambio y volver a la que funcionaba (vera_versiones.py).
+import vera_versiones as _vv  # noqa: E402
+HERRAMIENTAS += _vv.DECLARACIONES
 
 
 def _resumen_corrida(c: dict) -> dict:
@@ -706,12 +738,8 @@ def _mover_pantalla(nombre: str, a: Dict[str, Any]) -> Any:
         return api("GET", f"/api/bandeja/buzon?flujo={a['flujo']}&n={int(a.get('n') or 20)}")
     if nombre == "subir_adjuntos_a_flujo":
         return _subir_adjuntos(a)
-    if nombre == "versiones_flujo":
-        return api("GET", f"/api/flujos/{a['id']}/versiones")
-    if nombre == "restaurar_version":
-        r = api("POST", f"/api/flujos/{a['id']}/restaurar", {"version": a["version"]})
-        emitir("control", accion="editor", op="recargar")
-        return r
+    if nombre in _vv.NOMBRES:
+        return _vv.ejecutar(nombre, a, api, emitir)
     if nombre == "correr_flujo":
         cuerpo = {k: a[k] for k in ("entrada", "caso") if a.get(k) is not None}
         # Antes de correr, la entrada se revisa contra lo que pide el disparador del flujo.
@@ -1451,7 +1479,8 @@ GRUPOS: Dict[str, List[str]] = {
                "diagnosticar_flujo", "generar_documento", "ayuda_documentos"],
     "construir": ["validar_flujo", "guardar_flujo", "editar_nodo", "agregar_nodo", "eliminar_nodo", "editar_aristas", "proponer_borrado", "borrar_flujo",
                   "ver_estructura", "restablecer_estructura", "comparar_flujos", "traer_nodos", "encadenar_flujos",
-                  "renombrar_flujo", "clonar_flujo", "versiones_flujo", "restaurar_version", "plantillas", "instalar_plantilla",
+                  "renombrar_flujo", "clonar_flujo", "versiones_flujo", "restaurar_version", "comparar_versiones", "deshacer_cambio",
+                  "restaurar_version_que_funcionaba", "plantillas", "instalar_plantilla",
                   "plantillas_documento", "crear_plantilla_documento"],
     "correr": ["probar_paso", "archivos_de_corrida", "correr_flujo", "probar_flujo", "correr_correos", "correr_buzon", "cancelar_cola", "reintentar_corrida", "subir_adjuntos_a_flujo",
                "estado_motor", "ver_logs", "ver_programacion", "programar_flujo", "ver_recursos", "ajustar_recursos", "archivos_del_flujo",
@@ -1477,7 +1506,7 @@ DESCRIPCION_GRUPOS = {
     "documentos": "poner marca (logo, banner, marca de agua, colores) a documentos del chat, plantillas y recursos de Documentos, archivos de corridas y flujos",
 }
 PISTAS = {
-    "construir": r"crea|arma|haz un flujo|automatiz|nodo|paso|etapa|compar|cruz|diferenc|trae|traer|copia|encaden|llam|subflujo|soluciona|mejora|diagn|capacidad|puedes hacer|apaga|enciende|desactiv|reordena|insert|formato|heic|lector|edita|cambia|agrega|quita|elimina|borra|renombr|clon|copia|duplic|plantilla|versi|valida|guarda|arregla|corrige|genera|powerpoint|presentaci|diapositiv|pptx|zip|xml|json|csv|html",
+    "construir": r"crea|arma|haz un flujo|automatiz|nodo|paso|etapa|compar|cruz|diferenc|trae|traer|copia|encaden|llam|subflujo|soluciona|mejora|diagn|capacidad|puedes hacer|apaga|enciende|desactiv|reordena|insert|formato|heic|lector|edita|cambia|agrega|quita|elimina|borra|renombr|clon|copia|duplic|plantilla|versi|deshac|deshaz|restaur|como estaba|vuelve atr|volver atr|revert|funcionaba|valida|guarda|arregla|corrige|genera|powerpoint|presentaci|diapositiv|pptx|zip|xml|json|csv|html",
     "correr": r"corre|ejecut|prueba|procesa|reintent|lanza|log|motor|trabajador|program|horario|cron|recurso|cola|adjunt|archivo|documento|imagen|pdf|excel|word|powerpoint|presentaci|diapositiv|pptx|zip|muestr",
     "correo": r"correo|buzón|buzon|bandeja|correspondencia|mail|outlook|gmail|remitente|asunto",
     "conexiones": r"conexi|credencial|llave|api key|token|secreto|variable|entorno|manifiesto|cuenta|conectar|oauth",
@@ -1704,8 +1733,10 @@ def anotar_resultado(nombre: str, args: Dict[str, Any], res: Any, cambiados: set
         cambiados.add(args["destino"])
     if nombre == "restablecer_estructura" and res.get("ok") and args.get("flujo"):
         cambiados.add(args["flujo"])
-    if nombre in ("renombrar_flujo", "restaurar_version") and not res.get("error") and args.get("id"):
+    if nombre == "renombrar_flujo" and not res.get("error") and args.get("id"):
         cambiados.add(args["id"])
+    if nombre in _vv.CAMBIAN and res.get("confirmado") and not res.get("sin_cambio") and (args.get("id") or args.get("flujo")):
+        cambiados.add(args.get("id") or args.get("flujo"))
     if nombre == "ajustar_parametro_pqrd" and not res.get("error"):
         cambiados.add("pqrd")
     if nombre in ("proponer_borrado", "borrar_flujo") and res.get("propuesto"):
@@ -1733,6 +1764,8 @@ def _que_hizo(nombre: str, a: Dict[str, Any]) -> str:
         "clonar_flujo": f"cloné «{a.get('id')}»",
         "renombrar_flujo": "le cambié el nombre",
         "restaurar_version": f"restauré la versión {a.get('version')}",
+        "deshacer_cambio": "deshice el último cambio",
+        "restaurar_version_que_funcionaba": "volví a la última versión que funcionaba",
     }.get(nombre, nombre)
 
 
@@ -1747,8 +1780,8 @@ def resumen_al_agotarse(registro: List[tuple], propuestas: List[Dict[str, Any]],
         args = args or {}
         nuevo = r.get("flujo") if isinstance(r.get("flujo"), dict) else {}
         flujo = args.get("destino") or args.get("flujo") or nuevo.get("id") or args.get("id") or (args.get("definicion") or {}).get("id") or ""
-        if nombre in EDITAN_FLUJO | {"traer_nodos", "guardar_flujo", "restablecer_estructura", "clonar_flujo", "renombrar_flujo", "restaurar_version"}:
-            ok = bool(r.get("guardado") or (nombre in ("guardar_flujo", "clonar_flujo", "renombrar_flujo", "restaurar_version") and nuevo) or (nombre == "restablecer_estructura" and r.get("ok")))
+        if nombre in EDITAN_FLUJO | {"traer_nodos", "guardar_flujo", "restablecer_estructura", "clonar_flujo", "renombrar_flujo"} | _vv.CAMBIAN:
+            ok = bool(r.get("guardado") or (nombre in ("guardar_flujo", "clonar_flujo", "renombrar_flujo") and nuevo) or (nombre == "restablecer_estructura" and r.get("ok")) or (nombre in _vv.CAMBIAN and r.get("confirmado")))
             version = r.get("version") or nuevo.get("version")
             if ok:
                 hechos.append(f"- {_que_hizo(nombre, args)} en `{flujo}`" + (f": guardado, versión {version}" if version is not None else ": guardado"))
@@ -1785,7 +1818,7 @@ _NOMBRES_HERRAMIENTAS = {h["name"] for h in HERRAMIENTAS}
 PARALELAS = {
     "listar_flujos", "leer_flujo", "validar_flujo", "listar_correos", "ver_correo", "ver_buzon", "resumen_tablero", "ver_logs", "estado_motor",
     "listar_nodos", "ver_nodo", "ver_configuracion", "historial_configuracion", "listar_perfiles", "tipos_de_nodo", "ayuda_nodo", "reglas_de_flujos",
-    "versiones_flujo", "listar_credenciales", "tipos_de_credencial", "ver_entorno", "ver_manifiesto", "proveedores_ia", "modelos_ia", "ver_ia_flujo",
+    "versiones_flujo", "comparar_versiones", "listar_credenciales", "tipos_de_credencial", "ver_entorno", "ver_manifiesto", "proveedores_ia", "modelos_ia", "ver_ia_flujo",
     "historial", "aprobaciones", "plantillas", "plantillas_documento", "ultimas_corridas", "ver_corrida", "ver_estructura", "comparar_flujos",
     "diagnosticar_flujo", "ver_programacion", "ver_recursos", "archivos_del_flujo", "listar_chats", "ver_pantalla",
     "generar_documento", "aplicar_marca", "ayuda_documentos", "archivos_de_corrida",
@@ -1904,6 +1937,7 @@ def conversar(entrada: Dict[str, Any], aviso: Any = None) -> Dict[str, Any]:
     if entrada.get("conversacion"):
         CONVERSACION["id"] = entrada.get("conversacion")
     PANTALLA["flujo"] = flujo
+    fijar_pedido_de(entrada)
     cred, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
     cliente = genai.Client(vertexai=True, project=PROYECTO, location="global", credentials=cred,
                            http_options=types.HttpOptions(timeout=int(os.environ.get("VERA_TOPE_MS", "75000"))))
@@ -1987,6 +2021,7 @@ def _conversar_con_proveedor(entrada: Dict[str, Any], ia: Dict[str, Any], avisar
     if entrada.get("conversacion"):
         CONVERSACION["id"] = entrada.get("conversacion")
     PANTALLA["flujo"] = flujo
+    fijar_pedido_de(entrada)
     sistema = SISTEMA + f"\n\nHoy es {fecha_de_hoy()}. Usa esa fecha en documentos, actas e informes; nunca otra.\n\n" + describir_pantalla(entrada.get("pantalla") or {}, flujo)
     mensajes: List[Dict[str, Any]] = []
     todos = compactar(entrada.get("mensajes") or [])
