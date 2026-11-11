@@ -44,7 +44,7 @@ export async function pedir<T>(ruta: string, init?: RequestInit): Promise<T> {
   return cuerpo;
 }
 
-export type Vista = "inicio" | "tablero" | "flujo" | "historial" | "plantillas" | "documentos" | "notificaciones" | "aprobaciones" | "conexiones" | "adjuntos" | "corridas" | "logs" | "herramientas" | "proveedores" | "configuracion";
+export type Vista = "inicio" | "tablero" | "flujo" | "historial" | "plantillas" | "documentos" | "notificaciones" | "aprobaciones" | "conexiones" | "adjuntos" | "corridas" | "logs" | "herramientas" | "proveedores" | "configuracion" | "versiones";
 export type Foco = { tipo: "nodo"; id: string } | { tipo: "regla"; id: string } | { tipo: "correo"; caso: string } | { tipo: "corrida"; id: string } | null;
 
 export interface Aviso {

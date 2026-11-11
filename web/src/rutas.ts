@@ -7,6 +7,7 @@
  *   /flujos/<flujo>/correo/<caso>         el lienzo con un correo abierto
  *   /flujos/<flujo>/ejecucion/<corrida>   el lienzo mostrando una ejecución
  *   /flujos/<flujo>/historial[/<corrida>] /flujos/<flujo>/ejecuciones  /registro  /sistemas  /adjuntos  /herramientas  /ajustes
+ *   /flujos/<flujo>/versiones[/<n>|/<a>-<b>]  el historial de versiones: una abierta (contra la anterior) o dos comparadas
  *
  * El estado manda: cada cambio de vista, flujo o lo abierto escribe la URL (atrás/adelante funcionan),
  * y al llegar por un enlace, recargar o ir atrás, la URL se aplica al estado.
@@ -15,7 +16,7 @@ import { usar, type Vista } from "./estado.ts";
 
 const GLOBALES = new Set<Vista>(["inicio", "tablero", "plantillas", "documentos", "notificaciones", "aprobaciones", "conexiones"]);
 /** Nombre de cada vista del flujo en la URL (en el idioma de la pantalla). */
-const SLUG: Partial<Record<Vista, string>> = { historial: "historial", corridas: "ejecuciones", logs: "registro", proveedores: "sistemas", adjuntos: "adjuntos", herramientas: "herramientas", configuracion: "ajustes" };
+const SLUG: Partial<Record<Vista, string>> = { historial: "historial", corridas: "ejecuciones", logs: "registro", proveedores: "sistemas", adjuntos: "adjuntos", herramientas: "herramientas", configuracion: "ajustes", versiones: "versiones" };
 const VISTA_DE_SLUG: Record<string, Vista> = Object.fromEntries(Object.entries(SLUG).map(([v, slug]) => [slug, v as Vista]));
 const parte = (x: string) => encodeURIComponent(x);
 

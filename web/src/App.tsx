@@ -19,6 +19,7 @@ import { PanelEntorno, type EstadoCompuerta, type SeccionEntorno } from "./compo
 import { DialogoNuevoFlujo } from "./componentes/Dialogos.tsx";
 import { VistaInicio } from "./componentes/Inicio.tsx";
 import { VistaHistorial } from "./componentes/Historial.tsx";
+import { VistaVersiones } from "./componentes/Versiones.tsx";
 import { VistaPlantillas } from "./componentes/Plantillas.tsx";
 import { VistaDocumentos } from "./componentes/Documentos.tsx";
 import { Campana, VistaNotificaciones } from "./componentes/Notificaciones.tsx";
@@ -43,6 +44,7 @@ const NAVEGACION: { id: Vista; nombre: string; corto?: string; icono: NombreIcon
   { id: "inicio", nombre: "Inicio", icono: "inicio", pista: "Qué es la plataforma, tus flujos y lo que pasó hoy", grupo: "trabajo" },
   { id: "flujo", nombre: "Flujo", icono: "flujo", pista: "El flujo abierto: sus pasos, correrlo y verlo trabajar", grupo: "trabajo" },
   { id: "historial", nombre: "Historial", icono: "historial", pista: "Cada ejecución del flujo: qué entró, qué hizo y cómo terminó", grupo: "trabajo" },
+  { id: "versiones", nombre: "Versiones", icono: "reloj", pista: "Cada versión guardada del flujo: quién la hizo, qué cambió y volver a cualquiera", grupo: "trabajo" },
   { id: "aprobaciones", nombre: "Aprobaciones", corto: "Aprobar", icono: "persona", pista: "Casos en pausa que esperan que una persona decida", grupo: "trabajo" },
   { id: "plantillas", nombre: "Plantillas", icono: "plantilla", pista: "Flujos de ejemplo listos para usar", grupo: "construir" },
   { id: "documentos", nombre: "Documentos", icono: "documento", pista: "Plantillas de Word, Excel, PowerPoint y correo con el logo y los estilos de cada área", grupo: "construir" },
@@ -59,7 +61,7 @@ const NAVEGACION: { id: Vista; nombre: string; corto?: string; icono: NombreIcon
 const TITULOS: Partial<Record<Vista, string>> = { inicio: "Inicio", tablero: "Tus flujos", plantillas: "Plantillas", documentos: "Documentos", notificaciones: "Notificaciones", aprobaciones: "Aprobaciones" };
 /** Qué sección del riel se marca en cada vista (el resumen de corridas es parte del historial). */
 const SECCION_DE: Partial<Record<Vista, Vista>> = { corridas: "historial" };
-const VISTAS_DE_CONTROL = new Set<Vista>(["inicio", "plantillas", "documentos", "historial", "notificaciones", "aprobaciones", "tablero", "flujo", "conexiones", "adjuntos", "logs", "herramientas", "proveedores", "configuracion", "corridas"]);
+const VISTAS_DE_CONTROL = new Set<Vista>(["inicio", "plantillas", "documentos", "historial", "notificaciones", "aprobaciones", "tablero", "flujo", "conexiones", "adjuntos", "logs", "herramientas", "proveedores", "configuracion", "corridas", "versiones"]);
 
 /** «Ayuda»: abre la guía de primeros pasos; mientras no esté completa muestra el avance. */
 function BotonAyuda() {
@@ -620,6 +622,7 @@ export default function App() {
               {vista === "tablero" && <VistaTablero />}
               {vista === "flujo" && <EspacioFlujo ancho={ancho} bandejaVisible={bandeja} cerrarBandeja={() => setBandeja(false)} />}
               {vista === "historial" && <VistaHistorial />}
+              {vista === "versiones" && <VistaVersiones />}
               {vista === "plantillas" && <VistaPlantillas />}
               {vista === "documentos" && <VistaDocumentos />}
               {vista === "notificaciones" && <VistaNotificaciones />}

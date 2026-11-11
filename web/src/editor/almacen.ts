@@ -3,6 +3,7 @@ import { guardarLocal, leerLocal, pedir, usar } from "../estado.ts";
 import type { Corrida } from "../tipos.ts";
 import { marcarPaso } from "../guia.ts";
 import { autoOrdenar, normalizarTipos, slugFlujo, type Definicion, type Posicion, type TipoNodo } from "./modelo.ts";
+import { deshacerGuardado, rehacerGuardado } from "./versiones.ts";
 
 /**
  * El estado del editor de flujos declarativos: la definición que se está
@@ -82,6 +83,10 @@ export interface Version {
   version: number;
   actualizado: number;
   nota?: string;
+  autor?: "persona" | "vera" | null;
+  resumen?: string;
+  punto?: string;
+  etiqueta?: string;
 }
 
 export interface Problema {
@@ -172,6 +177,8 @@ interface EstadoEditor {
   disenioEnServidor: boolean | null;
   /** Vera (u otra pestaña) guardó una versión mientras había cambios aquí. */
   versionAjena: number | null;
+  /** Lo último que pasó fue deshacer lo guardado (en el servidor): Ctrl+Y lo rehace. */
+  deshechoEnServidor: boolean;
 
   tipos: TipoNodo[];
   tiposCargados: boolean;
@@ -223,6 +230,7 @@ export const usarEditor = create<EstadoEditor>((set, get) => ({
   error: "",
   disenioEnServidor: null,
   versionAjena: null,
+  deshechoEnServidor: false,
   tipos: [],
   tiposCargados: false,
   credenciales: [],
@@ -315,18 +323,28 @@ export const usarEditor = create<EstadoEditor>((set, get) => ({
       pasado: mismo ? s.pasado : [...s.pasado.slice(-79), d],
       futuro: [],
       ultimoGrupo: grupo ? { clave: grupo, t: ahora } : null,
+      deshechoEnServidor: false,
     }));
   },
 
   deshacer: () => {
-    const { pasado, definicion } = get();
-    if (!pasado.length || !definicion) return;
+    const { pasado, definicion, flujo } = get();
+    if (!definicion) return;
+    if (!pasado.length) {
+      // Nada sin guardar que deshacer aquí: se deshace lo último guardado (también lo que hizo Vera), como versión nueva.
+      if (flujo && !hayCambios(get()) && get().version > 1) void deshacerGuardado(flujo).then((r) => { if (r) { set({ deshechoEnServidor: true }); void get().recargar().then(() => set({ deshechoEnServidor: true })); } });
+      return;
+    }
     set((s) => ({ definicion: pasado.at(-1)!, pasado: pasado.slice(0, -1), futuro: [definicion, ...s.futuro], ultimoGrupo: null }));
   },
 
   rehacer: () => {
-    const { futuro, definicion } = get();
-    if (!futuro.length || !definicion) return;
+    const { futuro, definicion, flujo } = get();
+    if (!definicion) return;
+    if (!futuro.length) {
+      if (flujo && !hayCambios(get()) && get().deshechoEnServidor) void rehacerGuardado(flujo).then((r) => { if (r) void get().recargar().then(() => set({ deshechoEnServidor: false })); });
+      return;
+    }
     set((s) => ({ definicion: futuro[0]!, futuro: futuro.slice(1), pasado: [...s.pasado, definicion], ultimoGrupo: null }));
   },
 
@@ -362,7 +380,7 @@ export const usarEditor = create<EstadoEditor>((set, get) => ({
       const enServidor = Boolean(cuerpo.flujo?.definicion?.disenio && Object.keys(cuerpo.flujo.definicion.disenio).length);
       // Si el servidor no guarda el diseño, se queda en este navegador con la versión.
       if (d.disenio) guardarLocal(claveDisenio(flujo, version), d.disenio);
-      set({ version, actualizado: cuerpo.flujo?.actualizado ?? Date.now(), guardada: JSON.stringify(d), problemas: [], disenioEnServidor: enServidor, versionAjena: null });
+      set({ version, actualizado: cuerpo.flujo?.actualizado ?? Date.now(), guardada: JSON.stringify(d), problemas: [], disenioEnServidor: enServidor, versionAjena: null, deshechoEnServidor: false });
       void usar.getState().cargarFlujos();
       return true;
     } finally {
@@ -376,7 +394,7 @@ export const usarEditor = create<EstadoEditor>((set, get) => ({
     try {
       const r = await pedir<unknown>(`/api/flujos/${encodeURIComponent(f)}/versiones`);
       const lista = Array.isArray(r) ? r : Array.isArray((r as { versiones?: unknown[] })?.versiones) ? (r as { versiones: unknown[] }).versiones : [];
-      return (lista as Record<string, unknown>[]).map((v) => ({ version: Number(v.version), actualizado: Number(v.actualizado ?? 0), nota: typeof v.nota === "string" ? v.nota : undefined })).sort((a, b) => b.version - a.version);
+      return (lista as Record<string, unknown>[]).map((v) => ({ version: Number(v.version), actualizado: Number(v.actualizado ?? v.fecha ?? 0), nota: typeof v.nota === "string" ? v.nota : undefined, autor: v.autor === "vera" || v.autor === "persona" ? (v.autor as "vera" | "persona") : null, resumen: typeof v.resumen === "string" ? v.resumen : undefined, punto: typeof v.punto === "string" ? v.punto : undefined, etiqueta: typeof v.etiqueta === "string" ? v.etiqueta : undefined })).sort((a, b) => b.version - a.version);
     } catch {
       return null;
     }
@@ -409,7 +427,8 @@ export const usarEditor = create<EstadoEditor>((set, get) => ({
       const guardada = JSON.parse(get().guardada || "{}") as Definicion;
       const version = r.flujo?.version ?? get().version;
       if (version !== get().version && get().definicion?.disenio) guardarLocal(claveDisenio(flujo, version), get().definicion!.disenio);
-      set((s) => ({ version, definicion: s.definicion ? { ...s.definicion, ...cambios } : s.definicion, guardada: JSON.stringify({ ...guardada, ...cambios }) }));
+      // Renombrar también se deshace con Ctrl+Z: vuelve el nombre de antes como cambio sin guardar.
+      set((s) => ({ version, definicion: s.definicion ? { ...s.definicion, ...cambios } : s.definicion, guardada: JSON.stringify({ ...guardada, ...cambios }), pasado: [...s.pasado.slice(-79), d], futuro: [], ultimoGrupo: null }));
       void usar.getState().cargarFlujos();
     } catch {
       // Sin PATCH todavía: el nombre entra como cambio y se guarda con «Guardar».

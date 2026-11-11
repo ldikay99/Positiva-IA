@@ -359,7 +359,7 @@ function PanelVersiones({ cerrar }: { cerrar: () => void }) {
   }, [versiones, actual]);
   return (
     <motion.div className="en-pop versiones" role="dialog" aria-label="Versiones" initial={{ opacity: 0, y: -6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }}>
-      <header className="fila"><b className="crece">Versiones guardadas</b><button className="boton-mini" aria-label="Cerrar" onClick={cerrar}><Icono n="cerrar" tam={13} /></button></header>
+      <header className="fila"><b className="crece">Versiones guardadas</b><button className="boton chico" title="Quién hizo cada versión, qué cambió y comparar dos" onClick={() => { cerrar(); usar.getState().irA("versiones"); }}>Historial completo</button><button className="boton-mini" aria-label="Cerrar" onClick={cerrar}><Icono n="cerrar" tam={13} /></button></header>
       {lista === undefined ? (
         <div className="vacio chico"><span className="girando" />Cargando…</div>
       ) : lista === null ? (
@@ -372,7 +372,7 @@ function PanelVersiones({ cerrar }: { cerrar: () => void }) {
             <li key={v.version} className={v.version === actual ? "actual" : ""}>
               <div className="fila">
                 <b className="mono">v{v.version}</b>
-                <span className="crece texto-2 chico">{v.actualizado ? hace(v.actualizado) : ""}{v.nota ? ` · ${v.nota}` : ""}</span>
+                <span className="crece texto-2 chico">{v.actualizado ? hace(v.actualizado) : ""}{v.autor === "vera" ? " · Vera" : ""}{v.resumen || v.nota ? ` · ${v.resumen ?? v.nota}` : ""}{v.punto ? ` · ${v.punto}` : ""}</span>
                 {v.version === actual ? <span className="pastilla diminuto verde">en uso</span> : confirmar !== v.version && <button className="boton chico" onClick={() => setConfirmar(v.version)}>Restaurar</button>}
               </div>
               {confirmar === v.version && (
@@ -489,8 +489,8 @@ function BarraEditor({ abrirPaleta, paletaAbierta, abrirCorrer, ordenar }: { abr
       </div>
       <span className="espacio" />
       <div className="en-grupo" role="group" aria-label="Deshacer y rehacer">
-        <button className="boton-mini" disabled={!s.pasado.length} onClick={s.deshacer} aria-label="Deshacer" title="Deshacer (Ctrl+Z)"><Icono n="deshacer" tam={15} /></button>
-        <button className="boton-mini" disabled={!s.futuro.length} onClick={s.rehacer} aria-label="Rehacer" title="Rehacer (Ctrl+Shift+Z)"><Icono n="rehacer" tam={15} /></button>
+        <button className="boton-mini" disabled={!s.pasado.length && (sucio || s.version <= 1)} onClick={s.deshacer} aria-label="Deshacer" title={s.pasado.length ? "Deshacer (Ctrl+Z)" : "Deshacer lo último guardado, también lo de Vera (Ctrl+Z)"}><Icono n="deshacer" tam={15} /></button>
+        <button className="boton-mini" disabled={!s.futuro.length && !(s.deshechoEnServidor && !sucio)} onClick={s.rehacer} aria-label="Rehacer" title="Rehacer (Ctrl+Y o Ctrl+Shift+Z)"><Icono n="rehacer" tam={15} /></button>
       </div>
       <div className="en-pop-ancla">
         <button className={`boton chico en-ia-boton ${pop === "ia" ? "activo" : ""}`} aria-expanded={pop === "ia"} title="IA del flujo: la global o una propia" onClick={() => setPop(pop === "ia" ? null : "ia")}><Icono n="chispa" tam={14} /><span className="etq">{rotuloIaFlujo(s.definicion.ia, s.definicion.modelo)}</span></button>
@@ -1029,8 +1029,8 @@ export function EditorFlujo() {
         { etiqueta: "Ordenar automáticamente", icono: "reordenar", alHacer: ordenar },
         { etiqueta: "Encuadrar todo", icono: "encuadrar", atajo: "F", alHacer: encuadrar },
         { separador: true },
-        { etiqueta: "Deshacer", icono: "deshacer", atajo: "Ctrl Z", deshabilitado: !st.pasado.length, alHacer: st.deshacer },
-        { etiqueta: "Rehacer", icono: "rehacer", atajo: "Ctrl ⇧ Z", deshabilitado: !st.futuro.length, alHacer: st.rehacer },
+        { etiqueta: "Deshacer", icono: "deshacer", atajo: "Ctrl Z", deshabilitado: !st.pasado.length && (hayCambios(st) || st.version <= 1), alHacer: st.deshacer },
+        { etiqueta: "Rehacer", icono: "rehacer", atajo: "Ctrl Y", deshabilitado: !st.futuro.length && !st.deshechoEnServidor, alHacer: st.rehacer },
       ],
     });
   };

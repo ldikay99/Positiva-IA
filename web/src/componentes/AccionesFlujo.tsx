@@ -1,10 +1,65 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
 import { pedir, usar } from "../estado.ts";
 import { Icono } from "../iconos.tsx";
 import { peso } from "./Archivos.tsx";
 import { DialogoCruzar, type ModoCruzar } from "./CruzarFlujos.tsx";
+import { atajoDeshacer, deshacerGuardado, listarVersiones, rehacerGuardado } from "../editor/versiones.ts";
 import "./archivos.css";
+
+/**
+ * Deshacer y rehacer en un flujo de código (pqrd, tutelas y sus copias): el lienzo guarda cada cambio al instante
+ * (apagar una etapa, quitar un paso), así que Ctrl+Z vuelve a la versión anterior en el servidor (como versión nueva)
+ * y Ctrl+Y (o Ctrl+Shift+Z) rehace. Los declarativos tienen su propio deshacer en el editor.
+ */
+function DeshacerCodigo({ flujo }: { flujo: string }) {
+  const [estado, setEstado] = useState<{ deshacer: boolean; rehacer: boolean }>({ deshacer: false, rehacer: false });
+  const [ocupado, setOcupado] = useState(false);
+  const leer = useCallback(() => {
+    void listarVersiones(flujo)
+      .then((l) => {
+        const actual = l.find((v) => v.actual);
+        setEstado({ deshacer: l.length > 1 && Boolean(actual && actual.version > Math.min(...l.map((v) => v.version))), rehacer: Boolean(actual && (actual.por === "deshacer" || actual.por === "rehacer") && typeof actual.deshecha === "number") });
+      })
+      .catch(() => setEstado({ deshacer: false, rehacer: false }));
+  }, [flujo]);
+  const hacer = useCallback(async (que: "deshacer" | "rehacer") => {
+    if (ocupado) return;
+    setOcupado(true);
+    try {
+      await (que === "deshacer" ? deshacerGuardado(flujo) : rehacerGuardado(flujo));
+    } finally {
+      setOcupado(false);
+      leer();
+    }
+  }, [flujo, ocupado, leer]);
+  useEffect(() => {
+    leer();
+    const oir = (e: Event) => (e as CustomEvent<{ flujo?: string }>).detail?.flujo === flujo && leer();
+    const tecla = (e: KeyboardEvent) => {
+      const que = atajoDeshacer(e);
+      if (!que || (e.target as HTMLElement | null)?.closest?.("[role=dialog], .chat, .cr-dialogo")) return;
+      e.preventDefault();
+      void hacer(que);
+    };
+    window.addEventListener("positiva:flujo-guardado", oir);
+    window.addEventListener("keydown", tecla);
+    return () => {
+      window.removeEventListener("positiva:flujo-guardado", oir);
+      window.removeEventListener("keydown", tecla);
+    };
+  }, [flujo, leer, hacer]);
+  return (
+    <>
+      <button type="button" className="boton chico fantasma" disabled={!estado.deshacer || ocupado} aria-label="Deshacer" onClick={() => void hacer("deshacer")} title="Deshacer el último cambio (Ctrl+Z)">
+        <Icono n="deshacer" tam={13} />
+      </button>
+      <button type="button" className="boton chico fantasma" disabled={!estado.rehacer || ocupado} aria-label="Rehacer" onClick={() => void hacer("rehacer")} title="Rehacer (Ctrl+Y o Ctrl+Shift+Z)">
+        <Icono n="rehacer" tam={13} />
+      </button>
+    </>
+  );
+}
 
 /**
  * Renombrar, clonar y borrar un flujo, a la vista (en la cabecera del flujo y en cada
@@ -188,6 +243,10 @@ export function AccionesFlujo({ flujo, variante = "cabecera", alClonar }: { fluj
         </button>
         {variante === "cabecera" && (
           <>
+            {f.tipo === "codigo" && <DeshacerCodigo flujo={flujo} />}
+            <button type="button" className="boton chico fantasma" aria-label="Versiones" onClick={() => { setPanel(null); irA("versiones"); }} title="Historial de versiones: quién cambió qué, comparar y volver a cualquiera">
+              <Icono n="reloj" tam={13} /><span className="etq">Versiones</span>
+            </button>
             <button type="button" className={`boton chico fantasma ${cruzar === "comparar" ? "activo" : ""}`} aria-label="Comparar con otro flujo" onClick={() => { setPanel(null); setCruzar("comparar"); }} title="Comparar con otro flujo: pasos, conexiones y configuración">
               <Icono n="capas" tam={13} /><span className="etq">Comparar</span>
             </button>

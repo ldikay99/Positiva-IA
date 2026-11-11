@@ -35,6 +35,8 @@ export interface Item {
   pedido?: string;
   restaurada_de?: number;
   por?: string;
+  /** Viene de deshacer (o rehacer): «rehacer» vuelve a esta versión. */
+  deshecha?: number;
   del_codigo?: boolean;
   actual: boolean;
   corridas: { bien: number; revisar: number; fallo: number; ultima_bien: number | null };
@@ -56,6 +58,7 @@ export async function listar(id: string): Promise<{ tipo: "codigo" | "declarativ
       ...(v.nota ? { nota: v.nota } : {}), ...(m.resumen ? { resumen: m.resumen } : {}), ...(m.etiqueta ? { etiqueta: m.etiqueta } : {}),
       ...(m.punto ? { punto: m.punto } : {}), ...(m.pedido ? { pedido: m.pedido } : {}),
       ...(typeof m.restaurada_de === "number" ? { restaurada_de: m.restaurada_de } : {}), ...(m.por ? { por: m.por } : {}),
+      ...(typeof m.deshecha === "number" ? { deshecha: m.deshecha } : {}),
       ...(v.del_codigo ? { del_codigo: true } : {}),
       actual: Boolean(v.actual), corridas: corridas.get(v.version) ?? { bien: 0, revisar: 0, fallo: 0, ultima_bien: null },
     };
