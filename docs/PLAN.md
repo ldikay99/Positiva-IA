@@ -634,6 +634,86 @@ Jonathan pidió control de versiones interno: Ctrl+Z / Ctrl+Y en el editor, hist
 - [ ] Las versiones de antes de este historial no tienen autor ni resumen. En el PQRD original, la vuelta a la del código anterior a este cambio no quedó registrada: sus corridas posteriores se cuentan en la v3.
 - [ ] Chat.tsx no tiene rótulo propio para las herramientas nuevas (se ven con su nombre); es del agente del chat.
 
+## 5l. Chat y voz con una sola ejecución, y sin afirmar lo no confirmado (pedido 2026-11-11)
+
+Jonathan pidió que el chat y la voz tengan las mismas herramientas y la misma forma de ejecutarlas, que el seguimiento de tareas largas de la voz valga también por escrito, que Vera nunca diga que algo está hecho sin el resultado confirmado y, como prioridad, que deje de inventar cifras en los documentos de `generar_documento`.
+
+### Un solo registro y un solo ejecutor
+
+- [x] `puente/vera_herramientas.py` es el registro único y el ejecutor de los dos modos.
+  - **Registro**: `registro()` = `asistente.HERRAMIENTAS` (y lo que se les sume, como las de versiones de `vera_versiones.py`) + `estado_tareas` + las tres de la llamada. `de_modo("chat")` y `de_modo("voz")` salen de ahí; lo que solo vale en un modo está en `SOLO_CHAT` (`cargar_herramientas`) o `SOLO_VOZ` (`responder_por_escrito`, `escribir_en_chat`, `terminar_llamada`), cada una con su motivo. Hoy: 101 en el chat y 103 en la voz.
+  - **Dónde se agrega una herramienta** (dicho en la cabecera del módulo): su declaración en `asistente.HERRAMIENTAS` y su código en `asistente._mover_pantalla`, su grupo en `asistente.GRUPOS` y, solo si hace falta, `LARGAS` (corre como tarea) o `asistente.PARALELAS` (solo lee). Los dos modos la reciben sin más; `pruebas_voz.py` falla si una queda en un solo modo sin motivo o sin grupo.
+  - **Ejecutor** (`Ejecutor`): la vuelta por tandas (las de solo lectura a la vez, las barreras solas y en orden), los avisos con `indice`, lo que anota cada herramienta (flujos cambiados, propuestas con botón) y la `situacion` de cada resultado: `confirmado`, `en_curso`, `propuesto`, `no_confirmado` o `fallo`, con una nota que le dice a Vera qué puede afirmar.
+  - El chat escrito con Vertex (`conversar`), con otros proveedores (`_conversar_con_proveedor`, también por `ejecutar_lote`), dentro de `responder_por_escrito` y la voz (`voz.llamada`) usan el mismo ejecutor. En `voz.py` solo quedan las tres herramientas de la llamada (como manejadores), cómo se le cuenta al navegador y al turno, y la entrega del resultado de una tarea en una pausa. `asistente.correr_vuelta` sigue existiendo y pasa por el ejecutor.
+- [x] Arreglado en la primera prueba real: el chat escrito corre como `__main__` y `vera_herramientas` importaba otra copia de `asistente`, sin la conversación («no hay conversación donde dejar el documento»). Ahora el módulo principal se registra como `asistente`.
+
+### Seguimiento de tareas en los dos modos
+
+- [x] Lo que puede tardar (`LARGAS`: correr y esperar un flujo, probar, el buzón, diagnosticar, generar documentos, `responder_por_escrito`…) se lanza como tarea. En el chat espera en línea hasta 20 s (`VERA_ESPERA_EN_LINEA`): si termina, el resultado va en la misma respuesta. Si no, devuelve `en_curso` con su número. En la voz, `en_curso` a los 0,6 s, como antes. Una tarea igual que ya corre (en este proceso o en otro de la misma conversación) no se lanza dos veces. Tope por tarea: `VERA_TOPE_TAREA` (300 s).
+- [x] Las corridas que se lanzan sin esperar (`correr_correos`, `correr_buzon`, `correr_flujo` sin esperar, `reintentar_corrida`) también se siguen como tarea («Esperando las corridas») hasta que terminan.
+- [x] Registro en el servidor (`servidor/src/tareas_vera.ts`): `PUT /api/chats/:id/tareas` (solo desde la máquina) y `GET /api/chats/:id/tareas[?resultado=1]`. Cada cambio sale por el canal de eventos como `vera_tarea`. Si el proceso que corría una tarea muere, queda en «fallo».
+- [x] **Chat escrito**: el pedido termina en el primer «fin». La respuesta se guarda y la persona puede seguir escribiendo; el proceso sigue vivo con lo que quedó corriendo (tope de 20 min). Cuando una tarea termina, Vera redacta un mensaje nuevo con su resultado (`seguimiento` … `fin`). El servidor lo guarda en la conversación (`seguimiento: true`, `tarea`) y lo avisa por el canal (`vera_mensaje`); el chat recarga la conversación. Si la tarea termina mientras sigue el mismo turno, su resultado entra ahí mismo.
+- [x] **Herramienta `estado_tareas`** (los dos modos, grupo núcleo): lo que sigue en curso y lo terminado con su resultado, también lo lanzado desde la llamada. El SISTEMA de cada mensaje lista las tareas que siguen en curso para no relanzarlas.
+- [x] **Pantalla**: la franja de tareas de la llamada (una línea) ahora también va en el chat escrito («Corriendo el flujo ui-lento · en curso», luego «lista» o «no terminó»), alimentada por el canal de eventos y, en la llamada, también por la voz, sin repetirse (mismo `id`). Al abrir una conversación se trae lo que siga en curso. Estilos en `web/src/componentes/tareas.css` (12 px, solo variables del tema). Se agregaron rótulos en el chat para `estado_tareas` y las herramientas de versiones.
+
+### Nunca «de dientes para afuera»
+
+- [x] `verificar_respuesta` revisa en código la respuesta final contra los resultados del turno: «guardé/creé/cambié…», «corrí/ya terminó», «te abrí/ya lo tienes», «generé el informe», «borré», «se radicó» y un «listo / ya quedó» tras una acción que falló. Solo cuenta lo que tiene tilde (afirma «guardé», no «¿quieres que lo guarde?»), no lo negado ni lo que se refiere a un turno anterior. También exige decir «en curso» si el turno dejó algo corriendo, y que los conteos de tokens salgan de una herramienta (la evaluación «HEIC: costo sin inventar» falló así en esta tanda: «~258 tokens por imagen» de memoria).
+  - Chat (Vertex y otros proveedores): si hay problemas, la respuesta vuelve al modelo con lo que no cuadra, hasta dos veces; si aun así afirma lo no confirmado, se le agrega una nota «Ojo: …».
+  - Voz: al cerrar el turno se revisa lo dicho y, si no cuadra, se le pide corregirlo en voz en una frase (una vez por turno). Solo cuenta lo que dejó en curso ese turno: en la primera llamada real se le exigía mencionar en cada respuesta una tarea lanzada antes, y eso se quitó.
+- [x] En un flujo declarativo, «completar» se guarda como `radicado`; `_resumen_corrida` se lo daba a Vera con la nota del SGDEA y ella decía «quedaría radicado». Ahora le llega «completado».
+
+### Cifras de los documentos (prioritario)
+
+- [x] **Antes** (reproducido el 2026-11-11 contra el contenedor, sin datos previos en la conversación):
+  - «Hazme un excel con el resumen diario de radicaciones de la semana»: puso 0, 9, 26, 13, 0, 24 y 16 por día y un total de 88. Lo real: 5, 4, 37, 1, —, 24 y 16, con un total de 87.
+  - «…informe en PDF de cuántos correos se radicaron esta semana, con el tiempo promedio, el costo de IA y la comparación con la semana pasada»: tiempos de 30,1 s y 54,0 s (reales 29,8 y 55,8), costos de 0,33 y 0,37 USD (la herramienta decía 0), «-10,8 %» y un modelo «Gemini 3.1 Flash-Lite» que el flujo no usa (es `gemini-2.5-flash`).
+  - El pedido base salió bien esa vez (48, 36, 6, 5, 1, de las facetas del historial).
+- [x] **Arreglo en código** (`puente/procedencia.py`): `generar_documento` saca las cifras del contenido, las celdas, los datos de plantilla y el título. No cuentan fechas, horas, años ni la numeración de títulos y listas. Cada cifra tiene que estar tal cual en lo que devolvieron las herramientas en este proceso o en la conversación (incluidos los conteos que salen de una lista: cuántos y cuántos con cada valor), en lo que escribió o adjuntó la persona, o en un cálculo declarado en `calculos: [{valor, formula}]`. La fórmula se evalúa (solo + − × ÷) y sus números también deben tener procedencia. Redondear solo vale con decimales o con su unidad («29,8 s»): un conteo suelto tiene que estar exacto. Si falta alguna, el documento no se genera y el error dice cuáles y cómo consultarlas.
+  - Los resultados guardados en la conversación van recortados, así que cada paso guarda también sus `cifras` (las del resultado completo) para los turnos siguientes. En la voz también.
+- [x] `historial` con `resumen=true` cuenta todas las ejecuciones del filtro (de a 200) por desenlace, estado y flujo, con tiempo promedio y mediana; con `agrupar=dia` (hora de Colombia) o `agrupar=flujo`, además, por día o por flujo. Regla 19 en el SISTEMA.
+- [x] **Después** (mismos pedidos):
+  - «…cuántos correos se radicaron esta semana»: `historial` con resumen y por día, y un PDF con 42 (24, 16 y 2 por día; 38 de PQRD). Contado aparte en el historial: 42 y 38.
+  - Con tiempos, costo y comparación: el primer intento se rechazó por «-52,1 %» y «48,4 %» sin cálculo declarado. Salió con 38 frente a 41 (-7,3 %, `(38-41)/41*100`), 28,8 s frente a 55,8 s y el modelo real (Gemini 2.5 Flash), con sus tokens.
+  - El Excel diario: 21, 15 y 2 en PQRD, del `porDia` del tablero.
+  - Por voz, el PDF dijo 43; el historial ese momento, 43.
+
+### Pruebas (corridas el 2026-11-11)
+
+- [x] Automáticas, todas en verde:
+
+  | Suite | Resultado | Qué cubre |
+  |---|---|---|
+  | `puente/pruebas_vera.py` (nueva) | 17 de 17 | Situación, vuelta con índice, lo largo en línea o en segundo plano (chat y voz), sin repetir, corridas seguidas, `estado_tareas`, herramientas propias de la voz, veracidad (13 casos), tokens de memoria, cifras del documento, cálculos, conteos de listas, `generar_documento` de punta a punta, resumen del historial, un solo módulo, «completado» |
+  | `puente/pruebas_voz.py` | 11 de 11 | Paridad con el registro único (en los dos sentidos, con motivo y con grupo) y que chat y voz usan el mismo ejecutor y revisan lo dicho |
+  | `pruebas_salidas.py` | 28 | |
+  | `pruebas_declarativo.py` | 193 (1 omitida) | |
+  | `pruebas_versiones.py` | 6 | |
+  | Servidor (`node --test`, 6 archivos) | 46 de 46 | |
+  | `tsc --noEmit` (servidor y web) | limpio | |
+
+- [x] Chat escrito real (scratchpad `prueba_chat_tareas.py`): flujo de 50 s.
+  - A los 26 s: «La ejecución del flujo `ch-lento` está en curso (tarea 1). Te avisaré apenas termine». Luego «¿cuántas tareas tienes en curso?» → `estado_tareas` → «una sola… sigue procesándose».
+  - A los 55 s: `vera_tarea` «lista» y `vera_mensaje` por el canal. Se guardó el seguimiento: «terminó bien con desenlace **completado**. Tardó 50 segundos…».
+- [x] Llamada real por `/api/voz` con Gemini Live (scratchpad `prueba_voz_tareas.py`).
+  - «Corre vz-lento y me avisas»: tarea 1 en curso. «Te aviso en cuanto termine». Mientras tanto contestó «dieciséis flujos».
+  - Sin que nadie hablara: «Ya terminó de correr el flujo lento con el resultado completado».
+  - El informe en PDF por voz quedó en el chat con 43 radicados (el historial: 43).
+  - Las dos revisiones de veracidad que saltaron (en la respuesta a «cuántos flujos») llevaron al arreglo de «solo lo de este turno».
+- [x] Navegador (Playwright, scratchpad `captura_tareas.py`, 1440 y 390 px): la franja de 12 px aparece, el cuadro de texto sigue habilitado, el seguimiento llega solo y la franja se va. Sin errores ni desborde.
+- [x] `scripts/evaluar_vera.py`: 4 casos nuevos.
+  - «tarea larga por escrito: se reporta al terminar» y «voz: tarea larga se reporta al terminar» (la voz simulada usa ahora el mismo ejecutor y recibe el resultado como en la llamada).
+  - «no afirma lo que falló» (restaurar una versión que no existe).
+  - «documento con cifras reales» (el total del PDF contra el historial contado aparte).
+  - Con 15 casos relacionados (documentos, voz, pantalla, diagnóstico, radicado en prueba, capacidades): 18 de 19. Falló «HEIC: costo sin inventar» («~258 tokens» de memoria); con la revisión de tokens, 2 de 2 al repetirlo junto con el documento.
+
+### Pendiente
+
+- [ ] La voz simulada a veces repite el aviso «[Resultado de la tarea N]: {…}» en lo que dice en vez de contarlo (1 de 3 corridas). En la llamada real no pasó, pero el formato del aviso es el mismo.
+- [ ] Las tareas viven en memoria del servidor: si se reinicia, el registro se pierde, y un proceso del chat que seguía una tarea se corta.
+- [ ] La procedencia de cifras compara números. Un conteo pequeño (1, 2, 3) puede coincidir por azar con otro dato consultado. Un cálculo que Vera no declare se rechaza aunque esté bien hecho, y ella lo corrige declarándolo.
+- [ ] En la voz, las cifras dichas en palabras («cuarenta y tres») no se revisan; sí las del documento que genera.
+
 ## 6. Paso a producción (cuando aprueben)
 
 - [x] Documento de despliegue (`docs/PRODUCCION.md`): principios, entorno y secretos de PQRD y tutelas con sus nombres reales, conexiones, cómo jala la información cada flujo, qué escribe y los pasos para salir a producción.
