@@ -18,6 +18,7 @@ import type { Corrida } from "./motor.ts";
 import * as integ from "./flujos_integraciones.ts";
 import * as salidasMedida from "./flujos_salidas.ts";
 import * as estructuras from "./estructuras.ts";
+import * as historialVersiones from "./versiones.ts";
 
 /**
  * Los flujos de la plataforma.
@@ -934,6 +935,8 @@ export async function guardar(entrada: unknown, nota?: string, nombresExtra: str
   await writeFile(join(carpetaDeclarativos(), `${v.definicion.id}.json`), JSON.stringify({ definicion: v.definicion, version, actualizado, ...(notaLimpia ? { nota: notaLimpia } : {}) }, null, 2), "utf8");
   const f = aFlujo(v.definicion, version, actualizado, notaLimpia);
   declarativos.set(f.id, f);
+  // autor (persona o Vera), resumen del cambio y, si es de Vera, el punto «antes de: …» en la versión previa
+  await historialVersiones.anotar(f.id, version, { antes: previo?.definicion ?? null, despues: v.definicion, nota: notaLimpia, previa: previo?.version ?? null });
   return { ok: true, problemas: [], flujo: f };
 }
 
@@ -952,6 +955,7 @@ export async function borrar(id: string): Promise<boolean> {
   // sus versiones tampoco: un flujo nuevo con el mismo id empieza su propia historia
   for (const n of await readdir(join(carpetaDeclarativos(), "versiones")).catch(() => [] as string[]))
     if (n.startsWith(`${id}.v`) && /^\d+\.json$/.test(n.slice(id.length + 2))) await unlink(join(carpetaDeclarativos(), "versiones", n)).catch(() => undefined);
+  await historialVersiones.borrar(id);
   await entornos.borrarTodo(id);  // los secretos de un flujo borrado no se quedan
   return true;
 }
@@ -1002,7 +1006,17 @@ export async function restaurar(id: string, version: number): Promise<Operacion>
   const x = await leerVersion(id, version);
   if (!x) return { ok: false, codigo: 404, error: `no existe la versión ${version}` };
   const r = await guardar({ ...(x.definicion as object), id }, `restaurada la versión ${version}`);
+  if (r.ok) await historialVersiones.completar(id, r.flujo!.version!, { restaurada_de: version, por: "restaurar" });
   return r.ok ? { ok: true, flujo: r.flujo! } : { ok: false, codigo: 400, error: "esa versión ya no es válida", problemas: r.problemas };
+}
+
+/** La definición de una versión de un flujo declarativo (la actual o una guardada); null si no existe. */
+export async function definicionDeVersion(id: string, version: number): Promise<Definicion | null> {
+  const f = declarativos.get(id);
+  if (!f) return null;
+  if (version === f.version) return structuredClone(f.definicion!);
+  const x = await leerVersion(id, version);
+  return x ? (x.definicion as Definicion) : null;
 }
 
 /** Copia un flujo con otro id y nombre. La copia nace apagada (programado/correo_nuevo) y con un webhook nuevo. */

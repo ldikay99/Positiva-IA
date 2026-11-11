@@ -34,6 +34,8 @@ import * as probar from "./probar.ts";
 import * as cruzar from "./cruzar.ts";
 import * as oauth from "./oauth.ts";
 import * as conectores from "./conectores.ts";
+import * as versiones from "./versiones.ts";
+import * as rutasVersiones from "./rutas_versiones.ts";
 import { DISPARADORES_DE_SONDEO } from "./flujos_integraciones.ts";
 import { consumoDe, obtenerVera } from "./ia.ts";
 import { EventEmitter } from "node:events";
@@ -53,6 +55,9 @@ app.addContentTypeParser("application/json", { parseAs: "string" }, (_req, cuerp
 });
 // Archivos de un flujo y correos de prueba: multipart/form-data llega entero y se parte en espacio.multipart.
 app.addContentTypeParser("multipart/form-data", { parseAs: "buffer" }, (_req, cuerpo, listo) => listo(null, cuerpo));
+// Quién hace cada pedido (una persona o Vera, con lo que pidió): lo usa el historial de versiones al guardar un flujo.
+// Va en preHandler (después de leer el cuerpo) para que el contexto llegue entero hasta la ruta.
+app.addHook("preHandler", (req, _res, listo) => versiones.contexto.run(versiones.contextoDe(req.headers), listo));
 // Un pool de trabajadores por flujo. Los eventos de todos salen por el mismo
 // bus, cada uno con su flujo, y la web muestra solo los del flujo elegido.
 const bus = new EventEmitter();
@@ -261,10 +266,11 @@ app.put<{ Params: { id: string } }>("/api/flujos/:id/estructura", async (req, re
 
 /** Vuelve a la estructura del código (la editada queda guardada como versión). */
 app.delete<{ Params: { id: string } }>("/api/flujos/:id/estructura", async (req, res) => {
-  if (!flujos.baseDe(req.params.id)) return res.code(400).send({ error: "ese flujo no es de código" });
-  const ok = await estructuras.restablecer(req.params.id);
-  avisarFlujo(req.params.id, { estructura: true });
-  return { ok, restablecida: ok };
+  const base = flujos.baseDe(req.params.id);
+  if (!base) return res.code(400).send({ error: "ese flujo no es de código" });
+  const r = await estructuras.restablecerConVersion(req.params.id, base);
+  avisarFlujo(req.params.id, { estructura: true, ...(r.version !== undefined ? { version: r.version } : {}) });
+  return { ok: r.ok, restablecida: r.ok, ...(r.version !== undefined ? { version: r.version } : {}) };
 });
 
 app.post("/api/flujos/validar", async (req) => flujos.validar((req.body as { definicion?: unknown })?.definicion ?? req.body));
@@ -383,17 +389,9 @@ app.post<{ Params: { id: string } }>("/api/flujos/:id/correr", async (req, res) 
   return { id: c.id, caso: c.caso };
 });
 
-app.get<{ Params: { id: string } }>("/api/flujos/:id/versiones", async (req, res) => {
-  if (flujos.esDeCodigo(req.params.id)) return [];
-  return (await flujos.versiones(req.params.id)) ?? res.code(404).send({ error: "ese flujo no existe" });
-});
-
-app.post<{ Params: { id: string } }>("/api/flujos/:id/restaurar", async (req, res) => {
-  const r = await flujos.restaurar(req.params.id, Number((req.body as { version?: unknown })?.version));
-  if (!r.ok) return res.code(r.codigo).send({ error: r.error, problemas: r.problemas });
-  avisarFlujo(r.flujo.id, { version: r.flujo.version });
-  return { flujo: { ...r.flujo, trabajador: undefined } };
-});
+// Versiones de cualquier flujo (también pqrd, tutelas y sus copias), comparar, restaurar, deshacer y rehacer: rutas_versiones.ts.
+await rutasVersiones.registrar(app, { avisar: avisarFlujo });
+versiones.enlace.corridasDe = (id) => [...(motorDe(id, false)?.corridas.values() ?? [])].map((c) => ({ creada: c.creada, estado: historial.estadoLegible(c) }));
 
 /**
  * Clona cualquier flujo (también pqrd y tutelas: la copia es una instancia propia del mismo motor).
