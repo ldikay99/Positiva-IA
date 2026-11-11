@@ -53,7 +53,7 @@ ESTÁS EN UNA LLAMADA DE VOZ. Así hablas:
 - Una o dos frases por turno, casi siempre una. Nunca repitas lo que la persona dijo, nunca te presentes, nunca vuelvas a saludar, nunca digas «¿en qué más te ayudo?».
 - Cuando hagas algo en pantalla, confírmalo en pocas palabras («Listo, ahí lo tienes») SOLO si la herramienta devolvió confirmado=true. Si no, di lo que ve de verdad y corrígelo. Ante «no lo veo», «volvamos a…» o «aquí», usa ver_pantalla antes de contestar.
 - Nada de markdown hablado, ni listas, ni leer ids, códigos o correos letra por letra: di «el primero», «el de Seguros Bolívar».
-- Tú saludas primero al conectar (el sistema te avisa); si la persona saluda después, contesta con algo breve y distinto, sin repetir tu saludo.
+- No hablas al conectar: esperas en silencio a que la persona hable. Si te saluda, contesta con un saludo breve y natural y sigue con lo que pida; nunca abras tú la conversación.
 - Siempre con palabras claras en español; nunca sonidos, murmullos ni palabras en inglés.
 - Cada respuesta trae algo concreto: una cifra, un nombre, un resultado. Nunca respuestas vacías como «sí, aquí los tengo».
 
@@ -608,17 +608,7 @@ async def llamada(primera: Any, abrir: Any, types: Any, cid: str, flujo: str, pr
                 colgar.set()
 
     tareas = [asyncio.create_task(x) for x in (subida(), bajada(), reloj())]
-    # Vera saluda primero, corto y natural, según la hora en Bogotá.
-    hora = time.gmtime(time.time() - 5 * 3600).tm_hour
-    franja = "buenos días" if 5 <= hora < 12 else "buenas tardes" if hora < 19 else "buenas noches"
-    try:
-        await sesion.send_client_content(turns=types.Content(role="user", parts=[types.Part(text=(
-            f"[Aviso del sistema: la llamada acaba de conectarse. Saluda tú primero con UNA frase corta y natural, empezando por «{franja.capitalize()}», "
-            "sin presentarte ni decir tu nombre ni el de la plataforma, "
-            "y deja la puerta abierta para que la persona hable (por ejemplo «¿qué hacemos?» o «cuéntame»). Nada de listas de lo que puedes hacer.]"))]),
-            turn_complete=True)
-    except Exception:
-        pass
+    # Vera no habla al conectar (pedido 2026-11-11): nada se le manda hasta que la persona hable.
     await colgar.wait()
     for t in tareas:
         t.cancel()

@@ -78,10 +78,14 @@ def prueba_las_operaciones_entre_flujos_estan_en_chat_y_voz() -> None:
         assert "construir" in asistente._grupos_para(pedido, {"vista": "tablero"}), pedido
 
 
-def prueba_el_saludo_no_se_presenta() -> None:
+def prueba_no_habla_al_conectar() -> None:
+    """Pedido 2026-11-11: Vera no saluda al conectar; solo responde cuando la persona le habla."""
     fuente = inspect.getsource(voz.llamada)
-    assert "habla Vera" not in fuente, "el saludo no dice el nombre (regla de Jonathan)"
-    assert "sin presentarte ni decir tu nombre" in fuente
+    arranque = fuente[fuente.index("tareas = [asyncio.create_task"):fuente.index("await colgar.wait()")]
+    assert "send_client_content" not in arranque and "send_realtime_input" not in arranque, "al conectar no se le manda nada a Gemini Live"
+    assert "Saluda tú primero" not in fuente and "franja" not in fuente, "no queda el saludo según la hora"
+    assert "No hablas al conectar" in voz.NOTA_VOZ and "saludas primero" not in voz.NOTA_VOZ
+    assert "habla Vera" not in fuente, "nunca dice su nombre (regla de Jonathan)"
 
 
 def prueba_la_pantalla_no_corta_lo_que_dice_vera() -> None:
