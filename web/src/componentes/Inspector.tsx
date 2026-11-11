@@ -821,7 +821,19 @@ export function Inspector() {
   if (foco?.tipo === "nodo" && declarativo) return <PanelNodo id={foco.id} />;
   if (foco?.tipo === "nodo") {
     const n = catalogo?.nodos.find((x) => x.id === foco.id);
-    return n ? <InspectorNodo n={n} /> : null;
+    if (n) return <InspectorNodo n={n} />;
+    // Un enlace o Vera pueden pedir el inicio, el fin o un paso que ya no está: el panel dice qué es en vez de quedar en blanco.
+    const extremo = foco.id === "__inicio" ? "Aquí entra el correo. Elige uno o varios en la correspondencia y pulsa «Correr» para seguirlo paso a paso." : foco.id === "__fin" ? "Aquí termina el caso: radicado, a revisión de una persona o descartado, con su porqué." : `El paso «${foco.id}» no existe en este flujo.`;
+    return (
+      <div className="inspector">
+        <div className="estado-vacio dentro">
+          <span className="estado-vacio-icono"><Icono n={foco.id === "__inicio" ? "correo" : "info"} tam={18} /></span>
+          <h2>{foco.id === "__inicio" ? "Correo entrante" : foco.id === "__fin" ? "Resultado" : "Paso no encontrado"}</h2>
+          <p>{extremo}</p>
+          <button className="boton chico" onClick={() => usar.getState().enfocar(null)}>Cerrar</button>
+        </div>
+      </div>
+    );
   }
   if (foco?.tipo === "regla") return <InspectorRegla id={foco.id} />;
   if (foco?.tipo === "correo") return <InspectorCorreo caso={foco.caso} />;
