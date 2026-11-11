@@ -28,6 +28,7 @@ import * as historial from "./historial.ts";
 import * as plantillas from "./plantillas.ts";
 import * as documentos from "./documentos.ts";
 import * as notificaciones from "./notificaciones.ts";
+import * as tareasVera from "./tareas_vera.ts";
 import * as aprobaciones from "./aprobaciones.ts";
 import * as aplazadas from "./aplazadas.ts";
 import * as probar from "./probar.ts";
@@ -848,6 +849,8 @@ app.patch<{ Params: { id: string } }>("/api/chats/:id", async (req, res) => {
 // Qué está viendo la persona en este momento: el navegador lo reporta cada vez que cambia la pantalla
 // (y justo después de aplicar algo que pidió Vera). Vera lo consulta antes de afirmar que algo está en pantalla.
 const pantallas = new Map<string, { pantalla: Record<string, unknown>; t: number }>();
+// Las tareas largas de Vera en cada conversación (chat escrito y voz): tareas_vera.ts.
+tareasVera.registrar(app, (e) => bus.emit("evento", e));
 app.put<{ Params: { id: string } }>("/api/chats/:id/pantalla", async (req) => {
   const p = req.body && typeof req.body === "object" ? (req.body as Record<string, unknown>) : {};
   if (JSON.stringify(p).length > 8000) return { ok: false };
@@ -927,51 +930,93 @@ app.post<{ Params: { id: string } }>("/api/chats/:id/mensajes", async (req, res)
 
   res.hijack();
   res.raw.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-cache", "X-Accel-Buffering": "no" });
-  const respuesta: chats.MensajeChat = { rol: "asistente", texto: "", t: Date.now(), pasos: [] };
+  // La respuesta se cierra en el primer «fin»: se guarda, termina el pedido y la persona puede seguir escribiendo.
+  // Si Vera dejó tareas corriendo, el mismo proceso sigue vivo y cada tarea que termina llega como un mensaje
+  // de seguimiento («seguimiento» … «fin»), que se guarda en la conversación y se avisa por el canal de eventos.
+  const nueva = (extra: Partial<chats.MensajeChat> = {}): chats.MensajeChat => ({ rol: "asistente", texto: "", t: Date.now(), pasos: [], ...extra });
+  let respuesta = nueva();
+  let turnoCerrado = false;
+  let cola: Promise<void> = Promise.resolve();
+  const conContenido = (m: chats.MensajeChat) => Boolean(m.texto.trim() || m.pasos?.length || m.archivos?.length);
+  const guardarMensaje = (m: chats.MensajeChat, seguimiento: boolean): Promise<void> =>
+    (cola = cola.then(async () => {
+      const actual = (await chats.leer(c.id)) ?? c;
+      actual.mensajes.push(m);
+      await chats.guardar(actual);
+      if (seguimiento) bus.emit("evento", { tipo: "vera_mensaje", corrida: null, t: Date.now() / 1000, conversacion: c.id, mensaje: actual.mensajes.length - 1 });
+    }).catch((e) => app.log.warn({ e: String(e) }, "no se guardó un mensaje de Vera")));
+  const escribir = (t: string) => {
+    if (!turnoCerrado && !res.raw.writableEnded) res.raw.write(t);
+  };
   const p = spawn(config.python, [resolve(config.raiz, "puente", "asistente.py")], {
     env: { ...process.env, PYTHONIOENCODING: "utf-8", PYTHONUNBUFFERED: "1", API_INTERNA: `http://127.0.0.1:${config.puerto}` },
     stdio: ["pipe", "pipe", "pipe"],
   });
+  // Un proceso que se queda siguiendo tareas tiene tope (las tareas tienen el suyo: VERA_TOPE_TAREA).
+  const topeProceso = setTimeout(() => p.exitCode === null && p.kill(), 20 * 60 * 1000);
   let pendiente = "";
   p.stdout.setEncoding("utf8").on("data", (t: string) => {
-    res.raw.write(t);
     pendiente += t;
     const lineas = pendiente.split(String.fromCharCode(10));
     pendiente = lineas.pop() ?? "";
     for (const l of lineas) {
+      if (!l.trim()) continue;
+      escribir(l + String.fromCharCode(10));
       try {
-        const d = JSON.parse(l) as { tipo: string; texto?: string; nombre?: string; argumentos?: unknown; resultado?: string; indice?: number; paralelo?: number; flujos_cambiados?: string[]; propuesta?: { accion: string; id: string }; archivos?: unknown[] };
+        const d = JSON.parse(l) as { tipo: string; texto?: string; nombre?: string; argumentos?: unknown; resultado?: string; indice?: number; paralelo?: number; flujos_cambiados?: string[]; propuesta?: { accion: string; id: string }; archivos?: unknown[]; cifras?: string[]; situacion?: string; id?: string };
         if (d.tipo === "herramienta") respuesta.pasos!.push({ nombre: d.nombre ?? "", argumentos: d.argumentos, ...(d.paralelo ? { paralelo: d.paralelo } : {}) });
         else if (d.tipo === "resultado_herramienta" && respuesta.pasos!.length) {
           // con varias herramientas a la vez, cada resultado dice a qué paso va (indice); si no, es el del último
           const paso = typeof d.indice === "number" ? respuesta.pasos![d.indice] : respuesta.pasos![respuesta.pasos!.length - 1];
-          if (paso) paso.resultado = d.resultado;
+          if (paso) {
+            paso.resultado = d.resultado;
+            // las cifras del resultado completo: un documento de un turno siguiente las encuentra aunque el resultado vaya recortado
+            if (Array.isArray(d.cifras) && d.cifras.length) paso.cifras = d.cifras.slice(0, 400).map(String);
+            if (d.situacion) paso.situacion = String(d.situacion).slice(0, 20);
+          }
         }
         else if (d.tipo === "texto") respuesta.texto = (respuesta.texto ? `${respuesta.texto}\n\n` : "") + (d.texto ?? "");
         else if (d.tipo === "error") { respuesta.texto = `No pude terminar: ${d.texto}`; respuesta.error = true; }
-        else if (d.tipo === "fin") respuesta.cambiados = d.flujos_cambiados ?? [];
         else if (d.tipo === "propuesta" && d.propuesta) (respuesta.propuestas ??= []).push({ accion: d.propuesta.accion, id: d.propuesta.id });
         else if (d.tipo === "archivos" && Array.isArray(d.archivos)) (respuesta.archivos ??= []).push(...(d.archivos as NonNullable<chats.MensajeChat["archivos"]>).slice(0, 20));
+        else if (d.tipo === "seguimiento") respuesta = nueva({ seguimiento: true, ...(d.id ? { tarea: String(d.id).slice(0, 40) } : {}) });
+        else if (d.tipo === "fin") {
+          respuesta.cambiados = d.flujos_cambiados ?? [];
+          const lista = respuesta;
+          respuesta = nueva({ seguimiento: true });
+          if (!turnoCerrado) {
+            turnoCerrado = true;
+            void guardarMensaje(lista, false).then(() => res.raw.end());
+          } else if (conContenido(lista)) void guardarMensaje(lista, true);
+        }
       } catch {
         /* línea cortada */
       }
     }
   });
   let errores = "";
-  p.stderr.setEncoding("utf8").on("data", (t: string) => (errores += t));
+  p.stderr.setEncoding("utf8").on("data", (t: string) => (errores = (errores + t).slice(-20000)));
   p.on("exit", async (codigo) => {
-    if (codigo && !respuesta.texto) {
-      respuesta.texto = `No pude terminar: ${errores.trim().split(String.fromCharCode(10)).pop() || `código ${codigo}`}`;
-      respuesta.error = true;
-      res.raw.write(JSON.stringify({ tipo: "error", texto: respuesta.texto }) + String.fromCharCode(10));
+    clearTimeout(topeProceso);
+    tareasVera.procesoTerminado(c.id, p.pid, (e) => bus.emit("evento", e));
+    if (!turnoCerrado) {
+      if (codigo && !respuesta.texto) {
+        respuesta.texto = `No pude terminar: ${errores.trim().split(String.fromCharCode(10)).pop() || `código ${codigo}`}`;
+        respuesta.error = true;
+        escribir(JSON.stringify({ tipo: "error", texto: respuesta.texto }) + String.fromCharCode(10));
+      }
+      turnoCerrado = true;
+      await guardarMensaje(respuesta, false);
+      res.raw.end();
+    } else if (conContenido(respuesta)) {
+      // un seguimiento que no alcanzó su «fin» (se cortó): se guarda lo que haya
+      if (codigo && !respuesta.texto) { respuesta.texto = "No pude terminar de reportar esta tarea."; respuesta.error = true; }
+      await guardarMensaje(respuesta, true);
     }
-    const actual = (await chats.leer(c.id)) ?? c;
-    actual.mensajes.push(respuesta);
-    await chats.guardar(actual);
-    res.raw.end();
   });
   res.raw.on("close", () => {
-    if (p.exitCode === null) p.kill();
+    // si la persona detuvo la respuesta antes de que terminara, se corta; si ya terminó, las tareas siguen
+    if (p.exitCode === null && !turnoCerrado) p.kill();
   });
   // Lo que vino con el mensaje es la pantalla de este instante.
   if (r.data.pantalla) pantallas.set(c.id, { pantalla: r.data.pantalla, t: Date.now() });
@@ -1001,7 +1046,7 @@ const turnoDeVoz = z.object({
   usuario: z.object({ texto: z.string().max(20000) }),
   asistente: z.object({
     texto: z.string().max(60000),
-    pasos: z.array(z.object({ nombre: z.string(), argumentos: z.unknown().optional(), resultado: z.string().optional() })).max(60).default([]),
+    pasos: z.array(z.object({ nombre: z.string(), argumentos: z.unknown().optional(), resultado: z.string().optional(), cifras: z.array(z.string().max(40)).max(400).optional() })).max(60).default([]),
     cambiados: z.array(z.string()).max(20).default([]),
     propuestas: z.array(z.object({ accion: z.string(), id: z.string() })).max(10).default([]),
     archivos: z.array(z.object({ corrida: z.string(), id: z.string(), nombre: z.string(), tipo: z.string(), tamano: z.number().optional() })).max(20).default([]),
@@ -1113,6 +1158,7 @@ async function iniciarLlamada(
   socket.on("close", cerrar);
   p.on("exit", (codigo) => {
     llamadasActivas--;
+    tareasVera.procesoTerminado(c.id, p.pid, (e) => bus.emit("evento", e));
     if (codigo && errores) app.log.warn({ voz: errores.split("\n").slice(-5).join(" | ") }, "la voz terminó con error");
     if (socket.readyState === socket.OPEN) socket.close(1000, "fin de la llamada");
   });

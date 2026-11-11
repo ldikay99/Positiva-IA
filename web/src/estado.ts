@@ -502,6 +502,11 @@ async function resincronizar(): Promise<void> {
 
 function recibir(e: Evento): void {
   const s0 = usar.getState();
+  // Las tareas de Vera y los mensajes que escribe sola al terminar una son de su conversación, no del flujo abierto.
+  if (e.tipo === "vera_tarea" || e.tipo === "vera_mensaje") {
+    window.dispatchEvent(new CustomEvent(e.tipo === "vera_tarea" ? "positiva:vera-tarea" : "positiva:vera-mensaje", { detail: e }));
+    return;
+  }
   // Las notificaciones son de toda la plataforma, no del flujo abierto.
   if (e.tipo === "notificacion" || e.tipo === "notificaciones") {
     const n = e.notificacion as Notificacion | undefined;

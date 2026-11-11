@@ -24,6 +24,10 @@ export interface PasoChat {
   resultado?: string;
   /** Cuántas herramientas corrieron a la vez con esta (si fue más de una). */
   paralelo?: number;
+  /** Las cifras del resultado completo (el resultado va recortado): de ahí pueden salir las de un documento después. */
+  cifras?: string[];
+  /** confirmado | en_curso | propuesto | no_confirmado | fallo (vera_herramientas.situacion). */
+  situacion?: string;
 }
 
 export interface MensajeChat {
@@ -40,6 +44,9 @@ export interface MensajeChat {
   voz?: boolean;
   /** Acciones que la IA propuso y la persona confirma con un botón. */
   propuestas?: { accion: string; id: string; estado?: "hecha" | "descartada" }[];
+  /** Mensaje que Vera escribió sola al terminar una tarea que había quedado en curso (id de la tarea). */
+  seguimiento?: boolean;
+  tarea?: string;
 }
 
 export interface Conversacion {

@@ -6,10 +6,12 @@ import { Icono } from "../iconos.tsx";
 import { useVoz, VOCES, type EventoVoz } from "../voz.ts";
 import { Markdown } from "./Markdown.tsx";
 import { Selector } from "./Selector.tsx";
+import "./tareas.css";
 
 type Adjunto = { id: string; nombre: string; tipo: string; tamano: number };
 type Paso = { nombre: string; argumentos?: unknown; resultado?: string; paralelo?: number };
 type Propuesta = { accion: string; id: string; estado?: "hecha" | "descartada" };
+type Tarea = { id: string; n: number; nombre: string; etiqueta?: string; desde: number; lista?: boolean; fallo?: boolean };
 type ArchivoSalida = { corrida: string; id: string; nombre: string; tipo: string; tamano?: number };
 type Mensaje = { rol: "usuario" | "asistente"; texto: string; t: number; adjuntos?: Adjunto[]; pasos?: Paso[]; cambiados?: string[]; error?: boolean; voz?: boolean; propuestas?: Propuesta[]; archivos?: ArchivoSalida[] };
 
@@ -45,6 +47,13 @@ const NOMBRE_HERRAMIENTA: Record<string, string> = {
   traer_nodos: "Trae pasos de otro flujo",
   encadenar_flujos: "Encadena dos flujos",
   diagnosticar_flujo: "Diagnostica el flujo",
+  estado_tareas: "Revisa las tareas en curso",
+  seguir_corridas: "Espera las corridas",
+  versiones_flujo: "Revisa las versiones",
+  restaurar_version: "Vuelve a una versión",
+  comparar_versiones: "Compara dos versiones",
+  deshacer_cambio: "Deshace el último cambio",
+  restaurar_version_que_funcionaba: "Vuelve a la versión que funcionaba",
   ver_programacion: "Revisa la programación",
   programar_flujo: "Cambia la programación",
   ver_recursos: "Revisa los recursos",
@@ -429,8 +438,21 @@ export function Chat() {
   const [confirmando, setConfirmando] = useState<string | null>(null);
   const [arrastrando, setArrastrando] = useState(false);
   const [escritoEnLlamada, setEscritoEnLlamada] = useState<string[]>([]);
-  // Las tareas largas que Vera corre en segundo plano durante la llamada, con su nombre.
-  const [tareas, setTareas] = useState<{ n: number; nombre: string; desde: number; lista?: boolean }[]>([]);
+  // Las tareas largas que Vera corre en segundo plano (por escrito o en la llamada), con su nombre. Llegan por el canal
+  // de eventos (vera_tarea) y, en la llamada, también por la voz; el id es el mismo, así que no se repiten.
+  const [tareas, setTareas] = useState<Tarea[]>([]);
+  const ponerTarea = useCallback((x: { id?: unknown; tarea?: unknown; n?: unknown; nombre?: unknown; etiqueta?: unknown; estado?: unknown }) => {
+    const id = String(x.id ?? x.tarea ?? "");
+    if (!id) return;
+    const termino = x.estado === "lista" || x.estado === "fallo";
+    setTareas((t) => {
+      const previa = t.find((y) => y.id === id);
+      const nueva: Tarea = { id, n: Number(x.n ?? x.tarea ?? previa?.n ?? 0), nombre: String(x.nombre ?? previa?.nombre ?? ""), etiqueta: typeof x.etiqueta === "string" ? x.etiqueta : previa?.etiqueta, desde: previa?.desde ?? Date.now(), lista: termino || previa?.lista, fallo: x.estado === "fallo" || previa?.fallo };
+      return previa ? t.map((y) => (y.id === id ? nueva : y)) : [...t, nueva];
+    });
+    // terminada: se ve un momento («lista») y se quita
+    if (termino) setTimeout(() => setTareas((t) => t.filter((y) => y.id !== id)), 2500);
+  }, []);
   const caja = useRef<HTMLDivElement>(null);
   const entrada = useRef<HTMLTextAreaElement>(null);
   // El cuadro crece con lo escrito (también con renglones largos que se parten), hasta su tope en CSS; de ahí en adelante tiene scroll.
@@ -482,20 +504,48 @@ export function Chat() {
       if (c) void abrirConversacion(c.id);
       void cargarLista();
       if (Array.isArray(e.cambiados) && e.cambiados.length) void cargarFlujos();
-    } else if (e.tipo === "tarea_iniciada") setTareas((t) => [...t, { n: Number(e.tarea), nombre: String(e.nombre), desde: Date.now() }]);
-    else if (e.tipo === "tarea_lista") {
-      const n = Number(e.tarea);
-      // Se marca lista un momento (para que se vea que terminó) y luego se quita.
-      setTareas((t) => t.map((x) => (x.n === n ? { ...x, lista: true } : x)));
-      setTimeout(() => setTareas((t) => t.filter((x) => x.n !== n)), 2500);
-    }
+    } else if (e.tipo === "tarea_iniciada") ponerTarea({ ...e, estado: "en_curso" });
+    else if (e.tipo === "tarea_lista") ponerTarea({ ...e, estado: e.estado === "fallo" ? "fallo" : "lista" });
+    else if (e.tipo === "revision_veracidad") { /* lo corrige ella misma en voz */ }
     else if (e.tipo === "colgada") {
-      setTareas([]);
+      // las tareas que lanzó en la llamada siguen hasta terminar (el canal de eventos las sigue mostrando)
       setPensando("");
       setEscritoEnLlamada([]);
     } else enPantalla(e);
-  }, [abrirConversacion, cargarLista, cargarFlujos]);
+  }, [abrirConversacion, cargarLista, cargarFlujos, ponerTarea]);
   const llamada = useVoz(alEventoDeVoz);
+
+  // Seguimiento de tareas por el canal de eventos: las que lanzó Vera en esta conversación (por escrito o en la
+  // llamada) y el mensaje que escribe sola cuando una termina.
+  const ocupadoRef = useRef(false);
+  ocupadoRef.current = ocupado;
+  useEffect(() => {
+    const tarea = (ev: Event) => {
+      const d = (ev as CustomEvent<{ conversacion?: string; tarea?: Record<string, unknown> }>).detail;
+      if (d?.tarea && d.conversacion === actualRef.current?.id) ponerTarea(d.tarea);
+    };
+    const mensaje = (ev: Event) => {
+      const d = (ev as CustomEvent<{ conversacion?: string }>).detail;
+      if (!d?.conversacion) return;
+      void cargarLista();
+      // si está llegando otra respuesta, al terminarla se recarga la conversación (y ahí aparece este mensaje)
+      if (d.conversacion === actualRef.current?.id && !ocupadoRef.current) void abrirConversacion(d.conversacion);
+    };
+    window.addEventListener("positiva:vera-tarea", tarea);
+    window.addEventListener("positiva:vera-mensaje", mensaje);
+    return () => {
+      window.removeEventListener("positiva:vera-tarea", tarea);
+      window.removeEventListener("positiva:vera-mensaje", mensaje);
+    };
+  }, [ponerTarea, abrirConversacion, cargarLista]);
+  // Al abrir una conversación, lo que siga en curso (p. ej. tras recargar la página).
+  useEffect(() => {
+    setTareas([]);
+    if (!actual?.id) return;
+    void pedir<{ tareas: (Record<string, unknown> & { estado: string })[] }>(`/api/chats/${actual.id}/tareas`)
+      .then((r) => r.tareas.filter((t) => t.estado === "en_curso").forEach((t) => ponerTarea(t)))
+      .catch(() => undefined);
+  }, [actual?.id, ponerTarea]);
   const enLlamada = llamada.estado !== "inactiva";
 
   const llamar = async () => {
@@ -642,6 +692,10 @@ export function Chat() {
             actualizar((m) => ({ ...m, archivos: [...(m.archivos ?? []), ...nuevos] }));
           } else if (d.tipo === "renombrado") {
             void cargarLista();
+          } else if (d.tipo === "tarea_iniciada" || d.tipo === "tarea_lista") {
+            ponerTarea({ ...d, estado: d.tipo === "tarea_iniciada" ? "en_curso" : d.estado });
+          } else if (d.tipo === "revision_veracidad" || d.tipo === "seguimiento") {
+            setPensando("Revisando lo que te digo…");
           } else {
             enPantalla(d);
           }
@@ -860,15 +914,17 @@ export function Chat() {
                     )}
                   </div>
 
-                  {enLlamada && tareas.length > 0 && (() => {
+                  {tareas.length > 0 && (() => {
                     // una sola línea, aunque haya varias tareas: la que corre ahora y cuántas más
                     const activas = tareas.filter((t) => !t.lista);
                     const t = activas[0] ?? tareas[tareas.length - 1]!;
+                    const nombre = (x: Tarea) => x.etiqueta || etiquetaPaso(x.nombre);
                     return (
-                      <div className={`llamada-tareas ${activas.length ? "" : "lista"}`} aria-live="polite" aria-label="Tareas en segundo plano">
-                        {activas.length ? <span className="girando" /> : <Icono n="check" tam={12} />}
-                        <span>{etiquetaPaso(t.nombre)}{activas.length > 1 ? ` y ${activas.length - 1} más` : ""}</span>
-                        <small>{activas.length ? "en curso" : "listo"}</small>
+                      <div className={`llamada-tareas ${enLlamada ? "" : "chat-tareas"} ${activas.length ? "" : t.fallo ? "fallo" : "lista"}`} aria-live="polite"
+                        aria-label="Tareas en segundo plano" title={tareas.map((x) => `${nombre(x)}: ${x.lista ? (x.fallo ? "no terminó bien" : "lista") : "en curso"}`).join("\n")}>
+                        {activas.length ? <span className="girando" /> : <Icono n={t.fallo ? "cerrar" : "check"} tam={12} />}
+                        <span>{nombre(t)}{activas.length > 1 ? ` y ${activas.length - 1} más` : ""}</span>
+                        <small>{activas.length ? "en curso" : t.fallo ? "no terminó" : "lista"}</small>
                       </div>
                     );
                   })()}
