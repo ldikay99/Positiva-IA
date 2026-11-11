@@ -714,6 +714,33 @@ Jonathan pidió que el chat y la voz tengan las mismas herramientas y la misma f
 - [ ] La procedencia de cifras compara números. Un conteo pequeño (1, 2, 3) puede coincidir por azar con otro dato consultado. Un cálculo que Vera no declare se rechaza aunque esté bien hecho, y ella lo corrige declarándolo.
 - [ ] En la voz, las cifras dichas en palabras («cuarenta y tres») no se revisan; sí las del documento que genera.
 
+## 5n. Rediseño compacto: que todo quepa al 100 % (pedido 2026-11-11)
+
+Jonathan tenía que usar la plataforma al 67 % de zoom en su portátil: todo era grande y apretado a la vez. La meta era que al 100 % (1366×768, 1440×900, 1536×864 y 1920×1080) se vea como antes al 67 % o mejor, con una escala de verdad y no con un `zoom` global.
+
+- [x] Escala única en `web/src/tokens.css`, que se carga primero. Las demás hojas ya no escriben píxeles de letra ni de espacio:
+  - letra: `--t-2xs` 10, `--t-xs` 10,5, `--t-s` 11,5, `--t-m` 12,5 (base, antes 14), `--t-l` 13,5, `--t-xl` 15, `--t-2xl` 17, `--t-3xl` 20, `--t-4xl` 24 y `--t-5xl` 30 px;
+  - espacio: `--e-1` a `--e-10` (2, 4, 6, 8, 10, 12, 16, 20, 24 y 32 px);
+  - alto de controles: `--alto-xs` 22, `--alto-s` 24, `--alto-m` 28 (botón, campo y selector) y `--alto-l` 32 px;
+  - armazón: barra de 44 px (antes 62), riel de 64 px (de 84) con nombres cortos que caben y 184 px con nombres desde 1600 px (antes 212 desde 1440), bandeja de 288 px (de 368), inspector de 380 px (de 470), dock de 170–250 px (de 300) y nodos de 216 px (de 248);
+  - forma: `--radio` 12, `--radio-2` 7 y `--radio-3` 5 px.
+- [x] Las 11 hojas (`index`, `diseno`, `espacio`, `plataforma`, `editor`, `producto` y las de componentes) pasaron a los tokens con un codemod revisado a mano: 2.268 declaraciones. Las mayúsculas sostenidas salieron de la hoja base, así ya no dependen de que otra capa las anule.
+- [x] Títulos en Bricolage Grotesque con el eje de ancho a 88 (`font-stretch`; la fuente se pide con `wdth`). Es una decisión de densidad: mantiene el carácter y ocupa menos. El texto sigue en Schibsted Grotesk.
+- [x] Las medidas guardadas de la bandeja, el dock y el inspector pasan a `positiva-ia:medidas:v2`, para que no vuelvan los tamaños viejos.
+- [x] Vista por vista:
+  - **Correspondencia**: el título va en una línea con las pestañas y la ayuda queda en el globo. Los sobres pasan de 104 a 68 px (avatar de 28, el botón de abrir flota) y el sello es más chico. Caben 9 correos en 1366×768, antes 5.
+  - **Lienzo**: columnas de 272 px y filas más bajas; en 1920 se ve PQRD entero.
+  - **Inspector**: si piden el inicio, el fin o un paso que no existe, lo explica en vez de quedar en blanco. Donde hay poco ancho, los campos de la solicitud van en dos renglones; antes un valor quedaba en una columna de una letra.
+  - **Inicio**: la portada es una franja con el recorrido en tres renglones. Debajo mandan «Tus flujos», y «Hoy» y los primeros pasos van en una columna lateral.
+  - **Tablero**: fichas más densas (anillo de 64 px, cifras que se acomodan, actividad en una franja, las tres últimas ejecuciones) y cuatro por fila en 1366. Las acciones ya no salen como una caja dentro de la tarjeta, por un choque con `.tarjeta`.
+  - **Historial**: una sola superficie con filas de un renglón (33 px). Con el detalle abierto pasan a dos renglones; antes eran tarjetas de 50 px.
+  - **Plantillas, conexiones y herramientas**: rejillas desde 250–300 px (antes 290–380).
+  - **Chat**: en el inicio, las plantillas o el tablero dice dónde está la persona, no «En «PQRD»». El markdown ya no pone en cursiva los guiones bajos de un nombre de archivo.
+- [x] Al llegar por un enlace a un flujo, la carga inicial del flujo anterior pisaba el lienzo con sus pasos; ahora se descarta.
+- [x] Probado con Playwright en las cuatro resoluciones, más 390×844, antes (contenedor) y después (Vite :5181 y el contenedor con la web nueva). Se revisaron las capturas buscando superficies oscuras, desbordes y textos cortados. Se corrió un caso de PQRD en modo prueba desde la pantalla: radicado DRY-RUN-ENT en 8,3 s, con el proceso en vivo y la solicitud en el inspector. `tsc` limpio.
+- [ ] Unificar de verdad las capas: `diseno.css` y `espacio.css` todavía anulan reglas de `index.css`. Hoy todas usan los mismos tokens, pero conviene fundirlas en una hoja por área.
+- [ ] En el celular, la barra del flujo sigue escondiendo Renombrar, Clonar, Comparar y Traer pasos.
+
 ## 6. Paso a producción (cuando aprueben)
 
 - [x] Documento de despliegue (`docs/PRODUCCION.md`): principios, entorno y secretos de PQRD y tutelas con sus nombres reales, conexiones, cómo jala la información cada flujo, qué escribe y los pasos para salir a producción.
