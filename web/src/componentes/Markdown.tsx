@@ -7,7 +7,7 @@ import type { ReactNode } from "react";
  */
 
 function enLinea(texto: string, clave: string): ReactNode[] {
-  const partes = texto.split(/(\*\*[^*]+\*\*|`[^`]+`|\*[^*\s][^*]*\*|_[^_\s][^_]*_)/g);
+  const partes = texto.split(/(\*\*[^*]+\*\*|`[^`]+`|\*[^*\s][^*]*\*|(?<![\p{L}\p{N}])_[^_\s][^_]*_(?![\p{L}\p{N}]))/gu);
   return partes.map((t, i) => {
     const k = `${clave}-${i}`;
     if (t.startsWith("**") && t.endsWith("**") && t.length > 4) return <b key={k}>{t.slice(2, -2)}</b>;
