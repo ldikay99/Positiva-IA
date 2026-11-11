@@ -88,6 +88,16 @@ def prueba_no_habla_al_conectar() -> None:
     assert "habla Vera" not in fuente, "nunca dice su nombre (regla de Jonathan)"
 
 
+def prueba_la_deteccion_de_voz_de_gemini() -> None:
+    """La segunda puerta (Gemini Live): valores documentados en PLAN 5m y usados en la configuración."""
+    from google.genai import types
+    assert voz.VAD == {"inicio": "START_SENSITIVITY_LOW", "fin": "END_SENSITIVITY_LOW", "prefix_padding_ms": 300, "silence_duration_ms": 700}
+    types.StartSensitivity(voz.VAD["inicio"]), types.EndSensitivity(voz.VAD["fin"])  # nombres válidos
+    fuente = inspect.getsource(voz.principal)
+    assert 'VAD["silence_duration_ms"]' in fuente and 'VAD["prefix_padding_ms"]' in fuente
+    assert "TURN_INCLUDES_ONLY_ACTIVITY" in fuente and "START_OF_ACTIVITY_INTERRUPTS" in fuente
+
+
 def prueba_la_pantalla_no_corta_lo_que_dice_vera() -> None:
     """El aviso de cambio de pantalla no se manda en cuanto llega (interrumpía la respuesta): espera una pausa en el reloj."""
     fuente = inspect.getsource(voz.llamada)

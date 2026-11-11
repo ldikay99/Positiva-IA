@@ -47,6 +47,20 @@ LARGAS = {"responder_por_escrito", "probar_flujo", "correr_flujo", "correr_buzon
           "subir_adjuntos_a_flujo", "leer_buzon_flujo", "clonar_flujo", "diagnosticar_flujo"}
 VOZ_POR_DEFECTO = "Laomedeia"
 
+# Detección de voz de Gemini Live (la segunda puerta; la primera es la del navegador, en web/src/voz.ts,
+# que solo deja pasar habla sostenida y manda silencio digital en lo demás). Valores elegidos (PLAN 5m):
+# - inicio LOW: con el ruido ya filtrado en el navegador, Gemini solo debe abrir turno ante habla clara;
+#   HIGH hacía que restos de ruido o de eco abrieran turno.
+# - fin LOW: no corta a la persona en las pausas al pensar; el turno cierra tras silence_duration_ms.
+# - prefix_padding_ms 300: habla mínima antes de comprometer el inicio; deja pasar un «sí» corto
+#   (el navegador ya manda 150 ms previos al arranque) y descarta golpes, toses y clics.
+# - silence_duration_ms 700: en el navegador la cola de la puerta ya suma ~0,4 s, así que el turno
+#   cierra ~0,7-1 s después de la última palabra (antes 800: más lento sin evitar más cortes).
+# - turno solo con la actividad: lo que llega fuera del habla (silencio) no entra al turno.
+# Detección manual (activityStart/activityEnd) no: la puerta del navegador es por energía y la de Gemini
+# es un modelo de voz; las dos en serie rechazan más ruido que cualquiera sola.
+VAD = {"inicio": "START_SENSITIVITY_LOW", "fin": "END_SENSITIVITY_LOW", "prefix_padding_ms": 300, "silence_duration_ms": 700}
+
 NOTA_VOZ = """
 ESTÁS EN UNA LLAMADA DE VOZ. Así hablas:
 - Rápido y natural, como una colega en una llamada de trabajo en Colombia: frases cortas, ritmo ágil, sin tono de locutora ni pausas largas.
@@ -228,10 +242,11 @@ async def principal() -> None:
             output_audio_transcription=types.AudioTranscriptionConfig(),
             realtime_input_config=types.RealtimeInputConfig(
                 automatic_activity_detection=types.AutomaticActivityDetection(
-                    start_of_speech_sensitivity=types.StartSensitivity.START_SENSITIVITY_LOW,
-                    end_of_speech_sensitivity=types.EndSensitivity.END_SENSITIVITY_LOW,
-                    silence_duration_ms=800, prefix_padding_ms=300),
-                activity_handling=types.ActivityHandling.START_OF_ACTIVITY_INTERRUPTS),
+                    start_of_speech_sensitivity=types.StartSensitivity(VAD["inicio"]),
+                    end_of_speech_sensitivity=types.EndSensitivity(VAD["fin"]),
+                    silence_duration_ms=VAD["silence_duration_ms"], prefix_padding_ms=VAD["prefix_padding_ms"]),
+                activity_handling=types.ActivityHandling.START_OF_ACTIVITY_INTERRUPTS,
+                turn_coverage=types.TurnCoverage.TURN_INCLUDES_ONLY_ACTIVITY),
             context_window_compression=types.ContextWindowCompressionConfig(sliding_window=types.SlidingWindow()),
         )
 
