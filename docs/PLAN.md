@@ -161,7 +161,7 @@ El proyecto nació como PQRD y quedan cosas de PQRD que se ven en todos los fluj
 
 - [ ] Probar en una llamada real del navegador la renovación de la sesión (más de 10 minutos) y la despedida completa.
 
-- [x] Saludo propio al conectar, según la hora («Buenas noches, cuéntame.»; desde el 2026-11-10 no dice su nombre, ver 5g); despedidas variadas y ligadas a lo que se hizo; propone en vez de preguntar en cadena.
+- [x] Saludo propio al conectar, según la hora («Buenas noches, cuéntame.»; desde el 2026-11-10 no dice su nombre, ver 5g; desde el 2026-11-11 ya no saluda al conectar, ver 5m); despedidas variadas y ligadas a lo que se hizo; propone en vez de preguntar en cadena.
 - [x] Cortes corregidos: la sesión de Gemini Live se renueva por dentro con su identificador de reanudación (la llamada sigue, sin perder turno ni tareas); se cuelga al terminar el turno de la despedida y el navegador deja sonar lo que falte; interrumpir a Vera exige voz más clara (eco y ruido no la cortan).
 - [x] Tareas en curso en su propia franja sobre la barra de la llamada, con el nombre de cada una y «listo» al terminar.
 
@@ -431,7 +431,7 @@ Jonathan pidió que Vera haga todo en la plataforma, por texto y por voz (borrar
   - Los fragmentos de transcripción se pegan con `unir_transcripcion`, que pone el espacio que falta entre frases sin partir palabras.
   - El turno se guarda 0,9 s después del fin del turno, para que la transcripción que llega tarde quede en el mismo turno. Si la persona vuelve a hablar, se guarda antes.
   - El recordatorio «di el resultado» ya no se manda mientras suena su voz.
-- [x] **Saludo.** Ya no se presenta: «Buenas tardes, cuéntame qué hacemos hoy.» No dice su nombre ni el de la plataforma.
+- [x] **Saludo.** Ya no se presenta: «Buenas tardes, cuéntame qué hacemos hoy.» No dice su nombre ni el de la plataforma. (Desde el 2026-11-11 no saluda al conectar: ver 5m.)
 - [x] **Capacidades.** El SISTEMA trae la lista concreta y agrupada: crear, editar (también PQRD y copias), operar la plataforma (clonar, comparar, traer pasos, encadenar, borrar con botón, programar, recursos), correr, revisar y diagnosticar, y moverse por la pantalla. También dice lo que no hace. Por voz lo dice en dos o tres frases y deja la lista en el chat.
 - [x] **Diagnóstico de verdad.** La herramienta nueva es `diagnosticar_flujo`. Revisa:
   - las últimas corridas: desenlaces, motivos de revisión manual con ejemplos, errores, avisos frecuentes y campos sin resolver;
@@ -552,6 +552,58 @@ Jonathan pidió que Vera ponga el logo, un banner o una marca de agua que le pas
 - [x] Pruebas (`pruebas_salidas.py`, 28): marca en PDF, Word, PowerPoint y HTML (transparencia, ExtGState, ancla detrás del texto, alphaModFix, colores, fuente), `documento_marca` sobre tres documentos con un recurso de la biblioteca y un .txt que se salta, plantilla con su logo, estampado de un PDF y una imagen, validación en paridad con el zod, tandas y orden del paralelismo, avisos emparejados y las herramientas de Vera con adjuntos falsos. De punta a punta por la API: un chat con un logo adjunto pidió Word y PDF con el logo arriba y marca de agua al 15 % (Vera los armó a la vez), y un flujo con `documento_marca` marcó un PDF, un Word y un PowerPoint.
 - [ ] Un PDF que ya existe recibe la marca encima: si su texto empieza muy arriba, el logo puede quedar sobre él (para eso, la marca al generarlo). Las páginas giradas (/Rotate) no se corrigen.
 - [ ] Propuesta: una herramienta `en_lote` para que Vera mande en una sola llamada varias tareas largas (correr varios flujos y esperar), con avance por tarea.
+
+## 5m. Voz: sin saludo, detección robusta y audio sin cortes (pedido 2026-11-11)
+
+Jonathan pidió tres cosas de la llamada: que Vera no hable al conectar, que el ruido no abra turnos y que su voz no tenga cortes ni micro-silencios.
+
+- [x] **Sin saludo.** `puente/voz.py` ya no le manda nada a Gemini Live al conectar; la NOTA_VOZ dice «No hablas al conectar: esperas en silencio a que la persona hable». Solo responde cuando la persona le habla (o le escribe en la llamada). La prueba `prueba_no_habla_al_conectar` falla si algo se manda entre abrir la sesión y la espera de la llamada. Reemplaza el saludo de 2f y 5g.
+- [x] **Puerta de ruido en el navegador** (`web/public/microfono.js` y `web/src/voz.ts`):
+  - El worklet del micrófono calcula, por tramo de ~43 ms, la energía total y la de la banda de la voz (200–3800 Hz, dos biquads) y transfiere el tramo sin copiarlo.
+  - Un tramo es habla si la banda supera el suelo por 10 dB (mínimo −52 dBFS) y además concentra al menos el 35 % de la energía. El ventilador es grave; el siseo y los clics son agudos.
+  - Calibración: el primer segundo mide el ruido de fondo con el percentil 30, que no se arruina si alguien ya habla. El suelo calibrado queda en −42 dBFS como máximo.
+  - Seguimiento del suelo mientras no hay habla: sube despacio (3 s) y baja rápido (0,6 s). No sube mientras suena Vera.
+  - El turno abre con 200 ms de habla acumulada; los tramos sin voz descuentan 1,5 veces más rápido. Al abrir se mandan además los 150 ms anteriores, para no comerse el arranque.
+  - Para interrumpir a Vera hacen falta 26 dB sobre el suelo (mínimo −32 dBFS) y 600 ms.
+  - Una vez abierto, el turno cierra tras 400 ms sin voz (con 3 dB de histéresis).
+  - Si la puerta lleva 1,5 s abierta con un nivel casi constante (desviación < 2 dB), es ruido estable y no habla: se cierra y el suelo sube a ese nivel. La voz varía 6–10 dB entre tramos.
+  - Lo que no pasa sale como silencio digital, así que Gemini ve igual el final de cada turno.
+- [x] **Detección de voz de Gemini Live** (`VAD` en `voz.py`), la segunda puerta en serie:
+  - `startOfSpeechSensitivity` LOW: con el ruido ya filtrado, solo abre ante habla clara.
+  - `endOfSpeechSensitivity` LOW: no corta en las pausas al pensar.
+  - `prefixPaddingMs` 300: habla mínima antes de comprometer el inicio. Deja pasar un «sí» corto (el navegador ya manda 150 ms previos) y descarta golpes y toses.
+  - `silenceDurationMs` 700 (antes 800): la cola de la puerta ya suma unos 0,4 s, así que el turno cierra 0,7–1 s después de la última palabra.
+  - `turnCoverage` TURN_INCLUDES_ONLY_ACTIVITY y `activityHandling` START_OF_ACTIVITY_INTERRUPTS.
+  - No se usa detección manual (`activityStart`/`activityEnd`): la puerta del navegador mide energía y la de Gemini es un modelo de voz, y las dos en serie rechazan más ruido que cualquiera sola. Además, con detección manual un cierre temprano del navegador partiría la frase.
+  - Prueba: `prueba_la_deteccion_de_voz_de_gemini`.
+- [x] **Reproducción sin cortes** (`web/public/reproductor.js`, nuevo):
+  - La voz de Vera suena en un AudioWorklet con una cola de fragmentos. Cada uno se lee exactamente donde terminó el anterior, con la fase de interpolación continua, y el hilo principal solo transfiere el ArrayBuffer.
+  - Cada turno arranca con 120 ms de colchón, o antes si llega el fin del turno o pasan 300 ms.
+  - Si la cola se vacía a mitad de un turno, cuenta un subdesborde, mide el silencio que se oyó y sube el colchón 60 ms (hasta 300 ms) por el resto de la llamada. Al volver a sonar entra con un fundido de 4 ms, sin clic.
+  - El contexto de salida va a 24 kHz, la tasa de Gemini. El navegador remuestrea al dispositivo con su propio remuestreador, continuo entre fragmentos; antes, cada fragmento de 24 kHz se remuestreaba por separado en un contexto de 48 kHz. Si el navegador no acepta 24 kHz, el worklet remuestrea.
+  - El servidor marca el fin de cada turno (`fin_turno`), así que el final de una respuesta no cuenta como corte.
+  - Sin worklet queda la vía anterior (fuentes encadenadas) con 120 ms.
+  - `window.__vozDiag()` da las cifras de la reproducción y de la puerta.
+- [x] **Puente revisado:** no fragmenta ni retiene nada. `voz.py` escribe cada fragmento de Gemini apenas llega (stdout con flush) y el servidor lo reenvía tal cual por el WebSocket. Gemini entrega fragmentos de 40 a 280 ms casi en tiempo real (31 s de audio en 31 s), así que el colchón es lo único que absorbe la variación.
+- [x] **Mediciones** con llamadas reales por `/api/voz`: Chromium sin interfaz, micrófono falso con un WAV y conversaciones de prueba borradas al terminar. Las herramientas están en el scratchpad (`voz5m/`):
+  - `medir_voz.cjs` registra las llegadas por WebSocket, la programación de la reproducción, los subdesbordes del worklet, lo que la puerta deja pasar, los eventos de Gemini y las tareas largas del hilo principal.
+  - `generar_wavs.py` y `larga.py` arman los WAV: habla TTS en español sobre ruido de −58 dBFS; ruido blanco a −50 dBFS; ventilador grave a −37 dBFS con zumbido de 120 Hz; teclado con clics de −18 dBFS de pico, unos 6 por segundo; ruido variable a −38 dBFS con ±8 dB lentos.
+  - Con `ESTRES_MS` se bloquea el hilo principal cada 900 ms, como un render pesado del chat.
+
+  | Escenario | Antes | Después |
+  |---|---|---|
+  | Saludo al conectar | Sí, en los 9 casos («Buenas tardes, cuéntame…»), y la persona lo cortaba al hablar | No: el primer audio llega después de que la persona habla |
+  | Habla larga, sin estrés | 0 huecos (17,8 s de voz) | 0 subdesbordes (24–31 s de voz), colchón 120 ms; 0 tareas largas en el hilo principal |
+  | Hilo principal bloqueado 120 ms | 1 hueco de 160 ms | 1 subdesborde de 59 ms; el colchón sube a 180 ms y no vuelve a vaciarse |
+  | Hilo principal bloqueado 250 ms | 2 huecos de 199 y 160 ms | 4 de 59, 32, 32 y 11 ms (134 ms en total frente a 359); el colchón llega a 300 ms y se estabiliza |
+  | Ruido blanco, ventilador, ruido variable | 0 aperturas de la puerta (la supresión de ruido de Chrome ayuda) | 0 aperturas, 0 turnos |
+  | Teclado | **3 aperturas, 5,2 s de ruido mandados como habla** | 0 aperturas, 0 turnos |
+  | Frase corta («¿Cuántos flujos tengo en total?») | Abre turno; responde tras cortar el saludo | Abre turno (3 aperturas, 4,7 s) y responde «Tienes 17 flujos en total.» |
+  | Explicación larga | Partida en dos turnos por el saludo | Una sola transcripción completa y una respuesta continua |
+
+  - `puente/pruebas_voz.py`: 10 de 10 pasan.
+- [ ] Probar con micrófono y parlantes reales (eco de verdad, ruido de oficina, Bluetooth). La prueba fue con micrófono falso y sin salida de audio real.
+- [ ] Si en equipos lentos el chat bloquea el hilo principal más de 250 ms seguidos, recibir el WebSocket en un Worker que entregue el audio directo al worklet (un MessagePort), para que la voz no dependa del hilo principal.
 
 ## 6. Paso a producción (cuando aprueben)
 
