@@ -188,6 +188,7 @@ Cómo trabajas:
 16. Si necesitas varias herramientas que no dependen una de otra (leer dos flujos, revisar corridas y tablero, generar varios documentos), pídelas juntas en la misma vuelta: corren a la vez. Lo que mueve la pantalla o cambia un flujo corre de a una, en el orden en que lo pidas.
 17. Tareas largas (correr y esperar un flujo, el buzón, probar, diagnosticar, documentos pesados, las corridas que lanzas): corren como tarea. Si una herramienta devuelve situacion «en_curso», di que está en curso y qué es, sin resultado ni «ya terminó»; la persona puede seguir hablando contigo y el resultado te llega después como «[Resultado de la tarea N]»: ahí lo reportas, corto y con sus cifras. Si preguntan cómo va algo, estado_tareas. Lo que ya está en curso no se vuelve a lanzar.
 18. Cada resultado trae «situacion»: confirmado (se hizo, puedes decirlo), en_curso (sigue corriendo), propuesto (solo quedó un botón), no_confirmado o fallo (no se hizo: dilo así y por qué). Tu respuesta se revisa contra eso antes de llegar a la persona: «guardé», «corrí», «abrí», «listo», «ya quedó» o «se radicó» sin una herramienta confirmada se te devuelven para corregir.
+19. Documentos con cifras: primero consulta los datos (conteos de un periodo: historial con resumen=true, y agrupar=dia si es por día; consumo, costo y modelos: ver_ia_flujo y modelos_ia; tiempos: el resumen del historial) y pon SOLO esas cifras; lo que calcules tú va en «calculos» de generar_documento con su fórmula. Nunca estimes ni completes un dato que no consultaste: si no está, «sin dato».
 
 {INDICE_NODOS}"""
 
@@ -256,12 +257,12 @@ HERRAMIENTAS = [
     {"name": "configurar_ia_global", "description": "Cambia la IA global de la plataforma (la que usan los flujos que dicen «usar la global»). Solo si la persona lo pide.", "parameters": {"type": "object", "properties": {"proveedor": {"type": "string"}, "modelo": {"type": "string"}, "credencial": {"type": "string"}, "temperatura": {"type": "number"}}, "required": ["proveedor", "modelo"]}},
     {"name": "probar_paso", "description": "Prueba UN paso de un flujo (o el flujo hasta ese paso con hasta=true) sin correr todo y sin escribir nada afuera: con archivos que la persona adjuntó en el chat (usar_adjuntos_chat=true), una entrada, un correo (caso) o la salida de una ejecución anterior (desde_corrida). Devuelve lo que produce el paso y los archivos generados. Con fijar=true deja ese resultado como datos de prueba del paso.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "nodo": {"type": "string"}, "hasta": {"type": "boolean"}, "usar_adjuntos_chat": {"type": "boolean"}, "adjuntos": {"type": "array", "items": {"type": "string"}}, "entrada": {"type": "object"}, "caso": {"type": "string"}, "desde_corrida": {"type": "string"}, "fijar": {"type": "boolean"}}, "required": ["flujo", "nodo"]}},
     {"name": "archivos_de_corrida", "description": "Los archivos que generó una ejecución (Word, Excel, PDF, imágenes…). Los muestra a la persona como cápsulas en el chat para abrirlos o descargarlos.", "parameters": {"type": "object", "properties": {"corrida": {"type": "string"}}, "required": ["corrida"]}},
-    {"name": "generar_documento", "description": "Crea un documento AQUÍ en el chat y se lo entrega a la persona como cápsula para abrir o descargar: Word (docx), PDF, PowerPoint (pptx), Excel (xlsx), CSV, HTML o Markdown (md). Úsala cuando pidan «hazme un Word/PDF/PowerPoint/Excel con…», un informe, un acta, un resumen, una respuesta al ciudadano o una presentación, sin montar un flujo. Para docx, pdf, pptx, html y md escribe tú el contenido completo en «contenido» con «# » título, «## » sección (en pptx el «# » es la portada y cada «## » es una diapositiva: si piden N diapositivas, escribe exactamente N «## », con 3 a 5 viñetas cortas cada una), «- » viñetas y tablas con «|». Para xlsx o csv pasa «hojas»: [{nombre, columnas, filas}] (o una tabla con «|» en contenido). Con «plantilla» (id de plantillas_documento) y «datos» llena esa plantilla de la biblioteca. Si el documento usa datos de la plataforma (tablero, historial, corridas, correos), consúltalos ANTES con sus herramientas y pon las cifras reales, nunca inventadas. Con «marca» (docx, pdf, pptx, html) lleva logo, banner, marca de agua, colores y fuente con las imágenes que adjuntó la persona: mira antes ayuda_documentos.", "parameters": {"type": "object", "properties": {"formato": {"type": "string", "enum": ["docx", "pdf", "pptx", "xlsx", "csv", "html", "md"]}, "titulo": {"type": "string"}, "contenido": {"type": "string"}, "hojas": {"type": "array", "items": {"type": "object", "properties": {"nombre": {"type": "string"}, "columnas": {"type": "array", "items": {"type": "string"}}, "filas": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}}}}}, "plantilla": {"type": "string"}, "datos": {"type": "object"}, "nombre_archivo": {"type": "string"}, "marca": ESQUEMA_MARCA}, "required": ["titulo"]}},
+    {"name": "generar_documento", "description": "Crea un documento AQUÍ en el chat y se lo entrega a la persona como cápsula para abrir o descargar: Word (docx), PDF, PowerPoint (pptx), Excel (xlsx), CSV, HTML o Markdown (md). Úsala cuando pidan «hazme un Word/PDF/PowerPoint/Excel con…», un informe, un acta, un resumen, una respuesta al ciudadano o una presentación, sin montar un flujo. Para docx, pdf, pptx, html y md escribe tú el contenido completo en «contenido» con «# » título, «## » sección (en pptx el «# » es la portada y cada «## » es una diapositiva: si piden N diapositivas, escribe exactamente N «## », con 3 a 5 viñetas cortas cada una), «- » viñetas y tablas con «|». Para xlsx o csv pasa «hojas»: [{nombre, columnas, filas}] (o una tabla con «|» en contenido). Con «plantilla» (id de plantillas_documento) y «datos» llena esa plantilla de la biblioteca. Cada cifra del documento se comprueba: tiene que salir tal cual de una herramienta de esta conversación (historial con resumen=true y agrupar=dia, resumen_tablero, ver_corrida, diagnosticar_flujo, ver_ia_flujo, modelos_ia…) o de lo que dijo o adjuntó la persona; lo que calcules tú (porcentajes, variaciones, promedios, sumas) va en «calculos» con su fórmula sobre esas cifras. Si una cifra no tiene de dónde salir, el documento NO se genera y te dice cuáles faltan: consúltalas y vuelve a intentarlo, o escribe «sin dato». Con «marca» (docx, pdf, pptx, html) lleva logo, banner, marca de agua, colores y fuente con las imágenes que adjuntó la persona: mira antes ayuda_documentos.", "parameters": {"type": "object", "properties": {"formato": {"type": "string", "enum": ["docx", "pdf", "pptx", "xlsx", "csv", "html", "md"]}, "titulo": {"type": "string"}, "contenido": {"type": "string"}, "calculos": {"type": "array", "description": "las cifras que calculaste tú, cada una con su fórmula sobre cifras consultadas", "items": {"type": "object", "properties": {"valor": {"type": "string", "description": "como aparece en el documento, p. ej. «74,8 %»"}, "formula": {"type": "string", "description": "p. ej. «77/103*100» o «(36-41)/41*100»"}}, "required": ["valor", "formula"]}}, "hojas": {"type": "array", "items": {"type": "object", "properties": {"nombre": {"type": "string"}, "columnas": {"type": "array", "items": {"type": "string"}}, "filas": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}}}}}, "plantilla": {"type": "string"}, "datos": {"type": "object"}, "nombre_archivo": {"type": "string"}, "marca": ESQUEMA_MARCA}, "required": ["titulo"]}},
     {"name": "aplicar_marca", "description": "Pone la marca (logo, banner, marca de agua, colores y fuente) a documentos que YA existen en este chat: los que adjuntó la persona o los que generaste tú (PDF, Word, PowerPoint, HTML, PNG, JPG). archivos: sus nombres, o vacío para los del último mensaje con adjuntos (sin contar las imágenes que usa la marca). Cada uno sale como cápsula nueva. Las opciones, con ayuda_documentos.", "parameters": {"type": "object", "properties": {"archivos": {"type": "array", "items": {"type": "string"}}, "marca": ESQUEMA_MARCA, "sufijo": {"type": "string", "description": "lo que se agrega al nombre (por defecto «-con-marca»)"}}, "required": ["marca"]}},
     {"name": "ayuda_documentos", "description": "Cómo ponerle marca a un documento: opciones de logo (posición, tamaño), banner (arriba/abajo), marca de agua (imagen o texto, opacidad, tamaño, rotación), colores y fuente, de dónde salen las imágenes (adjuntos del chat, archivos del flujo, recursos de Documentos), qué admite cada formato y ejemplos para el chat y para los flujos (documento_generar, documento_plantilla, documento_marca). Llámala antes de usar «marca».", "parameters": {"type": "object", "properties": {"tema": {"type": "string", "description": "marca (por defecto), imagenes, formatos, ejemplos o flujos"}}}},
     {"name": "plantillas", "description": "La galería de plantillas de flujos listas para usar (extraer datos de documentos, clasificar correos, responder con IA, revisar tablas, informes programados, webhooks, aprobaciones…), con lo que necesita cada una. Con id, el detalle de una.", "parameters": {"type": "object", "properties": {"id": {"type": "string"}}}},
     {"name": "instalar_plantilla", "description": "Instala una plantilla como flujo propio (queda editable) y lo abre en pantalla.", "parameters": {"type": "object", "properties": {"id": {"type": "string"}, "nombre": {"type": "string"}, "id_nuevo": {"type": "string"}}, "required": ["id"]}},
-    {"name": "historial", "description": "El historial de ejecuciones con filtros: flujo, estado (en_curso | bien | revisar | fallo), desenlace, desde/hasta (AAAA-MM-DD) y texto. Con corrida, el detalle legible de una (qué entró, qué hizo cada paso, qué salió y por qué terminó así).", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "estado": {"type": "string"}, "desenlace": {"type": "string"}, "desde": {"type": "string"}, "hasta": {"type": "string"}, "texto": {"type": "string"}, "n": {"type": "integer"}, "corrida": {"type": "string"}}}},
+    {"name": "historial", "description": "El historial de ejecuciones con filtros: flujo, estado (en_curso | bien | revisar | fallo), desenlace, desde/hasta (AAAA-MM-DD) y texto. Con corrida, el detalle legible de una (qué entró, qué hizo cada paso, qué salió y por qué terminó así). Para un informe o cualquier cifra (cuántos, por día, tiempos) pide resumen=true: cuenta TODAS las ejecuciones del filtro (no solo las n de la lista) por desenlace, estado y flujo, con tiempo promedio y mediana; con agrupar=dia, además, por día (hora de Colombia).", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "estado": {"type": "string"}, "desenlace": {"type": "string"}, "desde": {"type": "string"}, "hasta": {"type": "string"}, "texto": {"type": "string"}, "n": {"type": "integer"}, "corrida": {"type": "string"}, "resumen": {"type": "boolean"}, "agrupar": {"type": "string", "enum": ["dia", "flujo"]}}}},
     {"name": "reintentar_corrida", "description": "Vuelve a correr una ejecución con la misma entrada o el mismo correo.", "parameters": {"type": "object", "properties": {"corrida": {"type": "string"}}, "required": ["corrida"]}},
     {"name": "notificaciones", "description": "Las notificaciones de la plataforma (fallos, aprobaciones pendientes, conexiones que fallan, recursos, horarios que no corrieron). Con marcar_leidas=true las marca leídas.", "parameters": {"type": "object", "properties": {"marcar_leidas": {"type": "boolean"}}}},
     {"name": "aprobaciones", "description": "Las aprobaciones humanas pendientes (o con estado dado) de un flujo o de todos: qué hay que decidir y con qué datos. Tú no decides: abre la bandeja (abrir_vista aprobaciones) para que la persona apruebe o rechace.", "parameters": {"type": "object", "properties": {"flujo": {"type": "string"}, "estado": {"type": "string"}}}},
@@ -335,6 +336,48 @@ def _tipo_de_flujo(fid: Any) -> Optional[str]:
         f = api("GET", f"/api/flujos/{fid}")
         _TIPOS_DE_FLUJO[fid] = f.get("tipo") if isinstance(f, dict) else None
     return _TIPOS_DE_FLUJO[fid]
+
+
+def _resumen_historial(q: Dict[str, Any], agrupar: Optional[str]) -> Dict[str, Any]:
+    """Las cifras de TODAS las ejecuciones de un filtro del historial (la lista va de a 200): para informes con cifras reales."""
+    import datetime
+    import statistics
+    from collections import Counter
+    from urllib.parse import urlencode
+    todas: List[Dict[str, Any]] = []
+    total = None
+    while len(todas) < 5000:
+        r = api("GET", "/api/historial?" + urlencode({**q, "limite": 200, "desde_n": len(todas)}))
+        lote = (r or {}).get("corridas") if isinstance(r, dict) else None
+        if not lote:
+            break
+        total = r.get("total")
+        todas += lote
+        if total is not None and len(todas) >= total:
+            break
+    segundos = [float(c["segundos"]) for c in todas if isinstance(c.get("segundos"), (int, float))]
+
+    def dia(c: Dict[str, Any]) -> str:
+        return (datetime.datetime.fromtimestamp(float(c.get("creada") or 0) / 1000, datetime.timezone.utc) - datetime.timedelta(hours=5)).date().isoformat()
+
+    res: Dict[str, Any] = {"ejecuciones": len(todas), "por_desenlace": dict(Counter(c.get("desenlace") or "sin_desenlace" for c in todas)),
+                           "por_estado": dict(Counter(c.get("estado") for c in todas)), "por_flujo": dict(Counter(c.get("flujo") for c in todas)),
+                           "segundos_promedio": round(statistics.mean(segundos), 1) if segundos else None,
+                           "segundos_mediana": round(statistics.median(segundos), 1) if segundos else None,
+                           "filtro": {k: v for k, v in q.items() if k != "limite"}}
+    if agrupar == "dia":
+        dias: Dict[str, Counter] = {}
+        for c in todas:
+            dias.setdefault(dia(c), Counter())[c.get("desenlace") or "sin_desenlace"] += 1
+        res["por_dia"] = [{"dia": d, "ejecuciones": sum(v.values()), **dict(v)} for d, v in sorted(dias.items())]
+    elif agrupar == "flujo":
+        flujos: Dict[str, Counter] = {}
+        for c in todas:
+            flujos.setdefault(c.get("flujo") or "", Counter())[c.get("desenlace") or "sin_desenlace"] += 1
+        res["por_flujo_y_desenlace"] = {f: dict(v) for f, v in flujos.items()}
+    if total is not None and total > len(todas):
+        res["nota"] = f"conté {len(todas)} de {total}"
+    return res
 
 
 def _esperar_corrida(cid: str, tope_s: int) -> Optional[Dict[str, Any]]:
@@ -946,6 +989,8 @@ def _mover_pantalla(nombre: str, a: Dict[str, Any]) -> Any:
         r = api("GET", "/api/historial?" + urlencode(q))
         if isinstance(r, dict) and isinstance(r.get("corridas"), list):
             r["corridas"] = [{k: c.get(k) for k in ("id", "flujo", "titulo", "estado", "desenlace", "motivo", "creada", "segundos")} for c in r["corridas"]]
+            if a.get("resumen") or a.get("agrupar"):
+                r["resumen"] = _resumen_historial(q, a.get("agrupar"))
         return r
     if nombre == "reintentar_corrida":
         r = api("POST", f"/api/historial/{a['corrida']}/reintentar", {})
@@ -1436,6 +1481,11 @@ def _generar_documento(a: Dict[str, Any]) -> Dict[str, Any]:
 
     if not CONVERSACION["id"]:
         return {"error": "no hay conversación donde dejar el documento"}
+    # Las cifras salen de lo consultado, no de lo que Vera suponga: si alguna no tiene procedencia, no se genera.
+    import vera_herramientas
+    rechazo = vera_herramientas.revisar_cifras_documento(a)
+    if rechazo:
+        return rechazo
     titulo = str(a.get("titulo") or "Documento").strip()[:160]
     contenido = str(a.get("contenido") or "")
     fmt = str(a.get("formato") or "docx").lower().lstrip(".")
