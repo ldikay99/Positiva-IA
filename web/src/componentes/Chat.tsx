@@ -707,7 +707,9 @@ export function Chat() {
   const nombreFlujo = flujos.find((f) => f.id === flujo)?.nombre ?? flujo;
   const mensajes = actual?.mensajes ?? [];
   const puedeEnviar = llamada.estado === "en_llamada" ? !!texto.trim() : (texto.trim() || subiendo.some((x) => x.listo)) && !subiendo.some((x) => !x.listo && !x.error);
-  const dondeEstas = vista === "tablero" ? "En el tablero" : `En «${nombreFlujo}»`;
+  // Las pantallas generales no son de un flujo: decir «En «PQRD»» estando en Inicio confundía.
+  const GENERALES: Partial<Record<string, string>> = { inicio: "En el inicio", tablero: "En el tablero", plantillas: "En plantillas", documentos: "En documentos", notificaciones: "En notificaciones", aprobaciones: "En aprobaciones", conexiones: "En conexiones" };
+  const dondeEstas = GENERALES[vista] ?? `En «${nombreFlujo}»`;
 
   return createPortal(
     <div className="chat-capa">
