@@ -372,6 +372,180 @@ CASOS += [
 ]
 
 
+# ------------------------------------------------------------------ pedido 2026-11-11: versiones de los flujos y deshacer
+EV_VERSIONES = {**EV_DESTINO, "id": "ev-versiones", "nombre": "EV Versiones"}
+PEDIDO_URGENTE = ("En ev-versiones agrega después de limpiar una condición «¿Urgente?» que mande a revisión manual con motivo URGENTE "
+                  "cuando el texto limpio contenga 'urgente'; si no, que siga a fin.")
+
+
+def _versiones(fid):
+    r = api("GET", f"/api/flujos/{fid}/versiones")
+    return r if isinstance(r, list) else []
+
+
+def _ids(fid):
+    return sorted(_nodos(fid))
+
+
+def _punto_y_autor(evs):
+    vs = _versiones("ev-versiones")
+    actual = next((v for v in vs if v.get("actual")), {})
+    punto = any((v.get("punto") or "").startswith("antes de: En ev-versiones agrega") for v in vs)
+    return punto and actual.get("autor") == "vera" and "urgente" in _nodos("ev-versiones")
+
+
+def _quedo_como_estaba(evs):
+    vs = _versiones("ev-versiones")
+    return _ids("ev-versiones") == ["fin", "inicio", "limpiar"] and len(vs) >= 3 and bool(_usadas(evs) & {"deshacer_cambio", "restaurar_version"})
+
+
+def _preparar_funciona():
+    """ev-funciona: la v1 corre bien; la v2 (de una persona) manda todo a revisión manual y corre así."""
+    d1 = {**EV_DESTINO, "id": "ev-funciona", "nombre": "EV Funciona"}
+    _preparar(d1)
+    correr("ev-funciona", {"texto": "hola"})
+    time.sleep(1.2)
+    d2 = json.loads(json.dumps(d1))
+    next(n for n in d2["nodos"] if n["id"] == "fin")["config"] = {"desenlace": "manual", "motivo": "REVISAR_TODO"}
+    api("PUT", "/api/flujos/ev-funciona", {"definicion": d2})
+    correr("ev-funciona", {"texto": "hola"})
+
+
+def _volvio_a_la_buena(evs):
+    fin = _nodos("ev-funciona").get("fin") or {}
+    return (fin.get("config") or {}).get("desenlace") == "completar" and "restaurar_version_que_funcionaba" in _usadas(evs)
+
+
+def _preparar_vera_cambio():
+    """ev-vversiones con un cambio hecho por Vera (como lo haría ella: con sus encabezados)."""
+    _preparar({**EV_DESTINO, "id": "ev-vversiones", "nombre": "EV Voz versiones"})
+    d = api("GET", "/api/flujos/ev-vversiones")["definicion"]
+    d["nodos"] = [n for n in d["nodos"] if n["id"] != "limpiar"]
+    d["aristas"] = [{"desde": "inicio", "hacia": "fin"}]
+    from urllib.parse import quote
+    api("PUT", "/api/flujos/ev-vversiones", {"definicion": d}, h={"x-autor": "vera", "x-pedido": quote("quítale el paso de limpiar"), "x-pedido-id": "ev-voz-1"})
+
+
+CASOS += [
+    {"nombre": "versiones: editar deja el punto", "flujo": None, "preparar": lambda: _preparar(EV_VERSIONES),
+     "pedido": PEDIDO_URGENTE, "espera_eventos": _punto_y_autor, "limpiar": lambda: _borrar("ev-versiones")},
+    {"nombre": "versiones: listar y comparar", "flujo": None, "preparar": lambda: _preparar(EV_VERSIONES), "previo": [(PEDIDO_URGENTE, None)],
+     "pedido": "¿Qué versiones tiene ev-versiones y qué cambió en la última?",
+     "espera_eventos": lambda evs: {"versiones_flujo", "comparar_versiones"} & _usadas(evs) and re.search(r"urgente", _texto(evs)) is not None and re.search(r"vers", _texto(evs)) is not None,
+     "limpiar": lambda: _borrar("ev-versiones")},
+    {"nombre": "versiones: déjalo como estaba", "flujo": None, "preparar": lambda: _preparar(EV_VERSIONES), "previo": [(PEDIDO_URGENTE, None)],
+     "pedido": "Eso no me sirvió, déjalo como estaba antes.",
+     "espera_eventos": _quedo_como_estaba, "limpiar": lambda: _borrar("ev-versiones")},
+    {"nombre": "versiones: la que funcionaba", "flujo": None, "preparar": _preparar_funciona,
+     "pedido": "ev-funciona dejó de terminar bien. Devuélvelo a la última versión con la que funcionaba.",
+     "espera_eventos": _volvio_a_la_buena, "limpiar": lambda: _borrar("ev-funciona")},
+    {"nombre": "voz: deshaz lo que hiciste", "flujo": None, "preparar": _preparar_vera_cambio,
+     "voz": "Deshaz lo último que hiciste en ev-vversiones, déjalo como estaba.",
+     "espera_voz": lambda dicho, usadas, propuestas, emitidas: "limpiar" in _nodos("ev-vversiones") and bool({"deshacer_cambio", "restaurar_version"} & set(usadas)),
+     "limpiar": lambda: _borrar("ev-vversiones")},
+]
+
+
+# ------------------------------------------------------------------ pedido 2026-11-11: una sola ejecución, tareas y nada sin confirmar
+def _flujo_lento(fid, segundos=45):
+    """Un flujo que tarda (más que la espera en línea del chat, VERA_ESPERA_EN_LINEA=20 s): entrada → esperar → completar."""
+    return {"id": fid, "nombre": f"EV {fid}", "modelo": "gemini-2.5-flash",
+            "nodos": [_ENTRADA, {"id": "pausa", "tipo": "esperar", "nombre": "Pausa", "config": {"segundos": segundos}}, _FIN],
+            "aristas": [{"desde": "inicio", "hacia": "pausa"}, {"desde": "pausa", "hacia": "fin"}]}
+
+
+EN_CURSO = re.compile(r"en curso|corriendo|te aviso|te cuento|cuando termine|en segundo plano|en proceso|procesando|en marcha|lo estoy|un momento|todav[ií]a")
+TERMINO = re.compile(r"\b(termin[óo]|complet[óo]|qued[óo] (completad|termin)|ya corri[óo]|ya est[áa] list)")
+
+
+def _seguimientos(cid, tope_s=150):
+    """Los mensajes que Vera escribe sola al terminar una tarea (llegan después de la respuesta)."""
+    fin = time.monotonic() + tope_s
+    while time.monotonic() < fin:
+        c = api("GET", f"/api/chats/{cid}") or {}
+        seg = [m for m in c.get("mensajes") or [] if m.get("seguimiento")]
+        if seg and not (api("GET", f"/api/chats/{cid}/tareas") or {}).get("en_curso"):
+            return seg
+        time.sleep(3)
+    return []
+
+
+def _tarea_larga_por_escrito(evs, cid):
+    """La respuesta dice que está en curso (sin inventar el final), la persona queda libre y el resultado llega después."""
+    t = _texto(evs)
+    lanzada = any(e.get("tipo") == "resultado_herramienta" and e.get("situacion") == "en_curso" for e in evs)
+    seg = _seguimientos(cid)
+    INFO_EV["seguimiento"] = [(m.get("texto") or "")[:200] for m in seg]
+    return lanzada and bool(EN_CURSO.search(t)) and not TERMINO.search(t) and any(re.search(r"complet|termin", (m.get("texto") or "").lower()) for m in seg)
+
+
+def _registro_de(evs):
+    """Lo que devolvieron las herramientas según los avisos del chat (con su situación)."""
+    r = []
+    for e in evs:
+        if e.get("tipo") == "resultado_herramienta":
+            try:
+                res = json.loads(e.get("resultado") or "")
+            except ValueError:
+                res = {"situacion": e.get("situacion")}
+            if isinstance(res, dict):
+                res.setdefault("situacion", e.get("situacion"))
+            r.append((e.get("nombre"), {}, res))
+    return r
+
+
+def _no_afirma_lo_que_fallo(evs):
+    import sys
+    sys.path.insert(0, "/app/puente")
+    import vera_herramientas as vh
+    t = _texto(evs)
+    fallo = any(e.get("tipo") == "resultado_herramienta" and e.get("situacion") in ("fallo", "no_confirmado") for e in evs)
+    fin = next((e for e in evs if e.get("tipo") == "fin"), {})
+    problemas = vh.verificar_respuesta(t, _registro_de(evs), fin.get("tareas_en_curso") or 0)
+    INFO_EV["problemas"] = problemas
+    return fallo and not problemas and not re.search(r"\b(cambi[ée]|renombr[ée]|guard[ée]|qued[óo] (cambiad|guardad|list))", t)
+
+
+def _lunes():
+    import datetime
+    hoy = (datetime.datetime.utcnow() - datetime.timedelta(hours=5)).date()
+    return (hoy - datetime.timedelta(days=hoy.weekday())).isoformat(), hoy.isoformat()
+
+
+def _documento_con_cifras_reales(evs):
+    """El documento se generó y su total de radicados es el del historial (contado aquí, aparte de Vera)."""
+    desde, hasta = _lunes()
+    todos = (api("GET", f"/api/historial?desde={desde}&hasta={hasta}&desenlace=radicado&limite=1") or {}).get("total")
+    pqrd = (api("GET", f"/api/historial?flujo=pqrd&desde={desde}&hasta={hasta}&desenlace=radicado&limite=1") or {}).get("total")
+    hechos = [e for e in evs if e.get("tipo") == "resultado_herramienta" and e.get("nombre") == "generar_documento" and e.get("situacion") == "confirmado"]
+    pedidos = [e for e in evs if e.get("tipo") == "herramienta" and e.get("nombre") == "generar_documento"]
+    contenido = json.dumps((pedidos[-1].get("argumentos") if pedidos else {}) or {}, ensure_ascii=False)
+    INFO_EV["cifras"] = {"radicados_todos": todos, "radicados_pqrd": pqrd, "rechazos": sum(1 for e in evs if e.get("tipo") == "resultado_herramienta"
+                                                                                       and e.get("nombre") == "generar_documento" and e.get("situacion") == "fallo")}
+    return bool(hechos) and any(re.search(rf"(?<![\d.,]){n}(?![\d.,])", contenido) for n in (todos, pqrd) if n is not None)
+
+
+INFO_EV = {}
+
+CASOS += [
+    {"nombre": "tarea larga por escrito: se reporta al terminar", "flujo": None, "preparar": lambda: _preparar(_flujo_lento("ev-tarea-larga")),
+     "pedido": "Corre el flujo ev-tarea-larga con texto «hola», espera el resultado y dime cómo terminó.",
+     "espera_eventos_chat": _tarea_larga_por_escrito, "limpiar": lambda: _borrar("ev-tarea-larga")},
+    {"nombre": "voz: tarea larga se reporta al terminar", "flujo": None, "preparar": lambda: _preparar(_flujo_lento("ev-tarea-voz", 30)),
+     "voz": "Corre el flujo ev-tarea-voz con texto hola, espera a que termine y me cuentas cómo terminó.",
+     "espera_voz": lambda dicho, usadas, propuestas, emitidas: "correr_flujo" in usadas and INFO_VOZ.get("tareas_entregadas", 0) >= 1
+     and bool(EN_CURSO.search(INFO_VOZ.get("antes_del_resultado", ""))) and not TERMINO.search(INFO_VOZ.get("antes_del_resultado", ""))
+     and bool(re.search(r"complet|termin", INFO_VOZ.get("despues_del_resultado", ""))),
+     "limpiar": lambda: _borrar("ev-tarea-voz")},
+    {"nombre": "no afirma lo que falló", "flujo": None, "preparar": lambda: _preparar(EV_DESTINO),
+     "pedido": "Restaura el flujo ev-destino a su versión 99 y dime cuando quede.",
+     "espera_eventos": _no_afirma_lo_que_fallo, "limpiar": lambda: _borrar("ev-destino")},
+    {"nombre": "documento con cifras reales", "flujo": None,
+     "pedido": "hazme un informe en PDF de cuántos correos se radicaron esta semana",
+     "espera_eventos": _documento_con_cifras_reales},
+]
+
+
 def voz_simulada(pedido, modelo):
     """
     La ruta de la voz sin audio: el mismo sistema (SISTEMA + NOTA_VOZ), las mismas herramientas
@@ -386,6 +560,8 @@ def voz_simulada(pedido, modelo):
     from google.genai import types
 
     emitidos = []
+    # como voz.py con la transcripción: lo que pide la persona va en cada pedido de Vera (el punto «antes de: …»)
+    asistente.fijar_pedido(pedido, f"voz-simulada:{time.time_ns()}")
     voz.enviar = lambda tipo, **d: emitidos.append((tipo, d))
     asistente.emitir = voz._emitir_en_llamada
     cliente = genai.Client(vertexai=True, project=asistente.PROYECTO, location="global")
