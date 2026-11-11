@@ -165,9 +165,11 @@
 }
 .vv-etiqueta {
   gap: 6px;
-  margin-top: auto;
-  padding-top: 8px;
-  border-top: 1px solid var(--linea);
+  max-width: 560px;
+}
+.vv-codigo {
+  font-size: 12px;
+  white-space: nowrap;
 }
 .vv-etiqueta .campo {
   flex: 1;
@@ -236,8 +238,11 @@
   text-align: left;
   overflow-wrap: anywhere;
 }
+.vv-tabla td.vv-antes {
+  width: 36%;
+}
 .vv-tabla th {
-  width: 26%;
+  width: 24%;
   font-weight: 500;
   color: var(--texto-2);
 }

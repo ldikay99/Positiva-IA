@@ -199,17 +199,18 @@ export function VistaVersiones() {
               <li key={v.version}>
                 <button className={`vv-item ${v.version === b ? "elegida" : ""}`} aria-current={v.version === b ? "true" : undefined} onClick={() => setSub(String(v.version))}>
                   <span className="vv-linea">
-                    <b className="mono">{etiquetaVersion(v)}</b>
+                    <b className="mono">v{v.version}</b>
+                    {v.del_codigo && <span className="texto-3 vv-codigo">la del código</span>}
                     {nombreAutor(v.autor) && <span className={`vv-autor ${v.autor ?? ""}`}>{nombreAutor(v.autor)}</span>}
                     <span className="vv-fecha">{fechaCorta(v.fecha)}</span>
                     {v.actual && <span className="pastilla diminuto verde">en uso</span>}
                   </span>
-                  <span className="vv-que">{v.resumen ?? v.nota ?? (v.del_codigo ? "La estructura del código, sin editar" : "Sin resumen")}</span>
+                  <span className="vv-que">{v.resumen ?? v.nota ?? (v.del_codigo ? "La estructura del código, sin editar" : v === lista[lista.length - 1] ? "Primera versión" : "Sin resumen")}</span>
                   {(v.etiqueta || v.punto || v.por || v.corridas.bien + v.corridas.revisar + v.corridas.fallo > 0) && (
                     <span className="vv-marcas">
                       {v.etiqueta && <span className="ficha">{v.etiqueta}</span>}
                       {v.punto && <span className="ficha vv-punto" title="Punto de restauración: así estaba antes de ese pedido">{v.punto[0]!.toUpperCase() + v.punto.slice(1)}</span>}
-                      {v.por && typeof v.restaurada_de === "number" && <span className="texto-3">{v.por === "deshacer" ? "deshizo" : v.por === "rehacer" ? "rehízo" : "volvió"} a v{v.restaurada_de}</span>}
+                      {v.por && typeof v.restaurada_de === "number" && <span className="texto-3">{v.por === "deshacer" ? "deshacer: " : v.por === "rehacer" ? "rehacer: " : ""}volvió a v{v.restaurada_de}</span>}
                       {v.corridas.bien > 0 && <span className="vv-corr bien">{v.corridas.bien} bien</span>}
                       {v.corridas.revisar > 0 && <span className="vv-corr revisar">{v.corridas.revisar} a revisar</span>}
                       {v.corridas.fallo > 0 && <span className="vv-corr fallo">{v.corridas.fallo} con fallo</span>}
@@ -246,6 +247,10 @@ export function VistaVersiones() {
                     </div>
                   </div>
                 )}
+                <div className="vv-etiqueta fila">
+                  <input className="campo" value={etiqueta} maxLength={80} placeholder="Etiqueta (por ejemplo, «la que va a producción»)" aria-label="Etiqueta de la versión" onChange={(e) => setEtiqueta(e.target.value)} onKeyDown={(e) => e.key === "Enter" && void guardarEtiqueta()} />
+                  <button className="boton chico" disabled={(etiqueta.trim() || "") === (vb.etiqueta ?? "")} onClick={() => void guardarEtiqueta()}>{etiqueta.trim() || !vb.etiqueta ? "Guardar etiqueta" : "Quitar etiqueta"}</button>
+                </div>
                 <div className="vv-comparar fila">
                   <span className="chico texto-2">Comparar</span>
                   <Selector<number> etiqueta="Versión de antes" tamano="chico" valor={a} opciones={opciones} placeholder="Ninguna" alCambiar={(x) => setSub(`${x}-${b}`)} ancho={190} />
@@ -259,10 +264,6 @@ export function VistaVersiones() {
                 ) : dif ? (
                   <Diferencia d={dif} />
                 ) : null}
-                <div className="vv-etiqueta fila">
-                  <input className="campo" value={etiqueta} maxLength={80} placeholder="Etiqueta (por ejemplo, «la que va a producción»)" aria-label="Etiqueta de la versión" onChange={(e) => setEtiqueta(e.target.value)} onKeyDown={(e) => e.key === "Enter" && void guardarEtiqueta()} />
-                  <button className="boton chico" disabled={(etiqueta.trim() || "") === (vb.etiqueta ?? "")} onClick={() => void guardarEtiqueta()}>{etiqueta.trim() ? "Guardar etiqueta" : "Quitar etiqueta"}</button>
-                </div>
               </>
             )}
           </section>
