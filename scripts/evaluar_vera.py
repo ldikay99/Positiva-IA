@@ -569,23 +569,43 @@ def voz_simulada(pedido, modelo):
     config = types.GenerateContentConfig(system_instruction=asistente.SISTEMA + voz.NOTA_VOZ, tools=[types.Tool(function_declarations=decl)], temperature=0.2)
     contenidos = [types.Content(role="user", parts=[types.Part(text=pedido)])]
     turno, usadas, dicho = voz.Turno(), [], ""
-    for _ in range(8):
+    import vera_herramientas as vh
+    listas = []
+    propias = {n: (lambda a: {"ok": True}) for n in ("terminar_llamada", "escribir_en_chat", "responder_por_escrito")}
+    ej = vh.Ejecutor("voz", lambda t, **d: emitidos.append((t, d)), espera_en_linea=0, tope_corta=45, manejadores=propias,
+                     al_resultado=lambda n, a, rs, res: voz.anotar_en_turno(turno, n, a, res), al_terminar_tarea=listas.append)
+    INFO_VOZ.clear()
+    for _ in range(10):
         r = cliente.models.generate_content(model=modelo, contents=contenidos, config=config)
         cand = r.candidates[0].content
         contenidos.append(cand)
         llamadas = [p.function_call for p in cand.parts or [] if p.function_call]
-        dicho += " ".join(p.text for p in cand.parts or [] if p.text)
+        dicho += " " + " ".join(p.text for p in cand.parts or [] if p.text)
         if not llamadas:
-            break
-        respuestas = []
-        for ll in llamadas:
-            args = dict(ll.args or {})
-            usadas.append(ll.name)
-            res = {"ok": True} if ll.name in ("terminar_llamada", "escribir_en_chat", "responder_por_escrito") else asistente.ejecutar(ll.name, args)
-            voz.anotar_en_turno(turno, ll.name, args, res)
-            respuestas.append(types.Part(function_response=types.FunctionResponse(name=ll.name, response={"resultado": json.dumps(res, ensure_ascii=False, default=str)[:6000]})))
+            if not ej.en_curso() and not [t for t in listas if not t.entregada]:
+                break
+            # como el reloj de voz.py: el resultado de una tarea se le cuenta en una pausa
+            INFO_VOZ.setdefault("antes_del_resultado", dicho.lower())
+            t = ej.esperar_siguiente(150)
+            if t is None:
+                break
+            INFO_VOZ["tareas_entregadas"] = INFO_VOZ.get("tareas_entregadas", 0) + 1
+            contenidos.append(types.Content(role="user", parts=[types.Part(text=(
+                f"[Resultado de la tarea {t.n} ({t.nombre})]: {json.dumps(t.resultado, ensure_ascii=False, default=str)[:6000]}\n"
+                "[Aviso del sistema: cuéntale a la persona en una o dos frases lo esencial y sigue con lo que estaban hablando.]"))]))
+            continue
+        usadas += [ll.name for ll in llamadas]
+        resultados = ej.vuelta([(ll.name, dict(ll.args or {})) for ll in llamadas])
+        respuestas = [types.Part(function_response=types.FunctionResponse(name=ll.name, response={"resultado": json.dumps(res, ensure_ascii=False, default=str)[:6000]}))
+                      for ll, res in zip(llamadas, resultados)]
         contenidos.append(types.Content(role="user", parts=respuestas))
+    ej.cerrar()
+    if "antes_del_resultado" in INFO_VOZ:
+        INFO_VOZ["despues_del_resultado"] = dicho.lower()[len(INFO_VOZ["antes_del_resultado"]):]
     return dicho.lower(), usadas, turno.propuestas, [d for t, d in emitidos if t == "propuesta"]
+
+
+INFO_VOZ = {}
 
 
 AFIRMA = re.compile(r"ya (lo |la )?(tienes|ves|est[aá]s viendo)|ah[ií] (lo |la )?tienes|ya te (lo |la )?abr[ií]|ya deber[ií]as (estar )?ver")
@@ -652,6 +672,12 @@ def main():
         elif caso.get("espera_eventos"):
             ok = caso["espera_eventos"](evs)
             detalle = ", ".join(herramientas)
+        elif caso.get("espera_eventos_chat"):
+            ok = caso["espera_eventos_chat"](evs, c["id"])
+            detalle = ", ".join(herramientas) + f" · {texto[:90]}"
+        if INFO_EV:
+            detalle += f" · {json.dumps(INFO_EV, ensure_ascii=False)[:240]}"
+            INFO_EV.clear()
         if caso.get("limpiar"):
             caso["limpiar"]()
         api("DELETE", f"/api/chats/{c['id']}")
