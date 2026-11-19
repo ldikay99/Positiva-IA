@@ -220,9 +220,123 @@ Antes de encenderla, el job de Cloud Run del mismo flujo debe estar pausado. Si 
 5. Desplegar por el pipeline correspondiente.
 6. Correr primero con `MODO_TEST=true` sobre correos reales (solo lectura) y comparar con el desenlace esperado. Después, apagar el modo prueba.
 
+## 6b. Estado de la plataforma en PostgreSQL (Cloud SQL)
+
+Sin `DATABASE_URL` todo sigue en archivos del volumen, como siempre. Con `DATABASE_URL`, el estado de la plataforma vive
+en PostgreSQL con aislamiento por organización: tablas, políticas y cifrado en
+[MODELO_DE_DATOS.md](MODELO_DE_DATOS.md).
+
+### Qué pasa a la base y qué no
+
+| En PostgreSQL | Sigue en archivos (por ahora) |
+|---|---|
+| Flujos declarativos y sus versiones, copias de pqrd y tutelas, nombres propios de los originales, estructuras editadas y sus versiones, historial de versiones (`flujos/`, `flujos_codigo/`, `flujos_historial/`) | Conexiones y variables secretas (`credenciales.json`, `entornos/`): pasan a la DEK de cada organización o a Secret Manager en su propia tarea |
+| Ejecuciones y sus eventos (`corridas/`) | `clave_descargas` (va a Secret Manager) |
+| Aprobaciones con el estado de la ejecución y la marca de reanudada; aplazadas (`aprobaciones/`, `aplazadas/`) | Notificaciones, plantillas de documentos, tablas de los flujos, límites y estado de los disparadores |
+| Programación de los de código y marcas del programador (`programaciones.json`, `programador.json`) | Archivos, bandeja, recibidos, buzón real, visor y caché (sus bytes van a Cloud Storage; la ficha, a `vera.archivos`) |
+| Conversaciones y mensajes; la ficha de cada adjunto (`chats/`; los bytes, en el volumen) | Telemetría (`trabajo/`) |
+| Configuración, historial de cambios, perfiles, IA global y de Vera, recursos y compuertas | |
+
+Los trabajadores de Python no tocan la base: nunca reciben `DATABASE_URL` ni la llave maestra (el servidor las quita de
+su entorno). Con la base, la aprobación y la aplazada que antes dejaban en disco las entregan por su canal de eventos y,
+al reanudar, la orden les trae la aprobación y el estado de la corrida.
+
+**Una sola instancia del servidor por organización** mientras no haya inicio de sesión: el programador, las aplazadas y
+la reclamación de una aprobación para reanudarla corren en el proceso (la base guarda la marca, pero el reparto entre
+instancias no está hecho). En Cloud Run: `--max-instances=1`.
+
+### Variables
+
+| Variable | Para qué |
+|---|---|
+| `DATABASE_URL` | `postgresql://<usuario>@<host>:<puerto>/<base>` del usuario de la **aplicación** (miembro de `vera_app`). Sin ella, archivos |
+| `DATABASE_PASSWORD_FILE` | Archivo con su clave (secreto de Docker o montado). Nunca la clave en la URL de un archivo del repositorio |
+| `VERA_ORGANIZACION` | Slug de la organización del despliegue (por defecto `principal`). Tiene que existir |
+| `VERA_KEK_LOCAL` / `VERA_KEK_LOCAL_ARCHIVO` | Llave maestra local (base64 de 32 bytes) que envuelve las llaves de datos: Docker local y pruebas |
+| `VERA_KEK_KMS` | La KEK en Cloud KMS. Se conecta en el despliegue en GCP; este repositorio no la implementa ni la llama (el servidor no arranca con ella) |
+| `BD_URL_MIGRADOR`, `BD_CLAVE_MIGRADOR_ARCHIVO` | Usuario **migrador** (dueño de las tablas) para `migrar`, `organizacion` y `migrar-datos` |
+| `BD_CONEXIONES_MAX`, `BD_TOPE_CONSULTA_MS`, `BD_ESPERA_CONEXION_MS` | Pool (10), tope por consulta (60 s) y espera de conexión (10 s) |
+| `PUERTO_BD`, `RUTA_SECRETOS_BD`, `MEMORIA_BD` | Docker local: puerto en 127.0.0.1 (5482), carpeta de las claves (`./datos/secretos-bd`) y memoria (1 GB) |
+
+### Local con Docker
+
+El servicio `postgres` de `docker-compose.yml` (perfil `bd`) usa `postgres:18.7-trixie` fijada por digest, corre como
+el usuario `postgres` sin capacidades (`cap_drop: ALL`, `no-new-privileges`), con el sistema de archivos de solo
+lectura (escribe solo en su volumen `positiva-ia-bd` y en tmpfs), publicado solo en `127.0.0.1:${PUERTO_BD:-5482}`,
+con healthcheck y las claves como secretos de Docker. Nada de eso va al repositorio.
+
+```bash
+# 1. Una vez: las claves (fuera del repositorio; datos/ no se versiona)
+mkdir -p datos/secretos-bd
+openssl rand -base64 24 | tr -d '\n' > datos/secretos-bd/migrador
+openssl rand -base64 24 | tr -d '\n' > datos/secretos-bd/app
+openssl rand -base64 32 | tr -d '\n' > datos/secretos-bd/kek
+chmod 600 datos/secretos-bd/*
+
+# 2. La base (la primera vez crea vera_app y vera_app_login con servidor/bd/inicio/)
+docker compose --profile bd up -d postgres
+
+# 3. Migraciones y organización (con el migrador)
+cd servidor
+export BD_URL_MIGRADOR=postgresql://vera_migrador@127.0.0.1:5482/vera BD_CLAVE_MIGRADOR_ARCHIVO=../datos/secretos-bd/migrador
+npm run bd -- migrar
+npm run bd -- organizacion principal "Positiva"
+
+# 4. El estado de hoy a la base: primero de prueba (cuenta y revierte), luego de verdad; se puede repetir
+npm run bd -- migrar-datos --organizacion principal --datos <ruta del volumen positiva-ia-datos> --prueba
+npm run bd -- migrar-datos --organizacion principal --datos <ruta del volumen positiva-ia-datos>
+
+# 5. La plataforma con la base
+cd .. && docker compose -f docker-compose.yml -f docker-compose.bd.yml --profile bd up -d
+```
+
+En el contenedor de la aplicación los mismos comandos son `node servidor/dist/bd/cli.js <orden>`. `migrar-datos` va en
+una sola transacción (o pasa todo o nada), no repite lo que ya está y no toca los archivos: para volver atrás basta
+quitar `DATABASE_URL`. Lo que la base rechace (un renglón dañado, un flujo que ya no existe) se omite, se cuenta y se
+dice por qué.
+
+El servidor no arranca con la base si faltan la llave maestra, la organización o una migración (dice cuál y cómo), ni si
+una migración ya aplicada cambió en el código: las migraciones aplicadas no se editan, se agrega otra.
+
+### Cloud SQL (sin conectarse desde aquí)
+
+- Instancia PostgreSQL 18 (`POSTGRES_18`, la misma versión mayor que la local), solo IP privada, `ssl_mode=ENCRYPTED_ONLY`,
+  CMEK, respaldos de 7 días con recuperación a un punto en el tiempo y la marca `cloudsql.iam_authentication=on`.
+- Dos identidades, sin claves descargadas:
+  - **aplicación**: la cuenta de servicio de Cloud Run como usuario IAM de la base (`<cuenta>@<proyecto>.iam`), con
+    `GRANT vera_app TO "<cuenta>@<proyecto>.iam"`. Nunca dueña de tablas ni con `BYPASSRLS`;
+  - **migrador**: otra cuenta de servicio (o un usuario propio con su clave en Secret Manager), dueña de las tablas.
+    Las migraciones las corre él, nunca el usuario `postgres`: las políticas del dueño se atan a quien corre la 0001.
+- Conexión: Cloud SQL Auth Proxy como contenedor auxiliar (o en local, para operar) con IAM automático:
+  ```bash
+  cloud-sql-proxy --private-ip --auto-iam-authn --port 5432 <proyecto>:<región>:<instancia>
+  # DATABASE_URL=postgresql://<cuenta>%40<proyecto>.iam@127.0.0.1:5432/vera   (sin clave: la pone el proxy)
+  ```
+  El proxy cifra el tramo hasta la instancia; entre la aplicación y el proxy es localhost.
+- Migraciones en cada despliegue: un job de Cloud Run con la imagen y la identidad del migrador corre
+  `node servidor/dist/bd/cli.js migrar` antes de pasar el tráfico a la revisión nueva.
+- La llave maestra de cada organización va en Cloud KMS (`VERA_KEK_KMS`) cuando se conecte; mientras tanto, en GCP no se
+  usa la KEK local.
+
+### Pruebas
+
+`servidor/src/pruebas_bd.ts` corre contra un PostgreSQL real: crea su propia base y su usuario de aplicación, los borra
+al terminar y se salta con un aviso si no hay `DATABASE_URL_PRUEBAS` (un usuario que pueda crear bases y roles):
+
+```bash
+cd servidor
+DATABASE_URL_PRUEBAS="postgresql://vera_migrador:$(cat ../datos/secretos-bd/migrador)@127.0.0.1:5482/postgres" npm run prueba:bd
+```
+
+Prueba las migraciones (idempotentes, una editada se detecta), el aislamiento con SQL crudo y sin filtro (otra
+organización y ninguna organización no ven ni cambian nada; las particiones no se leen directo), la auditoría que solo
+se agrega, el cifrado atado a su fila, cada tipo de estado a través de su módulo, la migración de datos (prueba,
+completa, idempotente) y que la URL y la llave no lleguen a los procesos hijos.
+
 ## 7. Estado de este documento
 
 - [x] Mapeo del entorno de cada flujo a Secret Manager y Cloud Run (`scripts/manifiesto_a_gcp.py`).
 - [x] Manifiesto de PQRD y tutelas verificado contra la configuración real de sus jobs, con observaciones de seguridad.
 - [x] PQRD y tutelas como el job: entorno con los nombres reales, lecturas reales en solo lectura, compuerta de radicación con dos llaves y programación del Cloud Scheduler (sección 5b).
+- [x] Estado de la plataforma en PostgreSQL con migraciones versionadas y aislamiento por organización (sección 6b); probado contra PostgreSQL 18 local, sin conectarse a Cloud SQL.
 - [ ] Copiar los valores reales al entorno de cada flujo (lo hace Jonathan con `PUT /api/flujos/:id/entorno/:nombre`).

@@ -4037,7 +4037,7 @@ async def procesar(orden: dict) -> None:
            **({"reanuda": reanudar} if reanudar else {}))
     try:
         # una corrida que sigue a la que esperó una aprobación: su estado guardado y desde el nodo que toca según la decisión
-        desde = await asyncio.to_thread(e.reanudar_aprobacion, reanudar) if reanudar else None
+        desde = await asyncio.to_thread(e.reanudar_aprobacion, reanudar, orden.get("reanudar")) if reanudar else None
         r = await asyncio.to_thread(e.correr, desde)
         extra = {k: r[k] for k in ("aprobacion", "aplazamiento", "alerta") if k in r}
         evento("resultado", caso=caso, accion=r["accion"], motivo=r["motivo"], area_destino=r.get("destino", ""), **extra,

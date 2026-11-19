@@ -1,4 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import * as bd from "./bd/conexion.ts";
+import * as estadoBd from "./bd/estado.ts";
 import { join } from "node:path";
 import { z } from "zod";
 import { config } from "./config.ts";
@@ -66,6 +68,14 @@ const ruta = () => join(config.datos, "recursos.json");
 let guardados: Record<string, CambioRecursos> = {};
 
 export async function cargar(): Promise<void> {
+  if (bd.activa()) {
+    guardados = {};
+    for (const [id, v] of Object.entries((await estadoBd.configuracion.ajuste<Record<string, unknown>>("recursos")) ?? {})) {
+      const r = esquema.safeParse(v);
+      if (r.success) guardados[id] = r.data;
+    }
+    return;
+  }
   try {
     const crudo = JSON.parse(await readFile(ruta(), "utf8")) as Record<string, unknown>;
     guardados = {};
@@ -79,6 +89,7 @@ export async function cargar(): Promise<void> {
 }
 
 async function persistir(): Promise<void> {
+  if (bd.activa()) return estadoBd.configuracion.ponerAjuste("recursos", guardados);
   await mkdir(config.datos, { recursive: true });
   const tmp = `${ruta()}.${Date.now()}.tmp`;
   await writeFile(tmp, JSON.stringify(guardados, null, 2), "utf8");

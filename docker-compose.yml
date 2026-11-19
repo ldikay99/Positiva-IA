@@ -41,6 +41,62 @@ services:
       options:
         max-size: "10m"
         max-file: "5"
+
+  # PostgreSQL local para el estado de la plataforma (docs/MODELO_DE_DATOS.md). Solo con el perfil «bd»:
+  #   docker compose --profile bd up -d postgres
+  # La aplicación lo usa con DATABASE_URL (docker-compose.bd.yml); sin ella, el estado sigue en archivos.
+  # postgres:18.7-trixie, fijada por digest (la misma versión mayor que la instancia de Cloud SQL, POSTGRES_18).
+  postgres:
+    profiles: ["bd"]
+    image: postgres:18.7-trixie@sha256:e754b839f447639b7004895f4d8a4bfcb4e9dbe3a1bc035f27f646562a16fd61
+    restart: unless-stopped
+    # Corre como el usuario postgres desde el principio: sin root, el entrypoint no necesita capacidades.
+    user: postgres
+    # Solo en la máquina, en un puerto que no choca con otros PostgreSQL locales.
+    ports:
+      - "127.0.0.1:${PUERTO_BD:-5482}:5432"
+    environment:
+      POSTGRES_DB: vera
+      # El migrador: dueño de las tablas; corre las migraciones. La aplicación entra con vera_app_login.
+      POSTGRES_USER: vera_migrador
+      POSTGRES_PASSWORD_FILE: /run/secrets/bd_migrador
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --data-checksums"
+    secrets:
+      - bd_migrador
+      - bd_app
+    volumes:
+      - positiva-ia-bd:/var/lib/postgresql
+      - ./servidor/bd/inicio:/docker-entrypoint-initdb.d:ro
+    read_only: true
+    tmpfs:
+      - /var/run/postgresql:size=8m,uid=999,gid=999,mode=0775,nosuid,nodev
+      - /tmp:size=256m,mode=1777,nosuid,nodev
+    shm_size: 256m
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "vera_migrador", "-d", "vera", "-h", "127.0.0.1"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 5
+    mem_limit: ${MEMORIA_BD:-1g}
+    pids_limit: 256
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+secrets:
+  # Archivos fuera del repositorio (datos/ no se versiona), uno por clave: ver docs/PRODUCCION.md › Base de datos.
+  bd_migrador:
+    file: ${RUTA_SECRETOS_BD:-./datos/secretos-bd}/migrador
+  bd_app:
+    file: ${RUTA_SECRETOS_BD:-./datos/secretos-bd}/app
 volumes:
   positiva-ia-datos:
   positiva-ia-archivos:
+  positiva-ia-bd:

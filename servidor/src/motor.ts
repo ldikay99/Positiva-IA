@@ -4,6 +4,8 @@ import { appendFile, mkdir, readdir, readFile, rename, writeFile } from "node:fs
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { config } from "./config.ts";
+import * as bd from "./bd/conexion.ts";
+import * as estadoBd from "./bd/estado.ts";
 import type { Configuracion } from "./configuracion.ts";
 import { enmascarar, enmascararTexto, variantes } from "./enmascarar.ts";
 import { Planificador, type Pool } from "./planificador.ts";
@@ -80,6 +82,13 @@ type Pedido = { tipo: "uno"; corrida: Corrida } | { tipo: "lote"; id: string; co
 
 /** El planificador de toda la plataforma: reparte TRABAJADORES_MAX entre los flujos con justicia. */
 export const planificador = new Planificador(topeGlobal);
+
+/**
+ * Con la base, el trabajador no escribe estado en disco: lo que dejaba en aprobaciones/ y aplazadas/ lo manda por su
+ * canal de eventos (estado_aprobacion, estado_aplazada) y el servidor lo guarda. Cada gancho dice si el evento era
+ * suyo; esos eventos no van al historial de la corrida ni a la web.
+ */
+export const estadoDelTrabajador: ((e: Evento) => boolean)[] = [];
 
 /** Pool de trabajadores de Python de UN flujo: cada uno atiende un correo (o un lote) a la vez. */
 export class Motor extends EventEmitter implements Pool {
@@ -232,7 +241,8 @@ export class Motor extends EventEmitter implements Pool {
     const real = this.radicacionReal();
     // La compuerta va DESPUÉS del entorno del flujo: el flujo no la puede poner (y entornos.ts tampoco lo deja).
     const proceso = spawn(config.python, [this.trabajador], {
-      env: { ...process.env, ...this.entornoDeProceso(), RADICACION_REAL: real ? "si" : "no", PYTHONUNBUFFERED: "1", PYTHONIOENCODING: "utf-8", RUTA_BANDEJA: config.bandeja, RUTA_VIVO: config.vivo, RUTA_TRABAJO: join(config.datos, "trabajo") },
+      // Ni la URL de la base ni la llave maestra llegan al trabajador; con la base, entrega su estado por eventos.
+      env: { ...bd.sinVariablesDelServidor(process.env), ...(bd.activa() ? { ESTADO_EN_SERVIDOR: "si" } : {}), ...this.entornoDeProceso(), RADICACION_REAL: real ? "si" : "no", PYTHONUNBUFFERED: "1", PYTHONIOENCODING: "utf-8", RUTA_BANDEJA: config.bandeja, RUTA_VIVO: config.vivo, RUTA_TRABAJO: join(config.datos, "trabajo") },
       stdio: ["pipe", "pipe", "pipe"],
     });
     const t: Trabajador = { id: this.siguienteId++, proceso, listo: false, activas: new Map(), real, lanzado: Date.now(), libreDesde: Date.now() };
@@ -519,6 +529,11 @@ export class Motor extends EventEmitter implements Pool {
     // El trabajador dice de qué corrida es cada evento; en un correo suelto, si
     // no lo dice (una línea de consola), es de la única que tiene.
     const corrida = (typeof e.corrida === "string" ? t.activas.get(e.corrida) : undefined) ?? this.unica(t);
+    if (e.tipo.startsWith("estado_")) {
+      e.flujo = this.flujo;
+      if (corrida) e.corrida = corrida.id;
+      for (const g of estadoDelTrabajador) if (g(e)) return;
+    }
     if (corrida) {
       e.corrida = corrida.id;
       corrida.eventos.push(e);
@@ -582,6 +597,11 @@ export class Motor extends EventEmitter implements Pool {
   }
 
   private async guardar(c: Corrida): Promise<void> {
+    if (bd.activa()) {
+      await estadoBd.corridas.guardar(c as unknown as estadoBd.CorridaBd).catch((e: unknown) =>
+        this.emit("evento", { tipo: "motor_aviso", corrida: c.id, t: Date.now() / 1000, flujo: this.flujo, aviso: `no se pudo guardar la corrida en la base: ${e instanceof Error ? e.message : String(e)}` }));
+      return;
+    }
     const carpeta = join(config.datos, "corridas");
     await mkdir(carpeta, { recursive: true });
     const { eventos, ...resto } = c;
@@ -590,6 +610,10 @@ export class Motor extends EventEmitter implements Pool {
 
   /** Las corridas de días anteriores, para que el historial sobreviva a un reinicio. */
   async cargarHistorial(maximo = 500): Promise<void> {
+    if (bd.activa()) {
+      for (const c of (await estadoBd.corridas.cargar(this.flujo, maximo)) as unknown as Corrida[]) if (!this.corridas.has(c.id)) this.corridas.set(c.id, c);
+      return;
+    }
     const carpeta = join(config.datos, "corridas");
     const archivos = (await readdir(carpeta).catch(() => [])).filter((a) => a.endsWith(".jsonl")).sort().reverse();
     const leidas: Corrida[] = [];
@@ -630,6 +654,7 @@ export class Motor extends EventEmitter implements Pool {
  * Reescribe cada archivo del día sin sus líneas, de forma atómica. Devuelve cuántas quitó.
  */
 export async function borrarCorridasDe(flujo: string): Promise<number> {
+  if (bd.activa()) return estadoBd.corridas.borrarDe(flujo);
   const carpeta = join(config.datos, "corridas");
   let n = 0;
   for (const a of (await readdir(carpeta).catch(() => [] as string[])).filter((x) => x.endsWith(".jsonl"))) {
@@ -653,6 +678,7 @@ export async function borrarCorridasDe(flujo: string): Promise<number> {
 
 /** Cuántas corridas guardadas tiene un flujo (para decir qué se borra). */
 export async function contarCorridasDe(flujo: string): Promise<number> {
+  if (bd.activa()) return estadoBd.corridas.contarDe(flujo);
   const carpeta = join(config.datos, "corridas");
   let n = 0;
   const marca = `"flujo":${JSON.stringify(flujo)}`;

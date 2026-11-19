@@ -1,8 +1,10 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { config } from "./config.ts";
+import * as bd from "./bd/conexion.ts";
+import * as estadoBd from "./bd/estado.ts";
 
 /**
  * Las conversaciones del asistente. Cada una es una sesión aparte: su título,
@@ -66,6 +68,7 @@ const ID = /^[a-z0-9-]{8,40}$/;
 export const idValido = (id: string) => ID.test(id);
 
 export async function listar(): Promise<Omit<Conversacion, "mensajes"> & { n: number; ultimo: string }[]> {
+  if (bd.activa()) return (await estadoBd.chats.listar()) as never;
   await mkdir(carpeta(), { recursive: true });
   const salida = [];
   for (const a of (await readdir(carpeta())).filter((x) => x.endsWith(".json"))) {
@@ -81,13 +84,15 @@ export async function listar(): Promise<Omit<Conversacion, "mensajes"> & { n: nu
 }
 
 export async function leer(id: string): Promise<Conversacion | null> {
+  if (bd.activa()) return idValido(id) ? (await estadoBd.chats.leer(id)) as Conversacion | null : null;
   if (!idValido(id) || !existsSync(ruta(id))) return null;
   return JSON.parse(await readFile(ruta(id), "utf8")) as Conversacion;
 }
 
 export async function guardar(c: Conversacion): Promise<void> {
-  await mkdir(carpeta(), { recursive: true });
   c.actualizada = Date.now();
+  if (bd.activa()) return estadoBd.chats.guardar(c as estadoBd.ConversacionBd);
+  await mkdir(carpeta(), { recursive: true });
   await writeFile(ruta(c.id), JSON.stringify(c), "utf8");
 }
 
@@ -98,6 +103,11 @@ export async function crear(flujo: string, titulo = "Nueva conversación"): Prom
 }
 
 export async function borrar(id: string): Promise<boolean> {
+  if (bd.activa()) {
+    if (!idValido(id) || !(await estadoBd.chats.borrar(id))) return false;
+    await rm(carpetaAdjuntos(id), { recursive: true, force: true });
+    return true;
+  }
   if (!idValido(id) || !existsSync(ruta(id))) return false;
   await rm(ruta(id), { force: true });
   await rm(carpetaAdjuntos(id), { recursive: true, force: true });
@@ -110,13 +120,20 @@ export async function guardarAdjunto(id: string, nombre: string, tipo: string, d
   const adj = randomUUID().slice(0, 12);
   const extension = extname(nombre).toLowerCase().replace(/[^.a-z0-9]/g, "").slice(0, 8);
   await writeFile(join(carpetaAdjuntos(id), `${adj}${extension}`), datos);
-  await writeFile(join(carpetaAdjuntos(id), `${adj}.json`), JSON.stringify({ id: adj, nombre, tipo, tamano: datos.length, extension }), "utf8");
+  // Con la base, la ficha (con el nombre cifrado) va a la base y los bytes se quedan en el almacén de objetos
+  // (aquí el volumen; en GCP, Cloud Storage bajo org/<organización>/chats/…).
+  if (bd.activa()) await estadoBd.chats.guardarAdjunto(id, { id: adj, nombre, tipo, tamano: datos.length, extension, objeto: `chats/adjuntos/${id}/${adj}${extension}`, sha256: createHash("sha256").update(datos).digest() });
+  else await writeFile(join(carpetaAdjuntos(id), `${adj}.json`), JSON.stringify({ id: adj, nombre, tipo, tamano: datos.length, extension }), "utf8");
   return { id: adj, nombre, tipo, tamano: datos.length };
 }
 
 /** La ruta en disco y la descripción de un adjunto, si existe. */
 export async function adjunto(id: string, adj: string): Promise<{ ruta: string; nombre: string; tipo: string; tamano: number } | null> {
   if (!idValido(id) || !/^[a-z0-9-]{6,20}$/.test(adj)) return null;
+  if (bd.activa()) {
+    const m = await estadoBd.chats.adjunto(id, adj);
+    return m ? { ruta: join(carpetaAdjuntos(id), `${adj}${m.extension}`), nombre: m.nombre, tipo: m.tipo, tamano: m.tamano } : null;
+  }
   const meta = join(carpetaAdjuntos(id), `${adj}.json`);
   if (!existsSync(meta)) return null;
   const m = JSON.parse(await readFile(meta, "utf8")) as { nombre: string; tipo: string; tamano: number; extension: string };

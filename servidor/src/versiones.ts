@@ -2,6 +2,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { config } from "./config.ts";
+import * as bd from "./bd/conexion.ts";
+import * as estadoBd from "./bd/estado.ts";
 
 /**
  * El historial de versiones de cada flujo, declarativo o de código: quién hizo cada versión (una persona o Vera),
@@ -81,6 +83,11 @@ async function leerArchivo(id: string): Promise<Archivo> {
   const c = cache.get(id);
   if (c) return c;
   let a: Archivo = { versiones: {} };
+  if (bd.activa()) {
+    a = { versiones: (await estadoBd.metas.leer(id)) as Record<string, Meta> };
+    cache.set(id, a);
+    return a;
+  }
   try {
     const x = JSON.parse(await readFile(ruta(id), "utf8")) as Archivo;
     if (x && typeof x.versiones === "object") a = x;
@@ -99,6 +106,11 @@ function enFila<T>(id: string, f: () => Promise<T>): Promise<T> {
 }
 
 async function escribir(id: string, a: Archivo): Promise<void> {
+  if (bd.activa()) {
+    await estadoBd.metas.escribir(id, a.versiones as Record<string, estadoBd.Meta>);
+    cache.set(id, a);
+    return;
+  }
   cache.set(id, a);
   await mkdir(carpeta(), { recursive: true });
   const tmp = `${ruta(id)}.tmp`;
@@ -126,6 +138,7 @@ export function completar(id: string, version: number, datos: Partial<Meta>): Pr
 
 export async function borrar(id: string): Promise<void> {
   cache.delete(id);
+  if (bd.activa()) return estadoBd.metas.borrar(id);
   await unlink(ruta(id)).catch(() => undefined);
 }
 

@@ -126,6 +126,23 @@ lo cambia porque usa el motor tal cual. Para quitarlo habría que reemplazarlo e
 cuenta de servicio). `RUTA_BANDEJA` es la carpeta de correos: una subcarpeta por correo con
 `mensaje.json` (formato de Microsoft Graph) y sus adjuntos en `adj/`.
 
+## Estado en PostgreSQL (opcional)
+
+Por defecto el estado de la plataforma (flujos y versiones, ejecuciones, aprobaciones, aplazadas, programaciones,
+conversaciones y configuración) vive en archivos del volumen. Con `DATABASE_URL` vive en PostgreSQL, aislado por
+organización con Row Level Security y cifrado con llaves de cada organización:
+
+```bash
+docker compose --profile bd up -d postgres                                   # PostgreSQL 18 local, solo en 127.0.0.1:5482
+cd servidor && npm run bd -- migrar                                          # con BD_URL_MIGRADOR y su clave
+npm run bd -- organizacion principal "Positiva"
+npm run bd -- migrar-datos --organizacion principal --datos <estado> --prueba # luego sin --prueba
+cd .. && docker compose -f docker-compose.yml -f docker-compose.bd.yml --profile bd up -d
+```
+
+Paso a paso, claves, Cloud SQL y pruebas: [docs/PRODUCCION.md › 6b](docs/PRODUCCION.md). El modelo:
+[docs/MODELO_DE_DATOS.md](docs/MODELO_DE_DATOS.md).
+
 ## Desarrollo
 
 ```bash

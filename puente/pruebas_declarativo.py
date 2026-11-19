@@ -4445,5 +4445,76 @@ class ImagenRealEnVertex(unittest.TestCase):
         print(f"\nVertex {r['modelo']}: {len(r['imagenes'][0]):,} bytes en {r['ms']} ms")
 
 
+# ------------------------------------------------------- estado en el servidor (PostgreSQL)
+
+class EstadoEnElServidor(Producto):
+    """Con la base de datos en el servidor (ESTADO_EN_SERVIDOR=si) el trabajador no deja aprobaciones ni aplazadas en
+    disco: las entrega por su canal de eventos y, al reanudar, la orden le trae la aprobación y el estado de la corrida.
+    El trabajador nunca recibe la URL de la base ni sus llaves."""
+
+    def setUp(self):
+        super().setUp()
+        self._estado_en_servidor = os.environ.get("ESTADO_EN_SERVIDOR")
+        os.environ["ESTADO_EN_SERVIDOR"] = "si"
+
+    def tearDown(self):
+        if self._estado_en_servidor is None:
+            os.environ.pop("ESTADO_EN_SERVIDOR", None)
+        else:
+            os.environ["ESTADO_EN_SERVIDOR"] = self._estado_en_servidor
+        super().tearDown()
+
+    def nada_en_disco(self, carpeta):
+        c = self.estado / carpeta
+        self.assertFalse(c.exists() and any(c.iterdir()), f"quedó algo en {c}")
+
+    def test_aprobacion_por_eventos_y_reanudar_con_la_orden(self):
+        d = flujo_aprobacion(tiempo_limite_h=2)
+        r, ev = self.correr_orden(d, entrada=AprobacionHumana.ENTRADA)
+        self.assertEqual(r["accion"], "en_espera", r.get("motivo"))
+        aid = r["aprobacion"]["id"]
+        [e] = self.eventos_de(ev, "estado_aprobacion")
+        rec, estado = e["registro"], e["estado"]
+        self.assertEqual((rec["id"], rec["estado"], rec["titulo"], rec["campos_editables"]), (aid, "pendiente", "Pago de 1500 a Ana María", ["monto"]))
+        self.assertEqual((estado["flujo"], estado["nodo"]), ("prueba", "ap"))
+        self.assertTrue(self.eventos_de(ev, "aprobacion_pendiente"))
+        self.nada_en_disco("aprobaciones")
+        # todavía pendiente: no sigue
+        r2, _ = self.correr_orden(d, exigir_ok=False, reanudar={"aprobacion": aid, "registro": rec, "estado": estado})
+        self.assertIn("todavía no tiene decisión", r2["motivo"])
+        # el servidor anotó la decisión de una persona (con un cambio editable) y manda la orden con todo
+        decidida = {**rec, "estado": "aprobado", "decision": "aprobar", "comentario": "visto bueno", "cambios": {"monto": 900},
+                    "resuelta": int(time.time() * 1000), "por": "persona"}
+        r3, ev3 = self.correr_orden(d, entrada={"aprobacion": aid}, origen="aprobacion", caso="aprobacion-x",
+                                    reanudar={"aprobacion": aid, "registro": decidida, "estado": estado})
+        self.assertEqual(r3["accion"], "radicado", r3.get("motivo"))
+        self.assertEqual(r3["motivo"], "aprobado 900 · visto bueno · Ana María / 1023456789")
+        self.assertTrue(any(e["tipo"] == "paso" and "aprobada por una persona" in e["titulo"] for e in ev3))
+        self.nada_en_disco("aprobaciones")  # ni la marca .reanudada: la lleva la base
+        # otra corrida que llega después (el servidor dice cuál la siguió) o sin el estado: no sigue
+        r4, _ = self.correr_orden(d, exigir_ok=False, reanudar={"aprobacion": aid, "ya_reanudada": "c-1"})
+        self.assertIn("ya se siguió en la corrida c-1", r4["motivo"])
+        r5, _ = self.correr_orden(d, exigir_ok=False, reanudar={"aprobacion": aid})
+        self.assertIn("no existe o ya no tiene el estado", r5["motivo"])
+        r6, _ = self.correr_orden(d, exigir_ok=False, reanudar={"aprobacion": aid, "registro": {**decidida, "flujo": "otro"}, "estado": estado})
+        self.assertIn("de otro flujo", r6["motivo"])
+
+    def test_aplazada_por_eventos(self):
+        d = manual(nodo("r", "reintentar_mas_tarde", en_minutos=30, motivo="servicio caído ({{entrada.x}})", max_intentos=2),
+                   campos=[{"nombre": "x"}], aristas=[{"desde": "inicio", "hacia": "r"}, {"desde": "r", "hacia": "fin", "cuando": "agotado"}],
+                   fin=nodo("fin", "salida", desenlace="manual", motivo="agotado"))
+        ahora = time.time()
+        np_._reloj = lambda: ahora
+        r, ev = self.correr_orden(d, entrada={"x": "y"})
+        self.assertEqual(r["accion"], "aplazada")
+        [e] = self.eventos_de(ev, "estado_aplazada")
+        rec = e["registro"]
+        self.assertEqual((rec["id"], rec["flujo"], rec["entrada"], rec["intento"], rec["cuando"]),
+                         (r["aplazamiento"]["id"], "prueba", {"x": "y"}, 1, int((ahora + 1800) * 1000)))
+        self.assertEqual(rec["motivo"], "servicio caído (y)")
+        self.assertTrue(self.eventos_de(ev, "aplazada"))
+        self.nada_en_disco("aplazadas")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -5,6 +5,8 @@ import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { z } from "zod";
 import { config } from "./config.ts";
+import * as bd from "./bd/conexion.ts";
+import * as estadoBd from "./bd/estado.ts";
 import { ajustables, catalogo as catalogoDePqrd, type Catalogo } from "./catalogo.ts";
 import * as credenciales from "./credenciales.ts";
 import * as entornos from "./entornos.ts";
@@ -796,13 +798,33 @@ function aCopia(g: CopiaGuardada): Flujo | null {
 }
 
 async function guardarCopia(f: Flujo): Promise<void> {
-  await mkdir(carpetaCodigo(), { recursive: true });
   const g: CopiaGuardada = { id: f.id, base: f.base!, nombre: f.nombre, descripcion: f.descripcion, copia_de: f.copia_de ?? f.base!, creado: f.creado ?? Date.now(), actualizado: f.actualizado ?? Date.now() };
+  if (bd.activa()) return estadoBd.flujos.guardarCopia(g);
+  await mkdir(carpetaCodigo(), { recursive: true });
   await writeFile(join(carpetaCodigo(), `${f.id}.json`), JSON.stringify(g, null, 2), "utf8");
+}
+
+/** Con la base: lo que está en vera.flujos (declarativos, copias y nombres propios de los originales). */
+async function cargarDeBd(): Promise<void> {
+  const r = await estadoBd.flujos.cargar();
+  originales = r.originales;
+  for (const g of r.copias) {
+    const f = aCopia(g);
+    if (f && !DE_CODIGO.some((x) => x.id === f.id)) copiasDeCodigo.set(f.id, f);
+  }
+  for (const guardado of r.declarativos) {
+    try {
+      const d = definicion.parse(guardado.definicion);
+      declarativos.set(d.id, aFlujo(d, guardado.version, guardado.actualizado, guardado.nota));
+    } catch {
+      /* definición que ya no valida: se ignora, como un archivo dañado */
+    }
+  }
 }
 
 async function cargarCopias(): Promise<void> {
   copiasDeCodigo.clear();
+  if (bd.activa()) return;
   await mkdir(carpetaCodigo(), { recursive: true });
   try {
     originales = JSON.parse(await readFile(join(carpetaCodigo(), "_originales.json"), "utf8")) as typeof originales;
@@ -840,6 +862,11 @@ export async function cargar(): Promise<void> {
   entornos.enlace.baseDe = (id) => baseDe(id) ?? id;
   compuerta.enlace.tieneCompuerta = (id) => baseDe(id) !== null;
   programadorEnlace.baseDe = (id) => baseDe(id);
+  if (bd.activa()) {
+    declarativos.clear();
+    await cargarDeBd();
+    return;
+  }
   await mkdir(carpetaDeclarativos(), { recursive: true });
   for (const a of (await readdir(carpetaDeclarativos())).filter((x) => x.endsWith(".json"))) {
     try {
@@ -926,13 +953,18 @@ export async function guardar(entrada: unknown, nota?: string, nombresExtra: str
   if (esDeCodigo(v.definicion.id)) return { ok: false, problemas: [`«${v.definicion.id}» es un flujo de código: elige otro id`] };
   const version = (previo?.version ?? 0) + 1;
   const actualizado = Date.now();
-  await mkdir(join(carpetaDeclarativos(), "versiones"), { recursive: true });
-  if (previo?.definicion) {
-    const anterior: Guardado = { definicion: previo.definicion, version: previo.version ?? 0, actualizado: previo.actualizado ?? 0, ...(previo.nota ? { nota: previo.nota } : {}) };
-    await writeFile(rutaVersion(previo.id, previo.version ?? 0), JSON.stringify(anterior, null, 2), "utf8");
-  }
   const notaLimpia = typeof nota === "string" && nota.trim() ? nota.trim().slice(0, 300) : undefined;
-  await writeFile(join(carpetaDeclarativos(), `${v.definicion.id}.json`), JSON.stringify({ definicion: v.definicion, version, actualizado, ...(notaLimpia ? { nota: notaLimpia } : {}) }, null, 2), "utf8");
+  if (bd.activa()) {
+    // Cada versión es su fila (la anterior ya quedó guardada cuando fue la vigente).
+    await estadoBd.flujos.guardarDeclarativo({ definicion: v.definicion, version, actualizado, ...(notaLimpia ? { nota: notaLimpia } : {}) });
+  } else {
+    await mkdir(join(carpetaDeclarativos(), "versiones"), { recursive: true });
+    if (previo?.definicion) {
+      const anterior: Guardado = { definicion: previo.definicion, version: previo.version ?? 0, actualizado: previo.actualizado ?? 0, ...(previo.nota ? { nota: previo.nota } : {}) };
+      await writeFile(rutaVersion(previo.id, previo.version ?? 0), JSON.stringify(anterior, null, 2), "utf8");
+    }
+    await writeFile(join(carpetaDeclarativos(), `${v.definicion.id}.json`), JSON.stringify({ definicion: v.definicion, version, actualizado, ...(notaLimpia ? { nota: notaLimpia } : {}) }, null, 2), "utf8");
+  }
   const f = aFlujo(v.definicion, version, actualizado, notaLimpia);
   declarativos.set(f.id, f);
   // autor (persona o Vera), resumen del cambio y, si es de Vera, el punto «antes de: …» en la versión previa
@@ -944,13 +976,21 @@ export async function borrar(id: string): Promise<boolean> {
   if (copiasDeCodigo.has(id)) {
     // una copia de pqrd o tutelas: su registro y su entorno (lo demás lo limpia el servidor)
     copiasDeCodigo.delete(id);
-    await unlink(join(carpetaCodigo(), `${id}.json`)).catch(() => undefined);
     await estructuras.borrarTodo(id);
+    if (bd.activa()) await estadoBd.flujos.borrar(id);
+    else await unlink(join(carpetaCodigo(), `${id}.json`)).catch(() => undefined);
     await entornos.borrarTodo(id);
     return true;
   }
   if (!declarativos.has(id)) return false;
   declarativos.delete(id);
+  if (bd.activa()) {
+    // en cascada: sus versiones, su historial y su programación
+    await estadoBd.flujos.borrar(id);
+    await historialVersiones.borrar(id);
+    await entornos.borrarTodo(id);
+    return true;
+  }
   await unlink(join(carpetaDeclarativos(), `${id}.json`)).catch(() => undefined);
   // sus versiones tampoco: un flujo nuevo con el mismo id empieza su propia historia
   for (const n of await readdir(join(carpetaDeclarativos(), "versiones")).catch(() => [] as string[]))
@@ -970,6 +1010,7 @@ export interface Version {
 }
 
 async function leerVersion(id: string, v: number): Promise<{ definicion: unknown; actualizado: number; nota?: string } | null> {
+  if (bd.activa()) return estadoBd.flujos.leerVersion(id, v);
   try {
     const crudo = JSON.parse(await readFile(rutaVersion(id, v), "utf8")) as Record<string, unknown>;
     // Las versiones de antes guardaban la definición sola.
@@ -983,8 +1024,13 @@ async function leerVersion(id: string, v: number): Promise<{ definicion: unknown
 export async function versiones(id: string): Promise<Version[] | null> {
   const f = declarativos.get(id);
   if (!f) return null;
-  const nombres = await readdir(join(carpetaDeclarativos(), "versiones")).catch(() => [] as string[]);
   const r: Version[] = [];
+  if (bd.activa()) {
+    for (const x of await estadoBd.flujos.versiones(id)) if (x.version !== f.version) r.push(x);
+    r.push({ version: f.version ?? 1, actualizado: f.actualizado ?? 0, ...(f.nota ? { nota: f.nota } : {}), actual: true });
+    return r.sort((a, b) => b.version - a.version);
+  }
+  const nombres = await readdir(join(carpetaDeclarativos(), "versiones")).catch(() => [] as string[]);
   for (const n of nombres) {
     const m = new RegExp(`^${id}\\.v(\\d+)\\.json$`).exec(n);
     if (!m) continue;
@@ -1099,8 +1145,11 @@ export async function renombrar(id: string, cambios: { nombre?: unknown; descrip
       return { ok: true, flujo: sig };
     }
     originales = { ...originales, [id]: { ...(originales[id] ?? {}), ...extra } };
-    await mkdir(carpetaCodigo(), { recursive: true });
-    await writeFile(join(carpetaCodigo(), "_originales.json"), JSON.stringify(originales, null, 2), "utf8");
+    if (bd.activa()) await estadoBd.flujos.guardarOriginales(originales);
+    else {
+      await mkdir(carpetaCodigo(), { recursive: true });
+      await writeFile(join(carpetaCodigo(), "_originales.json"), JSON.stringify(originales, null, 2), "utf8");
+    }
     return { ok: true, flujo: obtener(id)! };
   }
   const f = declarativos.get(id);

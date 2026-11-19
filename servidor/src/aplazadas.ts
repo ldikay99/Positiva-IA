@@ -3,8 +3,10 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { config } from "./config.ts";
+import * as bd from "./bd/conexion.ts";
+import * as estadoBd from "./bd/estado.ts";
 import * as flujos from "./flujos.ts";
-import type { Corrida, Evento } from "./motor.ts";
+import { estadoDelTrabajador, type Corrida, type Evento } from "./motor.ts";
 
 /**
  * Corridas aplazadas: reintentar_mas_tarde, limite_tasa (al_exceder aplazar) y ventana_horario (fuera aplazar) terminan la
@@ -50,6 +52,7 @@ const porCorrida = new Map<string, Aplazada>();
 
 async function leer(id: string): Promise<Aplazada | null> {
   if (!ID.test(id)) return null;
+  if (bd.activa()) return (await estadoBd.aplazadas.leer(id)) as Aplazada | null;
   try {
     return JSON.parse(await readFile(ruta(id), "utf8")) as Aplazada;
   } catch {
@@ -58,13 +61,21 @@ async function leer(id: string): Promise<Aplazada | null> {
 }
 
 async function escribir(a: Aplazada): Promise<void> {
+  if (bd.activa()) return estadoBd.aplazadas.escribir(a as unknown as estadoBd.AplazadaBd);
   await mkdir(carpeta(), { recursive: true });
   const tmp = `${ruta(a.id)}.${process.pid}.${randomBytes(3).toString("hex")}.tmp`;
   await writeFile(tmp, JSON.stringify(a), "utf8");
   await rename(tmp, ruta(a.id));
 }
 
+/** Quita una aplazada (ya corrió, o su flujo no existe). */
+async function quitar(id: string): Promise<void> {
+  if (bd.activa()) await estadoBd.aplazadas.borrar(id);
+  else await unlink(ruta(id)).catch(() => undefined);
+}
+
 export async function listar(flujo?: string): Promise<Aplazada[]> {
+  if (bd.activa()) return (await estadoBd.aplazadas.listar(flujo)) as unknown as Aplazada[];
   const r: Aplazada[] = [];
   for (const x of (await readdir(carpeta()).catch(() => [] as string[])).filter((y) => /^apl-.*\.json$/.test(y))) {
     const a = await leer(x.slice(0, -5));
@@ -83,7 +94,7 @@ export async function revisar(deps: Dependencias, ahora = Date.now()): Promise<s
     if (a.encolada) porCorrida.delete(a.encolada);
     const f = flujos.obtener(a.flujo);
     if (!f || f.tipo !== "declarativo") {
-      await unlink(ruta(a.id)).catch(() => undefined);  // el flujo ya no existe: no hay qué correr
+      await quitar(a.id).catch(() => undefined);  // el flujo ya no existe: no hay qué correr
       continue;
     }
     const disp = f.definicion ? flujos.disparadorDe(f.definicion)?.tipo : undefined;
@@ -101,7 +112,16 @@ export async function revisar(deps: Dependencias, ahora = Date.now()): Promise<s
 }
 
 export async function registrar(app: FastifyInstance, deps: Dependencias): Promise<void> {
-  await mkdir(carpeta(), { recursive: true });
+  if (!bd.activa()) await mkdir(carpeta(), { recursive: true });
+  // Con la base, la aplazada que deja el motor llega por su canal de eventos.
+  estadoDelTrabajador.push((e) => {
+    if (e.tipo !== "estado_aplazada" || !bd.activa()) return false;
+    const registro = e.registro as Aplazada | undefined;
+    if (registro && typeof registro.id === "string" && ID.test(registro.id))
+      void estadoBd.aplazadas.escribir(registro as unknown as estadoBd.AplazadaBd)
+        .catch((x: unknown) => app.log.error({ aplazada: registro.id, error: x instanceof Error ? x.message : String(x) }, "no se pudo guardar la aplazada en la base"));
+    return true;
+  });
   flujos.extrasDeOrden.push((_flujo, c) => {
     const a = c.origen === "aplazada" ? porCorrida.get(c.id) : undefined;
     return a ? { aplazamiento: { id: a.id, intento: a.intento, motivo: a.motivo, desde: a.corrida } } : undefined;
@@ -112,7 +132,7 @@ export async function registrar(app: FastifyInstance, deps: Dependencias): Promi
     const a = porCorrida.get(e.corrida);
     if (!a) return;
     porCorrida.delete(e.corrida);
-    void unlink(ruta(a.id)).catch(() => undefined);
+    void quitar(a.id).catch(() => undefined);
   });
   app.get<{ Querystring: { flujo?: string } }>("/api/aplazadas", async (req) =>
     (await listar(req.query.flujo || undefined)).map(({ entrada: _e, ...resto }) => resto));

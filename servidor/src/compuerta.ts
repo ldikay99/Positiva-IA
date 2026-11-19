@@ -1,4 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import * as bd from "./bd/conexion.ts";
+import * as estadoBd from "./bd/estado.ts";
 import { join } from "node:path";
 import { config } from "./config.ts";
 
@@ -50,6 +52,11 @@ let cargado = false;
 export const permitidoEnDespliegue = (entorno: NodeJS.ProcessEnv = process.env) => String(entorno.PERMITIR_RADICACION_REAL ?? "").trim().toLowerCase() === "si";
 
 export async function cargar(): Promise<void> {
+  if (bd.activa()) {
+    estado = (await estadoBd.configuracion.ajuste<Record<string, Guardada>>("compuertas")) ?? {};
+    cargado = true;
+    return;
+  }
   try {
     estado = JSON.parse(await readFile(ruta(), "utf8")) as Record<string, Guardada>;
   } catch {
@@ -59,6 +66,7 @@ export async function cargar(): Promise<void> {
 }
 
 async function guardar(): Promise<void> {
+  if (bd.activa()) return estadoBd.configuracion.ponerAjuste("compuertas", estado);
   await mkdir(config.datos, { recursive: true });
   const tmp = `${ruta()}.${Date.now()}.tmp`;
   await writeFile(tmp, JSON.stringify(estado, null, 2), "utf8");

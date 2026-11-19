@@ -108,6 +108,9 @@ COPY catalogo/ catalogo/
 COPY --from=servidor /src/servidor/package.json servidor/package.json
 COPY --from=servidor /src/servidor/node_modules servidor/node_modules
 COPY --from=servidor /src/servidor/dist servidor/dist
+# Migraciones versionadas de PostgreSQL (solo se usan con DATABASE_URL; el servidor revisa al arrancar que la base
+# esté al día y las aplica «node servidor/dist/bd/cli.js migrar» con la URL del migrador).
+COPY --from=servidor /src/servidor/migraciones servidor/migraciones
 COPY --from=web /src/web/dist web/dist
 
 # El código queda de root (solo lectura para el usuario de la app). Lo único que

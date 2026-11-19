@@ -715,6 +715,14 @@ def _fecha_ok(x: str) -> bool:
 #   archivos de aprobaciones y aplazamientos (los lee y escribe también el servidor)
 # =====================================================================
 
+def estado_en_servidor() -> bool:
+    """Con la base de datos (DATABASE_URL en el servidor), el trabajador no escribe aprobaciones ni aplazadas en disco:
+    las entrega por su canal de eventos (estado_aprobacion, estado_aplazada) y el servidor las guarda cifradas en
+    PostgreSQL. Al reanudar, la orden trae la aprobación y el estado de la corrida. El trabajador nunca tiene la URL
+    de la base ni sus llaves."""
+    return os.environ.get("ESTADO_EN_SERVIDOR") == "si"
+
+
 def carpeta_aprobaciones() -> Path:
     p = ruta_estado() / "aprobaciones"
     p.mkdir(parents=True, exist_ok=True)
@@ -1000,10 +1008,13 @@ class NodosProducto:
                   "carpeta": str(self.carpeta) if self.carpeta else None, "archivos": self.archivos, "entrada": self.entrada,
                   "pasos": self._pasos, "anonimizar": getattr(self, "_np_anon", None), "mapas": getattr(self, "_np_mapas", None),
                   "generados": getattr(self, "generados", [])}
-        carpeta = carpeta_aprobaciones()
         # el estado de la corrida va sin secretos (si alguno quedó en una variable, se guarda enmascarado)
-        (carpeta / f"{aid}.estado.json").write_text(fd.enmascarar(json.dumps(estado, ensure_ascii=False, default=str)), encoding="utf-8")
-        escribir_json(carpeta / f"{aid}.json", rec)
+        if estado_en_servidor():
+            fd.evento("estado_aprobacion", registro=rec, estado=json.loads(fd.enmascarar(json.dumps(estado, ensure_ascii=False, default=str))))
+        else:
+            carpeta = carpeta_aprobaciones()
+            (carpeta / f"{aid}.estado.json").write_text(fd.enmascarar(json.dumps(estado, ensure_ascii=False, default=str)), encoding="utf-8")
+            escribir_json(carpeta / f"{aid}.json", rec)
         fd.evento("aprobacion_pendiente", id=aid, aprobacion=publico(rec))
         vence = (" · vence " + datetime.datetime.fromtimestamp(rec["vence"] / 1000, _zona()).strftime("%Y-%m-%d %H:%M")) if rec["vence"] else ""
         fd._paso(n["id"], f"Esperando aprobación: {rec['titulo'][:120]}", "aviso", (rec["detalle"] or "")[:900] + vence,
@@ -1011,27 +1022,41 @@ class NodosProducto:
         self._terminar(n, "en_espera", {"accion": "en_espera", "motivo": f"Esperando aprobación: {rec['titulo']}"[:500], "aprobacion": publico(rec)}, t0)
         return "en_espera"  # no se llega
 
-    def reanudar_aprobacion(self, aid: str) -> str:
-        """Una corrida nueva sigue la que quedó esperando: restaura su estado y dice desde qué nodo seguir."""
+    def reanudar_aprobacion(self, aid: str, datos: Optional[dict] = None) -> str:
+        """Una corrida nueva sigue la que quedó esperando: restaura su estado y dice desde qué nodo seguir.
+
+        Con el estado en el servidor (base de datos), `datos` es lo que trae la orden: {registro, estado}, o
+        {ya_reanudada} si otra corrida ya la siguió (el servidor deja seguirla una sola vez)."""
         if not (isinstance(aid, str) and ID_APROBACION.match(aid)):
             raise ErrorDeNegocio("id de aprobación inválido")
-        carpeta = carpeta_aprobaciones()
-        try:
-            rec = leer_json(carpeta / f"{aid}.json")
-            estado = leer_json(carpeta / f"{aid}.estado.json")
-        except FileNotFoundError as e:
-            raise ErrorDeNegocio(f"la aprobación {aid} no existe") from e
+        datos = datos if isinstance(datos, dict) else {}
+        if datos.get("ya_reanudada"):
+            raise ErrorDeNegocio(f"esa aprobación ya se siguió en la corrida {datos['ya_reanudada']}")
+        if estado_en_servidor() or "registro" in datos:
+            rec, estado = datos.get("registro"), datos.get("estado")
+            if not isinstance(rec, dict) or not isinstance(estado, dict):
+                raise ErrorDeNegocio(f"la aprobación {aid} no existe o ya no tiene el estado de su corrida")
+            if rec.get("id") != aid:
+                raise ErrorDeNegocio("la orden trae otra aprobación")
+        else:
+            carpeta = carpeta_aprobaciones()
+            try:
+                rec = leer_json(carpeta / f"{aid}.json")
+                estado = leer_json(carpeta / f"{aid}.estado.json")
+            except FileNotFoundError as e:
+                raise ErrorDeNegocio(f"la aprobación {aid} no existe") from e
         if rec.get("flujo") != self.flujo:
             raise ErrorDeNegocio("esa aprobación es de otro flujo")
         if rec.get("estado") == "pendiente":
             raise ErrorDeNegocio("la aprobación todavía no tiene decisión")
-        try:
-            fd_ = os.open(str(carpeta / f"{aid}.reanudada"), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        except FileExistsError as e:
-            otra = (carpeta / f"{aid}.reanudada").read_text(encoding="utf-8").strip()
-            raise ErrorDeNegocio(f"esa aprobación ya se siguió en la corrida {otra or '(otra)'}") from e
-        with os.fdopen(fd_, "w", encoding="utf-8") as f:
-            f.write(fd._corrida.get() or "")
+        if not (estado_en_servidor() or "registro" in datos):
+            try:
+                fd_ = os.open(str(carpeta / f"{aid}.reanudada"), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            except FileExistsError as e:
+                otra = (carpeta / f"{aid}.reanudada").read_text(encoding="utf-8").strip()
+                raise ErrorDeNegocio(f"esa aprobación ya se siguió en la corrida {otra or '(otra)'}") from e
+            with os.fdopen(fd_, "w", encoding="utf-8") as f:
+                f.write(fd._corrida.get() or "")
         self.defi = estado.get("definicion") or self.defi
         self.vars = estado.get("vars") or {}
         self.hallazgos = estado.get("hallazgos") or {}
@@ -1954,7 +1979,11 @@ class NodosProducto:
         rec = {"id": aid, "flujo": self.flujo, "corrida": fd._corrida.get() or "", "caso": self.caso, "nodo": n["id"], "entrada": self.entrada,
                "cuando": int(cuando * 1000), "motivo": motivo, "intento": intento, "creada": int(_reloj() * 1000),
                "archivos": [a.get("id") for a in self.archivos if a.get("id")]}
-        escribir_json(carpeta_aplazadas() / f"{aid}.json", json.loads(fd.enmascarar(json.dumps(rec, ensure_ascii=False, default=str))))
+        rec = json.loads(fd.enmascarar(json.dumps(rec, ensure_ascii=False, default=str)))
+        if estado_en_servidor():
+            fd.evento("estado_aplazada", registro=rec)
+        else:
+            escribir_json(carpeta_aplazadas() / f"{aid}.json", rec)
         cuando_txt = datetime.datetime.fromtimestamp(cuando, _zona()).strftime("%Y-%m-%d %H:%M")
         fd.evento("aplazada", id=aid, cuando=rec["cuando"], motivo=motivo, intento=intento, nodo=n["id"])
         fd._paso(n["id"], f"Aplazada hasta {cuando_txt}", "aviso", motivo[:600], aplazada=aid, cuando=rec["cuando"])

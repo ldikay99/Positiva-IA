@@ -2,6 +2,8 @@ import { spawn } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { config } from "./config.ts";
+import * as bd from "./bd/conexion.ts";
+import * as estadoBd from "./bd/estado.ts";
 import type { Definicion, Flujo } from "./flujos.ts";
 import { DISPARADORES_DE_SONDEO } from "./flujos_integraciones.ts";
 
@@ -100,8 +102,11 @@ export async function olvidar(flujo: string): Promise<void> {
   for (const k of Object.keys(ultimas)) if (k.split(":")[1] === flujo) delete ultimas[k];
   if (flujo in programaciones) {
     delete programaciones[flujo];
-    await mkdir(config.datos, { recursive: true });
-    await writeFile(rutaProgramaciones(), JSON.stringify(programaciones, null, 2), "utf8");
+    if (bd.activa()) await estadoBd.programacion.quitar(flujo);
+    else {
+      await mkdir(config.datos, { recursive: true });
+      await writeFile(rutaProgramaciones(), JSON.stringify(programaciones, null, 2), "utf8");
+    }
   }
   await guardarEstado().catch(() => undefined);
 }
@@ -138,9 +143,12 @@ export async function ponerProgramacion(flujo: string, cuerpo: unknown, problema
     sig.n = b.n;
   }
   sig.cambiado = Date.now();
+  if (bd.activa()) await estadoBd.programacion.poner(flujo, sig);
   programaciones[flujo] = sig;
-  await mkdir(config.datos, { recursive: true });
-  await writeFile(rutaProgramaciones(), JSON.stringify(programaciones, null, 2), "utf8");
+  if (!bd.activa()) {
+    await mkdir(config.datos, { recursive: true });
+    await writeFile(rutaProgramaciones(), JSON.stringify(programaciones, null, 2), "utf8");
+  }
   return { ok: true, programacion: sig };
 }
 
@@ -247,6 +255,7 @@ export function coincideCron(expr: string, fecha: Date, zona: string): boolean {
 }
 
 async function guardarEstado(): Promise<void> {
+  if (bd.activa()) return estadoBd.programacion.escribirMarcas(ultimas);
   await mkdir(config.datos, { recursive: true });
   await writeFile(ruta(), JSON.stringify(ultimas, null, 2), "utf8");
 }
@@ -334,10 +343,13 @@ export async function sondear(deps: Dependencias, flujo: string, origen = "corre
 }
 
 export async function iniciar(deps: Dependencias, cadaMs = 15_000): Promise<void> {
-  try {
-    ultimas = JSON.parse(await readFile(ruta(), "utf8")) as Record<string, number>;
-  } catch {
-    ultimas = {};
+  if (bd.activa()) ultimas = await estadoBd.programacion.marcas();
+  else {
+    try {
+      ultimas = JSON.parse(await readFile(ruta(), "utf8")) as Record<string, number>;
+    } catch {
+      ultimas = {};
+    }
   }
   await cargarProgramaciones();
   if (reloj) clearInterval(reloj);
@@ -353,6 +365,10 @@ export async function iniciar(deps: Dependencias, cadaMs = 15_000): Promise<void
 }
 
 export async function cargarProgramaciones(): Promise<void> {
+  if (bd.activa()) {
+    programaciones = await estadoBd.programacion.leer();
+    return;
+  }
   try {
     programaciones = JSON.parse(await readFile(rutaProgramaciones(), "utf8")) as Record<string, ProgramacionDeCodigo>;
   } catch {

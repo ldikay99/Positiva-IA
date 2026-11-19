@@ -38,10 +38,27 @@ import * as conectores from "./conectores.ts";
 import * as versiones from "./versiones.ts";
 import * as rutasVersiones from "./rutas_versiones.ts";
 import { DISPARADORES_DE_SONDEO } from "./flujos_integraciones.ts";
+import * as bd from "./bd/conexion.ts";
+import * as cifradoBd from "./bd/cifrado.ts";
+import * as migracionesBd from "./bd/migraciones.ts";
+import * as ia from "./ia.ts";
 import { consumoDe, obtenerVera } from "./ia.ts";
 import { EventEmitter } from "node:events";
 
 const app = Fastify({ logger: { level: process.env.NIVEL_LOG ?? "info" }, bodyLimit: 4 * 1024 * 1024 });
+
+// La URL de la base y la llave maestra solo las tiene el servidor: ningún proceso de Python las hereda.
+bd.retirarDelEntorno();
+if (bd.activa()) {
+  // Con DATABASE_URL el estado vive en PostgreSQL (docs/MODELO_DE_DATOS.md). Sin la llave, sin la organización o con
+  // migraciones pendientes no arranca: dice qué falta en vez de escribir a medias.
+  const kek = cifradoBd.revisarKek();
+  const pendientes = await migracionesBd.alDia(bd.piscina());
+  if (!pendientes.ok) throw new Error(`la base tiene migraciones pendientes (${pendientes.faltan.join(", ")}): córrelas con «npm run bd -- migrar» y la URL del migrador`);
+  const org = await bd.iniciar();
+  await ia.precargarDeBd();
+  app.log.info({ organizacion: org.slug, kek }, "estado de la plataforma en PostgreSQL");
+}
 // Un DELETE (o cualquier pedido) con Content-Type JSON y sin cuerpo es válido: cuerpo vacío.
 app.removeContentTypeParser("application/json");
 app.addContentTypeParser("application/json", { parseAs: "string" }, (_req, cuerpo, listo) => {

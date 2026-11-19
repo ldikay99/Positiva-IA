@@ -1,0 +1,21 @@
+# El servidor con el estado en PostgreSQL (el contenedor postgres de docker-compose.yml):
+#   docker compose -f docker-compose.yml -f docker-compose.bd.yml --profile bd up -d
+# Antes, una sola vez: las claves en RUTA_SECRETOS_BD, las migraciones y la organización (docs/PRODUCCION.md).
+services:
+  positiva-ia:
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Sin clave en la URL: la lee de DATABASE_PASSWORD_FILE (el secreto bd_app).
+      DATABASE_URL: postgresql://vera_app_login@postgres:5432/vera
+      DATABASE_PASSWORD_FILE: /run/secrets/bd_app
+      VERA_ORGANIZACION: ${VERA_ORGANIZACION:-principal}
+      # La llave maestra local (base64 de 32 bytes). En GCP la reemplaza Cloud KMS.
+      VERA_KEK_LOCAL_ARCHIVO: /run/secrets/bd_kek
+    secrets:
+      - bd_app
+      - bd_kek
+secrets:
+  bd_kek:
+    file: ${RUTA_SECRETOS_BD:-./datos/secretos-bd}/kek

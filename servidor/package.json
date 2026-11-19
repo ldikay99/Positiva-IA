@@ -6,7 +6,9 @@
     "build": "tsc -p .",
     "start": "node dist/servidor.js",
     "dev": "node --watch src/servidor.ts",
-    "check": "tsc -p . --noEmit"
+    "check": "tsc -p . --noEmit",
+    "bd": "node src/bd/cli.ts",
+    "prueba:bd": "node --test src/pruebas_bd.ts"
   },
   "license": "UNLICENSED",
   "type": "module",
@@ -14,10 +16,12 @@
     "@fastify/static": "^10.1.11",
     "@fastify/websocket": "^11.3.7",
     "fastify": "^5.12.8",
+    "pg": "8.23.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
+    "@types/pg": "8.23.1",
     "typescript": "^7.0.2"
   },
   "private": true,

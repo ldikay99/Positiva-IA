@@ -3,6 +3,8 @@ import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { config } from "./config.ts";
+import * as bd from "./bd/conexion.ts";
+import * as estadoBd from "./bd/estado.ts";
 import * as versiones from "./versiones.ts";
 
 /**
@@ -77,6 +79,10 @@ function python<T>(cmd: string, entrada: unknown): Promise<T> {
 
 export async function cargar(): Promise<void> {
   guardadas.clear();
+  if (bd.activa()) {
+    for (const [id, g] of Object.entries(await estadoBd.estructuras.cargar())) guardadas.set(id, g as unknown as Guardada);
+    return;
+  }
   await mkdir(carpeta(), { recursive: true });
   for (const a of (await readdir(carpeta())).filter((x) => x.endsWith(".estructura.json"))) {
     try {
@@ -117,8 +123,9 @@ export function validar(base: string, definicion: unknown, entorno: string[] = [
 /** El número más alto usado por este flujo (guardada, versiones en disco o del historial): la siguiente nunca pisa una anterior. */
 async function ultimaVersion(id: string): Promise<number> {
   let n = guardadas.get(id)?.version ?? 0;
+  if (bd.activa()) for (const v of await estadoBd.estructuras.versiones(id)) n = Math.max(n, v.version);
   const patron = new RegExp(`^${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.estructura\\.v(\\d+)\\.json$`);
-  for (const a of await readdir(carpeta()).catch(() => [] as string[])) {
+  for (const a of bd.activa() ? [] : await readdir(carpeta()).catch(() => [] as string[])) {
     const m = patron.exec(a);
     if (m) n = Math.max(n, Number(m[1]));
   }
@@ -142,13 +149,17 @@ export async function guardar(id: string, base: string, definicion: unknown, not
   if (previa && JSON.stringify(previa.definicion) === JSON.stringify(definicion)) return { ...v, guardada: previa };
   const antes = previa ? previa.definicion : await porDefecto(base).catch(() => null);
   const versionPrevia = await versionActual(id);
-  await mkdir(carpeta(), { recursive: true });
-  if (previa) await writeFile(rutaVersion(id, previa.version), JSON.stringify(previa, null, 2), "utf8");
+  if (!bd.activa()) {
+    await mkdir(carpeta(), { recursive: true });
+    if (previa) await writeFile(rutaVersion(id, previa.version), JSON.stringify(previa, null, 2), "utf8");
+  }
   const g: Guardada = {
     definicion: definicion as DefinicionEstructura, version: (await ultimaVersion(id)) + 1, actualizado: Date.now(),
     ...(nota?.trim() ? { nota: nota.trim().slice(0, 300) } : {}), tramos: v.tramos ?? [], intercambio: v.intercambio ?? null, apagadas: v.apagadas ?? [],
   };
-  await writeFile(ruta(id), JSON.stringify(g, null, 2), "utf8");
+  // En la base cada versión es su fila (la anterior ya está); la vigente es la que marca el flujo.
+  if (bd.activa()) await estadoBd.estructuras.guardar(id, g as unknown as estadoBd.EstructuraGuardada, true);
+  else await writeFile(ruta(id), JSON.stringify(g, null, 2), "utf8");
   guardadas.set(id, g);
   await versiones.anotar(id, g.version, { antes, despues: g.definicion, nota: g.nota, previa: versionPrevia });
   return { ...v, guardada: g };
@@ -158,8 +169,11 @@ export async function guardar(id: string, base: string, definicion: unknown, not
 export async function restablecerConVersion(id: string, base?: string): Promise<{ ok: boolean; version?: number }> {
   const g = guardadas.get(id);
   if (!g) return { ok: false };
-  await writeFile(rutaVersion(id, g.version), JSON.stringify(g, null, 2), "utf8");
-  await unlink(ruta(id)).catch(() => undefined);
+  if (bd.activa()) await estadoBd.estructuras.quitarVigente(id);
+  else {
+    await writeFile(rutaVersion(id, g.version), JSON.stringify(g, null, 2), "utf8");
+    await unlink(ruta(id)).catch(() => undefined);
+  }
   guardadas.delete(id);
   const version = (await ultimaVersion(id)) + 1;
   const despues = base ? await porDefecto(base).catch(() => null) : null;
@@ -183,6 +197,7 @@ export interface VersionEstructura {
 }
 
 const leerGuardada = async (id: string, v: number): Promise<Guardada | null> => {
+  if (bd.activa()) return (await estadoBd.estructuras.leerVersion(id, v)) as unknown as Guardada | null;
   try {
     return JSON.parse(await readFile(rutaVersion(id, v), "utf8")) as Guardada;
   } catch {
@@ -196,8 +211,9 @@ export async function listarVersiones(id: string): Promise<VersionEstructura[]> 
   const metas = await versiones.leer(id);
   const r = new Map<number, VersionEstructura>();
   r.set(0, { version: 0, actualizado: 0, nota: "La estructura del código", del_codigo: true });
+  if (bd.activa()) for (const x of await estadoBd.estructuras.versiones(id)) r.set(x.version, x);
   const patron = new RegExp(`^${id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\.estructura\\.v(\\d+)\\.json$`);
-  for (const a of await readdir(carpeta()).catch(() => [] as string[])) {
+  for (const a of bd.activa() ? [] : await readdir(carpeta()).catch(() => [] as string[])) {
     const m = patron.exec(a);
     if (!m) continue;
     const g = await leerGuardada(id, Number(m[1]));
@@ -245,8 +261,11 @@ export async function copiar(desde: string, hacia: string): Promise<void> {
   const g = guardadas.get(desde);
   if (!g) return;
   const nueva: Guardada = { ...structuredClone(g), version: 1, actualizado: Date.now(), nota: `copiada de ${desde} v${g.version}` };
-  await mkdir(carpeta(), { recursive: true });
-  await writeFile(ruta(hacia), JSON.stringify(nueva, null, 2), "utf8");
+  if (bd.activa()) await estadoBd.estructuras.guardar(hacia, nueva as unknown as estadoBd.EstructuraGuardada, true);
+  else {
+    await mkdir(carpeta(), { recursive: true });
+    await writeFile(ruta(hacia), JSON.stringify(nueva, null, 2), "utf8");
+  }
   guardadas.set(hacia, nueva);
   await versiones.anotar(hacia, 1, { nota: nueva.nota });
 }
@@ -254,9 +273,10 @@ export async function copiar(desde: string, hacia: string): Promise<void> {
 export async function borrarTodo(id: string): Promise<void> {
   guardadas.delete(id);
   await versiones.borrar(id);
+  if (bd.activa()) return estadoBd.estructuras.borrarTodo(id);
   await unlink(ruta(id)).catch(() => undefined);
   for (const n of await readdir(carpeta()).catch(() => [] as string[]))
     if (n.startsWith(`${id}.estructura.v`)) await unlink(join(carpeta(), n)).catch(() => undefined);
 }
 
-export const existe = (id: string) => guardadas.has(id) && existsSync(ruta(id));
+export const existe = (id: string) => guardadas.has(id) && (bd.activa() || existsSync(ruta(id)));

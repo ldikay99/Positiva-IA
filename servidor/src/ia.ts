@@ -5,6 +5,8 @@ import { join, resolve } from "node:path";
 import { z } from "zod";
 import { config } from "./config.ts";
 import * as credenciales from "./credenciales.ts";
+import * as bd from "./bd/conexion.ts";
+import * as estadoBd from "./bd/estado.ts";
 
 /**
  * La IA de la plataforma, en tres niveles que nunca se mezclan:
@@ -197,7 +199,22 @@ export async function fichaDe(prov: string, modelo: string): Promise<FichaModelo
 
 const rutaEstado = (archivo: string) => join(config.datos, archivo);
 
+/** En la base: ia_global e ia_vera se leen al arrancar (precargarDeBd) y aquí se sirven de memoria. */
+const deLaBase = new Map<string, unknown>();
+const CLAVE_BD: Record<string, "ia_global" | "ia_vera"> = { "ia_global.json": "ia_global", "ia_vera.json": "ia_vera" };
+
+export async function precargarDeBd(): Promise<void> {
+  deLaBase.clear();
+  for (const [archivo, clave] of Object.entries(CLAVE_BD)) {
+    const v = await estadoBd.configuracion.ajuste(clave);
+    if (v !== null) deLaBase.set(archivo, v);
+  }
+  globalCache = null;
+  veraCache = null;
+}
+
 function leerJson<T>(archivo: string): T | null {
+  if (bd.activa()) return (deLaBase.get(archivo) as T | undefined) ?? null;
   try {
     return JSON.parse(readFileSync(rutaEstado(archivo), "utf8")) as T;
   } catch {
@@ -206,6 +223,11 @@ function leerJson<T>(archivo: string): T | null {
 }
 
 async function guardarJson(archivo: string, valor: unknown): Promise<void> {
+  if (bd.activa()) {
+    await estadoBd.configuracion.ponerAjuste(CLAVE_BD[archivo]!, valor);
+    deLaBase.set(archivo, structuredClone(valor));
+    return;
+  }
   await mkdir(config.datos, { recursive: true });
   const tmp = `${rutaEstado(archivo)}.${process.pid}.tmp`;
   await writeFile(tmp, JSON.stringify(valor, null, 2), "utf8");
