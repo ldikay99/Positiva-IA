@@ -1030,11 +1030,13 @@ def modelo_vertex(nombre: str, ubicacion: str):
     clave = f"{nombre}@{ubicacion}"
     if clave not in _modelos:
         import google.auth
-        from config import settings
         from pipeline.modelo import ModeloVertex
+        from proyecto_gcp import proyecto_gcp
 
+        # El proyecto sale de GCP_PROJECT, nunca del valor por defecto del motor (el del job de producción).
+        proyecto = proyecto_gcp()
         cred, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-        m = ModeloVertex(proyecto=os.environ.get("GCP_PROJECT", settings.GCP_PROJECT),
+        m = ModeloVertex(proyecto=proyecto,
                          ubicacion=ubicacion, nombre=nombre, credenciales=cred,
                          endpoint_global=True)
         # La temperatura está escrita dentro de `generar`: se ajusta en la

@@ -114,7 +114,8 @@ class Base(unittest.TestCase):
         carpeta = raiz / CASO
         (carpeta / "adj").mkdir(parents=True)
         adjuntos = [{"name": "certificado.txt", "archivo": "a1.txt"}, {"name": "logo.png", "archivo": "", "isInline": True}]
-        (carpeta / "adj" / "a1.txt").write_text(CERTIFICADO, encoding="utf-8")
+        # en bytes: un adjunto bajado del buzón llega exacto; write_text pondría \r\n en Windows
+        (carpeta / "adj" / "a1.txt").write_bytes(CERTIFICADO.encode("utf-8"))
         try:
             import fitz  # PyMuPDF, el mismo que usa la conversión
 
@@ -837,7 +838,8 @@ class Http(Base):
         fd._IPS_PERMITIDAS_PRUEBAS.add("127.0.0.1")
 
     def flujo_http(self, ruta="/afiliados", **conf):
-        conf = {"url": self.url + ruta, "timeout_ms": 3000, "salida": "resp", **conf}
+        # 10 s contra el servidor local: con la máquina cargada, 3 s alcanzaban a agotarse
+        conf = {"url": self.url + ruta, "timeout_ms": 10000, "salida": "resp", **conf}
         return flujo([nodo("correo", "entrada_correo", leer_adjuntos=False), nodo("h", "http", **conf),
                       nodo("ok", "salida", desenlace="radicar"), nodo("err_http", "salida", desenlace="manual", motivo="HTTP {{resp.status}}"),
                       nodo("err", "salida", desenlace="descartar", motivo="{{fallo.motivo}}")],
@@ -1747,7 +1749,9 @@ class HttpConCredencial(Http):
         habilitada = {"api": cred("http_bearer", True, secretos=["token"], token=TOKEN, hosts="127.0.0.1")}
         r, ev = self.correr_orden(d, habilitada)
         self.assertEqual(_Servidor.vistas[0]["auth"], f"Bearer {TOKEN}")
-        self.assertFalse(next(e for e in ev if e["tipo"] == "escritura")["bloqueada"])
+        escritura = next((e for e in ev if e["tipo"] == "escritura"), None)
+        self.assertIsNotNone(escritura, f"sin evento de escritura; resultado: {json.dumps(r, ensure_ascii=False, default=str)[:600]}")
+        self.assertFalse(escritura["bloqueada"])
         # GET con credencial: sale al host de la credencial aunque no esté en HTTP_HOSTS_PERMITIDOS
         r, _ = self.correr_orden(self.flujo_http(credencial="api"), bloqueada)
         self.assertEqual(r["variables"]["resp"]["status"], 200)
@@ -1759,6 +1763,21 @@ class HttpConCredencial(Http):
         self.assertTrue(_Servidor.vistas[-1]["auth"].startswith("Basic "))
         self.assertNotIn(TOKEN, self.salida.getvalue())
         self.assertNotIn(CLAVE_SQL, self.salida.getvalue())
+
+    def test_post_sin_respuesta_queda_registrado_como_escritura(self):
+        # El POST llega al destino pero la respuesta no alcanza a volver: la escritura se registra igual.
+        fd._IPS_PERMITIDAS_PRUEBAS.add("127.0.0.1")
+        os.environ["HTTP_HOSTS_PERMITIDOS"] = ""
+        d = self.flujo_http("/lento", metodo="POST", cuerpo={"a": "1"}, credencial="api", timeout_ms=200)
+        habilitada = {"api": cred("http_bearer", True, secretos=["token"], token=TOKEN, hosts="127.0.0.1")}
+        r, ev = self.correr_orden(d, habilitada)
+        escritura = next((e for e in ev if e["tipo"] == "escritura"), None)
+        self.assertIsNotNone(escritura, f"sin evento de escritura; resultado: {json.dumps(r, ensure_ascii=False, default=str)[:600]}")
+        self.assertFalse(escritura["bloqueada"])
+        self.assertIsNone(escritura["status"])
+        self.assertTrue(escritura["error"])
+        self.assertTrue(any(x.get("error") for x in r.get("escrituras", [])))
+        self.assertNotIn(TOKEN, self.salida.getvalue())
 
     def test_positiva_bloqueado_aunque_este_permitido(self):
         os.environ["HTTP_HOSTS_PERMITIDOS"] = "api.positiva.gov.co,positiva.gov.co"
@@ -2663,6 +2682,8 @@ class ProveedoresDeIA(Base):
     def test_vertex_de_verdad(self):
         if os.environ.get("SIN_VERTEX"):
             self.skipTest("SIN_VERTEX")
+        if not (os.environ.get("GCP_PROJECT") or "").strip():
+            self.skipTest("sin GCP_PROJECT (el proyecto de Vertex no tiene valor por defecto)")
         try:
             import google.auth
 
@@ -2695,6 +2716,57 @@ class ParidadDeProveedores(unittest.TestCase):
         r = json.loads(p.stdout.strip().splitlines()[-1])
         self.assertEqual(r["p"], list(pv.PROVEEDORES))
         self.assertEqual(r["c"], tipos)
+
+
+class ProyectoDelEntorno(unittest.TestCase):
+    """El proyecto de Google Cloud sale solo del entorno: sin él, lo que lo necesita falla diciendo cuál falta."""
+
+    def setUp(self):
+        self._previo = {k: os.environ.pop(k, None) for k in ("GCP_PROJECT", "PROYECTO_SECRETOS")}
+
+    def tearDown(self):
+        for k, v in self._previo.items():
+            os.environ.pop(k, None)
+            if v is not None:
+                os.environ[k] = v
+
+    def test_sin_gcp_project_falla_con_el_motivo(self):
+        import proyecto_gcp as pg
+
+        for falta, nombre in ((pg.proyecto_gcp, "GCP_PROJECT"), (pg.proyecto_secretos, "PROYECTO_SECRETOS")):
+            with self.assertRaises(pg.FaltaProyecto) as e:
+                falta()
+            self.assertIn(nombre, str(e.exception))
+            self.assertFalse(pv_base.es_pasajero(e.exception))  # reintentar no lo arregla
+        os.environ["GCP_PROJECT"] = "   "
+        self.assertRaises(pg.FaltaProyecto, pg.proyecto_gcp)
+
+    def test_con_el_entorno_se_usa_ese(self):
+        import proyecto_gcp as pg
+
+        os.environ["GCP_PROJECT"] = " proyecto-de-prueba "
+        self.assertEqual(pg.proyecto_gcp(), "proyecto-de-prueba")
+        self.assertEqual(pg.proyecto_secretos(), "proyecto-de-prueba")
+        os.environ["PROYECTO_SECRETOS"] = "otro-proyecto"
+        self.assertEqual(pg.proyecto_secretos(), "otro-proyecto")
+        self.assertIn("proyecto-de-prueba", pv.PROVEEDORES["vertex"].describir()["autenticacion"])
+
+    def test_vertex_sin_proyecto_no_pide_credenciales(self):
+        import proyecto_gcp as pg
+        from proveedores import familia_gemini as fg
+
+        self.assertIn("sin definir", pv.PROVEEDORES["vertex"].describir()["autenticacion"])
+        with self.assertRaises(pg.FaltaProyecto):
+            fg.Vertex().cliente({}, "sin-proyecto")
+
+    def test_ningun_proyecto_escrito_en_el_codigo(self):
+        import re
+
+        literal = re.compile(r"""["']positiva-sgda-prd-\d+["']""")
+        raices = [AQUI, AQUI.parent / "scripts"]
+        con = [str(f) for r in raices for f in r.rglob("*.py") if "__pycache__" not in f.parts
+               and literal.search(f.read_text(encoding="utf-8"))]
+        self.assertEqual(con, [])
 
 
 # =====================================================================

@@ -27,7 +27,6 @@ if __name__ == "__main__":
     sys.modules.setdefault("asistente", sys.modules[__name__])
 
 API = os.environ.get("API_INTERNA", f"http://127.0.0.1:{os.environ.get('PUERTO', '8080')}")
-PROYECTO = os.environ.get("GCP_PROJECT", "positiva-sgda-prd-416417")
 # Un pedido de varias ediciones encadenadas (ver, ayuda de nodos, agregar, corregir, volver a ver) usa ~20 vueltas.
 MAX_VUELTAS = int(os.environ.get("VERA_MAX_VUELTAS", "30"))
 
@@ -2065,8 +2064,11 @@ def conversar(entrada: Dict[str, Any], aviso: Any = None, seguir: bool = False) 
         CONVERSACION["id"] = entrada.get("conversacion")
     PANTALLA["flujo"] = flujo
     fijar_pedido_de(entrada)
+    from proyecto_gcp import proyecto_gcp
+
+    proyecto = proyecto_gcp()  # antes del ADC: si falta, que lo diga
     cred, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-    cliente = genai.Client(vertexai=True, project=PROYECTO, location="global", credentials=cred,
+    cliente = genai.Client(vertexai=True, project=proyecto, location="global", credentials=cred,
                            http_options=types.HttpOptions(timeout=int(os.environ.get("VERA_TOPE_MS", "75000"))))
     ultimo_pedido = next((m.get("texto") or "" for m in reversed(entrada.get("mensajes") or []) if m.get("rol") == "usuario"), "")
     activos = _grupos_para(ultimo_pedido, entrada.get("pantalla") or {})

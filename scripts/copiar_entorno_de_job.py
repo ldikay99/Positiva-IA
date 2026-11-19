@@ -16,6 +16,7 @@ Copia las variables y los secretos de un job de Cloud Run al entorno cifrado de 
 """
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -52,11 +53,13 @@ def main() -> int:
     a = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     a.add_argument("job")
     a.add_argument("flujo")
-    a.add_argument("--proyecto", default="positiva-sgda-prd-416417")
+    a.add_argument("--proyecto", default=(os.environ.get("GCP_PROJECT") or "").strip(), help="proyecto de Google Cloud (por defecto, GCP_PROJECT del entorno)")
     a.add_argument("--region", default="us-east1")
     a.add_argument("--api", default="http://localhost:8095")
     a.add_argument("--simular", action="store_true")
     x = a.parse_args()
+    if not x.proyecto:
+        a.error("falta el proyecto de Google Cloud: pásalo con --proyecto o define GCP_PROJECT en el entorno")
 
     d = json.loads(gcloud("run", "jobs", "describe", x.job, "--project", x.proyecto, "--region", x.region, "--format", "json"))
     contenedor = d["spec"]["template"]["spec"]["template"]["spec"]["containers"][0]

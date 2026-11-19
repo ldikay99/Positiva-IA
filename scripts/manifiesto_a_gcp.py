@@ -14,6 +14,7 @@ Revisa los comandos antes de correrlos.
 """
 import argparse
 import json
+import os
 import shlex
 import sys
 import urllib.request
@@ -32,11 +33,14 @@ def main() -> int:
     a = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     a.add_argument("flujo")
     a.add_argument("--job", required=True, help="nombre del job (o servicio) de Cloud Run")
-    a.add_argument("--proyecto", default="positiva-sgda-prd-416417")
+    a.add_argument("--proyecto", default=(os.environ.get("GCP_PROJECT") or "").strip(), help="proyecto de Google Cloud (por defecto, GCP_PROJECT del entorno)")
     a.add_argument("--region", default="us-east1")
-    a.add_argument("--cuenta", default="<cuenta-de-servicio-del-job>@positiva-sgda-prd-416417.iam.gserviceaccount.com")
+    a.add_argument("--cuenta", default="", help="cuenta de servicio del job (por defecto, un marcador en el proyecto)")
     a.add_argument("--api", default="http://localhost:8095")
     x = a.parse_args()
+    if not x.proyecto:
+        a.error("falta el proyecto de Google Cloud: pásalo con --proyecto o define GCP_PROJECT en el entorno")
+    x.cuenta = x.cuenta or f"<cuenta-de-servicio-del-job>@{x.proyecto}.iam.gserviceaccount.com"
 
     manifiesto = pedir(x.api, f"/api/flujos/{x.flujo}/manifiesto")
     entorno = pedir(x.api, f"/api/flujos/{x.flujo}/entorno")

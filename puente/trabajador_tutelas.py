@@ -70,7 +70,10 @@ os.environ.pop("MODO_UAT", None)
 for _s in _SECRETOS:
     if not solo_lectura.definida(_s):
         os.environ[_s] = "no-se-usa"
-os.environ.setdefault("TUTELAS-GCP-PROJECT", os.environ.get("GCP_PROJECT", "positiva-sgda-prd-416417"))
+# El proyecto de Vertex del motor sale del entorno (TUTELAS-GCP-PROJECT o GCP_PROJECT), nunca de su valor por
+# defecto, que es el del job de producción: sin ninguno de los dos, `procesar` lo dice y no llama al modelo.
+if not solo_lectura.definida("TUTELAS-GCP-PROJECT") and solo_lectura.definida("GCP_PROJECT"):
+    os.environ["TUTELAS-GCP-PROJECT"] = os.environ["GCP_PROJECT"].strip()
 # El Cloud Run Job de producción define TUTELAS-RADICAR-ENLACE-CON-ADJUNTOS=true
 # (gcloud run jobs describe ms-radicacion-ia-tutelas): con enlace y PDF anexo, radica.
 os.environ.setdefault("TUTELAS-RADICAR-ENLACE-CON-ADJUNTOS", "true")
@@ -751,6 +754,11 @@ def procesar(orden: dict) -> None:
                motivo="con la radicación real solo se corren hilos traídos del buzón real de tutelas")
         return
     if "ia" not in _servicios:
+        if not solo_lectura.definida("TUTELAS-GCP-PROJECT"):
+            evento("resultado", caso=caso, accion="error", segundos=0,
+                   motivo="falta GCP_PROJECT (o TUTELAS-GCP-PROJECT): define en el entorno el id del proyecto de "
+                          "Google Cloud con Vertex AI; Vera no trae uno por defecto")
+            return
         _servicios["ia"] = _ia_observada()
         if REAL:
             from Tutelas.services.juzgados_service import JuzgadosService

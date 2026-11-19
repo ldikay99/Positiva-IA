@@ -120,8 +120,9 @@ Licencias: lo que agrega el visor es MIT, BSD o Apache-2.0. El motor, en cambio,
 PyMuPDF (AGPL-3.0) para leer los PDF (`pipeline/conversion.py` y `pipeline/volumen.py`); el visor no
 lo cambia porque usa el motor tal cual. Para quitarlo habría que reemplazarlo en el motor.
 
-`RUTA_CREDENCIALES` es el archivo de credenciales de Google con acceso a Vertex AI en el proyecto
-`positiva-sgda-prd-416417` (el ADC de `gcloud auth application-default login` o una llave de
+`GCP_PROJECT` (obligatorio, sin valor por defecto) es el id del proyecto de Google Cloud con Vertex AI.
+`RUTA_CREDENCIALES` es el archivo de credenciales de Google con acceso a Vertex AI en ese proyecto
+(el ADC de `gcloud auth application-default login` o una llave de
 cuenta de servicio). `RUTA_BANDEJA` es la carpeta de correos: una subcarpeta por correo con
 `mensaje.json` (formato de Microsoft Graph) y sus adjuntos en `adj/`.
 

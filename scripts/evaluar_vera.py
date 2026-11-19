@@ -556,6 +556,7 @@ def voz_simulada(pedido, modelo):
     sys.path.insert(0, "/app/puente")
     import asistente
     import voz
+    from proyecto_gcp import proyecto_gcp
     from google import genai
     from google.genai import types
 
@@ -564,7 +565,7 @@ def voz_simulada(pedido, modelo):
     asistente.fijar_pedido(pedido, f"voz-simulada:{time.time_ns()}")
     voz.enviar = lambda tipo, **d: emitidos.append((tipo, d))
     asistente.emitir = voz._emitir_en_llamada
-    cliente = genai.Client(vertexai=True, project=asistente.PROYECTO, location="global")
+    cliente = genai.Client(vertexai=True, project=proyecto_gcp(), location="global")
     decl = [types.FunctionDeclaration(**h) for h in voz.herramientas_de_voz()]
     config = types.GenerateContentConfig(system_instruction=asistente.SISTEMA + voz.NOTA_VOZ, tools=[types.Tool(function_declarations=decl)], temperature=0.2)
     contenidos = [types.Content(role="user", parts=[types.Part(text=pedido)])]

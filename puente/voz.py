@@ -261,9 +261,17 @@ async def principal() -> None:
             if not llave:
                 ultimo_error = "falta la llave de Gemini en la conexión de la voz de Vera"
                 continue
-            cliente = genai.Client(api_key=llave)
+            # La Live API solo está en v1beta (google-genai 3 usa v1 por defecto con llave).
+            cliente = genai.Client(api_key=llave, http_options=types.HttpOptions(api_version="v1beta"))
         else:
-            cliente = genai.Client(vertexai=True, project=asistente.PROYECTO, location=region, credentials=cred)
+            from proyecto_gcp import FaltaProyecto, proyecto_gcp
+
+            try:
+                proyecto = proyecto_gcp()
+            except FaltaProyecto as e:
+                ultimo_error = str(e)
+                continue
+            cliente = genai.Client(vertexai=True, project=proyecto, location=region, credentials=cred)
 
         async def abrir(handle: Any = None, cliente: Any = cliente, modelo: str = modelo) -> Any:
             """Abre una sesión (nueva o reanudada) y devuelve (contexto, sesión)."""

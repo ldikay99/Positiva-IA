@@ -47,17 +47,22 @@ def a_png(datos: bytes) -> bytes:
 def _cliente_google(proveedor: str, cred: dict, flujo: str, ubicacion: str):
     from google import genai
 
-    from proveedores import familia_gemini as fg
+    from proyecto_gcp import proyecto_gcp
 
     k = (proveedor, huella(cred), flujo or "-", ubicacion)
     if k not in _clientes:
         if proveedor == "vertex":
             import google.auth
 
+            proyecto = proyecto_gcp()  # antes del ADC: si falta, que lo diga
             adc, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-            _clientes[k] = genai.Client(vertexai=True, project=fg.PROYECTO, location=ubicacion, credentials=adc)
+            _clientes[k] = genai.Client(vertexai=True, project=proyecto, location=ubicacion, credentials=adc)
         else:
-            _clientes[k] = genai.Client(api_key=str(cred.get("api_key") or ""))
+            from google.genai import types
+
+            # v1beta, como antes de google-genai 3 (que usa v1, sin los modelos -preview de imagen).
+            _clientes[k] = genai.Client(api_key=str(cred.get("api_key") or ""),
+                                        http_options=types.HttpOptions(api_version="v1beta"))
     return _clientes[k]
 
 

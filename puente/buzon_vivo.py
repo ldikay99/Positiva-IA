@@ -32,7 +32,6 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
-PROYECTO_SECRETOS = os.environ.get("PROYECTO_SECRETOS", "positiva-sgda-prd-416417")
 SECRETOS = {
     "MICROSOFT_TENANT_ID": "PQRD_MICROSOFT_TENANT_ID",
     "MICROSOFT_CLIENT_ID": "PQRD_MICROSOFT_CLIENT_ID",
@@ -81,12 +80,15 @@ def credenciales() -> Dict[str, str]:
     import google.auth.transport.requests
     import requests
 
+    from proyecto_gcp import proyecto_secretos
+
+    proyecto = proyecto_secretos()  # antes de pedir credenciales: sin proyecto no hay a quién pedirle
     cred, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
     cred.refresh(google.auth.transport.requests.Request())
     leidos = {}
     for variable, secreto in SECRETOS.items():
         r = requests.get(
-            f"https://secretmanager.googleapis.com/v1/projects/{PROYECTO_SECRETOS}"
+            f"https://secretmanager.googleapis.com/v1/projects/{proyecto}"
             f"/secrets/{secreto}/versions/latest:access",
             headers={"Authorization": f"Bearer {cred.token}"}, timeout=20)
         if r.status_code != 200:

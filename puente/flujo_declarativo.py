@@ -90,6 +90,7 @@ from conectores import expresion as c_expresion  # noqa: E402
 from conectores import hojas as c_hojas  # noqa: E402
 from conectores import sql as c_sql  # noqa: E402
 from conectores import tablas as c_tablas  # noqa: E402
+from proyecto_gcp import proyecto_gcp  # noqa: E402  (GCP_PROJECT, sin proyecto por defecto)
 import proveedores as ia_proveedores  # noqa: E402  (la capa de proveedores de IA: Vertex, Gemini, OpenAI, Claude…)
 import nodos_producto as np_  # noqa: E402  (aprobación humana, documentos, datos personales, hojas, mensajería, IA, datos y control)
 import nodos_integraciones as ni_  # noqa: E402  (Google Workspace, Microsoft 365, OpenAPI y disparadores por evento)
@@ -107,7 +108,6 @@ BANDEJA = Path(os.environ.get("RUTA_BANDEJA", RAIZ / "datos" / "bandeja"))
 VIVO = Path(os.environ.get("RUTA_VIVO", RAIZ / "datos" / "vivo"))
 # Los correos que trae el disparador correo_nuevo (uno por carpeta, como la bandeja).
 RECIBIDOS = Path(os.environ.get("RUTA_RECIBIDOS") or (ruta_estado() / "recibidos"))
-PROYECTO = os.environ.get("GCP_PROJECT", "positiva-sgda-prd-416417")
 
 # La conversión de adjuntos sale del motor de PQRD: se carga como él, sin
 # credenciales reales y en modo prueba.
@@ -1651,8 +1651,9 @@ def _genai():
         import google.auth
         from google import genai
 
+        proyecto = proyecto_gcp()  # antes del ADC: si falta, que lo diga
         cred, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-        _cliente["c"] = genai.Client(vertexai=True, project=PROYECTO, location="global", credentials=cred)
+        _cliente["c"] = genai.Client(vertexai=True, project=proyecto, location="global", credentials=cred)
     return _cliente["c"]
 
 
@@ -2831,6 +2832,15 @@ class Ejecucion(np_.NodosProducto, ni_.NodosIntegraciones, ns_.NodosSalidas):
             r = self._con_reintentos(n, una, f"{p['metodo']} {p['host']}")
         except RespuestaTransitoria as e:
             r = e.respuesta
+        except Exception as e:
+            if p["metodo"] != "GET":
+                # La petición pudo llegar al destino aunque no volviera respuesta (tiempo agotado, conexión cortada):
+                # la escritura queda registrada igual, sin estado, para que la auditoría no pierda ninguna.
+                fallo = f"{type(e).__name__}: {e}"[:300]
+                evento("escritura", sistema="http", operacion=p["metodo"], destino=p["url"], bloqueada=False, simulada=False, detalle=vista,
+                       nodo=n["id"], credencial=p["credencial"], status=None, error=fallo)
+                self.escrituras.append({**vista, "status": None, "bloqueado": False, "nodo": n["id"], "error": fallo})
+            raise
         if r["status"] < 400 and isinstance(c.get("paginacion"), dict) and p["metodo"] == "GET":
             r = self._paginar_http(n, c, p, r, una)
         if descargar and r["status"] < 400:

@@ -14,8 +14,8 @@ from typing import Any, Dict, List, Tuple
 
 from proveedores.base import ErrorDeProveedor, Peticion, Resultado, enmascarar, huella, instruccion_json, secretos_de
 from proveedores.registro import Adaptador, registrar
+from proyecto_gcp import descripcion_vertex, proyecto_gcp
 
-PROYECTO = os.environ.get("GCP_PROJECT", "positiva-sgda-prd-416417")
 UBICACION = os.environ.get("GCP_LOCATION", "global")
 
 _clientes: Dict[Tuple[str, str, str], Any] = {}
@@ -49,10 +49,15 @@ class _Google(Adaptador):
                 if self.vertex:
                     import google.auth
 
+                    proyecto = proyecto_gcp()  # antes del ADC: si falta, que lo diga
                     adc, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-                    _clientes[k] = genai.Client(vertexai=True, project=PROYECTO, location=UBICACION, credentials=adc)
+                    _clientes[k] = genai.Client(vertexai=True, project=proyecto, location=UBICACION, credentials=adc)
                 else:
-                    _clientes[k] = genai.Client(api_key=str(cred.get("api_key") or ""))
+                    from google.genai import types
+
+                    # v1beta, como antes de google-genai 3 (que usa v1, sin los alias -latest ni los -preview).
+                    _clientes[k] = genai.Client(api_key=str(cred.get("api_key") or ""),
+                                                http_options=types.HttpOptions(api_version="v1beta"))
             return _clientes[k]
 
     @staticmethod
@@ -122,7 +127,7 @@ class Vertex(_Google):
     id = "vertex"
     nombre = "Vertex AI (Gemini)"
     descripcion = "Gemini en Google Cloud con la identidad del servicio (lo que usan PQRD y tutelas). No necesita llave."
-    autenticacion = "Identidad del servicio (ADC) del proyecto " + PROYECTO
+    autenticacion = property(lambda self: descripcion_vertex())  # el proyecto sale de GCP_PROJECT al mostrarlo
     tipo_credencial = None
     requiere_credencial = False
     vertex = True
