@@ -1,0 +1,62 @@
+# Imagen de la plataforma (Dockerfile de la raíz): construcción y auditoría.
+# Sin despliegue y sin secretos. La construcción misma falla si `npm audit`
+# (servidor/ y web/) o `pip-audit` (dependencias de Python de la imagen)
+# encuentran cualquier vulnerabilidad.
+# Las imágenes de los jobs tienen su propio pipeline (motor/ y motores/tutelas/).
+
+trigger:
+  - dev
+  - uat
+  - prod
+
+pr:
+  - dev
+  - uat
+  - prod
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  IMAGE_NAME: positiva-ia
+  DOCKER_BUILDKIT: 1
+
+stages:
+  - stage: Build_Docker
+    jobs:
+      - job: Build_Docker
+        timeoutInMinutes: 60
+        steps:
+          - checkout: self
+            fetchDepth: 1
+            persistCredentials: false
+
+          - script: docker version && docker compose version
+            displayName: Versiones de Docker
+
+          - script: |
+              set -euo pipefail
+              # Valores de prueba: solo para comprobar que el compose interpola y es válido.
+              mkdir -p "$(Agent.TempDirectory)/vera/bandeja"
+              echo '{}' > "$(Agent.TempDirectory)/vera/adc.json"
+              RUTA_CREDENCIALES="$(Agent.TempDirectory)/vera/adc.json" \
+              RUTA_BANDEJA="$(Agent.TempDirectory)/vera/bandeja" \
+              GCP_PROJECT=validacion \
+                docker compose config -q
+            displayName: Validar docker-compose.yml
+
+          - script: |
+              set -euo pipefail
+              docker build --pull --progress=plain \
+                --label "org.opencontainers.image.revision=$(Build.SourceVersion)" \
+                -t "$(IMAGE_NAME):$(Build.SourceVersion)" .
+            displayName: Construir imagen (con npm audit y pip-audit)
+
+          - script: |
+              set -euo pipefail
+              docker run --rm --entrypoint cat "$(IMAGE_NAME):$(Build.SourceVersion)" /opt/venv/pip-audit.txt
+            displayName: Constancia de pip-audit
+
+          - script: docker image rm "$(IMAGE_NAME):$(Build.SourceVersion)" || true
+            displayName: Limpiar
+            condition: always()

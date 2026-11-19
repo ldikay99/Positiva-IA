@@ -1,11 +1,11 @@
 # Python CLI for PQRD Radicacion
-FROM python:3.12-slim
+# Base fijada por digest: python:3.12.16-slim-trixie (la serie 3.12-slim del job).
+FROM python:3.12.16-slim-trixie@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies (sin gcc: todas las dependencias se instalan de ruedas)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
     tesseract-ocr \
     tesseract-ocr-spa \
     poppler-utils \
@@ -52,10 +52,12 @@ COPY correr.py .
 # El workspace de cada correo y los informes por ejecucion. El sistema de
 # archivos del Job es efimero, asi que solo sirven dentro de la corrida: el
 # informe tambien se imprime, y ahi lo recoge Cloud Logging.
-RUN mkdir -p /app/workspace /app/logs
+# salidas_prueba es el TEST_OUTPUT_DIR por defecto del MODO_TEST.
+RUN mkdir -p /app/workspace /app/logs /app/salidas_prueba
 
-# Change ownership
-RUN chown -R appuser:appuser /app
+# Change ownership: el codigo queda de root (solo lectura para appuser); el
+# usuario solo escribe en sus carpetas de trabajo.
+RUN chown appuser:appuser /app/workspace /app/logs /app/salidas_prueba
 
 # Switch to non-root user
 USER appuser

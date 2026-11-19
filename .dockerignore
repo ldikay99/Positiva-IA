@@ -1,8 +1,51 @@
+# Nada de secretos en el contexto de construcción.
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/adc.json
+**/application_default_credentials.json
+**/*credentials*.json
+**/service-account*.json
+**/.clave-credenciales
+
+# Control de versiones y herramientas locales.
+.git
+**/.git
+**/.gitignore
+**/.gitattributes
+**/.claude
+**/.agents
+**/.vscode
+**/.idea
+**/.DS_Store
+**/.local_test
+
+# Dependencias y artefactos: se instalan y construyen dentro de la imagen.
 **/node_modules
 **/dist
 **/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.venv
+**/venv
+
+# Datos, pruebas y salidas de corridas (pueden traer PII real).
 datos
-.env
-.git
+**/corpus
+**/workspace
+**/logs
+**/salidas_prueba
+**/*.log
 motor/tests
 motor/harness
+
+# Lo que no corre en la imagen.
+docs
+scripts
+Dockerfile
+docker-compose.yml
+.dockerignore
+azure-pipelines.yml

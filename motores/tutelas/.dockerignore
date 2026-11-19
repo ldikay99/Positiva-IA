@@ -1,0 +1,35 @@
+# Contexto de la imagen del job (motores/tutelas/ como raíz). Nada de secretos ni datos.
+**/.env
+**/.env.*
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/adc.json
+**/application_default_credentials.json
+**/*credentials*.json
+**/service-account*.json
+
+.git
+**/.gitignore
+**/.claude
+**/.agents
+**/.vscode
+**/.DS_Store
+**/.local_test
+
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.venv
+**/venv
+
+# Salidas del MODO_TEST (traen PII real) y registros.
+**/salidas_prueba
+**/workspace
+**/logs
+**/*.log
+
+Dockerfile
+.dockerignore
+azure-pipelines.yml

@@ -2,10 +2,14 @@ services:
   positiva-ia:
     build: .
     image: positiva-ia:local
+    restart: unless-stopped
+    # Solo en la máquina por defecto: para exponerlo, IP_PUBLICADA=0.0.0.0 (o la IP de
+    # la interfaz) detrás de un proxy con TLS y autenticación.
     ports:
-      - "${PUERTO:-8080}:8080"
+      - "${IP_PUBLICADA:-127.0.0.1}:${PUERTO:-8080}:8080"
     environment:
-      GCP_PROJECT: ${GCP_PROJECT:-positiva-sgda-prd-416417}
+      # Sin valor por defecto: el proyecto de Vertex AI se elige a propósito en .env.
+      GCP_PROJECT: ${GCP_PROJECT:?define GCP_PROJECT en .env (proyecto de GCP con Vertex AI)}
       TRABAJADORES_MAX: ${TRABAJADORES_MAX:-8}
     volumes:
       # Credenciales de Vertex (ADC de gcloud o llave de cuenta de servicio), solo lectura.
@@ -16,6 +20,27 @@ services:
       - positiva-ia-datos:/datos/estado
       # Archivos de trabajo de los flujos (archivo_leer/guardar, SQLite): sobreviven a cada reconstrucción.
       - positiva-ia-archivos:/datos/archivos
+    # Sistema de archivos de solo lectura: la app escribe solo en los volúmenes de
+    # arriba y en /tmp (el espacio de trabajo de cada correo, en memoria).
+    read_only: true
+    tmpfs:
+      - /tmp:size=${TMP_MB:-2048}m,mode=1777,nosuid,nodev
+      - /home/app:size=64m,uid=1001,gid=1001,mode=0700,nosuid,nodev
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Topes del contenedor. El servidor reparte la memoria entre TRABAJADORES_MAX
+    # (o usa MEMORIA_TRABAJADOR_MB); cada trabajador y cada tesseract suma procesos e hilos.
+    mem_limit: ${MEMORIA_MAX:-8g}
+    pids_limit: ${PROCESOS_MAX:-1024}
+    # El servidor detiene sus trabajadores al recibir SIGTERM (vía tini).
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
 volumes:
   positiva-ia-datos:
   positiva-ia-archivos:
