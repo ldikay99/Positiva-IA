@@ -1,10 +1,14 @@
-requests>=2.31.0
-python-dotenv>=1.0.0
-redis>=5.0.0
-google-genai>=1.0.0
-google-auth>=2.0.0
-fpdf2>=2.7.0
-psycopg2-binary>=2.9.0
-PyMuPDF>=1.24.0
-pytesseract>=0.3.10
-pillow>=10.0.0
+# Versiones exactas para que la imagen sea reproducible y se pueda auditar (pip-audit -r).
+# El Dockerfile de la raiz instala este archivo junto con motor/requirements.txt: lo que
+# comparten (python-dotenv, redis, google-genai, PyMuPDF, pytesseract, Pillow) lleva la
+# misma version que alli, o pip no resuelve la imagen.
+requests==2.34.2
+python-dotenv==1.2.3
+redis==8.1.0
+google-genai==2.23.0
+google-auth==2.62.2
+fpdf2==2.9.0
+psycopg2-binary==2.9.13
+PyMuPDF==1.28.2
+pytesseract==0.3.13
+pillow==13.0.0
