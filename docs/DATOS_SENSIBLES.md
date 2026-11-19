@@ -50,8 +50,8 @@ Ley 1581 de 2012 de protección de datos personales.
 ## Marco de las reglas
 
 Las secciones Cifrado, Retención y Borrado son **reglas a implementar** en la versión multiorganización en GCP (Cloud SQL
-PostgreSQL, Cloud Storage, Secret Manager y Cloud KMS). Cada una dice
-primero cómo es hoy. Los plazos son una **propuesta que aprueba el responsable** del tratamiento de cada organización.
+PostgreSQL, Cloud Storage, Secret Manager y Cloud KMS), sobre el modelo de datos de
+[MODELO_DE_DATOS.md](MODELO_DE_DATOS.md). Cada una dice primero cómo es hoy. Los plazos son una **propuesta que aprueba el responsable** del tratamiento de cada organización.
 
 | Norma | Qué exige aquí |
 |---|---|
