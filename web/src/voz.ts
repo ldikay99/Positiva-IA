@@ -457,7 +457,7 @@ export function useVoz(alEvento: (e: EventoVoz) => void) {
     setEstado("terminando");
     // Si el servidor no cierra a tiempo, se cierra aquí (dejando sonar lo que falte).
     setTimeout(() => r.current.ws && r.current.ws.readyState !== WebSocket.CLOSED && r.current.ws.close(), 4000);
-  }, [limpiar]);
+  }, []);
 
   const alternarMic = useCallback(() => {
     const s = r.current;

@@ -3,7 +3,7 @@ import { motion } from "motion/react";
 import { usar } from "../estado.ts";
 import { Icono, type NombreIcono } from "../iconos.tsx";
 import { usarEditor } from "../editor/almacen.ts";
-import { resultadosDe, usarCorridaVisible } from "../editor/corrida.ts";
+import { resultadosDe, useCorridaVisible } from "../editor/corrida.ts";
 import { RAMA_ERROR, asaDeArista, asasDe, configInicial, esDefecto, resumenConfig, textoJson, tieneRamaError, variablesDisponibles, visualDe, type Esquema, type NodoDef, type TipoNodo } from "../editor/modelo.ts";
 import { segundos } from "../progreso.ts";
 import { Codigo, Deslizador, EditorJson, Interruptor } from "./Editores.tsx";
@@ -233,7 +233,7 @@ function Ayuda({ n, tipo, usarEjemplo }: { n: NodoDef; tipo: TipoNodo | undefine
 }
 
 function Datos({ n }: { n: NodoDef }) {
-  const corrida = usarCorridaVisible();
+  const corrida = useCorridaVisible();
   const r = useMemo(() => resultadosDe(corrida)[n.id], [corrida, n.id]);
   if (!corrida) return <div className="vacio grande"><Icono n="datos" tam={26} /><span>Corre el flujo para ver aquí lo que este nodo recibió y dejó.</span></div>;
   if (!r) return <div className="vacio">En la corrida {corrida.caso} el flujo no pasó por este nodo.</div>;
@@ -271,7 +271,7 @@ export function PanelNodo({ id }: { id: string }) {
   const enfocar = usar((s) => s.enfocar);
   const centrar = usar((s) => s.centrar);
   const flujoId = usarEditor((s) => s.flujo);
-  const corrida = usarCorridaVisible();
+  const corrida = useCorridaVisible();
   const [seccion, setSeccion] = useState<Seccion>("configurar");
   const mapa = useMemo(() => new Map(tipos.map((t) => [t.tipo, t])), [tipos]);
   const n = def?.nodos.find((x) => x.id === id);

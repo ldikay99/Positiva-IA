@@ -9,24 +9,25 @@ import {
   Panel,
   Position,
   ReactFlow,
-  applyNodeChanges,
+  NodeChangeset,
   getBezierPath,
+  useNodesStore,
   useReactFlow,
-  useStore,
+  useUpdateNodeInternals,
+  useViewportStore,
   type Connection,
   type Edge,
   type EdgeProps,
   type FinalConnectionState,
   type Node,
-  type NodeChange,
   type NodeProps,
 } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
+import "@xyflow/react/style.css";
 import { AnimatePresence, motion } from "motion/react";
 import { usar } from "../estado.ts";
 import { Icono, type NombreIcono } from "../iconos.tsx";
 import { hayCambios, usarEditor, type Version } from "../editor/almacen.ts";
-import { resultadosDe, usarCorridaVisible, type ResultadoNodo } from "../editor/corrida.ts";
+import { resultadosDe, useCorridaVisible, type ResultadoNodo } from "../editor/corrida.ts";
 import {
   ANCHO_NODO,
   ORDEN_CATEGORIAS,
@@ -135,9 +136,14 @@ function VerDatos({ r }: { r: ResultadoNodo }) {
 
 // -------------------------------------------------------------------- nodo
 
-const NodoEditor = memo(function NodoEditor({ data, selected }: NodeProps<Node<DatosNodo>>) {
+const NodoEditor = memo(function NodoEditor({ id, data, selected }: NodeProps<Node<DatosNodo>>) {
   const { n, tipo, asas, resultado: r } = data;
   const disparador = Boolean(tipo?.disparador);
+  // React Flow mide las asas solo cuando el nodo cambia de tamaño. Si cambian sin cambiar el tamaño
+  // (al llegar los tipos, «sigue» pasa a «ok»; al renombrar una salida), hay que pedirle que las vuelva a medir.
+  const actualizarInternos = useUpdateNodeInternals();
+  const firmaAsas = `${disparador ? "" : "e"}|${asas.map((a) => a.id).join("|")}|${tieneRamaError(tipo) ? RAMA_ERROR : ""}`;
+  useEffect(() => actualizarInternos(id), [id, firmaAsas, actualizarInternos]);
   const vis = visualDe(disparador ? "disparador" : tipo?.categoria);
   const deshabilitado = n.config.deshabilitado === true;
   return (
@@ -576,7 +582,7 @@ export function EditorFlujo() {
   const st = usarEditor();
   const { definicion: def, tipos, tiposCargados, problemas, resaltados } = st;
   const rf = useReactFlow();
-  const corrida = usarCorridaVisible();
+  const corrida = useCorridaVisible();
   const resultados = useMemo(() => resultadosDe(corrida), [corrida]);
   const mapa = useMemo(() => new Map((tipos.length ? tipos : TIPOS_MINIMOS).map((t) => [t.tipo, t])), [tipos]);
   const [nodos, setNodos] = useState<Node<DatosNodo>[]>([]);
@@ -590,7 +596,18 @@ export function EditorFlujo() {
   const motivoRef = useRef<string | null>(null);
   const envoltura = useRef<HTMLDivElement>(null);
   const encuadrado = useRef<string | null>(null);
-  const lejos = useStore((s) => s.transform[2] < 0.55);
+  const lejos = useViewportStore((s) => s.transform[2] < 0.55);
+  // Las asas que React Flow ya midió en cada nodo. Un cable no puede apuntar a un asa que aún no se mide
+  // (React Flow no lo dibuja y avisa); se dibuja apenas se mida. Texto para que el selector sea estable.
+  const firmaMedidas = useNodesStore((s) => {
+    const m: [string, string[]][] = [];
+    for (const [id, x] of s.nodeLookup) {
+      const b = x.internals.handleBounds;
+      if (b) m.push([id, [...(b.source ?? []), ...(b.target ?? [])].map((h) => `${h.type}:${h.id ?? ""}`)]);
+    }
+    return JSON.stringify(m);
+  });
+  const asasMedidas = useMemo(() => new Map((JSON.parse(firmaMedidas) as [string, string[]][]).map(([id, l]) => [id, new Set(l)])), [firmaMedidas]);
   const seleccionado = foco?.tipo === "nodo" ? foco.id : null;
 
   // Abrir el flujo y los catálogos.
@@ -681,13 +698,18 @@ export function EditorFlujo() {
         const recorrido = Boolean(ro && ro.siguiente === a.hacia && rd);
         const estado: DatosCable["estado"] = recorrido ? (rd?.estado === "activo" ? "activo" : "recorrido") : "inactivo";
         const id = `${a.desde}|${i}|${a.hacia}`;
+        const sourceHandle = `s:${asas.some((x) => x.id === asa) || error ? asa : (asas[0]?.id ?? "*")}`;
+        // Nodo ya medido pero sin esa asa todavía (sus salidas acaban de cambiar): se espera a la nueva medida.
+        const mo = asasMedidas.get(a.desde);
+        const md = asasMedidas.get(a.hacia);
+        if ((mo && !mo.has(`source:${sourceHandle}`)) || (md && !md.has("target:e"))) return null;
         const sel = aristaSel === id;
         const color = estado !== "inactivo" ? (estado === "activo" ? "#0094ff" : "#137a02") : sel ? "#015b9d" : error ? "#c73d2b" : "#a9b7cc";
         return {
           id,
           source: a.desde,
           target: a.hacia,
-          sourceHandle: `s:${asas.some((x) => x.id === asa) || error ? asa : (asas[0]?.id ?? "*")}`,
+          sourceHandle,
           targetHandle: "e",
           type: "cable",
           selected: sel,
@@ -695,9 +717,10 @@ export function EditorFlujo() {
           data: { cuando: asas.length > 1 || error || (a.cuando && !asas.some((x) => x.id === a.cuando)) ? (a.cuando ?? "") : "", error, estado, borrar: () => borrarArista(i) },
           markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color },
         };
-      });
+      })
+      .filter((c): c is NonNullable<typeof c> => c !== null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [def, mapa, resultados, aristaSel]);
+  }, [def, mapa, resultados, aristaSel, asasMedidas]);
 
   // ---------------------------------------------------------- acciones
 
@@ -756,7 +779,7 @@ export function EditorFlujo() {
     void rf.setCenter(n.position.x + (n.measured?.width ?? ANCHO_NODO) / 2 + tapado / z, n.position.y + (n.measured?.height ?? 120) / 2, { zoom: z, duration: 450 });
   }, [rf]);
 
-  const encuadrar = useCallback(() => void rf.fitView({ padding: 0.18, duration: 400, maxZoom: 1.05 }), [rf]);
+  const encuadrar = useCallback(() => void rf.fitView({ padding: "7.6%", duration: 400, maxZoom: 1.05 }), [rf]);
 
   const ordenar = useCallback(() => {
     usarEditor.getState().cambiar((d) => ({ ...d, disenio: autoOrdenar(d, mapa) }));
@@ -845,10 +868,10 @@ export function EditorFlujo() {
 
   // ---------------------------------------------------------- arrastre
 
-  const alCambiarNodos = useCallback((cambios: NodeChange<Node<DatosNodo>>[]) => {
+  const alCambiarNodos = useCallback((cambios: NodeChangeset<Node<DatosNodo>>) => {
     // La selección la maneja el foco; lo demás (medidas, posición en arrastre) se aplica aquí.
-    const utiles = cambios.filter((c) => c.type !== "select" && c.type !== "remove");
-    if (utiles.length) setNodos((ns) => applyNodeChanges(utiles, ns));
+    const utiles = new NodeChangeset(cambios.toArray().filter((c) => c.type !== "select" && c.type !== "remove"));
+    if (!utiles.isEmpty()) setNodos((ns) => utiles.applyTo(ns));
   }, []);
 
   const alSoltarNodo = useCallback((_: unknown, __: Node, movidos: Node[]) => {
@@ -914,7 +937,7 @@ export function EditorFlujo() {
     encuadrado.current = def.id;
     // En un teléfono se arranca legible (por el disparador), no con todo diminuto.
     const angosto = (envoltura.current?.clientWidth ?? 1000) < 600;
-    setTimeout(() => void rf.fitView({ padding: 0.2, maxZoom: 1, minZoom: angosto ? 0.62 : 0.2, duration: 0, ...(angosto ? { nodes: def.nodos.slice(0, 2).map((n) => ({ id: n.id })) } : {}) }), 30);
+    setTimeout(() => void rf.fitView({ padding: "8.3%", maxZoom: 1, minZoom: angosto ? 0.62 : 0.2, duration: 0, ...(angosto ? { nodes: def.nodos.slice(0, 2).map((n) => ({ id: n.id })) } : {}) }), 30);
   }, [def, nodos, rf]);
 
   useEffect(() => {
@@ -936,7 +959,7 @@ export function EditorFlujo() {
         if (d.modo === "ver_todo") c.encuadrar();
         else if (d.modo === "acercar") void c.rf.zoomIn({ duration: 250 });
         else if (d.modo === "alejar") void c.rf.zoomOut({ duration: 250 });
-        else if (d.modo === "restablecer") void c.rf.fitView({ padding: 0.2, maxZoom: 1, duration: 400 });
+        else if (d.modo === "restablecer") void c.rf.fitView({ padding: "8.3%", maxZoom: 1, duration: 400 });
         return;
       }
       if (d.accion !== "editor") return;
@@ -1124,6 +1147,8 @@ export function EditorFlujo() {
             snapToGrid
             snapGrid={[8, 8]}
             proOptions={{ hideAttribution: true }}
+            forceColorMode="light"
+            elevateEdgesOnSelect={false}
             className={lejos ? "lejos" : ""}
             connectionLineStyle={{ stroke: "#0094ff", strokeWidth: 2 }}
           >

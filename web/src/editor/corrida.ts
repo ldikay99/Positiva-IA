@@ -45,6 +45,6 @@ export function resultadosDe(corrida: Corrida | undefined): Record<string, Resul
 }
 
 /** La corrida que el lienzo muestra, si es de este flujo. */
-export function usarCorridaVisible(): Corrida | undefined {
+export function useCorridaVisible(): Corrida | undefined {
   return usar((s) => (s.corridaVisible ? s.corridas[s.corridaVisible] : undefined));
 }

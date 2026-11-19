@@ -8,17 +8,16 @@ import {
   Panel,
   Position,
   ReactFlow,
-  applyNodeChanges,
   getSmoothStepPath,
   useReactFlow,
-  useStore,
+  useViewportStore,
   type Edge,
   type EdgeProps,
   type Node,
-  type NodeChange,
+  type NodeChangeset,
   type NodeProps,
 } from "@xyflow/react";
-import "@xyflow/react/dist/style.css";
+import "@xyflow/react/style.css";
 import { AnimatePresence, motion } from "motion/react";
 import { CLAVE_POSICIONES, guardarLocal, leerLocal, usar } from "../estado.ts";
 import { ACCIONES, ANCLA_DEL_PUNTO, CATEGORIAS, FASES, FASE_DEL_FINAL, PUNTOS, categoria, fraseDeRegla, type Categoria } from "../flujo.ts";
@@ -713,7 +712,7 @@ function LienzoDeCodigo() {
   const [minimapa, setMinimapa] = useState(() => window.innerWidth >= 1680);
   const encuadrado = useRef(false);
   // Zoom semántico: de lejos cada nodo muestra solo su categoría y su nombre, en grande.
-  const lejos = useStore((s) => s.transform[2] < 0.62);
+  const lejos = useViewportStore((s) => s.transform[2] < 0.62);
 
   const reglas = useMemo(() => {
     const guardadas = configuracion?.reglas ?? [];
@@ -917,7 +916,7 @@ function LienzoDeCodigo() {
       .sort((x, y) => Number(x.data.estado !== "inactivo" || x.data.resaltado) - Number(y.data.estado !== "inactivo" || y.data.resaltado));
   }, [catalogo, nodos, p, corrida, reglas, evaluadas, principal, encima, foco, disposicion, ySalidas]);
 
-  const alCambiar = useCallback((cambios: NodeChange[]) => setNodos((ns) => applyNodeChanges(cambios, ns)), []);
+  const alCambiar = useCallback((cambios: NodeChangeset) => setNodos((ns) => cambios.applyTo(ns)), []);
 
   const encuadrar = useCallback(() => {
     const sinReglas = !reglas.length && !notas.length;
@@ -1184,6 +1183,8 @@ function LienzoDeCodigo() {
         elementsSelectable
         onlyRenderVisibleElements={false}
         proOptions={{ hideAttribution: true }}
+        forceColorMode="light"
+        elevateEdgesOnSelect={false}
         className={`${encima ? "con-encima" : ""} ${lejos ? "lejos" : ""}`}
       >
         <Panel position="top-left" className="lienzo-arriba-izq">

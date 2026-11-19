@@ -89,7 +89,7 @@ export function recargarIa(): void {
   cacheProveedores.clear();
 }
 
-function usarProveedores(flujo?: string | null): RespuestaProveedores | null {
+function useProveedores(flujo?: string | null): RespuestaProveedores | null {
   const [r, setR] = useState<RespuestaProveedores | null>(null);
   useEffect(() => {
     const k = flujo ?? "";
@@ -101,22 +101,24 @@ function usarProveedores(flujo?: string | null): RespuestaProveedores | null {
   return r;
 }
 
-function usarModelos(proveedor: string, credencial: string | undefined, flujo?: string | null): RespuestaModelos | null {
-  const [r, setR] = useState<RespuestaModelos | null>(null);
+function useModelos(proveedor: string, credencial: string | undefined, flujo?: string | null): RespuestaModelos | null {
+  // La respuesta se guarda con la consulta que la pidió: si cambia la consulta, se muestra «cargando» sin borrar en un efecto.
+  const consulta = proveedor ? new URLSearchParams({ proveedor, ...(credencial ? { credencial } : {}), ...(flujo ? { flujo } : {}) }).toString() : "";
+  const [r, setR] = useState<{ consulta: string; datos: RespuestaModelos } | null>(null);
   useEffect(() => {
-    if (!proveedor) return setR(null);
+    if (!consulta) return;
     let vivo = true;
-    setR(null);
-    const q = new URLSearchParams({ proveedor, ...(credencial ? { credencial } : {}), ...(flujo ? { flujo } : {}) });
-    void pedir<RespuestaModelos>(`/api/ia/modelos?${q.toString()}`).then((x) => vivo && setR(x)).catch((e: Error) => vivo && setR({ modelos: [], en_vivo: false, error_en_vivo: e.message }));
+    void pedir<RespuestaModelos>(`/api/ia/modelos?${consulta}`)
+      .then((datos) => vivo && setR({ consulta, datos }))
+      .catch((e: Error) => vivo && setR({ consulta, datos: { modelos: [], en_vivo: false, error_en_vivo: e.message } }));
     return () => { vivo = false; };
-  }, [proveedor, credencial, flujo]);
-  return r;
+  }, [consulta]);
+  return r && r.consulta === consulta ? r.datos : null;
 }
 
 /** La IA global de la plataforma (para decir qué usa un flujo que hereda). */
-export function usarIaGlobal(): IaElegida | null {
-  const r = usarProveedores(null);
+export function useIaGlobal(): IaElegida | null {
+  const r = useProveedores(null);
   return r?.global ?? null;
 }
 
@@ -144,10 +146,10 @@ function Capacidades({ f }: { f: FichaModelo }) {
 export function SelectorIA({ valor, alCambiar, flujo, pide = [], voz = false, sinProbar = false }: {
   valor: IaElegida | null; alCambiar: (v: IaElegida) => void; flujo?: string | null; pide?: Capacidad[]; voz?: boolean; sinProbar?: boolean;
 }) {
-  const datos = usarProveedores(flujo);
+  const datos = useProveedores(flujo);
   const irA = usar((s) => s.irA);
   const prov = datos?.proveedores.find((p) => p.id === valor?.proveedor);
-  const modelos = usarModelos(valor?.proveedor ?? "", valor?.credencial, flujo);
+  const modelos = useModelos(valor?.proveedor ?? "", valor?.credencial, flujo);
   const [prueba, setPrueba] = useState<Prueba | null>(null);
   const [probando, setProbando] = useState(false);
   const [otro, setOtro] = useState(false);
@@ -259,7 +261,7 @@ export function PanelIaFlujo({ cerrar }: { cerrar: () => void }) {
   const def = usarEditor((s) => s.definicion);
   const cambiar = usarEditor((s) => s.cambiar);
   const flujo = usarEditor((s) => s.flujo);
-  const global = usarIaGlobal();
+  const global = useIaGlobal();
   if (!def) return null;
   const ia = def.ia;
   const usaGlobal = ia !== undefined && "usar" in ia;
@@ -320,7 +322,7 @@ export function OpcionesIaNodo({ n, poner }: { n: NodoDef; poner: (clave: string
   const def = usarEditor((s) => s.definicion);
   const flujo = usarEditor((s) => s.flujo);
   const cambiar = usarEditor((s) => s.cambiar);
-  const global = usarIaGlobal();
+  const global = useIaGlobal();
   const c = n.config;
   const propia = typeof c.proveedor === "string" && c.proveedor !== "";
   const delFlujo: IaElegida | null = !def ? null : def.ia === undefined ? { proveedor: "vertex", modelo: def.modelo ?? "gemini-2.5-flash" } : "usar" in def.ia ? global : (def.ia as IaElegida);
@@ -395,7 +397,8 @@ export function TarjetasIa() {
     }
   };
   const limpia = (x: IaElegida & { por_defecto?: unknown }): IaElegida => ({ proveedor: x.proveedor, modelo: x.modelo, ...(x.credencial ? { credencial: x.credencial } : {}) });
-  const Guardar = ({ que, listo }: { que: "global" | "texto" | "voz"; listo: boolean }) => (
+  // Una función que devuelve el botón (no un componente creado en cada render, que se volvería a montar).
+  const botonGuardar = (que: "global" | "texto" | "voz", listo: boolean) => (
     <button className="boton primario chico" disabled={!listo || ocupado === que} onClick={() => void guardar(que)}>{ocupado === que ? <span className="girando" /> : <Icono n="ok" tam={13} />}Guardar</button>
   );
   return (
@@ -406,7 +409,7 @@ export function TarjetasIa() {
         {global ? (
           <>
             <SelectorIA valor={borrador.global ?? limpia(global)} alCambiar={(v) => setBorrador((b) => ({ ...b, global: v }))} />
-            <div className="fila"><span className="crece texto-3 chico">Ahora: {textoIa(global)}</span><Guardar que="global" listo={Boolean(borrador.global?.modelo)} /></div>
+            <div className="fila"><span className="crece texto-3 chico">Ahora: {textoIa(global)}</span>{botonGuardar("global", Boolean(borrador.global?.modelo))}</div>
           </>
         ) : <div className="vacio chico"><span className="girando" />Cargando…</div>}
       </article>
@@ -417,7 +420,7 @@ export function TarjetasIa() {
             <p className="texto-2 chico">Aparte de los flujos. Para escribir necesita un modelo con herramientas; para hablar, uno de voz en vivo.</p>
             <h4 className="chico">Texto</h4>
             <SelectorIA valor={borrador.texto ?? limpia(vera.texto)} pide={["herramientas"]} alCambiar={(v) => setBorrador((b) => ({ ...b, texto: v }))} />
-            <div className="fila"><span className="crece texto-3 chico">Ahora: {textoIa(vera.texto)}</span><Guardar que="texto" listo={Boolean(borrador.texto?.modelo)} /></div>
+            <div className="fila"><span className="crece texto-3 chico">Ahora: {textoIa(vera.texto)}</span>{botonGuardar("texto", Boolean(borrador.texto?.modelo))}</div>
             <h4 className="chico">Voz</h4>
             <SelectorIA valor={borrador.voz ?? limpia(vera.voz)} voz alCambiar={(v) => setBorrador((b) => ({ ...b, voz: { ...v, ...(b.voz?.voz ? { voz: b.voz.voz } : {}) } }))} sinProbar />
             <div className="f-campo">
@@ -426,7 +429,7 @@ export function TarjetasIa() {
             </div>
             <div className="fila">
               <span className="crece chico">{vera.voz_disponible ? <span className="pastilla verde"><Icono n="ok" tam={12} />Voz disponible · {textoIa(vera.voz)}</span> : <span className="pastilla rojo" title={vera.motivo}><Icono n="alerta" tam={12} />Sin voz: {vera.motivo}</span>}</span>
-              <Guardar que="voz" listo={Boolean(borrador.voz?.modelo)} />
+              {botonGuardar("voz", Boolean(borrador.voz?.modelo))}
             </div>
           </>
         ) : <div className="vacio chico"><span className="girando" />Cargando…</div>}
