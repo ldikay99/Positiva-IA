@@ -198,3 +198,27 @@ def test_las_partes_de_dos_corridas_del_mismo_instante_no_colisionan(bucket):
 
     contenido = almacen.leer("gs://b/logs/diario/hoy.txt")
     assert "corrida A" in contenido and "corrida B" in contenido
+
+
+def test_con_el_reloj_quieto_las_partes_siguen_en_orden(bucket, monkeypatch):
+    """
+    En Windows con Python 3.12 el reloj avanza de a 15,6 ms y varios `anexar`
+    seguidos leen el mismo instante; tambien pasa si NTP atrasa el reloj. El
+    orden no puede quedar en manos del sufijo aleatorio.
+    """
+    from datetime import datetime as _datetime, timezone as _timezone
+
+    quieto = _datetime(2026, 1, 1, 12, 0, 0, tzinfo=_timezone.utc)
+
+    class RelojQuieto(_datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return quieto
+
+    monkeypatch.setattr(almacen, "datetime", RelojQuieto)
+    monkeypatch.setattr(almacen, "_ultimo_momento", None)
+    for i in range(6):
+        almacen.anexar("gs://b/logs/serie.tsv", f"fila {i}\n")
+
+    assert almacen.leer("gs://b/logs/serie.tsv") == "".join(
+        f"fila {i}\n" for i in range(6))

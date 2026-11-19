@@ -24,8 +24,9 @@ tiene el problema.
 from __future__ import annotations
 
 import re
+import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -112,15 +113,39 @@ def leer(destino) -> Optional[str]:
 SUFIJO_DE_PARTES = ".partes"
 
 
+# Ultimo instante usado en este proceso para nombrar una parte.
+_ultimo_momento: Optional[datetime] = None
+_candado_momento = threading.Lock()
+
+
+def _momento_creciente() -> datetime:
+    """
+    El instante actual, siempre posterior al de la parte anterior del proceso.
+
+    El reloj de pared no basta: en Windows con Python 3.12 avanza de a 15,6 ms
+    (`GetSystemTimeAsFileTime`) y dos `anexar` seguidos leen el mismo instante;
+    con el reloj fino dos llamadas tambien pueden caer en el mismo microsegundo,
+    y NTP puede atrasarlo. Con el instante repetido, el orden lo decidia el
+    sufijo aleatorio y `leer` devolvia las filas revueltas.
+    """
+    global _ultimo_momento
+    with _candado_momento:
+        ahora = datetime.now(timezone.utc)
+        if _ultimo_momento is not None and ahora <= _ultimo_momento:
+            ahora = _ultimo_momento + timedelta(microseconds=1)
+        _ultimo_momento = ahora
+        return ahora
+
+
 def _nombre_de_parte() -> str:
     """
     Nombre que ordena por fecha y no colisiona entre corridas simultaneas.
 
     La fecha delante para que listar el prefijo devuelva las partes en el orden
-    en que se escribieron; el sufijo aleatorio porque dos corridas pueden
-    anexar en el mismo segundo.
+    en que se escribieron (estrictamente creciente dentro del proceso); el
+    sufijo aleatorio porque dos corridas pueden anexar en el mismo instante.
     """
-    momento = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%f")
+    momento = _momento_creciente().strftime("%Y%m%dT%H%M%S%f")
     return f"{momento}-{uuid.uuid4().hex[:8]}.txt"
 
 
