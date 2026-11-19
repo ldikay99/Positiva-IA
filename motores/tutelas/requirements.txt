@@ -3,12 +3,12 @@
 # comparten (python-dotenv, redis, google-genai, PyMuPDF, pytesseract, Pillow) lleva la
 # misma version que alli, o pip no resuelve la imagen.
 requests==2.34.2
-python-dotenv==1.2.3
+python-dotenv==1.2.4
 redis==8.1.0
-google-genai==2.23.0
+google-genai==3.6.1
 google-auth==2.62.2
 fpdf2==2.9.0
 psycopg2-binary==2.9.13
-PyMuPDF==1.28.2
+PyMuPDF==2.1
 pytesseract==0.3.13
 pillow==13.0.0

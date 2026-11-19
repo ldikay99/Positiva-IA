@@ -1,14 +1,14 @@
 # Lo que el visor agrega al motor. Solo licencias permisivas.
 # Renderiza cada hoja de un PDF en baja resolución para mostrarla en la web
 # (PDFium, Apache-2.0 / BSD-3-Clause). No interviene en lo que lee el motor.
-pypdfium2==4.30.0
+pypdfium2==5.15.2
 # Conectores de los flujos declarativos (puente/conectores/):
 # PostgreSQL en Python puro (BSD-3-Clause) y MySQL/MariaDB en Python puro (MIT).
 # La misma versión que motor/requirements.txt (el registro de radicados del job la usa).
 pg8000==1.31.6
 # Correos .msg de Outlook en la bandeja de prueba de un flujo (archivo compuesto OLE; BSD-2-Clause).
 olefile==0.47
-PyMySQL==1.1.2
+PyMySQL==1.2.4
 # Documentos de los nodos de producto (puente/documentos.py), sin dependencias nuevas: pypdfium2 (arriba) une, divide,
 # lee y pasa a imagen los PDF; python-docx (MIT), openpyxl (MIT) y Pillow (HPND) vienen con motor/requirements.txt;
 # el PDF se escribe con un generador propio. Sin LibreOffice.
@@ -16,15 +16,15 @@ PyMySQL==1.1.2
 # que trae XlsxWriter (BSD-2-Clause); usa lxml (BSD-3-Clause) y Pillow (HPND), que ya vienen con el motor.
 python-pptx==1.0.2
 # Especificaciones OpenAPI/Swagger en YAML del conector api_operacion (MIT; solo safe_load).
-PyYAML==6.0.2
+PyYAML==6.0.3
 # openpyxl (MIT), google-auth y requests (Apache-2.0) ya vienen con motor/requirements.txt:
 # Hojas XLSX y Google Drive por REST con la cuenta de servicio, sin google-api-python-client.
 # Fase 2 de integraciones (puente/conectores/sql.py y datos.py):
 # SQL Server en Python puro (python-tds, MIT); su cifrado TLS (obligatorio en Azure SQL) pide pyOpenSSL (Apache-2.0).
-python-tds==1.16.0
+python-tds==1.17.1
 pyOpenSSL==26.4.0
 # Oracle en modo «thin», sin el cliente de Oracle (python-oracledb, Apache-2.0 o UPL-1.0; usa cryptography, Apache-2.0/BSD, que ya está).
-oracledb==2.5.1
+oracledb==26.1.0
 # MongoDB (pymongo, Apache-2.0) va en requirements-sin-dependencias.txt: se instala con --no-deps porque su única
 # dependencia, dnspython, es ISC (fuera de la lista MIT/BSD/Apache) y solo sirve para mongodb+srv://, que no se admite.
 # Páginas web y RSS: beautifulsoup4 y soupsieve (MIT) ya vienen con motor/requirements.txt; FTP con ftplib (biblioteca estándar).

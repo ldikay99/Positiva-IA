@@ -1406,7 +1406,9 @@ def _tablas_de_pagina(pagina) -> List[str]:
     """Extrae tablas del PDF y las emite como tablas Markdown."""
     salida: List[str] = []
     try:
-        encontradas = pagina.find_tables()
+        # Sin el analizador de layout de PyMuPDF 2 (onnxruntime): con el tardaba
+        # segundos por hoja y partia las celdas; asi da lo mismo que 1.28.
+        encontradas = pagina.find_tables(use_layout=False)
     except Exception:
         return salida
     for tabla in getattr(encontradas, "tables", []) or []:

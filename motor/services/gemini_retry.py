@@ -2,12 +2,14 @@
 Helpers de resiliencia para llamadas a Gemini (google-genai).
 
 Aplica backoff exponencial sobre errores transitorios (429 rate-limit,
-500/502/503/504 del servicio, timeouts de httpx).
+500/502/503/504 del servicio, timeouts de red). google-genai 3 usa httpx2
+por defecto: sus excepciones no heredan de las de httpx.
 """
 
 import logging
 
 import httpx
+import httpx2
 from google.genai import errors as genai_errors
 from tenacity import (
     retry,
@@ -32,7 +34,8 @@ def _is_retryable_gemini_error(exc: BaseException) -> bool:
     if isinstance(exc, genai_errors.APIError):
         code = getattr(exc, "code", None) or getattr(exc, "status_code", None)
         return code in RETRYABLE_HTTP_STATUS
-    if isinstance(exc, (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError)):
+    if isinstance(exc, (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError,
+                        httpx2.TimeoutException, httpx2.ConnectError, httpx2.ReadError)):
         return True
     return False
 
